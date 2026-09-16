@@ -35,7 +35,7 @@ import {
   type TestEnvironment,
 } from "./test-helpers.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
-import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS, happyTurns, standardTurns } from "./turns.js";
+import { DEFAULT_ENTITIES_TURN, DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS, happyTurns, standardTurns } from "./turns.js";
 
 /**
  * Item P through the real workflow: `07k-skeleton-variety-attempt-N`.
@@ -451,7 +451,15 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
     const plan = steps.find((s) => s.stepId === "08a1b-relayout-for-interest-attempt-1")?.output as
       | { changes: Array<{ kind: string; slide: number }> }
       | undefined;
-    expect(plan?.changes[0]).toMatchObject({ kind: "switch-archetype", slide: 2 });
+    // The remedy on slide 2 is whichever rung the ladder reaches first, and
+    // Phase 5.5 (spec §4.7) reordered it: a plate short of content is now
+    // offered a PICTURE the run already vetted and did not use before it is
+    // offered a different archetype, because a photograph is worth two content
+    // elements and an archetype switch is worth none. Both rungs reassign the
+    // slide's layout, which is all this case needs — its subject is that the
+    // skeleton signature is recomputed AFTER the re-layout, not which rung fired.
+    expect(plan?.changes[0]?.slide).toBe(2);
+    expect(["promote-image-to-cover", "switch-archetype"]).toContain(plan?.changes[0]?.kind);
 
     const preRender = (steps.find((s) => s.stepId === "07k-skeleton-variety-attempt-1")?.output as { signature: string }).signature;
     const reported = (steps.find((s) => s.stepId === "08a1e-skeleton-occupancy-attempt-1")?.output as { signature: string }).signature;
@@ -501,16 +509,21 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
       seedSkeletons: lastWeek(repeated),
     });
     const render = countingRender(env);
-    // The copy turn reports $1.80 of Sonnet output, so the meter crosses the
-    // $1.50 hard max on attempt 1 and the posture is `cheapest-path` by the
-    // time `07k` runs. ONE attempt's worth of turns is queued: a second would
+    // The copy turn reports $3.00 of Sonnet output, so the meter crosses the
+    // hard max on attempt 1 and the posture is `cheapest-path` by the time
+    // `07k` runs. ONE attempt's worth of turns is queued: a second would
     // exhaust the router, so this passing IS the assertion that no redraft
     // was bought.
+    //
+    // Phase 5.5 re-baseline: 120k tokens ($1.80) crossed the old $1.60
+    // `MAX_RUN_SPEND_USD`. The ceiling is now $2.60, fitted to a plan that
+    // actually buys the pictures, so the lever needs a bigger number to reach
+    // the same posture. Nothing about what is asserted changed.
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()),
       finalTurn(goodResearchOutput()),
-      finalTurn(goodAngleProposal()),
-      finalTurn(goodCopyOutput(), { outputTokens: 120_000 }),
+      finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
+      finalTurn(goodCopyOutput(), { outputTokens: 200_000 }),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),

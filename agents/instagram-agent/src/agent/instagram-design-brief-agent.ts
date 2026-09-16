@@ -74,11 +74,18 @@ export class InstagramDesignBriefAgent extends BaseAgent<StudioDesignBriefOutput
     // runs once per client per 120 days, so the headroom is free.
     //
     // It was not free at 4k: eight proposals with a `why` each do not fit,
-    // and on 2026-09-16 this step truncated for `geektime` and, on the run
-    // where it did fit, was rejected for two `gaps` lines a few characters
-    // over their cap. Both failure modes are now handled below the agent
-    // (`raisedOutputLimit`, `clampOversizeValues`); this number stops being
-    // the thing that decides whether a client gets templates.
+    // and on 2026-09-16 this step truncated for `geektime` and took the whole
+    // Template Studio down with it — no design brief, no templates, and a
+    // `templatesStored: 0` marker that then locked the client out for 30 days.
+    // On the run where it did fit, it was rejected for two `gaps` lines a few
+    // characters over their cap. Both failure modes are now handled below the
+    // agent (`raisedOutputLimit`, `clampOversizeValues`); this number stops
+    // being the thing that decides whether a client gets templates.
+    //
+    // `setup-ceilings.test.ts` measures this schema's maximal instance at
+    // ~12,200 characters (~3,400 tokens of English, ~6,100 of Hebrew) — 85% of
+    // the old ceiling in English and past it in Hebrew, for a step whose whole
+    // job is to fill those eight proposals.
     maxTokens: 16_384,
     modelPolicy: resolveModelPolicy("instagram-design-brief", { policy: "pinned", model: "claude-sonnet-4-6", contentLanguageSensitive: true }),
     skillRef: "instagram-design-brief@1",

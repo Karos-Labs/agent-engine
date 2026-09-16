@@ -143,8 +143,19 @@ describe("run-budget — the concept is priced before anyone knows whether it fi
     // who moved it: the owner did, on 2026-09-14, to state that its job is to
     // break an infinite loop rather than to fail a run. No phase bought room
     // with it, which is what this pair of literals is here to keep true.
-    expect(TARGET_RUN_SPEND_USD).toBe(1.0);
-    expect(MAX_RUN_SPEND_USD).toBe(1.6);
+    //
+    // PHASE 5.5 RE-BASELINE (spec §2 A1), and it is the owner again rather
+    // than a phase buying room. On 2026-09-16 the $1.00 target was the number
+    // a run with ZERO GENERATED IMAGES came in under, and rung 1 of the ladder
+    // was `generatedImagesCap 4 -> 2 -> 0`: so every prep run planned no
+    // pictures and the owner's loudest complaint about the posts was that
+    // there were none in them. 1.80 is fitted to a plan that BUYS the
+    // pictures; 2.60 is the same loop-breaker at ~1.7x the heaviest designed
+    // path. The property this pair exists to protect is unchanged — no phase
+    // may move these to make its own feature fit — and the record of who moved
+    // them and why is this comment.
+    expect(TARGET_RUN_SPEND_USD).toBe(1.8);
+    expect(MAX_RUN_SPEND_USD).toBe(2.6);
     // The image ladder is module-private, so it is pinned through the only
     // door it has: the adaptations a cold run's plan reports, in order.
     // Phase 5 (RFC-18 §7.2) added $0.034 to $0.043 to a run, and a cold run had
@@ -155,13 +166,12 @@ describe("run-budget — the concept is priced before anyone knows whether it fi
     // @18's re-encoded marking adds a further 3 x $0.007, so a cold plan now walks ONE MORE rung and
     // reports the optional-re-vet lever too. Still three attempts, still a full deliverable: the rungs
     // that cost the POST something remain untouched, which is the property this assertion exists for.
-    expect(planRunBudget(DEFAULT_RUN_SHAPE).adaptations).toEqual([
-      "images capped at 4",
-      "images capped at 2",
-      "no generated images (stock or text-only)",
-      "trend evidence reduced to the one cached industry query",
-      "optional rescue re-vets skipped",
-    ]);
+    // PHASE 5.5: the ladder is re-ordered OPTIONAL-FIRST and the image rung is
+    // last with a floor — `[4, 3, 2]`, never zero. A cold English plan now
+    // fits after ONE rung, and that rung's own name says it is optional.
+    // "no generated images (stock or text-only)" is no longer reachable from
+    // any plan, which is the whole point: it was rung 1.
+    expect(planRunBudget(DEFAULT_RUN_SHAPE).adaptations).toEqual(["optional rescue re-vets skipped"]);
   });
 });
 

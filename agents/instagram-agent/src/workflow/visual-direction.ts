@@ -1,7 +1,9 @@
 import { z } from "zod";
 import type { ClientBrief } from "@agent-engine/tools";
 import { isPlaceholderBriefValue } from "./client-brief.js";
+import type { SetupFailureStatus } from "./template-studio.js";
 import type { BrandTokens } from "./types.js";
+import { ClientVisualSystemSchema, fallbackClientVisualSystem, type ClientVisualSystem } from "./visual-system.js";
 
 /**
  * RFC-13 Phase 3, item Q — **per-client visual direction, derived once at
@@ -107,12 +109,57 @@ export const VISUAL_DIRECTION_LINES_MAX = 10;
 export const VISUAL_DIRECTION_ATTEMPT_BELIEF_KEY = "instagramVisualDirectionAttempt";
 export const VISUAL_DIRECTION_RETRY_DAYS = 7;
 
-/** A derivation that was tried and did not stick. Written by `00d3` on the failure path, read by `checkVisualDirection`. */
+/**
+ * The failure vocabulary, spelled here because a zod enum needs literals and
+ * asserted identical to `template-studio.ts`'s `SetupFailureStatus` below —
+ * one setup, one vocabulary, whichever marker records it.
+ */
+export const SETUP_FAILURE_STATUSES_FOR_MARKER = ["tooling_error", "budget_exceeded", "content_fail"] as const;
+/** Compile-time only: a change to `SetupFailureStatus` that is not made here stops the build. */
+type _MarkerStatusesAgree = (typeof SETUP_FAILURE_STATUSES_FOR_MARKER)[number] extends SetupFailureStatus
+  ? SetupFailureStatus extends (typeof SETUP_FAILURE_STATUSES_FOR_MARKER)[number]
+    ? true
+    : never
+  : never;
+const _markerStatusesAgree: _MarkerStatusesAgree = true;
+void _markerStatusesAgree;
+
+/**
+ * A derivation that was tried and did not stick. Written by `00d3` on the
+ * failure path, read by `checkVisualDirection`.
+ *
+ * `outcome` is the same discrimination `template-studio.ts` makes for the
+ * studio's own cooldown, and it is here for the same 2026-09-16 evidence:
+ * `00d2-derive-visual-direction` ran out of its 3,000-token ceiling on two
+ * new clients, and the marker this schema describes then suppressed the
+ * retry for seven days — for a failure that a one-line ceiling change fixed
+ * the same afternoon. The seven days are the right answer to a derivation
+ * that RAN and produced nothing usable; they are the wrong answer to a step
+ * that never answered at all.
+ *
+ * Optional, and absent reads as `"failed"`, NOT as `"empty"`: every marker
+ * currently on disk was written by `00d`'s `derived === undefined` branch,
+ * which fires on a tooling error exactly as it fires on an empty answer, and
+ * the clients carrying one are the clients we need to be able to re-derive
+ * today.
+ *
+ * `SetupFailureStatus` is imported as a TYPE from `template-studio.ts` so the
+ * two markers cannot drift apart in vocabulary; the import is erased at
+ * compile time, so this module takes on no runtime dependency for it.
+ */
 export const VisualDirectionAttemptSchema = z.object({
   version: z.literal(1),
   attemptedAt: z.string().min(1),
   /** Plain language, for the ledger and the gate: which step failed and how. */
   failedWith: z.string().min(1).max(240),
+  /**
+   * `"empty"` — the art director answered and the answer was unusable.
+   * `"failed"` — the step produced no answer (tooling error, budget lever,
+   * schema refusal). Only `"empty"` holds the retry window.
+   */
+  outcome: z.enum(["empty", "failed"]).optional(),
+  /** Which failure, when `outcome` is `"failed"`. Reporting only; nothing branches on it. */
+  status: z.enum(SETUP_FAILURE_STATUSES_FOR_MARKER).optional(),
 });
 export type VisualDirectionAttempt = z.infer<typeof VisualDirectionAttemptSchema>;
 
@@ -212,6 +259,25 @@ const VISUAL_DIRECTION_FIELDS = {
   lines: z.array(VisualDirectionLineSchema).min(VISUAL_DIRECTION_LINES_MIN).max(VISUAL_DIRECTION_LINES_MAX),
   styleLock: VisualStyleLockSchema,
   gaps: z.array(z.string().min(1).max(GAP_MAX_CHARS)).max(GAPS_MAX).default([]),
+  /**
+   * Phase 5.5, item C/D — THE SIX FROZEN AXES (`visual-system.ts`).
+   *
+   * The lines above steer what a GENERATED PHOTOGRAPH looks like. These steer
+   * what the SLIDE looks like, and until this phase nothing did: all three
+   * prep clients rendered `Fraunces, Georgia, Times New Roman, serif` for
+   * display, `Inter, system-ui` for body, an accent bar on every plate and the
+   * same eight archetypes, so three posts for three unrelated businesses read
+   * as one machine's output — the owner's *"רואים שאותו AI ייצר אותו"*.
+   *
+   * OPTIONAL in the schema, and that is load-bearing in two directions. A
+   * document written before this phase must still parse (`readVisualDirection`
+   * `safeParse`s, and a refusal there costs ~$0.075 of re-derivation on EVERY
+   * subsequent run — the exact recurring leak `GAP_MAX_CHARS` documents); and
+   * a turn that ran out of room mid-answer must still yield a storable
+   * direction. Absent, `clientVisualSystemFor` derives the axes from the brand
+   * kit for $0, so a client ALWAYS has a system.
+   */
+  system: ClientVisualSystemSchema.optional(),
 } as const;
 
 /**
@@ -291,24 +357,43 @@ export interface VisualDirectionCheck {
  * proceeds on `fallbackVisualDirection`. There is no fourth outcome: a budget
  * lever must never be able to stop a run.
  *
- * A RECENT FAILED ATTEMPT is the third reason to answer `unavailable`. A
- * derivation that failed and left nothing behind used to resolve `derive`
+ * A RECENT EMPTY ATTEMPT is the third reason to answer `unavailable`. A
+ * derivation that ran and left nothing behind used to resolve `derive`
  * again on the very next run, and the run after that — re-paying `00d1` +
  * `00d2` (~$0.075) every time on a budget that is supposed to be a per-client
  * one-off. Inside `VISUAL_DIRECTION_RETRY_DAYS` the marker stands, the
  * fallback direction carries the run, and the money is not spent twice for
  * the same answer.
+ *
+ * **A marker written for a step that FAILED suppresses nothing** — see
+ * `retryHeld`. That distinction is the whole of item D1: on 2026-09-16 this
+ * window was holding three clients on the brand-kit fallback because their
+ * art-director step had run out of output tokens.
  */
 export function checkVisualDirection(beliefs: unknown, options: { now: Date; allowDerive: boolean }): VisualDirectionCheck {
   const stored = readVisualDirection(beliefs);
   const attempt = readVisualDirectionAttempt(beliefs);
   const attemptAgeDays = attempt === undefined ? undefined : visualDirectionAgeDays({ generatedAt: attempt.attemptedAt }, options.now);
-  /** A failure is "recent" only when its stamp parses: an unreadable stamp must not silence the retry forever. */
-  const retryHeld = attempt !== undefined && attemptAgeDays !== undefined && attemptAgeDays < VISUAL_DIRECTION_RETRY_DAYS;
+  /**
+   * A failure is "recent" only when its stamp parses: an unreadable stamp
+   * must not silence the retry forever.
+   *
+   * And only an `"empty"` attempt holds the window at all. A marker whose
+   * `outcome` is `"failed"` — or absent, which every marker on disk today is
+   * — records WHAT HAPPENED without suppressing anything: `00d2` failing for
+   * want of output tokens is not evidence that this client has no derivable
+   * visual direction, and treating it as evidence is what left three clients
+   * on `fallbackVisualDirection` with the fix already merged. The recurring-
+   * spend leak the window exists to stop is still stopped for the case it was
+   * written for (a derivation that runs and produces nothing usable, every
+   * week, for the same client).
+   */
+  const retryHeld =
+    attempt !== undefined && attempt.outcome === "empty" && attemptAgeDays !== undefined && attemptAgeDays < VISUAL_DIRECTION_RETRY_DAYS;
   const retryReason =
     attempt === undefined
       ? ""
-      : `the last derivation failed ${attemptAgeDays ?? "an unknown number of"} day(s) ago (${attempt.failedWith}) and the ${VISUAL_DIRECTION_RETRY_DAYS}-day retry window has not passed`;
+      : `the last derivation ran and produced nothing usable ${attemptAgeDays ?? "an unknown number of"} day(s) ago (${attempt.failedWith}) and the ${VISUAL_DIRECTION_RETRY_DAYS}-day retry window has not passed`;
   if (stored !== undefined) {
     const ageDays = visualDirectionAgeDays(stored, options.now);
     if (ageDays !== undefined && ageDays < VISUAL_DIRECTION_TTL_DAYS) {
@@ -763,10 +848,39 @@ export function finaliseVisualDirection(
     forbid: output.forbid,
     lines,
     styleLock: output.styleLock,
+    // Phase 5.5 — carried through when the director authored it, omitted when
+    // it did not. Omitted rather than filled with the fallback HERE, because
+    // the belief document must be able to say "no one has decided these axes
+    // yet": a derived-at-read-time fallback that got persisted would be
+    // indistinguishable from an authored decision on the next run, and would
+    // then be frozen for 90 days on the strength of a slug hash.
+    ...(output.system !== undefined ? { system: output.system } : {}),
     source: meta.source,
     gaps: tidyGaps(gaps),
   });
   return parsed.success ? parsed.data : undefined;
+}
+
+/**
+ * The client's six frozen axes — the authored ones when setup produced them,
+ * the brand-kit derivation otherwise. **Never `undefined`.**
+ *
+ * The one entry point the render path uses, so "which system is this client
+ * on" has exactly one answer and a missing setup degrades the ANSWER rather
+ * than removing the question. On 2026-09-16 all three prep clients would have
+ * taken the fallback arm (`00d2` failed on two of them and the marker locked
+ * the retry for seven days), and all three would still have rendered three
+ * visibly different posts — which is the whole point of the fallback existing.
+ */
+export function clientVisualSystemFor(direction: VisualDirection | undefined, tokens: BrandTokens | undefined, clientSlug?: string): ClientVisualSystem {
+  if (direction?.system !== undefined) return direction.system;
+  return fallbackClientVisualSystem({
+    ...(tokens?.accentColor !== undefined ? { accentColor: tokens.accentColor } : {}),
+    ...(tokens?.palette !== undefined ? { palette: tokens.palette } : {}),
+    ...(tokens?.aesthetic !== undefined ? { aesthetic: tokens.aesthetic } : {}),
+    ...(tokens?.visualMood !== undefined ? { visualMood: tokens.visualMood } : {}),
+    ...(clientSlug !== undefined ? { clientSlug } : {}),
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────

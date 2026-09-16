@@ -5,7 +5,6 @@ import type { AgentContext, AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import { invertedTemplateFileName } from "../src/workflow/slides-data.js";
-import { GROUND_MATERIAL_MOUNTED, groundMaterialCssBlock } from "../src/workflow/ground-material.js";
 import {
   goodRelevanceVerdict,
   goodTrendScoutOutput,
@@ -21,7 +20,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
-import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
+import { DEFAULT_ENTITIES_TURN, DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 /**
@@ -67,7 +66,7 @@ function tools(env: TestEnvironment): AgentToolRegistry {
 function draftTurns(copyOutput: ReturnType<typeof goodCopyOutput>) {
   // The angle proposal (04i) leads each ROUND: one per revision, outside the
   // attempt loop, so a two-round fixture spends two of them.
-  return [finalTurn(goodAngleProposal()), finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)];
+  return [finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN), finalTurn(copyOutput), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)];
 }
 
 describe("ground/fg inversion, end to end (IGSTYLE-10, §10a/10b/10c/10e)", () => {
@@ -142,7 +141,7 @@ describe("ground/fg inversion, end to end (IGSTYLE-10, §10a/10b/10c/10e)", () =
       // appended run is currently empty. Mirrored off the flag rather than
       // deleted, so flipping `GROUND_MATERIAL_MOUNTED` restores the assertion
       // in the same commit that restores the behaviour.
-      GROUND_MATERIAL_MOUNTED ? groundMaterialCssBlock({ ground: "#F4F2EC", fg: "#17181C" }, "acme") : ""
+      ""
     }\n`;
     expect(invertedHtml.replace(appendedBlock, "")).toBe(primaryHtml);
 

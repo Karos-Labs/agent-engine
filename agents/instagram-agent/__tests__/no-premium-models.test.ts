@@ -31,6 +31,16 @@ import {
   InstagramTemplateSetReviewAgent,
   InstagramVisualQaAgent,
 } from "../src/agent/index.js";
+// Phase 5.5, `05f-author-custom-archetype`. Imported by PATH rather than through
+// the barrel because the line in `src/agent/index.ts` belongs to the hunk that
+// wires the step, and this suite must see the class the moment it exists rather
+// than the moment it is re-exported.
+import { InstagramCustomArchetypeAgent } from "../src/agent/instagram-custom-archetype-agent.js";
+// Phase 5.5, item A2: `04b3-extract-entities`. Imported by PATH for the same
+// reason as the line above — the `src/agent/index.ts` export belongs to the
+// hunk that wires the step, and this suite must see the class the moment it
+// exists rather than the moment it is re-exported.
+import { InstagramEntityAgent } from "../src/agent/instagram-entity-agent.js";
 
 /**
  * RFC-15 §8 — **no premium-tier model in an Instagram run**, proved against every agent this package ships
@@ -95,7 +105,14 @@ function everyInstagramAgentPolicy(): Array<{ id: string; policy: ModelPolicy }>
     new InstagramBriefAgent(noopRuntime),
     new InstagramConceptAgent(noopRuntime),
     new InstagramCopyAgent(noopRuntime),
+    // Phase 5.5 item B3: the markup half of a writer-designed layout, hoisted
+    // off the copy step. Added to this list the same commit the class was
+    // written, which is the rule the comment above states.
+    new InstagramCustomArchetypeAgent(noopRuntime),
     new InstagramDesignBriefAgent(noopRuntime),
+    // Phase 5.5, item A2 — the entity extractor. Added to this list the same
+    // commit the class was written, which is the rule the comment above states.
+    new InstagramEntityAgent(noopRuntime),
     new InstagramImageVettingAgent(noopRuntime),
     new InstagramNativeEditorAgent(noopRuntime),
     // Phase 5, RFC-18 §6.1. Added to this list the same commit the class was
@@ -132,7 +149,7 @@ describe("no Instagram step resolves to a premium model, in any language (RFC-15
     // Five of them, on `claude-sonnet-4-6`. If a future change deletes these flags, this assertion fails and
     // says so, rather than the suite quietly passing because there is nothing left to re-point.
     expect(sensitive.map((p) => p.id).sort()).toEqual(
-      ["instagram-angle", "instagram-brief", "instagram-copy", "instagram-design-brief", "instagram-template-designer"].sort(),
+      ["instagram-angle", "instagram-brief", "instagram-copy", "instagram-custom-archetype", "instagram-design-brief", "instagram-template-designer"].sort(),
     );
     expect(sensitive.every((p) => p.policy.model === "claude-sonnet-4-6")).toBe(true);
   });

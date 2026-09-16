@@ -103,7 +103,6 @@
     --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
     --f-body: 'Inter', system-ui, -apple-system, sans-serif;
     --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
-    --mx: 64px;
     --ts: 1;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -115,6 +114,41 @@
      font-size on an older checkpointed slides-data re-rendered post-deploy. */
   body.ts-s { --ts: 0.85; }
   body.ts-l { --ts: 1.18; }
+  /* ── PHASE 5.5: THE ONE TYPE SCALE (`visual-system.ts`, `TYPE_SCALE_PX`). ──
+     Six steps for the whole archetype set, against the 45 distinct `font-size`
+     values the eight bundled templates declared between them. A plate picks a
+     step by ROLE rather than by which file the writer's layout landed on.
+     `visualSystemCssBlock` overrides these per run with the resolved system's
+     type flavour; these are the self-contained defaults a brandless render
+     uses.
+
+     ── ON `body`, NOT ON `:root`, AND THAT IS NOT A STYLE CHOICE. ──
+     A custom property's `var()` references are substituted AT THE ELEMENT THAT
+     DECLARES IT. `--ts` is `1` on `:root` and is overridden on `body.ts-s` /
+     `body.ts-l`, so a `--t-*` declared on `:root` resolves `var(--ts, 1)`
+     against the ROOT's value — always 1 — and then inherits down already
+     substituted. Declared there, the reviewer's whole type-scale control
+     silently stopped reaching every size that reads a step: measured, this
+     plate rendered its 300px figure at 300px at `ts-s`, where the literal it
+     replaced rendered 255px, and the calibration's own s-vs-l control pair
+     reported the two plates painting identical ink (0.4175 both). Declared
+     HERE the substitution happens on `body`, where `body.ts-s` is in force. */
+  body {
+    /* ── PHASE 5.5: THE PAGE MARGIN IS THE VISUAL SYSTEM'S `gutter` AXIS. ──
+       `--gutter` is emitted per run by `visualSystemCssBlock` (`wide` 64px,
+       `tight` 48px) and was read by nothing: every template hard-coded its own
+       margin, so two catalog entries that differ ONLY in gutter rendered the
+       same plate and the twelve-entry catalog was a variety claim a reader
+       could not see. The literal stays as the fallback, so a document composed
+       without the run sheet is byte-identical. */
+    --mx: var(--gutter, 64px);
+    --t-micro: calc(22px * var(--ts, 1));
+    --t-label: calc(32px * var(--ts, 1));
+    --t-lead: calc(46px * var(--ts, 1));
+    --t-statement: calc(84px * var(--ts, 1));
+    --t-display: calc(124px * var(--ts, 1));
+    --t-figure: calc(220px * var(--ts, 1));
+  }
   body.ta-center { text-align: center; }
   body.ta-end { text-align: end; }
   html, body { width: 1080px; height: 1440px; }
@@ -147,7 +181,7 @@
      frame means the plate gets a corner wash. ── */
   .ground {
     position: absolute; inset: 0; z-index: 0;
-    background-image: radial-gradient(58% 26% at 100% 0%, color-mix(in srgb, var(--wash) 8%, transparent) 0%, transparent 72%);
+    background-image: radial-gradient(58% 26% at 100% 0%, color-mix(in srgb, var(--wash) var(--ground-texture-alpha, 8%), transparent) 0%, transparent 72%);
   }
   /* ── THERE IS NO FULL-BLEED L2 ON THIS PLATE ANY MORE, and that is the
         point. ──
@@ -257,8 +291,13 @@
      shrinking band above is what makes the composition fit, and it needs no
      per-archetype clamp to do it. */
   .sc-figure-band img { inline-size: 100%; block-size: 100%; object-fit: cover; display: block; }
-  /* The one mark it carries: the brand rule that ties it to the plate. */
+  /* ── PHASE 5.5: hidden unless the system switches it on. ──
+     A contentless 8px accent rule under the picture band. `--fx-accent` is set
+     by `visualSystemCssBlock` on at most three slides of a carousel; on the
+     rest this mark does not paint at all. It is `display` rather than an ink
+     swap because the bar is a positioned `::after` with no layout to preserve. */
   .sc-figure-band::after {
+    display: var(--fx-accent, none);
     content: ""; position: absolute; inset-block-end: 0; inset-inline: 0;
     block-size: calc(8px * var(--ts, 1)); background: var(--accent);
   }
@@ -321,19 +360,36 @@
   /* `inline-block` so a client's `pill`/`brackets` badge variant wraps the
      words rather than painting a full-measure bar. */
   .eyebrow {
+    /* ── THE LABEL'S BOX IS ITS LABEL. ──
+       A block-level eyebrow spans the whole measure whatever it says, so its
+       BOX reaches the opposite corner of the plate even when its ink stops
+       after two words. `renderCarousel`'s reserved-zone probe reads boxes, so
+       a full-width label was reported as entering the brand mark's corner from
+       the other side of the frame — a finding about nothing, on the instrument
+       §7 F2 exists to make trustworthy. `fit-content` makes the two agree.
+       `stat-callout.html` has always been `inline-block` for the same reason. */
+    inline-size: fit-content; max-inline-size: 100%;
     display: inline-block;
-    font-family: var(--f-mono); font-weight: 600; font-size: calc(22px * var(--ts, 1));
+    font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro);
     letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent);
   }
   .eyebrow:empty { display: none; }
+  /* ── PHASE 5.5 §4.3: UNDER THE ACCENT SWITCH, AND IT IS THE EYEBROW'S
+        UNDERLINE. ──
+     `stat-callout.html`'s `.sc-rail` carries the whole argument. The same 2px
+     full-measure hairline at 48% of the foreground appears in seven of the
+     eight files, so before this it painted on six of eight plates of every
+     carousel — the owner's *"יש קווים כאלה"* in a quieter colour — and on a
+     plate whose eyebrow slot came through empty it was a rule over nothing. */
   .lt-rail {
-    block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent);
+    display: var(--fx-accent, none); block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent);
     margin-block: calc(24px * var(--ts, 1)) calc(40px * var(--ts, 1));
   }
+  body:not(:has(.eyebrow:not(:empty))) .lt-rail { display: none; }
 
   .me-head {
     z-index: 3;
-    font-family: var(--f-display); font-weight: 600; font-size: calc(66px * var(--ts, 1));
+    font-family: var(--f-display); font-weight: 600; font-size: calc(var(--t-statement) * 0.7857);
     line-height: 1.3; letter-spacing: -0.012em; text-wrap: balance;
     /* `auto` block margins inside the elastic head: the headline sits
        optically between the rail and the panel, and the plate's slack is two
@@ -343,9 +399,9 @@
        clear of it — an `auto` margin resolves to 0 when there is nothing to
        distribute. */
     margin-block: auto;
-    padding-block-end: 0.12em;
+    padding-block-end: max(0.12em, var(--mk-face-bleed, 0em));
   }
-  .me-head.small { font-size: calc(52px * var(--ts, 1)); }
+  .me-head.small { font-size: calc(var(--t-statement) * 0.619); }
   /* ── THE SAME `ts-l` STEP-DOWN, AND THE SAME REASON. ──
 
      `stat-callout.html` carries the full argument. This plate hit it one
@@ -357,8 +413,8 @@
      the display face and between them they are most of the plate. The rows'
      existing `:has(.me-row:nth-child(4))` step already exists for exactly this
      shape of problem at `m`; this is the same idea one scale up. */
-  body.ts-l .me-head { font-size: calc(54px * var(--ts, 1)); }
-  body.ts-l .me-head.small { font-size: calc(44px * var(--ts, 1)); }
+  body.ts-l .me-head { font-size: calc(var(--t-statement) * 0.6429); }
+  body.ts-l .me-head.small { font-size: calc(var(--t-statement) * 0.5238); }
 
   /* RFC-17 twin slot. `.me-head` hosts BOTH `html:headlineRuns` (marked)
      and `headline` (plain, escaped); whichever arrives filled wins and the
@@ -372,7 +428,7 @@
      `buildListRows` inlines them into `html:itemRows` itself. */
   /* The twin host's block-start bleed — see `cover.html` for the measurement
      and why it is here rather than only in the shared mark sheet. */
-  :has(> span.mk-plain) { padding-block-start: var(--mk-twin-bleed, .22em); }
+  :has(> span.mk-plain) { padding-block-start: max(var(--mk-twin-bleed, .22em), var(--mk-face-bleed, 0em)); }
   .me-head:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
 
   /* The rows panel: graded and textured for the reason in the header, capped
@@ -454,7 +510,11 @@
      covering half the frame from out-voting the real ground for
      `backgroundHex` (the third rule in this file's header). */
   .me-rows:not(:empty) {
-    border-block-start: calc(8px * var(--ts, 1)) solid var(--accent);
+    /* PHASE 5.5 — the panel's accent cap paints only on a slide the visual
+       system chose (`--fx-accent-ink`). Ink rather than `display`: the border
+       is 8px of the panel's own box, and removing it would move every row
+       under it by 8px on the plates that keep it. */
+    border-block-start: calc(8px * var(--ts, 1)) solid var(--fx-accent-ink, transparent);
     background-image:
       linear-gradient(164deg,
         color-mix(in srgb, var(--accent) 13%, transparent) 0%,
@@ -512,10 +572,10 @@
      four, with 72px to spare for a note that wraps. Everything still scales
      off `--ts`, so all three reviewer size steps keep their relationship. */
   .me-rows:has(.me-row:nth-child(4)) .me-row { padding: calc(24px * var(--ts, 1)) 0; }
-  .me-rows:has(.me-row:nth-child(4)) .me-title { font-size: calc(40px * var(--ts, 1)); }
-  .me-rows:has(.me-row:nth-child(4)) .me-note { font-size: calc(26px * var(--ts, 1)); }
-  body.ts-l .me-rows:has(.me-row:nth-child(4)) .me-title { font-size: calc(34px * var(--ts, 1)); }
-  body.ts-l .me-rows:has(.me-row:nth-child(4)) .me-note { font-size: calc(22px * var(--ts, 1)); }
+  .me-rows:has(.me-row:nth-child(4)) .me-title { font-size: calc(var(--t-lead) * 0.8696); }
+  .me-rows:has(.me-row:nth-child(4)) .me-note { font-size: calc(var(--t-label) * 0.8125); }
+  body.ts-l .me-rows:has(.me-row:nth-child(4)) .me-title { font-size: calc(var(--t-lead) * 0.7391); }
+  body.ts-l .me-rows:has(.me-row:nth-child(4)) .me-note { font-size: calc(var(--t-label) * 0.6875); }
   /* THE MARKER IS THE RANK, and on this archetype only — `comparison-card.html`
      keeps the set's rotated square, because a two-column comparison has no
      order to count. A fixed column so every numeral starts at the same x and
@@ -530,7 +590,7 @@
        B fails the slide on — measured at `l`, where "01" plus its tracking is
        wider than 62px. The column still aligns; it just cannot be too small. */
     display: inline-block; flex: 0 0 auto; min-inline-size: calc(62px * var(--ts, 1));
-    font-family: var(--f-mono); font-weight: 600; font-size: calc(30px * var(--ts, 1));
+    font-family: var(--f-mono); font-weight: 600; font-size: calc(var(--t-label) * 0.9375);
     /* No tracking: a trailing letter-space on an inline-block is advance the
        box does not include, and the span then reports `scrollWidth >
        clientWidth` — an overflowing element to the DOM probe, on two
@@ -554,12 +614,12 @@
        title sets on one line and the note keeps a readable ~34-character
        measure. */
     flex: 0 0 56%; min-inline-size: 0;
-    font-family: var(--f-display); font-weight: 500; font-size: calc(46px * var(--ts, 1));
+    font-family: var(--f-display); font-weight: 500; font-size: calc(var(--t-lead) * 1);
     line-height: 1.3; letter-spacing: -0.01em; text-wrap: balance; padding-block-end: 0.18em;
   }
   .me-note {
     flex: 1 1 auto; min-inline-size: 0;
-    font-family: var(--f-body); font-weight: 400; font-size: calc(29px * var(--ts, 1)); line-height: 1.5;
+    font-family: var(--f-body); font-weight: 400; font-size: calc(var(--t-label) * 0.9062); line-height: 1.5;
     color: color-mix(in srgb, var(--fg) 85%, transparent); text-wrap: pretty;
   }
   .me-note:empty { display: none; }
@@ -570,12 +630,17 @@
      otherwise lays the handle out in normal flow, in the middle of the rows. */
   .brand-handle {
     position: absolute; bottom: 34px; inset-inline-start: 44px; z-index: 6;
-    font-family: var(--f-mono); font-size: calc(19px * var(--ts, 1)); letter-spacing: 0.08em;
+    font-family: var(--f-mono); font-size: var(--t-micro); letter-spacing: 0.08em;
     color: color-mix(in srgb, var(--fg) 55%, transparent);
   }
+  /* The badge RULE outlives the badge SLOT: the `seriesBadge` slot is deleted
+     from this file's markup, but a CLIENT's own template may still carry it
+     (it is still in `KNOWN_SLOT_NAMES` and still a `LAYOUT_FIELD_KEY` for
+     exactly that reason), and a badge with no placement rule lays itself out
+     in normal flow over the copy. */
   .brand-badge {
     position: absolute; top: 36px; inset-inline-end: var(--mx); z-index: 6;
-    font-family: var(--f-mono); font-weight: 600; font-size: calc(19px * var(--ts, 1));
+    font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro);
     letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);
   }
   /* An @handle, a URL and a #hashtag are LTR strings, and a Hebrew or Arabic
@@ -586,13 +651,36 @@
      have re-resolved its own `inset-inline-start` and moved the watermark to
      the other corner. The extra :has() selector is what keeps an empty slot
      hidden now that the div always has an element child. */
+  /* ── PHASE 5.5: THE PAGINATION INDEX. ──
+     One index, the same size in the same corner in all eight templates,
+     painted on every interior slide or on none
+     (`ClientVisualSystem.pagination`, frozen per client). It replaces the
+     460px `.ground-glyph` that existed in two of the eight files, which is
+     what the owner saw as *"על חלק מהשקופיות כתוב מספר ועל חלק לא"*. Hidden
+     unless switched on — the inversion this phase applies to every mark in
+     the set. See `slide.html` for the full note. */
+  .pg-index {
+    display: var(--fx-pagination, none);
+    position: absolute; inset-block-end: 40px; inset-inline-end: 44px; z-index: 6;
+    font-family: var(--f-mono); font-size: var(--t-micro); letter-spacing: 0.14em;
+    color: color-mix(in srgb, var(--fg) 45%, transparent);
+  }
   .brand-badge:empty, .brand-handle:empty, .brand-handle:has(> bdi:empty) { display: none; }
 </style>
 </head>
-<body class="ts-{{fontScale}} ta-{{textAlign}}">
+<body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}">
   <div class="ground" aria-hidden="true"></div>
-  <div class="brand-badge">{{seriesBadge}}</div>
+  <!-- The `seriesBadge` slot was here and is deleted. It printed an INTERNAL
+       label ("BY THE NUMBERS", "{ FIELD NOTES }") in the same corner on every
+       slide of every post — a name for the pipeline's own format that a reader
+       cannot use, repeated eight times, which is the repetition a reader reads
+       as machine-made. On geektime it also collided with the brand logo disc
+       in that corner and clipped to `{ FIELD` on all eight plates. What
+       replaces it is this slide's OWN topical line (`kicker`, in the
+       composition where a label belongs), on the slides this run's visual
+       system allows one. -->
   <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
+  <span class="pg-index" aria-hidden="true">{{slideIndex}}</span>
   <div class="sc-figure-band"><img src="{{image:hero}}" onerror="this.remove()" alt="" /></div>
   <div class="lt-head">
     <div class="eyebrow">{{kicker}}</div>

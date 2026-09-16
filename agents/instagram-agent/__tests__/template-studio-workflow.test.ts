@@ -234,8 +234,17 @@ describe.skipIf(!STUDIO_WIRED)("the Template Studio in a real run", () => {
    * own meter, unbounded, against an item documented twice as running at most
    * once per client per 120 days. `00c` now reads the setup history that
    * `09b` already writes.
+   *
+   * PHASE 5.5 SPLIT THE TWO ZERO-STORE PATHS APART, and this case is the one
+   * that changed sides. A design-brief turn that fails its schema is a
+   * FAILURE, not a judgement about this client, so the next run tries again;
+   * only a setup that ran, authored candidates and had every one of them
+   * dropped earns the 30-day cooldown. That cost three clients a month of
+   * identical-looking posts on 2026-09-16 — `setup-cooldown.test.ts` carries
+   * the evidence and owns the cooldown half, which needs no workflow to
+   * exercise.
    */
-  it("a setup that stored NOTHING is remembered, so the next run reuses the bundled set instead of re-paying the bill", async () => {
+  it("a setup that FAILED does not stand the client down: the next run tries again", async () => {
     // Run 1: the design-brief turn comes back as something that is not a
     // design brief, so nothing is generated, nothing is stored, and the run
     // still delivers on the bundled archetypes.
@@ -255,19 +264,21 @@ describe.skipIf(!STUDIO_WIRED)("the Template Studio in a real run", () => {
     expect(setups).toHaveLength(1);
     expect(setups[0]).toMatchObject({ runId: "studio_stored_nothing_1", templatesStored: 0 });
 
-    // Run 2, same client, still no rows: `00c` resolves REUSE off that trace
-    // and the router is queued with NO studio turns at all, so a `generate`
-    // here would exhaust it.
-    const second = fakeRouterSequence(standardTurns({ ...runTurns, copy: secondPost() }));
+    // Run 2, same client, still no rows. The design brief FAILED its schema
+    // in run 1, so this run is entitled to another attempt and the router is
+    // queued with the studio turns it needs. (`SETUP_FAILURE_BACKOFF_RUNS`
+    // bounds this at the third consecutive failure; the first two are free,
+    // which is what a fixed ceiling or a fixed prompt needs.)
+    const second = fakeRouterSequence(standardTurns({ designBrief: { nope: true }, ...runTurns, copy: secondPost() }));
     const durable2 = new MemoryDurableStepStore();
     const secondResult = await new WorkflowEngine(durable2).run(workflow(second), { runId: "studio_stored_nothing_2", ...base });
     expect(secondResult.status, JSON.stringify(secondResult)).toBe("completed");
     const steps2 = await durable2.listSteps("studio_stored_nothing_2");
     const check = steps2.find((s) => s.stepId === "00c-check-template-studio")?.output as { action?: string; reason?: string } | undefined;
-    expect(check?.action).toBe("reuse");
-    expect(check?.reason).toContain("stored no templates");
-    expect(check?.reason).toContain("refreshTemplates");
-    expect(steps2.map((s) => s.stepId).filter((id) => /^00c[1-8]/.test(id))).toEqual([]);
+    expect(check?.action).toBe("generate");
+    expect(steps2.map((s) => s.stepId)).toContain("00c3-write-design-brief");
+    // And it still delivered, on the bundled archetypes, exactly as run 1 did.
+    expect(await env.templateStore.list({ clientSlug: "acme", includeDisabled: true })).toHaveLength(0);
   }, 180_000);
 
   /**

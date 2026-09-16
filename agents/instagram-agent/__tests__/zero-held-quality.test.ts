@@ -19,7 +19,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
-import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
+import { DEFAULT_ENTITIES_TURN, DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 import type { InstagramCopyOutput } from "../src/workflow/types.js";
 import {
@@ -113,7 +113,7 @@ describe("zero-held quality guarantee: a refusing gate never costs the post (RFC
     return { router, durableStore, go: () => new WorkflowEngine(durableStore).run(workflowFn, { ...base, runId }) };
   }
 
-  const PRE_LOOP = [finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal())];
+  const PRE_LOOP = [finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN)];
   /** The turns an attempt pulls once it gets PAST `07`/`07b`: the relevance judge, the value judge, visual QA. */
   const paidTail = (qa: unknown = goodVisualQaOutput()) => [
     finalTurn(goodRelevanceVerdict()),
@@ -206,18 +206,28 @@ describe("zero-held quality guarantee: a refusing gate never costs the post (RFC
       "a clean run must carry NO marker: absent, never empty. A degraded badge on every post is the same defect in reverse.",
     ).toBeUndefined();
     expect((result as { output: { selfCheck?: unknown } }).output.selfCheck).toBeUndefined();
-    // 3 pre-loop + 2 (copy, vetting) + 3 (relevance, value, QA) + 1 packager = 9.
-    expect(router.complete).toHaveBeenCalledTimes(9);
+    // 3 pre-loop + 1 entities + 2 (copy, vetting) + 3 (relevance, value, QA) + 1 packager = 10.
+    // Phase 5.5 (spec §2 A2): `04b3-extract-entities` adds ONE turn per
+    // REVISION, immediately after `04j-select-angle` — it reads this run's
+    // fact cards and names the real-world things a picture could be OF. It is
+    // outside the attempt loop, so a redraft never re-pays for it, which is
+    // why every count below moves by exactly one however many attempts run.
+    expect(router.complete).toHaveBeenCalledTimes(10);
   }, 90000);
 
   // ── RFC-19 §4 item 2: step 07's slide self-check ──
   it("delivers a draft whose banned word step 07 refused on every attempt, rather than holding", async () => {
     // "guaranteed" is banned by `goodStyleConfig()`, so `checkSlidesData` refuses this on all three attempts.
     const banned = copyWithBody("This is guaranteed to help your team every single week.");
-    // 3 pre-loop + 2 refused attempts × (copy, vetting) + the delivering attempt's 5 (copy, vetting,
-    // relevance, value, QA) + 1 packager = 13. `07` sits ABOVE every paid step, which is why the two refused
-    // attempts cost two turns each and not five.
-    const EXPECTED_TURNS = 3 + 2 * 2 + 5 + 1;
+    // 3 pre-loop + 1 entities + 2 refused attempts × (copy, vetting) + the delivering attempt's 5 (copy,
+    // vetting, relevance, value, QA) + 1 packager = 14. `07` sits ABOVE every paid step, which is why the
+    // two refused attempts cost two turns each and not five.
+    // Phase 5.5 (spec §2 A2): `04b3-extract-entities` adds ONE turn per
+    // REVISION, immediately after `04j-select-angle` — it reads this run's
+    // fact cards and names the real-world things a picture could be OF. It is
+    // outside the attempt loop, so a redraft never re-pays for it, which is
+    // why every count below moves by exactly one however many attempts run.
+    const EXPECTED_TURNS = 3 + 1 + 2 * 2 + 5 + 1;
     const runId = "zero_held_quality_slides";
     const { router, durableStore, go } = run(
       [
@@ -253,7 +263,7 @@ describe("zero-held quality guarantee: a refusing gate never costs the post (RFC
   // ── RFC-19 §4 item 3: 07b craft hygiene ──
   it("delivers a draft whose em dash the craft gate refused on every attempt, rather than holding", async () => {
     const emDash = copyWithBody("Teams saved time — every single week, without fail.");
-    const EXPECTED_TURNS = 3 + 2 * 2 + 5 + 1;
+    const EXPECTED_TURNS = 3 + 1 + 2 * 2 + 5 + 1;
     const runId = "zero_held_quality_craft";
     const { router, durableStore, go } = run(
       [
@@ -295,7 +305,7 @@ describe("zero-held quality guarantee: a refusing gate never costs the post (RFC
       );
     // 3 pre-loop + 2 refused attempts × (copy, vetting, relevance) + the delivering attempt's 5 + 1 packager
     // = 15. `07g` is the first PAID step an attempt reaches, so a relevance refusal costs three turns, not two.
-    const EXPECTED_TURNS = 3 + 2 * 3 + 5 + 1;
+    const EXPECTED_TURNS = 3 + 1 + 2 * 3 + 5 + 1;
     const runId = "zero_held_quality_relevance";
     const copy = goodCopyOutput();
     const { router, durableStore, go } = run(
@@ -349,7 +359,7 @@ describe("zero-held quality guarantee: a refusing gate never costs the post (RFC
     };
     // 3 pre-loop + 3 full attempts × 5 + 1 packager = 19. Visual QA is the LAST step in the attempt, so a QA
     // refusal is the most expensive of all of them — and today it is also the one that threw the render away.
-    const EXPECTED_TURNS = 3 + 3 * 5 + 1;
+    const EXPECTED_TURNS = 3 + 1 + 3 * 5 + 1;
     const runId = "zero_held_quality_visual_qa";
     const copy = goodCopyOutput();
     const { router, durableStore, go } = run(
@@ -393,7 +403,7 @@ describe("zero-held quality guarantee: a refusing gate never costs the post (RFC
     // returns `tooling_error` — and this fixture does not buy it. Both statuses reach the same Mechanism B
     // branch (RFC-19 §4 items 12/13), which is why one fixture covers the behaviour; only the price differs,
     // and in production the `tooling_error` route costs one extra `copyAttempt` at $0.181.
-    const EXPECTED_TURNS = 3 + 5 + 5 + 5 + 1;
+    const EXPECTED_TURNS = 3 + 1 + 5 + 5 + 5 + 1;
     const runId = "zero_held_quality_salvage";
     const { router, durableStore, go } = run(
       [
@@ -437,7 +447,7 @@ describe("zero-held quality guarantee: a refusing gate never costs the post (RFC
     // This is the owner's own carve-out — "a genuine tooling failure where no output exists at all" — and it
     // is the only thing left at the bottom of the attempt loop. The old generic wording is gone: nine
     // unrelated causes used to read as this one sentence, and `held-sites.test.ts` asserts it is deleted.
-    const EXPECTED_TURNS = 3 + 3;
+    const EXPECTED_TURNS = 3 + 1 + 3;
     const runId = "zero_held_quality_no_draft";
     const { router, go } = run([...PRE_LOOP, ...[1, 2, 3].map(() => finalTurn(MALFORMED_COPY))], runId);
     const result = await go();
@@ -508,7 +518,8 @@ describe("zero-held quality guarantee: a refusing gate never costs the post (RFC
     expect(finding?.detail).toMatch(/The gate formed no view — this is not a finding about the copy/);
 
     // 4. Three pre-loop + one attempt's five + one packager = 9. Two `copyAttempt`s at $0.181 NOT spent.
-    expect(router.complete).toHaveBeenCalledTimes(3 + 5 + 1);
+    // Phase 5.5: + 1 for `04b3-extract-entities`, once per revision.
+    expect(router.complete).toHaveBeenCalledTimes(3 + 1 + 5 + 1);
   }, 90000);
 });
 

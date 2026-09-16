@@ -22,7 +22,7 @@ import {
   type TestEnvironment,
 } from "./test-helpers.js";
 import { FLAT_BACKGROUND_CEILING, IMAGERY_OR_DEVICE_FLOOR, OCCUPIED_SHARE_FLOOR, type SlideMetrics } from "../src/workflow/interest-floor.js";
-import { VALUE_TURN_NO_FINDINGS, happyTurns, standardTurns } from "./turns.js";
+import { DEFAULT_ENTITIES_TURN, VALUE_TURN_NO_FINDINGS, happyTurns, standardTurns } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 import { goodTrendScoutOutput, goodResearchOutput, goodImageVettingOutput, goodRelevanceVerdict, goodVisualQaOutput } from "./test-helpers.js";
 
@@ -360,15 +360,21 @@ describe("08a1-interest-floor: it can never become a fourth hold", () => {
     expect(record?.deliverable.visualInterest?.findings.some((f) => f.slide === 1)).toBe(true);
   }, 60000);
 
-  it("stops escalating past the hard max: over $1.50 it ships degraded on the cheapest path with no second attempt", async () => {
+  it("stops escalating past the hard max: over the run's hard max it ships degraded on the cheapest path with no second attempt", async () => {
     // The same lever `run-budget-workflow.test.ts` uses: a copy turn
-    // reporting 120k Sonnet output tokens is $1.80 measured, straight through
-    // the $1.00 target and the $1.50 hard max at `05-write-copy-attempt-1`.
+    // reporting 200k Sonnet output tokens is $3.00 measured, straight through
+    // the target and the hard max at `05-write-copy-attempt-1`.
+    //
+    // Phase 5.5 re-baseline: this fixture reported 120k tokens ($1.80) when
+    // `MAX_RUN_SPEND_USD` was $1.60. The ceiling is now $2.60 — fitted to a
+    // plan that actually buys the pictures, per the owner's 2026-09-16 ruling
+    // — so $1.80 no longer crosses it and the run bought a second attempt.
+    // The ASSERTION is unchanged; only the number that crosses the line is.
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()),
       finalTurn(goodResearchOutput()),
-      finalTurn(goodAngleProposal()),
-      finalTurn(goodCopyOutput(), { outputTokens: 120_000 }),
+      finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
+      finalTurn(goodCopyOutput(), { outputTokens: 200_000 }),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       // No visual-QA turn: past the hard max the optional model QA is

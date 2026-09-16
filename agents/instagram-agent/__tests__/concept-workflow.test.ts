@@ -671,10 +671,16 @@ describe("RFC-16 Phase 4 — the concept mode's workflow wiring", () => {
     // fails — which is the point.
     const router = fakeRouterSequence([
       ...standardTurns({ scout: conceptTrendScout() }),
-      // ~$1.05 of Sonnet output on the research turn: over the $1.00 target,
-      // under the $1.50 hard max, so the posture is `essential-only` and the
-      // angle step still runs.
-      finalTurn(conceptResearch(), { outputTokens: 70_000 }),
+      // ~$2.10 of output on the research turn: over the run target, under the
+      // hard max, so the posture is `essential-only` and the angle step still
+      // runs.
+      //
+      // Phase 5.5 re-baseline: this was 70k tokens (~$1.05) against a $1.00
+      // target and a $1.60 max. Both moved — $1.80 and $2.60, fitted to a plan
+      // that actually buys the pictures — so the same posture now needs a
+      // bigger number. The window this fixture sits in (above target, below
+      // max) is what it always asserted and is unchanged.
+      finalTurn(conceptResearch(), { outputTokens: 140_000 }),
       ...standardTurns({ angle: goodAngleProposal() }),
       ...standardTurns({
         copy,

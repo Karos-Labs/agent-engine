@@ -82,6 +82,15 @@ export class InstagramBriefAgent extends BaseAgent<InstagramBriefAgentOutput> {
     // is now the engine's own default rather than a bespoke number, and a
     // turn that still runs out is raised once more by `raisedOutputLimit`
     // instead of ending the step.
+    //
+    // The size is also measured rather than assumed: `setup-ceilings.test.ts`
+    // builds the maximal instance this schema permits (every string at its
+    // `max()`, every array full) and serialises it at ~22,100 characters —
+    // ~6,150 tokens of English and ~11,100 of Hebrew, the language this
+    // `contentLanguageSensitive` step writes for `geektime`. 8,000 could not
+    // hold the Hebrew worst case at all. That test fails if the schema grows
+    // past what this ceiling can carry, so the next widening of
+    // `ClientBriefSchema` is caught by CI instead of by a client's setup.
     maxTokens: 16_384,
     modelPolicy: resolveModelPolicy("instagram-brief", { policy: "pinned", model: "claude-sonnet-4-6", contentLanguageSensitive: true }),
     skillRef: "instagram-brief@1",

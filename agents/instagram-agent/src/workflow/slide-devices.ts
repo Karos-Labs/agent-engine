@@ -275,6 +275,214 @@ export function validateDevice(device: SlideDevice): { ok: true } | { ok: false;
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 5.5, item G4 — the cover's figure device
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * ## The plate this exists to refuse
+ *
+ * karoslabs, 2026-09-16, on two posts with different topics:
+ *
+ * ```
+ *   7.2%
+ *   Only of organizations respond to inbound leads within five minutes, meaning
+ *   The Inbound Pipeline
+ * ```
+ *
+ * Four defects in one device, on the one slide the whole audience sees. The
+ * label opens with a subordinator and ends on `meaning` — it is the middle of
+ * somebody else's sentence with the figure cut out of it. The figure is not
+ * from this post's argument at all (the post is about GEO and AI answers; the
+ * card is about inbound lead response time). And **the same 7.2% appeared on
+ * two posts about different subjects**, because it came from whichever fact
+ * card the re-layout reached first rather than from the angle.
+ *
+ * `interest-relayout.ts` no longer builds a cover device from an arbitrary
+ * fact card — that limb is deleted. This is the belt-and-braces half, for a
+ * device the WRITER declares: four rules, $0, deterministic, returning a
+ * finding to `05` and never holding a run. Devices are furniture and furniture
+ * must not be able to hold a run; what it can do is go back to the writer with
+ * the reason.
+ */
+export const COVER_FIGURE_LABEL_MAX_CHARS = 90;
+
+/**
+ * Words that cannot open a complete clause, in the two languages this
+ * pipeline actually ships.
+ *
+ * A label beginning with one of these is a fragment of a longer sentence:
+ * "Only of organizations respond…" is what "Only 7.2% of organizations
+ * respond…" becomes when the figure is cut out by position, which is exactly
+ * how `deviceFromText` builds a label. The deterministic test for "did
+ * somebody cut a number out of the middle of a sentence" is that the sentence
+ * no longer starts.
+ *
+ * **`of` is deliberately NOT here, and that is the one that had to be
+ * checked.** A device reads as a figure and then its label — `90%` over
+ * "of CMOs say buyer discovery now happens inside AI-generated answers" is
+ * the correct, idiomatic composition, and it is what `contentFor` puts in a
+ * stat callout's `subLabel` on every good plate in the live runs. Refusing it
+ * would refuse the shape the system is supposed to produce. The same applies
+ * to Hebrew `של`. The tell is `Only`, not the preposition after it.
+ */
+export const LABEL_SUBORDINATOR_OPENERS: readonly string[] = [
+  "only",
+  "that",
+  "which",
+  "who",
+  "whom",
+  "whose",
+  "than",
+  "but",
+  "and",
+  "or",
+  "because",
+  "while",
+  "whereas",
+  "though",
+  "although",
+  // Hebrew: "רק" (only), "אשר" (which), "כי" (because), "אבל" (but), "בעוד"
+  // (while) — and NOT "של", for the reason above. The prefixed forms (־ש, ־ו)
+  // are attached to the next word, so a label opening with one reads as the
+  // same fragment and is caught by the same test.
+  "רק",
+  "אשר",
+  "כי",
+  "אבל",
+  "בעוד",
+];
+
+/**
+ * Words a complete clause does not end on. Same defect from the other end:
+ * `…within five minutes, meaning` is a sentence that was truncated at the
+ * label's character budget rather than written to fit it.
+ */
+export const LABEL_DANGLING_TAILS: readonly string[] = [
+  "meaning",
+  "because",
+  "and",
+  "or",
+  "but",
+  "of",
+  "to",
+  "for",
+  "with",
+  "that",
+  "which",
+  "than",
+  "the",
+  "a",
+  "an",
+  // Hebrew: "כלומר" (meaning), "כי" (because), "של" (of), "עם" (with), "אל" (to).
+  "כלומר",
+  "כי",
+  "של",
+  "עם",
+  "אל",
+];
+
+/**
+ * Whether a device label reads as a whole clause rather than as the middle of
+ * somebody else's sentence.
+ *
+ * Deliberately NOT a grammar check. Two string tests — does it start, does it
+ * finish — each of which fires on the exact shape a positional cut produces,
+ * and neither of which can fire on a label a writer composed. A label is
+ * lower-cased and stripped of its punctuation before the comparison so
+ * `"Only"`, `"only,"` and `"ONLY"` are one case.
+ */
+export function isCompleteClause(label: string): { ok: true } | { ok: false; reason: string } {
+  const words = label
+    .trim()
+    .split(/\s+/u)
+    .map((word) => word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "").toLowerCase())
+    .filter((word) => word.length > 0);
+  if (words.length === 0) return { ok: false, reason: "the label is empty" };
+  // BOTH ENDS, in one reason. The karoslabs label fails at both — it opens
+  // with `Only` because the figure was cut out by position and ends on
+  // `meaning` because what was left was then truncated to fit — and a check
+  // that stopped at the first would send the writer back to fix half of it.
+  const problems: string[] = [];
+  const first = words[0]!;
+  if (LABEL_SUBORDINATOR_OPENERS.indexOf(first) !== -1) {
+    problems.push(`the label opens with "${first}", so it is the middle of a sentence with the figure cut out of it, not a clause`);
+  }
+  const last = words[words.length - 1]!;
+  if (LABEL_DANGLING_TAILS.indexOf(last) !== -1) {
+    problems.push(`the label ends on "${last}", so it was truncated rather than written to fit`);
+  }
+  return problems.length === 0 ? { ok: true } : { ok: false, reason: problems.join("; and ") };
+}
+
+/** What a cover figure has to be checked against. Structural, so `ResearchFact`, `FactCardForPrompt` and a hand-written card all satisfy it. */
+export interface CoverFigureEvidence {
+  /**
+   * The fact-card claims THIS post's angle rests on, verbatim (`Angle.restsOn`).
+   *
+   * Empty means the caller could not say, and the check then falls back to
+   * every card it was given — weaker, and stated rather than silent. It never
+   * abstains entirely: a cover figure that appears in NO card at all is
+   * unsourced whatever the angle says.
+   */
+  citedClaims: readonly string[];
+  factCards: readonly { claim: string; source?: string | undefined }[];
+  /** The figure this client's PREVIOUS post put on its cover, from skeleton memory. */
+  previousCoverFigure?: string | undefined;
+}
+
+/** The digits a figure carries, separators and units stripped — `"7.2%"` and `"7.2 %"` compare equal. Mirrors `visual-qa-pre-checks.ts`'s `digitsOf`. */
+function figureDigits(value: string): string {
+  return value.replace(/[^\d]/gu, "");
+}
+
+/**
+ * The four rules a writer-declared COVER figure device has to pass, all of
+ * them $0 and none of them able to hold a run.
+ *
+ * Returns every reason rather than the first, because the remedy is one
+ * redraft and a writer told about one defect at a time spends three.
+ *
+ * Applies to the `figure` kind only: `figure_pair`, `bars`, `timeline`,
+ * `versus` and `unit_grid` carry their own labels per row and are not the
+ * shape this defect takes — a positional cut produces a figure and the
+ * sentence it was cut out of.
+ */
+export function checkCoverFigureDevice(device: SlideDevice, evidence: CoverFigureEvidence): { ok: true } | { ok: false; reasons: string[] } {
+  if (device.kind !== "figure") return { ok: true };
+  const reasons: string[] = [];
+  const digits = figureDigits(device.value);
+
+  // 1. THE FIGURE COMES FROM A CARD THIS POST'S ANGLE RESTS ON.
+  const cited = evidence.citedClaims.length > 0 ? evidence.citedClaims : evidence.factCards.map((card) => card.claim);
+  const fromAngle = digits.length > 0 && cited.some((claim) => figureDigits(claim).includes(digits));
+  if (!fromAngle) {
+    const anywhere = digits.length > 0 && evidence.factCards.some((card) => figureDigits(card.claim).includes(digits));
+    reasons.push(
+      anywhere
+        ? `the figure "${device.value}" comes from a fact card this post's angle does not rest on — a cover figure has to be the number THIS post is arguing about`
+        : `the figure "${device.value}" does not appear in any fact card, so nothing sources it`,
+    );
+  }
+
+  // 2 and 3. THE LABEL IS A WHOLE CLAUSE, AND IT FITS.
+  const complete = isCompleteClause(device.label);
+  if (!complete.ok) reasons.push(`${complete.reason} ("${device.label}")`);
+  if (device.label.length > COVER_FIGURE_LABEL_MAX_CHARS) {
+    reasons.push(`the label is ${device.label.length} characters (max ${COVER_FIGURE_LABEL_MAX_CHARS}); a cover figure's label is read in one glance`);
+  }
+
+  // 4. NOT THE SAME NUMBER THIS CLIENT'S LAST POST LED WITH.
+  //
+  // Two posts on unrelated topics carrying the identical cover figure is the
+  // owner's *"רואים שאותו AI ייצר אותו"* in its most literal form.
+  if (evidence.previousCoverFigure !== undefined && figureDigits(evidence.previousCoverFigure) === digits && digits.length > 0) {
+    reasons.push(`this client's previous post put the same figure "${device.value}" on its cover; a cover figure is this post's own strongest number`);
+  }
+
+  return reasons.length === 0 ? { ok: true } : { ok: false, reasons };
+}
+
 /**
  * The figure tokens a device actually PAINTS, in reading order.
  *

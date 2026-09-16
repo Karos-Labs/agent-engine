@@ -3,6 +3,7 @@ import type { AgentToolRegistry } from "@agent-engine/core";
 import { createWorkspaceStore, defineTool, notAvailable, type GcsArtifactStoreLike, type WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { z } from "zod";
 import { createFindImages, FindImagesInputSchema } from "./find-images.js";
+import { withGenAiFailover, type GenerateContentClient } from "./resilient-genai-client.js";
 import { createGenerateImage, type ImageGenerationClient } from "./generate-image.js";
 import { createGenerateVideo, type VideoGenerationClient } from "./generate-video.js";
 import { createFindStockClip } from "./stock-video.js";
@@ -47,6 +48,7 @@ export * from "./harvest-article-images.js";
 export * from "./screenshot-page.js";
 export * from "./stage-asset.js";
 export * from "./media-library.js";
+export * from "./resilient-genai-client.js";
 
 export interface KarosMediaToolsOptions {
   env?: Record<string, string | undefined>;
@@ -336,11 +338,27 @@ function readImageModel(env: Record<string, string | undefined>): string | undef
  */
 function createImageGenerationClientFromEnv(env: Record<string, string | undefined>): ImageGenerationClient | undefined {
   const project = env["GEMINI_VERTEX_PROJECT_ID"]?.trim() || env["GOOGLE_CLOUD_PROJECT"]?.trim();
-  if (!project) return undefined;
+  // ── THE SECOND TRANSPORT (see `resilient-genai-client.ts`). ──
+  //
+  // The Gemini Developer API with `GEMINI_API_KEY` — the same endpoint
+  // `ResilientGeminiAdapter` hops to for text, now reachable by the steps that
+  // LOOK at something. On 2026-09-13/14 a Vertex 403 killed
+  // `04b-research-extract-facts` AND `05c-inspect-candidates` in one run; only
+  // the first of those ever went through the router, so only the first was
+  // covered. Absent key, no fallback and the client is exactly what it was.
+  const apiKey = env["GEMINI_API_KEY"]?.trim();
+  const direct = apiKey ? (new GoogleGenAI({ apiKey }) as unknown as GenerateContentClient) : undefined;
+  if (!project) {
+    // No Vertex project at all: the direct key alone is still a working
+    // client, which is strictly better than `not_available` and is how a
+    // deployment with one credential gets pictures.
+    return direct as unknown as ImageGenerationClient | undefined;
+  }
   // Deliberately NOT `CLOUD_ML_REGION`, which is "global" here: an image model
   // needs a concrete region. `us-central1` and `global` were both verified to
   // serve `gemini-2.5-flash-image` for this project; the explicit region is the
   // safer default of the two.
   const location = env["IMAGE_GEN_LOCATION"]?.trim() || env["VERTEX_AI_LOCATION"]?.trim() || "us-central1";
-  return new GoogleGenAI({ vertexai: true, project, location }) as unknown as ImageGenerationClient;
+  const vertex = new GoogleGenAI({ vertexai: true, project, location }) as unknown as GenerateContentClient;
+  return withGenAiFailover(vertex, direct, { from: "vertex", to: "gemini-direct" }) as unknown as ImageGenerationClient;
 }

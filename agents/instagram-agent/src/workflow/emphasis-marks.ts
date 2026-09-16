@@ -1502,7 +1502,7 @@ ${isHebrew ? HEBREW_GEOMETRY : ""}/* ── THE TWIN HOST'S BLOCK-START BLEED, A
 
    On the host of the PLAIN twin, so it applies whether or not a mark fragment
    arrived: the unmarked render spilled too. */
-:has(> span.mk-plain) { padding-block-start: var(--mk-twin-bleed, .22em); }
+:has(> span.mk-plain) { padding-block-start: max(var(--mk-twin-bleed, .22em), var(--mk-face-bleed, 0em)); }
 /* An UNMARKED run. It paints nothing and changes no metric — it exists only
    so that no text node is ever stranded outside a text-bearing leaf. See
    buildMarkedRuns. */

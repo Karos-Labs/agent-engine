@@ -185,7 +185,12 @@ describe("RFC-19: the workflow has exactly four WorkflowHeld sites, and each one
     // 1..n-1 re-draft against a judge that had gone silent, re-paying for copy, sourcing, vetting, any
     // generative rescue and a full render each time. A judge that ANSWERED and refused is untouched and
     // still holds its bare guard one branch below.
+    // Phase 5.5 (spec §6 G4) adds the seventeenth: `07h1-cover-figure-device`.
+    // A cover figure that no fact card sources, or whose label is not a whole
+    // clause, returns the draft to `05` on attempts 1..n-1 and is RECORDED on
+    // the final one — the same shape every other guard in this list has, and
+    // the reason it is in this list at all.
     const guards = source.match(/if \(!isFinalAttempt[ )]/g) ?? [];
-    expect(guards.length).toBe(16);
+    expect(guards.length).toBe(17);
   });
 });

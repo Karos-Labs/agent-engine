@@ -321,7 +321,8 @@ describe("02i / 04a / 07g — the grounding gate in the instagram workflow", () 
     //
     // 13 -> 16 is the whole cost of the owner's ruling on this path, enumerated
     // rather than estimated: one more refused drafting round, three turns.
-    expect(router.complete).toHaveBeenCalledTimes(16);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(17);
     // And the queue is EXACTLY spent — a turn left over would mean a step the
     // enumeration above thinks runs did not.
     await expect(router.complete({} as never, {} as never, [] as never, {} as never)).rejects.toThrow(/exhausted/);

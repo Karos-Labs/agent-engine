@@ -115,6 +115,21 @@ describe("DEFAULT_RENDER_RULES + resolveRenderRules — Phase 0 item D's rule so
       // reason `dir` is — the code derives it from the resolved target
       // language, nobody writes it, and a slide carrying only a `lang` has no
       // prose on it.
+      // Phase 5.5, item A4 (`HERO_GRADE_FIELD_KEYS`, `style-lock.ts`). The
+      // three keys `gradePictureSet` writes onto EVERY hero-bearing slide: the
+      // colour grade, the hero's own treatment token, and the scrim strength
+      // that keeps a headline legible over a photograph. All three are CSS
+      // switches read by `imageTreatmentCssBlock` / `heroScrimCssBlock` and by
+      // nothing else, and they are declared here for the reason the three
+      // above them are: item A4 made them reach every photo slide of every
+      // client, and an undeclared one would have handed each of those slides
+      // two free content elements — making the interest floor's content limb
+      // satisfiable by GRADING A PICTURE. `imageTreatment` is not new; it got
+      // away with being undeclared only because `explainImageTreatment`
+      // returned `none` for the whole fleet.
+      "heroScrimStrength",
+      "heroTreatment",
+      "imageTreatment",
       "lang",
       "seriesBadge",
       "slideIndex",

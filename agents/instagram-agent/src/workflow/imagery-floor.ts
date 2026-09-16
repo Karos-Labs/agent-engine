@@ -1,3 +1,4 @@
+import type { SceneSource } from "./scene-brief.js";
 import { FULL_BLEED_IMAGE_LAYOUTS } from "./slides-data.js";
 import type { InstagramCopyOutput, InstagramSlideLayout } from "./types.js";
 
@@ -354,3 +355,159 @@ export function enforceImageryBand(
   // ── INSIDE THE BAND: the ordinary case, and it touches nothing. ──
   return { copy, promotions: [], demotions: [], before, after: before };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 5.5, brief item A5 — A SLIDE THAT LOST ITS PHOTOGRAPH
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * What to do about a slide that asked for a picture and did not get one.
+ *
+ * The ladder is `interest-relayout.ts`'s (spec §4.7), in its order, and every
+ * value here means "the relayout may consider this remedy for this slide":
+ *
+ * - `promote` — the run holds a vetted image nobody placed. Put it here. The
+ *   only remedy that ends with the picture the slide asked for.
+ * - `attach-device` — the slide's own copy carries a sourced figure with its
+ *   complete label, so the bounded device path can carry the plate. **Only with
+ *   a figure that appears verbatim in this slide's copy**: the remedy that
+ *   fabricated the digit `2` out of the middle of `B2B` on run
+ *   `pubsub-21839432908803804` is the reason that clause is written twice.
+ * - `merge` — fold this slide into its neighbour and let the carousel be one
+ *   slide shorter. The spec's own first rung (§4.7), and the ONLY remedy that
+ *   removes an empty plate rather than resizing one.
+ * - `font-scale` — the writer's own plate, still carrying its own idea, on a
+ *   carousel that cannot afford to lose it. Raise the type step of the
+ *   strongest line: a composition, not an addition.
+ * - `none` — the slide already ships a designed object, so losing the
+ *   photograph cost the post nothing to fix. Recorded anyway, because the gate
+ *   payload should say a picture was wanted and not found even when the plate
+ *   survives it.
+ */
+export type ImageryRemedy = "merge" | "promote" | "font-scale" | "attach-device" | "none";
+
+/**
+ * One slide that wanted a picture and ships without one.
+ *
+ * **Emitted, and gating nothing.** Losing a photograph is never a hold (clause
+ * E's `downgradedForImages` waiver stands, and the standing rule is that
+ * budgets and imagery adapt). What changes is that the loss stops being silent:
+ * today it sits inside `waived` where nobody reads it, and the owner's *"חלק
+ * מהשקפים ריקים"* — some of the slides are empty — is the result. This record
+ * travels to the gate payload and into `08a1b-relayout-for-interest` as an
+ * input, so on attempts 1..n-1 the finding can go back to `05` and only the
+ * final attempt degrades.
+ */
+export interface ImageryShortfall {
+  /** 1-based slide number. */
+  slide: number;
+  /** What the slide's own brief asked for. `none` never appears: a slide that asked for no picture has not lost one. */
+  wanted: SceneSource;
+  /** Whether `enforceImageryBand` is what asked this slide for a picture, rather than the writer. */
+  promotedByBand: boolean;
+  /** `none` — the layout still wants a hero and has none. `text_only` — the slide was reassigned to a typographic plate. */
+  got: "none" | "text_only";
+  /** The real reason, in the sourcing ladder's own words ("no candidate cleared the vet", a provider 503, "generation budget spent"). */
+  why: string;
+  remedy: ImageryRemedy;
+}
+
+/** One slide's side of the question, as the sourcing ladder knows it. */
+export interface ImageryShortfallInput {
+  slide: number;
+  wanted: SceneSource;
+  got: "none" | "text_only";
+  why: string;
+  /** The slide's copy carries a figure WITH its complete label — `composeBoundedObjects`'s precondition. */
+  hasOwnFigure?: boolean;
+  /** The plate already renders a designed object, so it is not a bare type plate. */
+  hasDesignedObject?: boolean;
+}
+
+/**
+ * The shortfall records for one attempt, with a remedy chosen deterministically
+ * and for $0.
+ *
+ * `spareVettedImages` is how many vetted, rights-clean images the run sourced
+ * and did not place. It is consumed in order — two shortfalls and one spare
+ * produce exactly one `promote` — because a remedy that two slides both claim
+ * is a remedy that fails for one of them at relayout time, and the relayout has
+ * no way to tell which.
+ *
+ * Slides are processed in slide order so the spare lands on the earliest plate,
+ * which is the same argument `enforceImageryBand` makes when it promotes
+ * lowest-first: an early picture earns the swipe.
+ *
+ * ── WHY `merge` IS NOT RESERVED FOR A BAND PROMOTION ANY MORE. ──
+ *
+ * It was, and the consequence was measured on this tree: a plain photo slide
+ * that sourced nothing and carries no figure of its own fell all the way to
+ * `font-scale`, i.e. *set the same two strings larger*. Rendered with sourcing
+ * returning nothing (the 2026-09-16 condition), karoslabs slides 3 and 6
+ * measured `occupiedShare` 0.023/0.024 with a single empty rectangle covering
+ * 46% of the plate, and deel's the same — and in the same attempt clause H is
+ * waived for exactly these slides, so nothing objected either. `font-scale` on
+ * a two-element plate adds nothing a reader looks at; the spec's §4.7 order is
+ * merge, promote, raise the step, attach a device, and `merge` is the one rung
+ * that makes the empty plate stop existing.
+ *
+ * So `merge` is now offered to ANY shortfall slide a neighbour can absorb once
+ * the two rungs that would IMPROVE the plate (a spare picture, the slide's own
+ * figure) have been tried, and `font-scale` is what is left when no neighbour
+ * can take it. Whether a neighbour CAN is the
+ * caller's fact and arrives as `mergeable`: `interest-relayout.ts`'s
+ * `mergeRemedy` refuses the cover, the closer, a post already at its client's
+ * `slides_min`, and any caller that cannot apply the change — and a remedy the
+ * planner will refuse is a remedy that reads like a fix in the trace and is
+ * not one. Absent, no slide is offered `merge`, which is the pre-5.5 behaviour
+ * for every caller that has not been told the carousel's shape.
+ *
+ * AT MOST ONE per attempt, like `spareVettedImages` and for the same reason:
+ * the workflow's apply case renumbers every n-keyed structure from ONE table,
+ * and two merges planned against pre-merge numbering would move the second
+ * one's picture onto the wrong slide.
+ */
+export function imageryShortfallsFor(
+  slides: readonly ImageryShortfallInput[],
+  context: {
+    promotedSlides?: readonly number[] | ReadonlySet<number>;
+    spareVettedImages?: number;
+    /** Which slide numbers a neighbour could absorb — the caller's own answer to `mergeRemedy`'s preconditions. Absent means "this caller cannot merge", and no slide is offered one. */
+    mergeable?: readonly number[] | ReadonlySet<number>;
+  } = {},
+): ImageryShortfall[] {
+  const promoted = context.promotedSlides instanceof Set ? context.promotedSlides : new Set(context.promotedSlides ?? []);
+  const mergeable = context.mergeable instanceof Set ? context.mergeable : new Set(context.mergeable ?? []);
+  let spare = Number.isFinite(context.spareVettedImages) ? Math.max(0, Math.floor(context.spareVettedImages!)) : 0;
+  let mergesLeft = 1;
+  return [...slides]
+    .filter((s) => s.wanted !== "none")
+    .sort((a, b) => a.slide - b.slide)
+    .map((s) => {
+      const promotedByBand = promoted.has(s.slide);
+      let remedy: ImageryRemedy;
+      if (spare > 0) {
+        spare -= 1;
+        remedy = "promote";
+      } else if (s.hasOwnFigure === true) {
+        remedy = "attach-device";
+      } else if (s.hasDesignedObject === true) {
+        // Checked AFTER the two remedies that would improve the plate and
+        // BEFORE the two that only rearrange it: a plate with a designed object
+        // is not empty, so there is nothing here the relayout has to fix — and
+        // merging one away would throw a composed plate out.
+        remedy = "none";
+      } else if (mergeable.has(s.slide) && mergesLeft > 0) {
+        // NOTHING LEFT TO PUT ON IT, and a neighbour that can take its words.
+        // This is where a plain photo slide that sourced nothing used to fall
+        // through to `font-scale`; `promotedByBand` is now a fact on the record
+        // rather than the gate on this rung.
+        mergesLeft -= 1;
+        remedy = "merge";
+      } else {
+        remedy = "font-scale";
+      }
+      return { slide: s.slide, wanted: s.wanted, promotedByBand, got: s.got, why: s.why, remedy };
+    });
+}
+

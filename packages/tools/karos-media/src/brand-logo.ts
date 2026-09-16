@@ -10,10 +10,26 @@
  * karosCMO's own upload route accepts them. Widening the hero whitelist to
  * accommodate logos would fix one path by weakening another.
  *
- * Returns `undefined` on ANY failure (bad status, unexpected content type,
- * over the size cap, network error): a logo is brand furniture, and brand
- * furniture must never be able to hold a run — the caller composes the
- * document without it and the slide ships.
+ * `downloadBrandLogo` returns `undefined` on ANY failure (bad status,
+ * unexpected content type, over the size cap, network error): a logo is brand
+ * furniture, and brand furniture must never be able to hold a run — the
+ * caller composes the document without it and the slide ships.
+ *
+ * **That `undefined` is why nobody could answer "where is the logo?".** On
+ * 2026-09-16 two of three prep clients rendered only their `@handle` although
+ * their brand kits carry a `logoUrl`, and the gate payload's only sentence
+ * about it was a four-way disjunction — *"bad status, wrong content-type,
+ * over the size cap, or a network error"* — naming none of the four. Six
+ * distinct refusals collapsed into one absent value, so the instrument could
+ * not tell an expired link from a content type we choose not to accept, and
+ * a human had to re-fetch the URL by hand to find out.
+ *
+ * So `downloadBrandLogoOutcome` is the real function now: it returns WHICH
+ * refusal and the actual measured value behind it (`HTTP 403`,
+ * `content-type: application/octet-stream`, `2,410,112 bytes > 4,000,000`).
+ * `downloadBrandLogo` stays as a thin wrapper over it — every existing caller
+ * keeps the fail-open `undefined` it was written against, and a caller that
+ * wants to REPORT the failure asks for the outcome instead.
  *
  * The one exception to "just returns undefined": a non-`https://` URL
  * (SCRUM-383). That used to be a bare, silent `return undefined` on this
@@ -29,10 +45,37 @@
 
 import { decodePngRows } from "@agent-engine/tool-common";
 
-/** Logos are small; anything past this is not a logo, whatever it claims to be. Data URIs also count against the rendered document's size. */
-export const BRAND_LOGO_MAX_BYTES = 1_500_000;
+/**
+ * Logos are small; anything past this is not a logo, whatever it claims to
+ * be. Data URIs also count against the rendered document's size.
+ *
+ * **4MB, raised from 1.5MB on 2026-09-16.** The cap was never sized against
+ * what clients actually upload: karosCMO's brand-kit route accepts whatever
+ * the operator has, and karoslabs' own `logoUrl` is a Firebase Storage
+ * `Screenshot_2026-07-10_124752.png` served with an `alt=media&token=` query
+ * — a screenshot, not an exported mark, and screenshots are megabytes. A cap
+ * that silently refuses a real client's real logo is worse than a slightly
+ * larger document: the whole point of the disc is that it is on every slide.
+ * 4MB is still an order of magnitude under anything that would trouble the
+ * renderer (a base64 data URI is ~1.37x the byte count, so ~5.5MB of inline
+ * markup at the absolute ceiling), and it stays a cap rather than an opinion
+ * — past it, the asset is not a logo.
+ */
+export const BRAND_LOGO_MAX_BYTES = 4_000_000;
 
-const LOGO_MIME_WHITELIST = new Set(["image/png", "image/jpeg", "image/webp", "image/svg+xml"]);
+/**
+ * `image/avif` is here for the same reason SVG is: it is what the export
+ * actually produced. Modern design tools and every CDN-backed asset pipeline
+ * emit AVIF by default now, and Chromium — the only thing that ever decodes
+ * these bytes, inside an `<img>` — has shipped AVIF since 85. Refusing it
+ * meant refusing a valid mark for the file extension it happened to carry.
+ *
+ * Note what this does NOT widen: `readBrandLogoInk` still decodes only PNG
+ * and SVG, so an AVIF mark renders with its contrast UNVERIFIED and
+ * `planBrandLogoPlacement` says exactly that in its `reason`, as it already
+ * does for JPEG and WebP.
+ */
+const LOGO_MIME_WHITELIST = new Set(["image/png", "image/jpeg", "image/webp", "image/svg+xml", "image/avif"]);
 
 export interface BrandLogoDownload {
   bytes: Uint8Array;
@@ -40,32 +83,122 @@ export interface BrandLogoDownload {
   mime: string;
 }
 
-export async function downloadBrandLogo(
+/**
+ * Which refusal, in the vocabulary a gate payload prints. One member per
+ * `return` in `downloadBrandLogoOutcome`, so a new refusal cannot be added
+ * without naming itself.
+ */
+export type BrandLogoFailureReason = "not-https" | "http-status" | "content-type" | "too-large" | "empty" | "network";
+
+export type BrandLogoOutcome =
+  | { ok: true; download: BrandLogoDownload }
+  | {
+      ok: false;
+      reason: BrandLogoFailureReason;
+      /**
+       * The MEASURED value behind the refusal, never a restatement of
+       * `reason`: `"HTTP 403"`, `"content-type: application/octet-stream"`,
+       * `"2,410,112 bytes > 4,000,000"`. This is the half that makes the
+       * difference between "the logo did not download" and a fix.
+       */
+      detail: string;
+    };
+
+/** `2410112` → `"2,410,112"`. Hand-grouped rather than `toLocaleString`, so the string a test pins does not depend on the host's ICU data. */
+function groupDigits(value: number): string {
+  return String(Math.trunc(value)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/**
+ * The brand logo's bytes, or the named reason there are none.
+ *
+ * The ladder is unchanged from the original `downloadBrandLogo` — same
+ * refusals, same order, same fail-open posture — and every arm now carries
+ * what it measured. Nothing here throws: a network error is one more named
+ * outcome, because a caller that must not hold a run on brand furniture must
+ * not have to write a try/catch to honour that.
+ */
+export async function downloadBrandLogoOutcome(
   fetchImpl: typeof fetch,
   url: string,
   maxBytes: number = BRAND_LOGO_MAX_BYTES,
-): Promise<BrandLogoDownload | undefined> {
+): Promise<BrandLogoOutcome> {
   if (!/^https:\/\//i.test(url)) {
     console.warn(
       `[karos-media.downloadBrandLogo] refusing non-https brand logo URL "${url}" — only https:// is ever fetched; ` +
         "the caller proceeds without a logo rather than holding the run on brand furniture.",
     );
-    return undefined;
+    return { ok: false, reason: "not-https", detail: `url scheme is not https: "${url}"` };
   }
   try {
     const response = await fetchImpl(url);
-    if (!response.ok) return undefined;
-    const mime = (response.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
-    if (!LOGO_MIME_WHITELIST.has(mime)) return undefined;
+    if (!response.ok) {
+      const status = typeof response.status === "number" ? String(response.status) : "unknown";
+      return { ok: false, reason: "http-status", detail: `HTTP ${status}` };
+    }
+    const rawType = response.headers.get("content-type");
+    const mime = (rawType ?? "").split(";")[0]!.trim().toLowerCase();
+    if (!LOGO_MIME_WHITELIST.has(mime)) {
+      return { ok: false, reason: "content-type", detail: `content-type: ${rawType === null || rawType.trim().length === 0 ? "(absent)" : rawType}` };
+    }
     const declared = Number(response.headers.get("content-length") ?? "0");
-    if (declared > maxBytes) return undefined;
+    if (declared > maxBytes) {
+      return { ok: false, reason: "too-large", detail: `content-length ${groupDigits(declared)} bytes > ${groupDigits(maxBytes)}` };
+    }
     const bytes = new Uint8Array(await response.arrayBuffer());
     // The declared length is advisory; the actual byte count is the check
     // that holds.
-    if (bytes.byteLength === 0 || bytes.byteLength > maxBytes) return undefined;
-    return { bytes, mime };
-  } catch {
-    return undefined;
+    if (bytes.byteLength === 0) return { ok: false, reason: "empty", detail: "the response body was 0 bytes" };
+    if (bytes.byteLength > maxBytes) {
+      return { ok: false, reason: "too-large", detail: `${groupDigits(bytes.byteLength)} bytes > ${groupDigits(maxBytes)}` };
+    }
+    return { ok: true, download: { bytes, mime } };
+  } catch (error) {
+    return { ok: false, reason: "network", detail: (error as Error)?.message ?? String(error) };
+  }
+}
+
+/**
+ * The fail-open wrapper every existing caller was written against.
+ *
+ * Kept deliberately: `derive-brand-setup.ts`, `create-tiktok-agent-workflow.ts`
+ * and the Instagram workflow's own `ensureBrandLogoDataUri` all want exactly
+ * "the bytes or nothing", and changing their shape to make a REPORTING
+ * improvement would be the tail wagging the dog. A caller that reports asks
+ * `downloadBrandLogoOutcome` instead.
+ */
+export async function downloadBrandLogo(
+  fetchImpl: typeof fetch,
+  url: string,
+  maxBytes: number = BRAND_LOGO_MAX_BYTES,
+): Promise<BrandLogoDownload | undefined> {
+  const outcome = await downloadBrandLogoOutcome(fetchImpl, url, maxBytes);
+  return outcome.ok ? outcome.download : undefined;
+}
+
+/**
+ * The refusal as one sentence for a human, with the remedy where there is an
+ * unambiguous one.
+ *
+ * Lives here rather than in the workflow because the six reasons and their
+ * remedies are one fact: raise this module's cap, fix the client's URL, or
+ * re-export the asset. The gate payload prints this verbatim.
+ */
+export function describeBrandLogoFailure(outcome: Extract<BrandLogoOutcome, { ok: false }>, url: string): string {
+  const head = `brand logoUrl "${url}" produced no usable download`;
+  switch (outcome.reason) {
+    case "not-https":
+      return `${head}: ${outcome.detail} — only https:// is ever fetched; re-save this client's logo as an https URL in karosCMO`;
+    case "http-status":
+      return `${head}: ${outcome.detail} — the URL is unreachable or the token in it has expired; re-upload the logo in karosCMO`;
+    case "content-type":
+      return `${head}: ${outcome.detail} — the host did not serve it as one of PNG, JPEG, WebP, SVG or AVIF; re-upload it with the right type`;
+    case "too-large":
+      return `${head}: ${outcome.detail} — past BRAND_LOGO_MAX_BYTES; export the mark rather than a screenshot of it`;
+    case "empty":
+      return `${head}: ${outcome.detail} — the asset at that URL is empty`;
+    case "network":
+      return `${head}: the fetch threw (${outcome.detail})`;
   }
 }
 

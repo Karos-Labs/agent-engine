@@ -81,7 +81,6 @@
     /* Quote slides get wider gutters than the rest of the set — both legacy
        generations did this, and it is what keeps a 70px italic measure from
        running the full plate width. */
-    --mx: 80px;
     --ts: 1;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -93,6 +92,41 @@
      font-size on an older checkpointed slides-data re-rendered post-deploy. */
   body.ts-s { --ts: 0.85; }
   body.ts-l { --ts: 1.18; }
+  /* ── PHASE 5.5: THE ONE TYPE SCALE (`visual-system.ts`, `TYPE_SCALE_PX`). ──
+     Six steps for the whole archetype set, against the 45 distinct `font-size`
+     values the eight bundled templates declared between them. A plate picks a
+     step by ROLE rather than by which file the writer's layout landed on.
+     `visualSystemCssBlock` overrides these per run with the resolved system's
+     type flavour; these are the self-contained defaults a brandless render
+     uses.
+
+     ── ON `body`, NOT ON `:root`, AND THAT IS NOT A STYLE CHOICE. ──
+     A custom property's `var()` references are substituted AT THE ELEMENT THAT
+     DECLARES IT. `--ts` is `1` on `:root` and is overridden on `body.ts-s` /
+     `body.ts-l`, so a `--t-*` declared on `:root` resolves `var(--ts, 1)`
+     against the ROOT's value — always 1 — and then inherits down already
+     substituted. Declared there, the reviewer's whole type-scale control
+     silently stopped reaching every size that reads a step: measured, this
+     plate rendered its 300px figure at 300px at `ts-s`, where the literal it
+     replaced rendered 255px, and the calibration's own s-vs-l control pair
+     reported the two plates painting identical ink (0.4175 both). Declared
+     HERE the substitution happens on `body`, where `body.ts-s` is in force. */
+  body {
+    /* ── PHASE 5.5: THE PAGE MARGIN IS THE VISUAL SYSTEM'S `gutter` AXIS. ──
+       `--gutter` is emitted per run by `visualSystemCssBlock` (`wide` 64px,
+       `tight` 48px) and was read by nothing: every template hard-coded its own
+       margin, so two catalog entries that differ ONLY in gutter rendered the
+       same plate and the twelve-entry catalog was a variety claim a reader
+       could not see. The literal stays as the fallback, so a document composed
+       without the run sheet is byte-identical. */
+    --mx: calc(var(--gutter, 64px) * 1.25);
+    --t-micro: calc(22px * var(--ts, 1));
+    --t-label: calc(32px * var(--ts, 1));
+    --t-lead: calc(46px * var(--ts, 1));
+    --t-statement: calc(84px * var(--ts, 1));
+    --t-display: calc(124px * var(--ts, 1));
+    --t-figure: calc(220px * var(--ts, 1));
+  }
   body.ta-center { text-align: center; }
   body.ta-end { text-align: end; }
   html, body { width: 1080px; height: 1440px; }
@@ -116,7 +150,7 @@
        pools its own, the panel wins, and every dark pixel at the frame edge is
        then measured as clipped ink. The standing rule for this set: a panel
        over about 40% of the frame means the plate gets a corner wash. */
-    background-image: radial-gradient(58% 26% at 100% 0%, color-mix(in srgb, var(--wash) 8%, transparent) 0%, transparent 72%);
+    background-image: radial-gradient(58% 26% at 100% 0%, color-mix(in srgb, var(--wash) var(--ground-texture-alpha, 8%), transparent) 0%, transparent 72%);
   }
   /* ── THERE IS NO L2 ON THIS PLATE ANY MORE, and that is the point. ──
      A full-bleed texture inset 16px used to paint ink in every cell of the
@@ -131,12 +165,29 @@
   /* `inline-block` so a client's `pill`/`brackets` badge variant wraps the
      words rather than painting a full-measure bar. */
   .eyebrow {
+    /* ── THE LABEL'S BOX IS ITS LABEL. ──
+       A block-level eyebrow spans the whole measure whatever it says, so its
+       BOX reaches the opposite corner of the plate even when its ink stops
+       after two words. `renderCarousel`'s reserved-zone probe reads boxes, so
+       a full-width label was reported as entering the brand mark's corner from
+       the other side of the frame — a finding about nothing, on the instrument
+       §7 F2 exists to make trustworthy. `fit-content` makes the two agree.
+       `stat-callout.html` has always been `inline-block` for the same reason. */
+    inline-size: fit-content; max-inline-size: 100%;
     display: inline-block;
-    font-family: var(--f-mono); font-weight: 600; font-size: calc(22px * var(--ts, 1));
+    font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro);
     letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent);
   }
   .eyebrow:empty { display: none; }
-  .qc-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(24px * var(--ts, 1)); }
+  /* ── PHASE 5.5 §4.3: UNDER THE ACCENT SWITCH, AND IT IS THE EYEBROW'S
+        UNDERLINE. ──
+     `stat-callout.html`'s `.sc-rail` carries the whole argument. The same 2px
+     full-measure hairline at 48% of the foreground appears in seven of the
+     eight files, so before this it painted on six of eight plates of every
+     carousel — the owner's *"יש קווים כאלה"* in a quieter colour — and on a
+     plate whose eyebrow slot came through empty it was a rule over nothing. */
+  .qc-rail { display: var(--fx-accent, none); block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(24px * var(--ts, 1)); }
+  body:not(:has(.eyebrow:not(:empty))) .qc-rail { display: none; }
 
   /* The pull-quote panel: graded and textured for the reason in the header,
      with the accent spent on one heavy rule down the reading-start edge
@@ -329,14 +380,19 @@
      exact flex it had before the band existed and every share the calibration
      measured on it still holds. */
   body:has(.sc-figure-band img[src]:not([src=""])) .quote-block { flex: 1 0 auto; }
-  /* The one mark it carries: the brand rule that ties it to the plate. */
+  /* ── PHASE 5.5: hidden unless the system switches it on. ──
+     A contentless 8px accent rule under the picture band. `--fx-accent` is set
+     by `visualSystemCssBlock` on at most three slides of a carousel; on the
+     rest this mark does not paint at all. It is `display` rather than an ink
+     swap because the bar is a positioned `::after` with no layout to preserve. */
   .sc-figure-band::after {
+    display: var(--fx-accent, none);
     content: ""; position: absolute; inset-block-end: 0; inset-inline: 0;
     block-size: calc(8px * var(--ts, 1)); background: var(--accent);
   }
   .quote-mark {
     font-family: var(--f-display); font-style: italic; font-weight: 400;
-    font-size: calc(180px * var(--ts, 1)); line-height: 0.55; color: var(--accent);
+    font-size: calc(var(--t-figure) * 0.8182); line-height: 0.55; color: var(--accent);
     /* The tight leading IS the lockup (see the header). The padding gives the
        glyph the room its line box does not have, so the DOM probe stops
        reporting the mark as an overflowing element; the negative margin
@@ -386,11 +442,11 @@
      and a base rung is every quote's size; a step is one quote's. */
   .quote-text {
     font-family: var(--f-display); font-style: italic; font-weight: 500;
-    font-size: calc(84px * var(--ts, 1)); line-height: 1.26; letter-spacing: -0.008em; text-wrap: balance;
-    padding-block-end: 0.22em;
+    font-size: calc(var(--t-statement) * 1); line-height: 1.26; letter-spacing: -0.008em; text-wrap: balance;
+    padding-block-end: max(0.22em, var(--mk-face-bleed, 0em));
   }
-  .quote-text.small { font-size: calc(64px * var(--ts, 1)); line-height: 1.24; }
-  .quote-text.tiny { font-size: calc(50px * var(--ts, 1)); line-height: 1.28; }
+  .quote-text.small { font-size: calc(var(--t-statement) * 0.7619); line-height: 1.24; }
+  .quote-text.tiny { font-size: calc(var(--t-statement) * 0.5952); line-height: 1.28; }
   /* ── THE STEP UP, for a quote that is a single breath. ──
      The ladder only ever stepped DOWN, so a 31-character quote got the same
      84px as a 90-character one and sat as two short lines in the middle of an
@@ -402,13 +458,25 @@
      others, below the `small` threshold at every scale, so no quote the ladder
      already sized moves: English SHORT is 44 characters and stays at 84px, and
      the mark-slots fixtures are untouched. */
-  .quote-text.big { font-size: calc(104px * var(--ts, 1)); line-height: 1.16; }
+  .quote-text.big { font-size: calc(var(--t-display) * 0.8387); line-height: 1.16; }
   /* Outside the panel, under it — see `.quote-block`'s margin note. */
   .qc-foot { position: relative; z-index: 3; flex: 0 0 auto; display: flex; align-items: center; gap: calc(26px * var(--ts, 1)); }
-  .qc-foot::before { content: ""; flex: 0 0 auto; inline-size: calc(64px * var(--ts, 1)); block-size: calc(6px * var(--ts, 1)); background: var(--accent); }
+  /* PHASE 5.5 — a contentless 64x6 accent dash before the attribution, hidden
+     unless the visual system switched this slide's accent on. */
+  /* ── PHASE 5.5, ITEM C: THE ACCENT MARK IS ONE GEOMETRY, NOT SIX. ──
+     The run's `accentForm` decides the mark's shape ONCE and publishes it as
+     `--fx-accent-w` / `--fx-accent-h`. Before this the length was a property of
+     whichever template the writer's layout landed on — 64px on a quote card,
+     200px on a stat plate, 240px on a closer, full measure on a panel — so the
+     three slides the accent switch allows a mark on carried three different
+     shapes, which is the owner's *"sometimes a long purple marker and
+     sometimes a short one"* read as geometry rather than as colour. Each file
+     keeps its own literal as the var() fallback, so a document composed
+     without the run sheet is byte-identical. */
+  .qc-foot::before { display: var(--fx-accent, none); content: ""; flex: 0 0 auto; inline-size: var(--fx-accent-w, calc(64px * var(--ts, 1))); block-size: var(--fx-accent-h, calc(6px * var(--ts, 1))); background: var(--accent); }
   .qc-foot:has(.quote-attr:empty) { display: none; }
   .quote-attr {
-    font-family: var(--f-body); font-size: calc(27px * var(--ts, 1)); font-weight: 500;
+    font-family: var(--f-body); font-size: calc(var(--t-label) * 0.8438); font-weight: 500;
     letter-spacing: 0.01em; color: color-mix(in srgb, var(--fg) 82%, transparent);
   }
 
@@ -440,7 +508,7 @@
      owes it is the slot, and the slot is here. */
   /* The twin host's block-start bleed — see `cover.html` for the measurement
      and why it is here rather than only in the shared mark sheet. */
-  :has(> span.mk-plain) { padding-block-start: var(--mk-twin-bleed, .22em); }
+  :has(> span.mk-plain) { padding-block-start: max(var(--mk-twin-bleed, .22em), var(--mk-face-bleed, 0em)); }
   .quote-text:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
 
   /* Standing brand furniture. The brand head fragment (`buildBrandHeadHtml`)
@@ -449,12 +517,17 @@
      otherwise lays the handle out in normal flow, on top of the quote. */
   .brand-handle {
     position: absolute; bottom: 34px; inset-inline-start: 44px; z-index: 6;
-    font-family: var(--f-mono); font-size: calc(19px * var(--ts, 1)); letter-spacing: 0.08em;
+    font-family: var(--f-mono); font-size: var(--t-micro); letter-spacing: 0.08em;
     color: color-mix(in srgb, var(--fg) 55%, transparent);
   }
+  /* The badge RULE outlives the badge SLOT: the `seriesBadge` slot is deleted
+     from this file's markup, but a CLIENT's own template may still carry it
+     (it is still in `KNOWN_SLOT_NAMES` and still a `LAYOUT_FIELD_KEY` for
+     exactly that reason), and a badge with no placement rule lays itself out
+     in normal flow over the copy. */
   .brand-badge {
     position: absolute; top: 36px; inset-inline-end: var(--mx); z-index: 6;
-    font-family: var(--f-mono); font-weight: 600; font-size: calc(19px * var(--ts, 1));
+    font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro);
     letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);
   }
   /* An @handle, a URL and a #hashtag are LTR strings, and a Hebrew or Arabic
@@ -465,13 +538,36 @@
      have re-resolved its own `inset-inline-start` and moved the watermark to
      the other corner. The extra :has() selector is what keeps an empty slot
      hidden now that the div always has an element child. */
+  /* ── PHASE 5.5: THE PAGINATION INDEX. ──
+     One index, the same size in the same corner in all eight templates,
+     painted on every interior slide or on none
+     (`ClientVisualSystem.pagination`, frozen per client). It replaces the
+     460px `.ground-glyph` that existed in two of the eight files, which is
+     what the owner saw as *"על חלק מהשקופיות כתוב מספר ועל חלק לא"*. Hidden
+     unless switched on — the inversion this phase applies to every mark in
+     the set. See `slide.html` for the full note. */
+  .pg-index {
+    display: var(--fx-pagination, none);
+    position: absolute; inset-block-end: 40px; inset-inline-end: 44px; z-index: 6;
+    font-family: var(--f-mono); font-size: var(--t-micro); letter-spacing: 0.14em;
+    color: color-mix(in srgb, var(--fg) 45%, transparent);
+  }
   .brand-badge:empty, .brand-handle:empty, .brand-handle:has(> bdi:empty) { display: none; }
 </style>
 </head>
-<body class="ts-{{fontScale}} ta-{{textAlign}}">
+<body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}">
   <div class="ground" aria-hidden="true"></div>
-  <div class="brand-badge">{{seriesBadge}}</div>
+  <!-- The `seriesBadge` slot was here and is deleted. It printed an INTERNAL
+       label ("BY THE NUMBERS", "{ FIELD NOTES }") in the same corner on every
+       slide of every post — a name for the pipeline's own format that a reader
+       cannot use, repeated eight times, which is the repetition a reader reads
+       as machine-made. On geektime it also collided with the brand logo disc
+       in that corner and clipped to `{ FIELD` on all eight plates. What
+       replaces it is this slide's OWN topical line (`kicker`, in the
+       composition where a label belongs), on the slides this run's visual
+       system allows one. -->
   <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
+  <span class="pg-index" aria-hidden="true">{{slideIndex}}</span>
   <div class="qc-head">
     <div class="eyebrow">{{kicker}}</div>
     <div class="qc-rail"></div>

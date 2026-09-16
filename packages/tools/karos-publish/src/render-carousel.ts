@@ -90,8 +90,37 @@ import { measureSlidePng, type SlideMetrics, type SlideProbe } from "./slide-met
  * tool file against the previous push and cannot read a diff to know a change
  * was inert on the wire. Semver already means "nothing a caller can observe
  * moved", which is exactly the claim being made here.
+ *
+ * 1.6.0 — RFC-22's collision instrument, and the type-step set. Three things
+ * move on the wire and all three are additive: a new optional input
+ * `reservedZone`, and a new per-slide result `geometry` carrying
+ * `collisions` and `fontSizeSteps`. `probe` is BYTE-IDENTICAL to 1.5.1 —
+ * `probePage` is not touched — which is why the new reads live in their own
+ * function and their own field rather than as extra `SlideProbe` keys. A
+ * caller reading only 1.5.1 fields reads the same numbers.
+ *
+ * MINOR rather than PATCH because a caller can observe the new field, and
+ * because a run record made before this change cannot answer a question a
+ * record made after it can: "did anything on this plate print on top of
+ * anything else". That question had NO instrument. `probePage` has walked
+ * every element with `getBoundingClientRect()` since 1.1.0 and has always
+ * reported a box leaving its parent; it has never once reported two boxes in
+ * the same pixels, which is how geektime's brand disc shipped on top of its
+ * own series badge for eight slides while `08a2` reported the mark present,
+ * correctly cornered and at 7.04 contrast.
+ *
+ * ## 1.7.0 — the watch list stops being furniture-only
+ *
+ * MINOR again, and for the same reason: a record made under 1.6.0 cannot
+ * answer a question a 1.7.0 record can. `COLLISION_WATCH_CLASSES` shipped
+ * holding eight names, all of them brand furniture, so the first real defect
+ * the instrument was aimed at was one it was constitutionally unable to see —
+ * the closer's CTA set on top of `.brand-handle`, which is a furniture-versus-
+ * CONTENT pair. The list now also carries the prose and object classes the
+ * eight bundled archetypes actually declare. `probe` and every 1.6.0 field are
+ * byte-identical; `geometry.collisions` can only grow.
  */
-const TOOL_VERSION = "1.5.1";
+const TOOL_VERSION = "1.7.0";
 
 // n/template/fields/images have no existing TSDoc to transcribe (SCRUM-293 flag) — descriptions
 // below synthesized from fillTemplate's/validateRenderInputs' usage of each field.
@@ -164,6 +193,17 @@ export const RenderCarouselInputSchema = z.object({
     .boolean()
     .optional()
     .describe("Run one page.evaluate per slide in the page already open, reporting overflow, offscreen boxes, element count, text-box share and the font families actually resolved. Also free."),
+  reservedZone: z
+    .object({
+      x: z.number().nonnegative().describe("Left edge in CSS px, in the design canvas's own coordinates (1080x1440), already resolved for this slide's writing direction."),
+      y: z.number().nonnegative().describe("Top edge in CSS px."),
+      w: z.number().positive().describe("Width in CSS px."),
+      h: z.number().positive().describe("Height in CSS px."),
+    })
+    .optional()
+    .describe(
+      "The rectangle the brand mark owns, which no other watched element may enter. Read only when `probe` is true. Resolved by the CALLER, not here: the zone's corner depends on the writing direction and on the placement plan, both of which live in the agent. Omitted means no zone is declared and only element-to-element collisions are reported.",
+    ),
 });
 export type RenderCarouselInput = z.infer<typeof RenderCarouselInputSchema>;
 
@@ -180,6 +220,17 @@ export interface RenderCarouselResult {
     measureFailure?: string;
     /** Present only when the input asked for `probe` and the page answered. */
     probe?: SlideProbe;
+    /**
+     * The second in-page read (1.6.0): collision and the distinct type-step
+     * set. Gated on the SAME `probe: true` input — it is the same kind of
+     * free DOM fact from the same open page, and a second input flag would
+     * only create a state where a caller asked for DOM facts and got some of
+     * them.
+     *
+     * Separate from `probe` rather than folded into it so this release stays
+     * strictly additive: see {@link probeGeometry}'s own comment.
+     */
+    geometry?: SlideGeometry;
   }>;
 }
 
@@ -360,6 +411,13 @@ interface ProbeElement {
   tagName: string;
   id: string;
   className: unknown;
+  /**
+   * Typed OPTIONAL for the same reason the four RFC-17 `getComputedStyle`
+   * reads below are: a fake DOM in a Chromium-free test supplies only what
+   * the case under test needs, and `probeGeometry` is the only caller. Every
+   * read of it is guarded.
+   */
+  getAttribute?(name: string): string | null;
   scrollWidth: number;
   scrollHeight: number;
   clientWidth: number;
@@ -387,6 +445,10 @@ declare function getComputedStyle(element: ProbeElement): {
   backgroundClip?: string;
   webkitBackgroundClip?: string;
   color?: string;
+  /** Read only by `probeGeometry`: a `visibility: hidden` box still HAS a rect, and two of them are not a collision. */
+  visibility?: string;
+  /** Read only by `probeGeometry`'s alignment-column set: the INLINE START edge is `left` in `ltr` and `right` in `rtl`. */
+  direction?: string;
 };
 
 function readyFlagCheck(flag: string): boolean {
@@ -621,6 +683,423 @@ export function probePage(canvas: { n: number; w: number; h: number }): {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// The second DOM read: collision, and the type-step set
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * The classes `probeGeometry` watches for collision.
+ *
+ * NOT every element on the plate. A collision list over the whole document
+ * would be thousands of pairs of nested and deliberately-stacked boxes (every
+ * scrim sits on every ground by design), and a list that long is a list
+ * nobody reads. These eight are the furniture that is placed ABSOLUTELY, in
+ * corners, by rules that were each written without knowing about the others —
+ * which is exactly the population where two things end up in the same pixels.
+ *
+ * `brand-logo` is the class `buildBrandLogoBodyHtml` actually emits today;
+ * `brand-mark` and `eyebrow` are the names RFC-22 §4.3 renames the furniture
+ * to. BOTH spellings are watched on purpose, so this instrument sees the
+ * defect on the templates as they stand (the geektime white disc printed on
+ * top of `.brand-badge`, clipping `{ FIELD NOTES }` to `{ FIELD` on all eight
+ * slides) AND keeps seeing it after the rename — a watch list that has to be
+ * edited in the same commit as a rename is a watch list that goes blind in
+ * the commit after it.
+ *
+ * ## AND THE CONTENT, which 1.6.0 left off and which is half the question
+ *
+ * The eight names above are all FURNITURE. A list that holds only furniture
+ * can report furniture landing on furniture and nothing else — so the first
+ * defect this instrument was pointed at after it shipped was one it could not
+ * see: on the karoslabs closer the CTA's third line printed directly on top of
+ * `.brand-handle` (`mono-display`, an eight-slide English carousel, a
+ * 108-character CTA), both strings legible, both ruined, and `probeGeometry`
+ * reported zero collisions because `.cl-cta` was not a name it knew.
+ *
+ * The second half of the list is therefore the prose and object classes the
+ * eight bundled archetypes actually carry, grepped out of the template set
+ * rather than invented: a furniture-versus-content collision is the common
+ * case precisely because the furniture is placed ABSOLUTELY and the content is
+ * laid out in flow, so neither rule can see the other.
+ *
+ * Three deliberate absences. `#takeaway` is not here because it is spelled
+ * `class="headline" id="takeaway"` and `headline` already watches it — the
+ * probe matches CLASSES, so an id in this list would be a dead entry that
+ * looked like coverage. `.pg-index` is not here for the same reason from the
+ * other direction: every template marks it `aria-hidden="true"`, and this
+ * probe skips `aria-hidden` boxes by design, so the name would read as
+ * coverage it can never deliver (the closer's own foot strip is reserved in
+ * CSS instead). `.hero`, `.bg`, `.ground`, `.scrim` and the bands are
+ * not here because they are full-bleed layers that share pixels with the copy
+ * BY DESIGN; the ancestor/descendant exclusion does not cover a sibling scrim,
+ * and adding them would bury every real pair under eight guaranteed ones.
+ *
+ * Still warn-only for every pair that does not name the brand mark (the agent
+ * splits them at `08a2`), so widening the list cannot hold a run — it can only
+ * let the reviewer and the judge see what is actually on top of what.
+ */
+export const COLLISION_WATCH_CLASSES: readonly string[] = [
+  // Furniture (1.6.0).
+  "brand-logo",
+  "brand-mark",
+  "brand-badge",
+  "eyebrow",
+  "brand-handle",
+  "kicker",
+  "headline",
+  "figure",
+  // Content (1.7.0) — closer, cover/slide/headline-focus, stat callout,
+  // list, quote card, comparison card, in that order.
+  "cl-question",
+  "cl-cta",
+  "cl-recap",
+  "body-text",
+  "hf-headline",
+  "num-figure",
+  "num-label",
+  "num-body",
+  "source-line",
+  "me-head",
+  "me-rows",
+  "quote-text",
+  "quote-attr",
+  "cmp-head",
+  "cmp-label",
+  "cmp-body",
+  "cmp-foot-text",
+];
+
+/**
+ * How deep two boxes must be into each other before it counts, in CSS px.
+ *
+ * Measured, not chosen: the 48-render sweep recorded in `probePage`'s "WHAT
+ * IS STILL BLIND" comment found `.diamond`, the list/comparison bullet, hung
+ * 3-4px outside its row for optical alignment across every bundled template.
+ * Type does the same thing to itself constantly — a display face's glyph box
+ * routinely sits a px or two into its neighbour's margin. 4px is the top of
+ * that measured band, so the first thing this can report is an intrusion
+ * larger than any deliberate hang in the tree. The geektime disc overlaps its
+ * badge by ~120px, so the threshold is nowhere near the case it exists for.
+ */
+export const COLLISION_MIN_PX = 4;
+
+/**
+ * The three groups whose rendered area is a plate's SUBJECT, for
+ * `probeGeometry`'s `subjectBoxes`.
+ *
+ * Copied from the agent's own `probeSubjectBoxes` (`interest-floor.ts`), which
+ * is where the argument lives and where `cover-subject.test.ts` proved the
+ * numbers in real Chromium. It is copied rather than imported for the reason
+ * every constant in this file's page bodies is: a tool must not depend on an
+ * agent, and a body that is serialised into the page may close over nothing.
+ *
+ * What is deliberately ABSENT is the point of the read: `.ground`, `.scrim`,
+ * `.cov-field` and `.stat-band` are not subjects. **A gradient is what a boring
+ * cover carries instead of a subject**, so a measurement that counted it would
+ * pass exactly the plate the clause exists to refuse.
+ *
+ * `.hero` rather than `img`: a tag name would count the brand logo disc, and
+ * `cover.html`'s `onerror` REMOVES the element when the photograph failed to
+ * load, so the class is present exactly when a picture actually rendered.
+ */
+export const SUBJECT_BOX_GROUPS = {
+  hero: [".hero"],
+  device: [".dv", ".cov-device", ".sl-device", ".cl-recap"],
+  graphic: ["svg", "canvas", ".cl-art"],
+} as const;
+
+/** The pseudo-selector used for the other half of a reserved-zone intrusion, so `a`/`b` read the same way for both kinds. */
+export const RESERVED_ZONE_SELECTOR = "[reserved-zone]";
+
+export const ProbeCollisionSchema = z.object({
+  a: z.string().describe("The first box, named the way `overflowing`/`offscreen` name theirs — `tag#id.first-class`."),
+  b: z.string().describe("The second box, or `[reserved-zone]` when this is an element intruding into a declared reserved rectangle rather than onto another element."),
+  overlapPx: z
+    .number()
+    .describe(
+      "How DEEP the two boxes are into each other: the SMALLER of the two intersection dimensions, in CSS px. Deliberately not the intersection AREA — a 2px-deep overlap along a 600px shared edge is 1,200px² and is a rounding artefact, while a 120px-deep overlap of a small disc onto a label is the defect. Depth is the number a human means by 'they overlap by N pixels'.",
+    ),
+});
+export type ProbeCollision = z.infer<typeof ProbeCollisionSchema>;
+
+export const SlideGeometrySchema = z.object({
+  n: z.number().int().positive().describe("The slide this read belongs to."),
+  collisions: z
+    .array(ProbeCollisionSchema)
+    .describe(
+      "Pairs of visible, non-`aria-hidden` watch-list boxes sharing pixels more than COLLISION_MIN_PX deep, deepest first. Empty is the normal answer. A pair naming the brand mark is a finding this phase; everything else is warn-only until we have a false-positive rate.",
+    ),
+  fontSizeSteps: z
+    .array(z.number())
+    .describe(
+      "The DISTINCT rendered font sizes on the plate, in px, largest first, rounded to whole px. `displayTypeScale` reports only the largest, which cannot tell one confident line over quiet body copy from six sizes competing — and 'how many type steps does this plate use' is the question a type-contrast clause has to ask.",
+    ),
+  alignmentColumns: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe(
+      "How many DISTINCT inline start edges the plate's text leaves sit on, to the nearest 4px. One is a ranged-left plate; two is a deliberate indent; five is a plate whose elements were each placed without reference to the others. Reporting-only — see the agent's ALIGNMENT_COLUMN_CEILING.",
+    ),
+  subjectBoxes: z
+    .object({
+      hero: z.number().describe("Share of the canvas covered by `.hero` boxes — the photograph, present exactly when one rendered (`onerror` removes the element)."),
+      device: z.number().describe("Share covered by the drawn device (`.dv`, `.cov-device`, `.sl-device`, `.cl-recap`)."),
+      graphic: z.number().describe("Share covered by drawn graphics (`svg`, `canvas`, `.cl-art`)."),
+    })
+    .describe(
+      "What the plate is CARRYING, by area, in three groups. Grounds, scrims and fields (`.ground`, `.scrim`, `.cov-field`, `.stat-band`) are deliberately NOT subjects: a gradient is what a cover carries INSTEAD of a subject, which is the whole reason this read exists.",
+    ),
+});
+export type SlideGeometry = z.infer<typeof SlideGeometrySchema>;
+
+/**
+ * The SECOND in-page read, answering the two questions `probePage` has never
+ * been able to answer.
+ *
+ * ## Why a second function rather than more fields on `probePage`
+ *
+ * `probePage`'s return shape is `SlideProbe`, which is defined by
+ * `SlideProbeSchema` in `slide-metrics.ts` and asserted round-trippable by
+ * `render-carousel-measure.test.ts`. Adding fields there would mean either
+ * two sources of truth for that shape or a schema edit in a file this change
+ * has no business touching. Keeping the new reads in their own function and
+ * their own result field makes 1.6.0 strictly additive: `probe` is
+ * byte-identical to 1.5.1 for every existing caller, and the new numbers
+ * arrive beside it rather than inside it.
+ *
+ * ## Collision, which is not overflow
+ *
+ * `probePage` has walked every element with `getBoundingClientRect()` since
+ * 1.1.0 and has ALWAYS been able to tell that a box left its parent. It has
+ * never once been able to tell that two boxes are in the same pixels. That is
+ * how geektime's brand disc shipped printed on top of its own series badge
+ * for eight consecutive slides while `08a2` reported the mark as
+ * `present: true, corner: "top-start", groundContrast: 7.04` — every
+ * instrument green, the badge reading `{ FIELD`, and the human gate
+ * approving it. Overflow asks "did this box stay inside its parent";
+ * collision asks "is anything else already here", and no amount of the first
+ * answers the second.
+ *
+ * ## The reserved zone
+ *
+ * A corner PREFERENCE is not a reservation: it moved the mark away from the
+ * badge only while the code that computed `hasSeriesBadge` was right about
+ * the badge. `reserved` lets the caller declare the rectangle the mark owns,
+ * and any other watched box that enters it is reported against
+ * {@link RESERVED_ZONE_SELECTOR}. That limb fires even when the mark itself
+ * did not render — thepitchbydeel has no `logoUrl` at all — which is the
+ * whole point of a zone: it is reserved whether or not the tenant showed up.
+ *
+ * ## Exclusions, each of them a real layout idiom
+ *
+ * - **zero-area** boxes, and `visibility: hidden` ones: they have rects and
+ *   no pixels;
+ * - **`aria-hidden="true"`**: the scrims and grounds are stacked on purpose
+ *   and say so;
+ * - **ancestor/descendant pairs**: a `.headline` inside a `.figure` shares
+ *   pixels with it by definition, and reporting containment as collision
+ *   would bury the one pair that matters.
+ *
+ * EXPORTED, and closing over NOTHING at module scope — the watch list and
+ * the threshold arrive as arguments precisely so the module-level constants
+ * above stay the single source of truth while Playwright still serialises
+ * this function by its source. Same discipline as `probePage`.
+ */
+export function probeGeometry(arg: {
+  n: number;
+  /** Class names WITHOUT the leading dot — {@link COLLISION_WATCH_CLASSES}. */
+  watch: readonly string[];
+  /** {@link COLLISION_MIN_PX}. */
+  minOverlapPx: number;
+  /** The rectangle no element but the brand mark may enter, in CSS px. Omitted when the caller declares none. */
+  reserved?: { x: number; y: number; w: number; h: number };
+  /** Which watch classes OWN `reserved` and so are not intruders in it. Ignored when `reserved` is absent. */
+  reservedOwners?: readonly string[];
+  /** The design canvas, in CSS px — `subjectBoxes` is a SHARE of it. */
+  w: number;
+  h: number;
+  /**
+   * Tag names and `.class` selectors, in three groups, whose rendered area is
+   * the plate's SUBJECT. Passed in rather than closed over for the same reason
+   * `watch` is: this body is serialised into the page.
+   */
+  subjects: { hero: readonly string[]; device: readonly string[]; graphic: readonly string[] };
+}): {
+  n: number;
+  collisions: { a: string; b: string; overlapPx: number }[];
+  fontSizeSteps: number[];
+  alignmentColumns: number;
+  subjectBoxes: { hero: number; device: number; graphic: number };
+} {
+  const describe = (element: ProbeElement): string => {
+    const tag = String(element.tagName || "").toLowerCase();
+    const id = element.id ? `#${element.id}` : "";
+    const cls = typeof element.className === "string" && element.className.trim() !== "" ? `.${element.className.trim().split(/\s+/)[0]}` : "";
+    return `${tag}${id}${cls}`;
+  };
+
+  const classesOf = (element: ProbeElement): string[] => {
+    const raw = typeof element.className === "string" ? element.className.trim() : "";
+    return raw === "" ? [] : raw.split(/\s+/);
+  };
+
+  const isAncestor = (maybeAncestor: ProbeElement, node: ProbeElement): boolean => {
+    let cursor: ProbeElement | null = node.parentElement ?? null;
+    // Bounded rather than `while (cursor)`: a fake DOM wired into a cycle by
+    // a test would otherwise hang the probe, and no slide template nests
+    // anywhere near this deep.
+    for (let depth = 0; cursor !== null && depth < 64; depth++) {
+      if (cursor === maybeAncestor) return true;
+      cursor = cursor.parentElement ?? null;
+    }
+    return false;
+  };
+
+  // Same exclusion `probePage` applies for the same reason: `<script>` and
+  // `<style>` are text-bearing leaves with a computed font size and no
+  // pixels. The zero-area guard below already catches them in a real browser,
+  // but the two reads must agree by CONSTRUCTION and not by coincidence —
+  // `fontSizeSteps[0]` and `displayTypeScale` are asserted to describe the
+  // same glyph.
+  const nonVisual = ["script", "style", "head", "meta", "link", "title", "noscript", "template"];
+
+  const isIn = (element: ProbeElement, group: readonly string[]): boolean => {
+    const tag = String(element.tagName || "").toLowerCase();
+    if (group.indexOf(tag) !== -1) return true;
+    for (const name of classesOf(element)) if (group.indexOf(`.${name}`) !== -1) return true;
+    return false;
+  };
+
+  /**
+   * The share of the canvas one subject group covers. A match nested inside
+   * another match of the SAME group is skipped — a `.dv` fragment inside
+   * `.cov-device` is one object, not two — which is the same rule the agent's
+   * own `probeSubjectBoxes` states, and `cover-subject.test.ts` is what pins
+   * the two readings together.
+   */
+  const subjectShare = (group: readonly string[]): number => {
+    const frame = arg.w * arg.h;
+    if (frame <= 0) return 0;
+    let area = 0;
+    for (const element of document.querySelectorAll("*")) {
+      if (!isIn(element, group)) continue;
+      let ancestor: ProbeElement | null = element.parentElement ?? null;
+      let nested = false;
+      for (let depth = 0; ancestor !== null && !nested && depth < 64; depth++) {
+        if (isIn(ancestor, group)) nested = true;
+        ancestor = ancestor.parentElement ?? null;
+      }
+      if (nested) continue;
+      const rect = element.getBoundingClientRect();
+      area += Math.max(0, rect.width) * Math.max(0, rect.height);
+    }
+    return Math.min(1, area / frame);
+  };
+
+  const all = document.querySelectorAll("*");
+  const watched: { element: ProbeElement; rect: ProbeRect; name: string; classes: string[] }[] = [];
+  const sizes: number[] = [];
+  const columns: number[] = [];
+
+  for (const element of all) {
+    if (nonVisual.indexOf(String(element.tagName || "").toLowerCase()) !== -1) continue;
+    const classes = classesOf(element);
+    const rect = element.getBoundingClientRect();
+
+    // ── THE TYPE-STEP SET ──────────────────────────────────────────────
+    // Same definition of a text-bearing leaf `probePage` uses (an element
+    // with words and no element children), so `fontSizeSteps[0]` and
+    // `displayTypeScale * canvasHeight` describe the same glyph. Rounded to
+    // whole px because a `clamp()` or a `calc(19px * var(--ts))` resolves to
+    // 31.9998 and 32 for what a designer laid out as ONE step; nothing in
+    // these templates puts two intended steps within 1px of each other.
+    const text = (element.textContent ?? "").trim();
+    if (element.children.length === 0 && text !== "" && rect.width > 0 && rect.height > 0) {
+      const computed = getComputedStyle(element);
+      const px = parseFloat(String(computed.fontSize ?? ""));
+      if (isFinite(px) && px > 0) {
+        const step = Math.round(px);
+        if (sizes.indexOf(step) === -1) sizes.push(step);
+      }
+      // ── THE ALIGNMENT COLUMN SET ───────────────────────────────────────
+      // The INLINE START edge, which is the left edge in `ltr` and the right
+      // edge in `rtl` — a Hebrew plate ranged right sits on ONE column, and a
+      // read that took `left` unconditionally would report one column per line
+      // length and make every Hebrew plate look chaotic.
+      //
+      // Quantised to 4px for the reason the font sizes are rounded to whole
+      // px: sub-pixel layout and an optical hang of a px or two are one column
+      // to a reader, and the question is "how many places does the eye have to
+      // start from", not "how many distinct floats did Chromium produce".
+      const rtl = String(computed.direction ?? "ltr") === "rtl";
+      const edge = Math.round((rtl ? rect.right : rect.left) / 4) * 4;
+      if (columns.indexOf(edge) === -1) columns.push(edge);
+    }
+
+    if (classes.length === 0) continue;
+    let isWatched = false;
+    for (const cls of classes) if (arg.watch.indexOf(cls) !== -1) isWatched = true;
+    if (!isWatched) continue;
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    const ariaHidden = typeof element.getAttribute === "function" ? element.getAttribute("aria-hidden") : null;
+    if (ariaHidden === "true") continue;
+    if (String(getComputedStyle(element).visibility ?? "visible") === "hidden") continue;
+    watched.push({ element, rect, name: describe(element), classes });
+  }
+
+  const collisions: { a: string; b: string; overlapPx: number }[] = [];
+  const depth = (p: ProbeRect, q: { left: number; top: number; right: number; bottom: number }): number => {
+    const ix = Math.min(p.right, q.right) - Math.max(p.left, q.left);
+    const iy = Math.min(p.bottom, q.bottom) - Math.max(p.top, q.top);
+    return ix <= 0 || iy <= 0 ? 0 : Math.min(ix, iy);
+  };
+
+  for (let i = 0; i < watched.length; i++) {
+    const a = watched[i]!;
+    for (let j = i + 1; j < watched.length; j++) {
+      const b = watched[j]!;
+      if (isAncestor(a.element, b.element) || isAncestor(b.element, a.element)) continue;
+      const overlapPx = depth(a.rect, b.rect);
+      if (overlapPx > arg.minOverlapPx) collisions.push({ a: a.name, b: b.name, overlapPx });
+    }
+
+    if (arg.reserved !== undefined) {
+      let owns = false;
+      for (const cls of a.classes) if ((arg.reservedOwners ?? []).indexOf(cls) !== -1) owns = true;
+      if (!owns) {
+        const zone = { left: arg.reserved.x, top: arg.reserved.y, right: arg.reserved.x + arg.reserved.w, bottom: arg.reserved.y + arg.reserved.h };
+        const overlapPx = depth(a.rect, zone);
+        // The literal must equal `RESERVED_ZONE_SELECTOR`, and cannot
+        // REFERENCE it: this body is serialised to the page and closes over
+        // nothing. `probe-collisions.test.ts` asserts the two agree, so the
+        // drift is caught by a test rather than left to a reader.
+        if (overlapPx > arg.minOverlapPx) collisions.push({ a: a.name, b: "[reserved-zone]", overlapPx });
+      }
+    }
+  }
+
+  // Deepest first, then by name, so the cap drops the least interesting pairs
+  // and two runs of the same plate report the same list in the same order.
+  collisions.sort((x, y) => y.overlapPx - x.overlapPx || (x.a + x.b < y.a + y.b ? -1 : 1));
+  sizes.sort((x, y) => y - x);
+
+  // The caps are literals rather than named module constants because this
+  // body is serialised and run in the page and may close over nothing — the
+  // same rule that puts `watch` and `minOverlapPx` in the argument. Six
+  // collisions matches `overflowing`/`offscreen`, which are capped at six for
+  // the same reason: these lists exist to NAME A CULPRIT in a steer sentence,
+  // not to enumerate a DOM. Twenty-four type steps is well past the point
+  // where the count is itself the finding.
+  return {
+    n: arg.n,
+    collisions: collisions.slice(0, 6),
+    fontSizeSteps: sizes.slice(0, 24),
+    alignmentColumns: columns.length,
+    subjectBoxes: { hero: subjectShare(arg.subjects.hero), device: subjectShare(arg.subjects.device), graphic: subjectShare(arg.subjects.graphic) },
+  };
+}
+
 /**
  * Persists one rendered slide's PNG bytes: uploads to `mediaStore` when one
  * is configured (the deliverable then carries a durable `gs://` reference —
@@ -797,6 +1276,7 @@ export function createRenderCarousel(mediaStore?: GcsArtifactStoreLike) {
           // AFTER the screenshot, deliberately: nothing the probe reads can
           // then have perturbed the pixels that were measured.
           let probe: SlideProbe | undefined;
+          let geometry: SlideGeometry | undefined;
           if (input.probe === true) {
             try {
               probe = await page.evaluate(probePage, { n: slide.n, w: input.canvas.w, h: input.canvas.h });
@@ -804,6 +1284,28 @@ export function createRenderCarousel(mediaStore?: GcsArtifactStoreLike) {
               // The probe is diagnostic. A page that will not answer it still
               // rendered, and a render must not fail on its own instrumentation.
               probe = undefined;
+            }
+            // A SEPARATE try: a geometry read that throws must not take the
+            // overflow read down with it, and vice versa. Two evaluates
+            // rather than one because the watch list and the threshold are
+            // module constants that this body must not close over, and
+            // because the two answer different questions — see probeGeometry.
+            try {
+              geometry = await page.evaluate(probeGeometry, {
+                n: slide.n,
+                watch: [...COLLISION_WATCH_CLASSES],
+                minOverlapPx: COLLISION_MIN_PX,
+                w: input.canvas.w,
+                h: input.canvas.h,
+                subjects: {
+                  hero: [...SUBJECT_BOX_GROUPS.hero],
+                  device: [...SUBJECT_BOX_GROUPS.device],
+                  graphic: [...SUBJECT_BOX_GROUPS.graphic],
+                },
+                ...(input.reservedZone !== undefined ? { reserved: input.reservedZone, reservedOwners: ["brand-logo", "brand-mark"] } : {}),
+              });
+            } catch {
+              geometry = undefined;
             }
           }
 
@@ -816,6 +1318,7 @@ export function createRenderCarousel(mediaStore?: GcsArtifactStoreLike) {
             ...(metrics !== undefined ? { metrics } : {}),
             ...(measureFailure !== undefined ? { measureFailure } : {}),
             ...(probe !== undefined ? { probe } : {}),
+            ...(geometry !== undefined ? { geometry } : {}),
           });
         }
 

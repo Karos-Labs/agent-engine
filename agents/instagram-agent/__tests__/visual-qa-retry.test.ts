@@ -17,7 +17,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
-import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
+import { DEFAULT_ENTITIES_TURN, DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 const params = { runId: "instagram_run_visualqa", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -45,7 +45,7 @@ describe("08b-visual-qa: post-render visual QA runs and retries through the SAME
       findings: [{ ruleId: "no-empty-closer", slide: 6, passed: false, note: "the closer slide's images carry no device/photo reference" }],
     };
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(badQa),
@@ -69,7 +69,8 @@ describe("08b-visual-qa: post-render visual QA runs and retries through the SAME
 
     // scout + research + angle + 2 x (copy + vet + relevance + QA).
     expect(result.status).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(14);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(15);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("08b-visual-qa-attempt-1");
@@ -93,7 +94,7 @@ describe("08b-visual-qa: post-render visual QA runs and retries through the SAME
     const promptStore = makePromptStore();
     const badQa = { pass: false, findings: [{ ruleId: "nothing-overlaps", passed: false, note: "a headline field and a stat field both claim the same region" }] };
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(badQa),
@@ -155,7 +156,8 @@ describe("08b-visual-qa: post-render visual QA runs and retries through the SAME
     //   3 × (copy + vet + relevance + value + visual QA)                      = 15
     //   after the loop: packager                                              = 1
     //                                                                     total 19
-    expect(router.complete).toHaveBeenCalledTimes(19);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(20);
 
     // And the client receives it, with the truth attached rather than a 404.
     const deliverables = await env.store.listJson<{ deliverable: { selfCheck?: { reason: string } } }>(

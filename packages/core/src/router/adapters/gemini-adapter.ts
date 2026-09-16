@@ -1,6 +1,10 @@
-import { FinishReason, type GoogleGenAI } from "@google/genai";
+import { FinishReason, GoogleGenAI } from "@google/genai";
 import type { CompletionRequest, CompletionResult, ModelAdapter } from "./types.js";
 import { toRootObjectJsonSchema } from "./root-object-schema.js";
+// `OutputLimitExceededError` is ONE type across every route on purpose:
+// `BaseAgent` discriminates on it both to raise the ceiling and to book a
+// cut-off turn's spend, and a per-adapter copy would mean the Gemini leg
+// silently kept reporting $0 the day the Anthropic leg was fixed.
 import { OutputLimitExceededError, parseStructuredOutput, parseStructuredOutputText } from "./structured-output.js";
 import { withRetry, type RetryOptions } from "./retry.js";
 
@@ -25,6 +29,19 @@ export type GeminiClientResolver = (canonicalModelId: string) => GoogleGenAI;
 export interface GeminiAdapterOptions {
   client: GoogleGenAI | GeminiClientResolver;
   retryOptions?: RetryOptions;
+  /**
+   * Overrides `providerId` for a second instance of this adapter pointed at a
+   * different Google backend. Defaults to `"google-gemini"`, which is what
+   * every existing caller gets.
+   *
+   * It exists because `providerId` is what a failover log line and a step's
+   * `servedBy.adapter` field are made of, and `ResilientGeminiAdapter` puts
+   * two `GeminiAdapter`s in one chain: without this, a Vertex-to-direct
+   * failover would record `google-gemini -> google-gemini`, which names the
+   * hop that happened and tells an operator nothing about WHICH transport is
+   * now serving the run.
+   */
+  providerId?: string;
 }
 
 /**
@@ -59,7 +76,7 @@ export interface GeminiAdapterOptions {
  * exploiting one provider's looser rule.
  */
 export class GeminiAdapter implements ModelAdapter {
-  readonly providerId = "google-gemini";
+  readonly providerId: string;
 
   private readonly resolveClient: GeminiClientResolver;
   private readonly retryOptions: RetryOptions;
@@ -67,6 +84,7 @@ export class GeminiAdapter implements ModelAdapter {
   constructor(options: GeminiAdapterOptions) {
     this.resolveClient = typeof options.client === "function" ? options.client : () => options.client as GoogleGenAI;
     this.retryOptions = options.retryOptions ?? {};
+    this.providerId = options.providerId ?? "google-gemini";
   }
 
   async complete<TOutput>(req: CompletionRequest<TOutput>): Promise<CompletionResult<TOutput>> {
@@ -89,6 +107,31 @@ export class GeminiAdapter implements ModelAdapter {
       this.retryOptions,
     );
 
+    const finishReason = response.candidates?.[0]?.finishReason;
+
+    const usage = response.usageMetadata;
+    const cached = usage?.cachedContentTokenCount ?? 0;
+    const prompt_ = usage?.promptTokenCount ?? 0;
+
+    // Resolved before ANY failure branch below, so a turn that fails still
+    // reports its real spend rather than the zeros a post-validation read
+    // leaves behind. Ordering is the whole mechanism here — see the sibling
+    // comment in `messages-api-adapter.ts`.
+    //
+    // `candidatesTokenCount` excludes `thoughtsTokenCount`, and thinking
+    // tokens are billed at the same output rate AND count against
+    // `maxOutputTokens` — which is how `04b-research-extract-facts` truncated
+    // on geektime (prep run pubsub-21868533047825082) while its three
+    // successful siblings returned only 3,059-3,263 visible output tokens on
+    // 65k-76k of input. Folding thoughts in is what makes the reported figure
+    // match the invoice on a thinking model, and it is also the only evidence
+    // a future truncation leaves behind.
+    const reportedUsage = {
+      modelUsed: req.model,
+      inputTokens: { cached, uncached: Math.max(prompt_ - cached, 0) },
+      outputTokens: (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0),
+    };
+
     // Mirrors every other adapter's truncation handling: a cut-off response
     // is not a partial answer, the JSON is unparseable mid-object, and the
     // schema-violation error this would otherwise surface points nowhere
@@ -96,20 +139,16 @@ export class GeminiAdapter implements ModelAdapter {
     // instead of ending the step on a ceiling it is allowed to raise — and
     // carrying the usage of the truncated attempt, which is a full ceiling's
     // worth of output tokens and was previously recorded as zero.
-    const finishReason = response.candidates?.[0]?.finishReason;
+    //
+    // It carries `reportedUsage` rather than re-reading `usageMetadata` here,
+    // because only `reportedUsage` folds `thoughtsTokenCount` in — and a
+    // thinking model that truncates spent most of the ceiling on thoughts, so
+    // a branch that re-derived the usage locally would under-report exactly the
+    // call it exists to account for.
     if (finishReason === FinishReason.MAX_TOKENS) {
-      const truncatedUsage = response.usageMetadata;
-      const truncatedCached = truncatedUsage?.cachedContentTokenCount ?? 0;
       throw new OutputLimitExceededError(
         `google-gemini: model "${req.model}" hit the ${maxOutputTokens}-token output limit before completing its structured output`,
-        {
-          attemptedMaxTokens: maxOutputTokens,
-          usage: {
-            modelUsed: req.model,
-            inputTokens: { cached: truncatedCached, uncached: Math.max((truncatedUsage?.promptTokenCount ?? 0) - truncatedCached, 0) },
-            outputTokens: truncatedUsage?.candidatesTokenCount ?? 0,
-          },
-        },
+        { attemptedMaxTokens: maxOutputTokens, usage: reportedUsage },
       );
     }
 
@@ -122,21 +161,51 @@ export class GeminiAdapter implements ModelAdapter {
       );
     }
 
-    const usage = response.usageMetadata;
-    const cached = usage?.cachedContentTokenCount ?? 0;
-    const prompt_ = usage?.promptTokenCount ?? 0;
-
-    // Resolved before parsing so a malformed turn still reports its real spend
-    // rather than the zeros a post-validation read leaves behind.
-    const reportedUsage = {
-      modelUsed: req.model,
-      inputTokens: { cached, uncached: Math.max(prompt_ - cached, 0) },
-      outputTokens: usage?.candidatesTokenCount ?? 0,
-    };
     const parseContext = { providerId: "google-gemini", model: req.model, usage: reportedUsage };
 
     const output = parseStructuredOutput(req.schema, parseStructuredOutputText(raw, parseContext), wrapped, parseContext);
 
     return { output, ...reportedUsage };
   }
+}
+
+/**
+ * The Gemini Developer API (`GEMINI_API_KEY`) as a SECOND TRANSPORT to the
+ * same models — not as a route.
+ *
+ * AU59 (SCRUM-358) deleted the `new GoogleGenAI({ apiKey })` construction
+ * from `create-model-router-from-env.ts` along with the whole direct model
+ * route, and that decision is not reopened here: `GEMINI_ROUTE=direct` still
+ * builds no vendor adapter, and `vertex-only-router.test.ts` still pins that.
+ * What AU59 left behind is a different, narrower gap — the Vertex route is
+ * now the ONLY way a Gemini step can be served, so one infrastructure fault
+ * on it takes every Gemini step in the engine with it. On 2026-09-13/14 a
+ * Vertex 403 (`Lightning dunning decision is deny for project`) did exactly
+ * that: research extraction and image vetting both died, the run shipped
+ * all-typographic, and the human gate approved it.
+ *
+ * Claude has had the symmetric answer since AU61 — Agent Platform primary,
+ * direct Anthropic API on a 429/404/403 (`ResilientClaudeAdapter`). This is
+ * the factory that lets `ResilientGeminiAdapter` do the same for Gemini. It
+ * is deliberately here, in the adapter's own module, rather than back in
+ * `create-model-router-from-env.ts`: a failover transport and a selectable
+ * route are different things, and putting the construction back where AU59
+ * removed it would be an invitation to re-wire it as a route by accident.
+ *
+ * Model ids need no translation between the two backends (see the class
+ * comment above), so the SAME `req.model` is sent on both — this hop never
+ * changes model identity, exactly like Claude's primary->secondary hop, and
+ * so does not weaken RFC-01 §5.4's "a pinned step never silently swaps
+ * models".
+ */
+export function createDirectGeminiAdapter(apiKey: string, options: { retryOptions?: RetryOptions } = {}): ModelAdapter {
+  if (apiKey.trim() === "") {
+    throw new Error("createDirectGeminiAdapter: GEMINI_API_KEY is empty — pass a key or leave the failover transport unconfigured");
+  }
+  const client = new GoogleGenAI({ apiKey });
+  return new GeminiAdapter({
+    client,
+    providerId: "google-gemini-direct",
+    ...(options.retryOptions !== undefined ? { retryOptions: options.retryOptions } : {}),
+  });
 }

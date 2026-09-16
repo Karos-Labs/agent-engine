@@ -470,6 +470,68 @@ export const InstagramSlideLayoutSchema = z.enum([
 export type InstagramSlideLayout = z.infer<typeof InstagramSlideLayoutSchema>;
 
 /**
+ * ══ PHASE 5.5, BRIEF ITEM B: EVERY STRING IN THE COPY CONTRACT IS BOUNDED ══
+ *
+ * Read this once and the `.max()` on every field below stops looking arbitrary.
+ *
+ * ## Why they exist at all
+ *
+ * `05-write-copy` inherited `DEFAULT_MAX_TOKENS = 16384` because it declared no
+ * ceiling, and on 2026-09-16 five of six attempts across three prep runs died
+ * at it for $0 (`messages-api-adapter.ts`'s `max_tokens` branch). The ceiling
+ * is raised to `COPY_MAX_TOKENS` in `instagram-copy-agent.ts`, and that alone
+ * would be a fix that cannot be regression-tested: until this block, the
+ * schema's MAXIMUM SERIALISED OUTPUT WAS INFINITE. `headline` and `body` were
+ * `z.string().min(1)` with no upper bound, as were `sourceRef`, `caption`, and
+ * every string on the four archetype content blocks. There was no number to
+ * assert against a ceiling, so `__tests__/copy-schema-length.test.ts` — the
+ * guard that fails CI when a future field pushes the maximal draft past the
+ * ceiling — was literally unwritable. The bounds and the test ship together.
+ *
+ * ## How each number was chosen, and the rule that generated it
+ *
+ * **A schema max on a model output is a coin flip that loses the whole draft**
+ * (the `altText` `max(125)` defect cost two of three live runs their hashtags
+ * on the same day). So no bound here is a design preference about length. Each
+ * one clears BOTH of two floors, and the second one is the load-bearing half:
+ *
+ *   1. **At least 1.5x the longest value the field has ever carried**, measured
+ *      over the six prep runs of 2026-09-16 (8 completed drafts, 61 slides).
+ *   2. **At least 2x the gate that already governs it.**
+ *      `slide-word-budget.ts` holds a slide's `headline` plus `body` to
+ *      `MAX_WORDS_PER_SLIDE = 30` and one structured block — a list row, a
+ *      comparison column — to `MAX_WORDS_PER_BLOCK = 20`. At the ~7 characters
+ *      a word this agent's two languages average, that is ~210 characters a
+ *      slide and ~140 a block. The gate RETURNS a draft with a finding and
+ *      costs the run nothing; the schema kills it. So the schema must never be
+ *      the thing that fires first, on any field, ever.
+ *
+ * | field | longest seen | gate equivalent | bound |
+ * |---|---|---|---|
+ * | `headline` + `body` | 109 + 269 | ~210 | 200 + 600 |
+ * | `sourceRef` | 194 | exempt (a citation) | 300 |
+ * | `caption` | 1,516 | none | 2,200, Instagram's own limit |
+ * | `stat.subLabel` | 93 | ~210 with the headline | 200 |
+ * | `stat.source` | 52 | exempt (a citation) | 120 |
+ * | `quote.text` | 79 | ~210 | 300 |
+ * | `quote.attribution` | 45 | exempt | 120 |
+ * | `comparison.*Label` + `*Body` | 20 + 127 | ~140 a column | 60 + 220 |
+ * | `items[].title` + `.note` | 66 + 134 | ~140 a row | 140 + 210 |
+ *
+ * `kicker` (38 seen, 48 bound) and `SlideEmphasisSchema`'s spans (32 seen, 48
+ * bound) were already bounded and are unchanged.
+ *
+ * ## The headroom this leaves, and why it is not larger
+ *
+ * `__tests__/copy-schema-length.test.ts` measures the maximal draft these
+ * bounds permit at ~16,100 output tokens against the 19,200 it is allowed
+ * (60% of `COPY_MAX_TOKENS`). The spare 16% is deliberate and it is SMALL:
+ * `scene-brief.ts` is about to gain a `subject` block in the same phase, worth
+ * roughly 700 tokens of it. A bound loosened here is spent out of that margin,
+ * and the test says so by failing.
+ */
+
+/**
  * `stat_callout`'s content. `figure` carries its own unit or symbol ("73%",
  * "4.2x", "$1.8B") exactly as the legacy contract did — a separate unit field
  * invites "4.2" + "x" being typeset apart, and the figure's own string length
@@ -477,26 +539,36 @@ export type InstagramSlideLayout = z.infer<typeof InstagramSlideLayoutSchema>;
  *
  * `source` is required, not optional: the legacy system's rule was "every
  * figure names its source on the slide", and a big unattributed number is
- * precisely the shape of a claim a reader should distrust.
+ * precisely the shape of a claim a reader should distrust. Its bound is the
+ * same 120 `slide-devices.ts` gives a device's `source`, because it is the same
+ * kind of string doing the same job on the same plate.
  */
 export const SlideStatSchema = z.object({
   figure: z.string().min(1).max(12),
-  subLabel: z.string().min(1),
-  source: z.string().min(1),
+  subLabel: z.string().min(1).max(200),
+  source: z.string().min(1).max(120),
 });
 
-/** `quote_card`'s content — the pull-quote and who said it. */
+/**
+ * `quote_card`'s content — the pull-quote and who said it.
+ *
+ * `text` gets the loosest ratio in the table (3.8x the longest ever seen)
+ * deliberately: a pull quote is the one field whose length is not the writer's
+ * to choose, since §27 of the copy prompt forbids paraphrasing a source's
+ * prose. A quote that has to be cut to fit a schema is a quote that gets
+ * silently reworded instead.
+ */
 export const SlideQuoteSchema = z.object({
-  text: z.string().min(1),
-  attribution: z.string().min(1),
+  text: z.string().min(1).max(300),
+  attribution: z.string().min(1).max(120),
 });
 
 /** `comparison_card`'s content — two sides, each a short label plus a line of detail. */
 export const SlideComparisonSchema = z.object({
-  leftLabel: z.string().min(1),
-  leftBody: z.string().min(1),
-  rightLabel: z.string().min(1),
-  rightBody: z.string().min(1),
+  leftLabel: z.string().min(1).max(60),
+  leftBody: z.string().min(1).max(220),
+  rightLabel: z.string().min(1).max(60),
+  rightBody: z.string().min(1).max(220),
 });
 
 /**
@@ -505,7 +577,7 @@ export const SlideComparisonSchema = z.object({
  * so five would overflow the canvas rather than shrink to fit.
  */
 export const SlideListSchema = z
-  .array(z.object({ title: z.string().min(1), note: z.string().min(1).optional() }))
+  .array(z.object({ title: z.string().min(1).max(140), note: z.string().min(1).max(210).optional() }))
   .min(2)
   .max(4);
 
@@ -530,19 +602,127 @@ export const SlideListSchema = z
  * model-authored content, deliberately, since that split is what keeps a
  * copy field from being an injection point (see `assertSafeMarkup`).
  */
+/**
+ * How many `{{key}}` slots one authored archetype may declare, and therefore
+ * how many entries `fields` may carry. One number, referenced by both, because
+ * the contract is that they are the same set: every declared slot has a value
+ * and every value fills a declared slot.
+ */
+export const MAX_CUSTOM_ARCHETYPE_SLOTS = 8;
+
+/**
+ * The identifier shape, shared by the brief that names an archetype and the
+ * markup that fills it.
+ *
+ * `.max(47)` is `"custom_"` plus the regex's own 40, so it refuses nothing the
+ * regex accepts. It is there because a bound a machine can read is worth
+ * having: `__tests__/copy-schema-length.test.ts` walks this schema and refuses
+ * any string whose maximum it cannot determine, and a length implied by a
+ * regex is a length no walker can determine.
+ */
+const CustomArchetypeIdSchema = z
+  .string()
+  .max(47)
+  .regex(/^custom_[a-z0-9_]{3,40}$/, "must start with 'custom_' and contain only lowercase letters, digits, and underscores");
+
+/** A `{{key}}` slot name. Alphanumeric plus underscore, because it is interpolated into markup by exact match. */
+const CustomArchetypeSlotSchema = z.string().min(1).max(40).regex(/^[A-Za-z0-9_]+$/);
+
 export const SlideCustomArchetypeSchema = z.object({
-  archetypeId: z
-    .string()
-    .regex(/^custom_[a-z0-9_]{3,40}$/, "must start with 'custom_' and contain only lowercase letters, digits, and underscores"),
+  archetypeId: CustomArchetypeIdSchema,
   name: z.string().min(1).max(60),
   /** One sentence: why none of the six standard archetypes fit this slide. */
   rationale: z.string().min(1).max(300),
   bodyHtml: z.string().min(1).max(4000),
   css: z.string().max(4000).default(""),
-  slots: z.array(z.string().regex(/^[A-Za-z0-9_]+$/)).min(1).max(8),
-  fields: z.record(z.string(), z.string().max(2000)),
+  slots: z.array(CustomArchetypeSlotSchema).min(1).max(MAX_CUSTOM_ARCHETYPE_SLOTS),
+  /**
+   * The value for every declared slot.
+   *
+   * `2000` a value and NO CAP AT ALL on the number of entries was the single
+   * largest term in the copy schema's maximum: 8 slots' worth of markup plus an
+   * unbounded record of 2,000-character values, on every one of eight slides.
+   * A value is now bounded by the same 600 `body` gets — it IS a body, set in a
+   * shape the writer designed — and the record carries at most as many entries
+   * as there are slots.
+   */
+  fields: z
+    .record(CustomArchetypeSlotSchema, z.string().max(600))
+    .refine((f) => Object.keys(f).length <= MAX_CUSTOM_ARCHETYPE_SLOTS, {
+      message: `at most ${MAX_CUSTOM_ARCHETYPE_SLOTS} fields, one per declared slot`,
+    }),
 });
 export type SlideCustomArchetype = z.infer<typeof SlideCustomArchetypeSchema>;
+
+/**
+ * ══ PHASE 5.5 ITEM B3: THE MARKUP IS HOISTED OUT OF THE COPY STEP ══
+ *
+ * `customArchetype` was up to 4,000 (`bodyHtml`) + 4,000 (`css`) + an unbounded
+ * record of 2,000-character values, authored INSIDE the draft, on a step whose
+ * output ceiling five of six attempts hit on 2026-09-16. It was also the wrong
+ * thing to be there: it is markup rather than copy, the writer authors it at
+ * most once or twice per carousel, and a markup mistake failed the whole draft
+ * rather than the one slide it belonged to.
+ *
+ * So the copy step now emits a BRIEF — which archetype, called what, why, and
+ * which slots it needs, about sixty output tokens — and
+ * `05f-author-custom-archetype` (`InstagramCustomArchetypeAgent`) authors the
+ * markup against it in its own bounded step. A failure there degrades THAT
+ * SLIDE through `assembleSlidesData`'s existing ladder, at the cost of one
+ * $0.030 call rather than a $0.35 draft.
+ *
+ * The identity of the archetype stays with the WRITER, deliberately: the markup
+ * step receives `archetypeId`, `name` and `rationale` and does not re-emit
+ * them, so it cannot quietly rename or re-justify a design the writer chose.
+ * `composeCustomArchetype` is the only way the two halves are joined.
+ */
+export const SlideCustomArchetypeBriefSchema = z.object({
+  archetypeId: CustomArchetypeIdSchema,
+  name: z.string().min(1).max(60),
+  /** One sentence naming the SHAPE none of the standard archetypes can make. */
+  rationale: z.string().min(1).max(300),
+  /**
+   * The `{{key}}` names this design needs, in reading order.
+   *
+   * The writer declares them because the writer knows what the slide has to
+   * say; `05f` must use exactly this set, which is what keeps a design that
+   * reads only standard field names (and is therefore promotable to a stored
+   * template) a decision the writer can make.
+   */
+  slots: z.array(CustomArchetypeSlotSchema).min(1).max(MAX_CUSTOM_ARCHETYPE_SLOTS),
+});
+export type SlideCustomArchetypeBrief = z.infer<typeof SlideCustomArchetypeBriefSchema>;
+
+/** `InstagramCustomArchetypeAgent`'s output — the markup half only. See `SlideCustomArchetypeBriefSchema`. */
+export const CustomArchetypeMarkupSchema = SlideCustomArchetypeSchema.pick({
+  bodyHtml: true,
+  css: true,
+  slots: true,
+  fields: true,
+});
+export type CustomArchetypeMarkup = z.infer<typeof CustomArchetypeMarkupSchema>;
+
+/**
+ * Join the writer's brief to the markup step's output.
+ *
+ * The ONE place the two halves meet, so there is one place to read when asking
+ * what a stored custom archetype is made of. `slots` comes from the MARKUP,
+ * not the brief: `05f` may legitimately drop a slot it found it did not need,
+ * and `assertSafeMarkup` plus `custom-archetype-checks.ts` validate `bodyHtml`
+ * against the slots it actually declares. A slot the markup added that the
+ * brief never asked for is still checked there, not here.
+ */
+export function composeCustomArchetype(brief: SlideCustomArchetypeBrief, markup: CustomArchetypeMarkup): SlideCustomArchetype {
+  return {
+    archetypeId: brief.archetypeId,
+    name: brief.name,
+    rationale: brief.rationale,
+    bodyHtml: markup.bodyHtml,
+    css: markup.css,
+    slots: markup.slots,
+    fields: markup.fields,
+  };
+}
 
 /**
  * The copy fields a mark may be aimed at — the COPY's OWN field names, never
@@ -633,8 +813,8 @@ export type SlideEmphasis = z.infer<typeof SlideEmphasisSchema>;
 
 export const InstagramSlideCopySchema = z.object({
   n: z.number().int().positive(),
-  headline: z.string().min(1),
-  body: z.string().min(1),
+  headline: z.string().min(1).max(200),
+  body: z.string().min(1).max(600),
   /**
    * Phase 3, item R: a scene brief, not twelve words.
    *
@@ -647,7 +827,8 @@ export const InstagramSlideCopySchema = z.object({
    * consumer goes through (`normaliseVisualNeed`) live in `scene-brief.ts`.
    */
   visualNeed: VisualNeedFieldSchema,
-  sourceRef: z.string().min(1),
+  /** A `facts[].claim` copied verbatim, which step 07 traces back character for character — so the bound is 2.1x the longest claim any of the six 2026-09-16 runs put here (194). */
+  sourceRef: z.string().min(1).max(300),
   layout: InstagramSlideLayoutSchema.default("photo"),
   /**
    * The archetype-specific content, all optional.
@@ -667,7 +848,40 @@ export const InstagramSlideCopySchema = z.object({
   quote: SlideQuoteSchema.optional(),
   comparison: SlideComparisonSchema.optional(),
   items: SlideListSchema.optional(),
+  /**
+   * The AUTHORED markup for a `layout: "custom"` slide.
+   *
+   * Still here, still optional, still read by everything downstream
+   * (`assembleSlidesData`, `custom-archetype-memory.ts`, the promotion path) —
+   * but since Phase 5.5 the COPY STEP no longer writes it. `05f` does, through
+   * `composeCustomArchetype`, which is why `InstagramCopyDraftSchema` below
+   * omits this one key. See `SlideCustomArchetypeBriefSchema` for the why.
+   */
   customArchetype: SlideCustomArchetypeSchema.optional(),
+  /** What the writer wants `05f-author-custom-archetype` to build, when a slide's shape needs a layout none of the standard archetypes has. */
+  customArchetypeBrief: SlideCustomArchetypeBriefSchema.optional(),
+  /**
+   * An object this slide's archetype asks for that the fact cards genuinely
+   * cannot fill — named HERE, and never in `headline` or `body`.
+   *
+   * On 2026-09-16 geektime's slide 4 shipped the sentence *"לא נמצא ציטוט
+   * משתתף ישיר בחומרים; השקף נושא את הטענה בכותרת ובגוף"* to the reader. The
+   * model was not hallucinating: `editorial-series.ts` told the writer, in the
+   * block handed to it, to *"say so in that slide's content"*. A writer obeying
+   * an instruction is a fixed instruction, not a fixed model, and an
+   * instruction that has no field to write into will always write into the
+   * prose. This is that field.
+   *
+   * Optional and never gating: a slide that filled its archetype omits it, and
+   * a run whose series step never fired reads exactly as it did. What reads it
+   * is `07a`'s degrade path (the slide gets a designed object plate and a
+   * `degradeMarker` on the gate payload) and `craft-hygiene.ts`'s work-note
+   * clause, which returns a draft that narrated the gap in prose instead.
+   *
+   * 160 characters: one sentence naming one missing object, and short enough
+   * that it is obviously not somewhere to move the slide's copy to.
+   */
+  unfillable: z.string().min(1).max(160).optional(),
   /** A short mono eyebrow above a `headline_focus` statement. Optional on every archetype. */
   kicker: z.string().min(1).max(48).optional(),
   /**
@@ -809,10 +1023,44 @@ export const InstagramCopyOutputSchema = z.object({
    * a real caption a human wrote to accompany the images. Required, because
    * an Instagram carousel with no caption is exactly the defect this field
    * exists to close.
+   *
+   * `2200` is not a house number: it is Instagram's own caption limit, so a
+   * caption over it could not be published whatever this schema said. The
+   * longest caption any of the six 2026-09-16 prep runs wrote was 1,516
+   * characters, which is the same ~1.5x margin every other bound in this file
+   * carries, arrived at from the other direction.
    */
-  caption: z.string().min(1),
+  caption: z.string().min(1).max(2200),
 });
 export type InstagramCopyOutput = z.infer<typeof InstagramCopyOutputSchema>;
+
+/**
+ * ══ WHAT `05-write-copy` ITSELF MAY EMIT ══
+ *
+ * `InstagramCopyOutputSchema` minus the one key the copy step no longer writes.
+ *
+ * Two schemas rather than one, and the difference is the whole of item B3.
+ * `InstagramCopyOutput` is the shape the REST OF THE WORKFLOW carries, and it
+ * keeps `customArchetype` because `05f-author-custom-archetype` writes it back
+ * onto the slide before anything renders. `InstagramCopyDraft` is the shape the
+ * MODEL is asked for, and it cannot contain markup at all — which is what makes
+ * the maximal serialised draft a finite number that
+ * `__tests__/copy-schema-length.test.ts` can hold against `COPY_MAX_TOKENS`.
+ *
+ * A draft is assignable to `InstagramCopyOutput` by construction (an omitted
+ * optional key), so nothing downstream needed a change or a cast.
+ *
+ * `.omit()` STRIPS rather than refuses: a model that emits `customArchetype`
+ * anyway loses the key and keeps its draft. That is the same fail-open
+ * reasoning `SlideEmphasisSchema` states at length — furniture must never be
+ * able to reject a draft — and here it also means the migration cannot fail: a
+ * checkpoint written by the previous prompt re-parses, minus a block that is
+ * about to be rebuilt by `05f`.
+ */
+export const InstagramCopyDraftSchema = InstagramCopyOutputSchema.extend({
+  slides: z.array(InstagramSlideCopySchema.omit({ customArchetype: true })).min(1).max(8),
+});
+export type InstagramCopyDraft = z.infer<typeof InstagramCopyDraftSchema>;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Step 06 — source + vet images (InstagramImageVettingAgent's output)
@@ -830,6 +1078,29 @@ export const ImageCandidateSchema = z.object({
   description: z.string().min(1),
 });
 export type ImageCandidate = z.infer<typeof ImageCandidateSchema>;
+
+/**
+ * How defensible one candidate's licence is, as a closed class.
+ *
+ * `editorial-only` is new in Phase 5.5 and it is the reason this enum exists
+ * at all: a press photograph of a named public figure is routinely licensed
+ * for editorial use and not for advertising, and until now such a candidate
+ * had nowhere to land but `unknown`, which the rights gate refuses outright.
+ * Carrying the class lets a COMMENTARY post use it and a PROMOTIONAL one not,
+ * which is the actual rule rather than a proxy for it.
+ *
+ * ## Why the enum lives HERE and the policy lives in `entity-imagery.ts`
+ *
+ * `ImageSelectionSchema` needs the enum, and `entity-imagery.ts` imports
+ * `concept-direction.ts` (for the illustration clause), which imports half the
+ * workflow. Declaring it there and importing it here would close a runtime
+ * cycle through this file — the same trap `scene-brief.ts`'s header documents.
+ * The enum is a vocabulary; `licenceClassFor`, `licenceAdmissible` and
+ * `creditLineFor` are the policy, and they stay with the rights commentary.
+ */
+export const LICENCE_CLASSES = ["blanket", "attributable", "editorial-only", "unknown"] as const;
+export const LicenceClassSchema = z.enum(LICENCE_CLASSES);
+export type LicenceClass = z.infer<typeof LicenceClassSchema>;
 
 /**
  * One slide's vetting verdict. `imagePath: null` means "no candidate in the
@@ -888,6 +1159,53 @@ export const ImageSelectionSchema = z.object({
   claimMatch: z.number().int().min(1).max(5),
   /** Why the score — names what in the picture does or does not carry the slide's claim. Required, so a low score is checkable rather than a black box. */
   claimMatchReason: z.string().min(1),
+  /**
+   * Phase 5.5, item A3. Does this picture show the slide's `subject.noun` and
+   * its `mustShow` clauses — WHAT IS IN FRAME, judged apart from the grade,
+   * the light and the framing `scene` also describes?
+   *
+   * This is the score the selection floor moves onto, and it exists because
+   * `claimMatch` alone could not see the 2026-09-16 failure. karoslabs' cover
+   * pool held four correct photographs of server racks; the vet scored the
+   * pool `claimMatch 1` and refused all of them, and its own reason says why:
+   * *"The other candidates are server infrastructure, but none feature the
+   * 'long exposure' effect that the `why` section states is necessary."* The
+   * subject was right and the treatment was wrong, and one number could not
+   * say so.
+   *
+   * OPTIONAL on the wire, and that is a file-ownership fact rather than a
+   * design preference: several `ImageSelection`s are CONSTRUCTED in the
+   * workflow (the typographic placeholder at `06`, the cover promoted by the
+   * interest re-layout) and a required field would be a breaking change to a
+   * file this package's image work does not own. `selectionPasses` therefore
+   * falls back to the `claimMatch` floor and REPORTS that it did, so a vet
+   * that silently stopped emitting the field shows up as a basis on the gate
+   * payload instead of as a quietly restored old threshold. Prompt `@6`
+   * requires it on every selection.
+   */
+  subjectMatch: z.number().int().min(1).max(5).optional(),
+  /** Why the subject score — names what is in frame, never how it was shot. */
+  subjectMatchReason: z.string().min(1).optional(),
+  /**
+   * How defensible this candidate's licence is, as a CLASS rather than as
+   * prose. `license` stays (it is the human-readable basis a reviewer reads);
+   * this is the machine-readable half the rights gate and the credit line need.
+   * Derived in code by `licenceClassFor` when the model omits it.
+   */
+  licenceClass: LicenceClassSchema.optional(),
+  /**
+   * WARN-ONLY this phase, gating nothing. Eight stock clichés the owner named
+   * in one sentence ("stock desks and cranes"); thepitchbydeel's 2026-09-16
+   * post shipped a yellow gantry crane under a headline about specialised
+   * agents.
+   *
+   * It ships unarmed on purpose. `instagram-floor-candidates-falsified`
+   * records three separators this project killed with the control that
+   * measured them, and a cliché detector that refuses a correct photograph of
+   * a real handshake is exactly that shape of mistake. Three prep runs of
+   * recorded verdicts first, then a decision.
+   */
+  stockCliche: z.enum(["handshake", "open-plan-office", "crane", "abstract-network", "lightbulb", "chess", "rocket", "glowing-brain"]).optional(),
 });
 export type ImageSelection = z.infer<typeof ImageSelectionSchema>;
 
@@ -897,8 +1215,77 @@ export type ImageSelection = z.infer<typeof ImageSelectionSchema>;
  * the existing text-only downgrade path. 3 ("compatible and generic") is the
  * floor because a generic-but-honest picture is what most stock pools can
  * offer; 1-2 is a picture that says something the slide does not.
+ *
+ * Still the floor on the CLAIM axis, and still re-checked deterministically.
+ * What changed in Phase 5.5 is that it is no longer the only axis — see
+ * `selectionPasses`.
  */
 export const MIN_CLAIM_MATCH = 3;
+
+/**
+ * The subject floor: 4, not 3.
+ *
+ * It is a whole step stricter than `MIN_CLAIM_MATCH` because the two numbers
+ * are answering different questions. `claimMatch 3` is documented, correctly,
+ * as *"compatible and generic… A stock desk under a slide about desk work"* —
+ * an honest floor for "does this contradict the claim". `subjectMatch` asks
+ * "is this a picture OF the thing", and "generically compatible" is not a yes.
+ * A 3 on this axis is the stock desk, which is the picture the owner looked at
+ * and said was not a picture.
+ */
+export const MIN_SUBJECT_MATCH = 4;
+
+/** Why a selection passed or failed the floor, so the gate payload can show the basis instead of a boolean. */
+export interface SelectionFloorVerdict {
+  passes: boolean;
+  /** `"subject"` — the `@6` floor ran. `"claim-fallback"` — the vet emitted no `subjectMatch` and the pre-5.5 floor was used. */
+  basis: "subject" | "claim-fallback";
+  reason: string;
+}
+
+/**
+ * THE SELECTION FLOOR, in one place.
+ *
+ * ```
+ * rightsUsable && watermarkFree && (subjectMatch >= 4 || (subjectMatch >= 3 && claimMatch >= 4))
+ * ```
+ *
+ * The second limb is what stops this from being a flat raise. A picture that
+ * is one honest step of abstraction from the subject (`subjectMatch 3`) but is
+ * unmistakably evidence for what the slide claims (`claimMatch 4`) is a good
+ * selection and always was — a photograph of an OpenAI office under a headline
+ * about OpenAI's decision. What the floor now refuses is the pairing that
+ * shipped all three of the 2026-09-16 posts' pictures: generically compatible
+ * on both axes.
+ *
+ * `imagePath === null` is NOT tested here. A null selection is unfillable by
+ * construction and every caller already handles it; folding it in would let a
+ * caller that forgot the null check believe this function had done it.
+ */
+export function selectionPasses(selection: Pick<ImageSelection, "rightsUsable" | "watermarkFree" | "claimMatch" | "subjectMatch">): SelectionFloorVerdict {
+  if (!selection.rightsUsable) return { passes: false, basis: "subject", reason: "the candidate is not rights-usable" };
+  if (!selection.watermarkFree) return { passes: false, basis: "subject", reason: "the candidate is watermarked" };
+
+  const subject = selection.subjectMatch;
+  if (subject === undefined) {
+    const passes = selection.claimMatch >= MIN_CLAIM_MATCH;
+    return {
+      passes,
+      basis: "claim-fallback",
+      reason: `the vet returned no subjectMatch, so the pre-5.5 claim floor was applied (claimMatch ${selection.claimMatch}/5, floor ${MIN_CLAIM_MATCH})`,
+    };
+  }
+
+  if (subject >= MIN_SUBJECT_MATCH) return { passes: true, basis: "subject", reason: `the picture shows the briefed subject (subjectMatch ${subject}/5)` };
+  if (subject >= MIN_CLAIM_MATCH && selection.claimMatch >= 4) {
+    return { passes: true, basis: "subject", reason: `one step of abstraction from the subject (subjectMatch ${subject}/5) but evidence for the claim (claimMatch ${selection.claimMatch}/5)` };
+  }
+  return {
+    passes: false,
+    basis: "subject",
+    reason: `subjectMatch ${subject}/5 is under the ${MIN_SUBJECT_MATCH}/5 floor and claimMatch ${selection.claimMatch}/5 does not carry it — the picture is compatible with the slide rather than of its subject`,
+  };
+}
 
 export const ImageVettingOutputSchema = z.object({
   selections: z.array(ImageSelectionSchema).min(1),
@@ -1019,7 +1406,16 @@ export interface ConceptReport {
    * `status: "absent"` with two empty lists, which is the conservative
    * default and is exactly what the owner is being asked to look at.
    */
-  likeness?: { status: string; marks: readonly string[]; figures: readonly string[]; ownMarks: boolean; scopeNote?: string };
+  likeness?: {
+    status: string;
+    marks: readonly string[];
+    figures: readonly string[];
+    ownMarks: boolean;
+    /** Phase 5.5, item A2 — the permit's own words, shown ONLY when `consentRelevant`. A blocking-sounding note printed every week is a note nobody reads. */
+    scopeNote?: string;
+    /** Whether `04b3` found a person whose likeness this run would actually need a permit for. `false` on a post about a pricing change, which is most of them. */
+    consentRelevant?: boolean;
+  };
   /** Present once `04m` returned something the legibility guard accepted. */
   concept?: {
     pattern: string;

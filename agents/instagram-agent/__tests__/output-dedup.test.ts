@@ -3,7 +3,7 @@ import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import type { InstagramCopyOutput } from "../src/workflow/types.js";
 import { fakeRenderCarousel, fakeRouterSequence, finalTurn, fixtureHeadline, goodCopyOutput, goodImageCandidatePool, goodImageVettingOutput, goodRelevanceVerdict, goodResearchOutput, goodTrendScoutOutput, goodVisualQaOutput, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
-import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
+import { DEFAULT_ENTITIES_TURN, DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 const base = { clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -49,7 +49,7 @@ describe("output dedup: the shipped-output window steers future runs", () => {
     // Run 1: ships goodCopyOutput's text, which enters the window.
     const first = await engine.run(
       workflowFor(
-        fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(goodCopyOutput()), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)]),
+        fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN), finalTurn(goodCopyOutput()), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)]),
       ),
       { runId: "dedup_run_1", ...base },
     );
@@ -67,7 +67,7 @@ describe("output dedup: the shipped-output window steers future runs", () => {
     const second = await new WorkflowEngine(durableStore2).run(
       workflowFor(
         fakeRouterSequence([
-          finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+          finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
           // Each attempt pays the relevance judge (07g) BEFORE the dedupe check (07d) rejects it.
           finalTurn(goodCopyOutput()),
           finalTurn(goodImageVettingOutput()),
@@ -97,7 +97,7 @@ describe("output dedup: the shipped-output window steers future runs", () => {
     const engine = new WorkflowEngine(new MemoryDurableStepStore());
     const r1 = await engine.run(
       workflowFor(
-        fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(goodCopyOutput()), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)]),
+        fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN), finalTurn(goodCopyOutput()), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)]),
       ),
       { runId: "dedup_flag_1", ...base },
     );
@@ -108,7 +108,7 @@ describe("output dedup: the shipped-output window steers future runs", () => {
     const r2 = await new WorkflowEngine(durableStore).run(
       workflowFor(
         fakeRouterSequence([
-          finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+          finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
           // Each attempt pays the relevance judge (07g) BEFORE the dedupe check (07d) flags it.
           finalTurn(goodCopyOutput()),
           finalTurn(goodImageVettingOutput()),

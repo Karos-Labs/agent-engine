@@ -23,6 +23,7 @@ import {
 } from "./emphasis-marks.js";
 import { buildDeviceFragment, deviceFigureValues, validateDevice, type SlideDevice } from "./slide-devices.js";
 import { imageTreatmentFields, type ImageTreatment } from "./style-lock.js";
+import type { CarouselVisualSystem } from "./visual-system.js";
 import type {
   BrandTokens,
   ImageSelection,
@@ -230,8 +231,23 @@ export const MAX_RECAP_PLATE_CHARS = 40;
  * the CSS DEFAULT in the templates, so a checkpoint written before this
  * field existed — where `{{groundStyle}}` strips to nothing — still paints a
  * ground rather than reverting to the bare plate this item exists to kill.
+ *
+ * ── 2026-09-16 (Phase 5.5, item C): `"flat"`, and the axis changes owner. ──
+ *
+ * The ground is no longer a seeded coin-flip over two treatments; it is
+ * `CarouselVisualSystem.ground`, resolved once per run by `pickVisualSystem`
+ * from a catalog constrained by the client's own frozen axes. Same
+ * determinism, same one-material-per-post guarantee, and now the reason is
+ * readable on the gate payload instead of being a hash.
+ *
+ * `"flat"` is the third value and it is a real composition rather than an
+ * absence: the restraint reference the owner supplied (`@semrush`, `@buffer`)
+ * puts three or four element groups on an untextured plate and spends the
+ * whole colour budget on one diagram. It renders as the grid branch minus the
+ * texture — `body.gr-flat` matches no template's `gr-glyph` rule, exactly as a
+ * stripped `{{groundStyle}}` always has, so it needs no new template branch.
  */
-export type SlideGroundStyle = "grid" | "glyph";
+export type SlideGroundStyle = "grid" | "glyph" | "flat";
 
 /**
  * The share of ground-bearing slides that take the glyph field rather than
@@ -247,6 +263,32 @@ export type SlideGroundStyle = "grid" | "glyph";
  * carousel each, so at most two slides in a post paint a ground at all.
  */
 export const GROUND_VARIATION_MIX = 0.5;
+
+/**
+ * The longest a topical eyebrow may be before it stops reading as an eyebrow.
+ *
+ * 24 characters is about three words in Latin and five in Hebrew — a section
+ * marker. Beyond that it is a second headline sitting above the first at a
+ * third of its size, which is the "nine element groups, three of which said
+ * the same sentence" the owner rejected in an earlier phase. Measured against
+ * the live drafts: the 2026-09-16 kickers ran 9-21 characters, so the cap is
+ * a guard rather than a routine trim.
+ */
+export const EYEBROW_MAX_CHARS = 24;
+
+/**
+ * Trims to `EYEBROW_MAX_CHARS` on a word boundary, never mid-word, and never
+ * to nothing: a single word longer than the cap is returned whole, because a
+ * hard cut in the middle of a term is worse than a slightly long eyebrow and
+ * the alternative — dropping it — silently loses the slide's own label.
+ */
+export function clampEyebrow(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= EYEBROW_MAX_CHARS) return trimmed;
+  const cut = trimmed.slice(0, EYEBROW_MAX_CHARS);
+  const lastSpace = cut.lastIndexOf(" ");
+  return lastSpace > 0 ? cut.slice(0, lastSpace) : trimmed.split(" ")[0]!;
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // IGSTYLE-10, §10a/10b/10c/10e — smart template & palette variation.
@@ -380,7 +422,7 @@ export interface VariationPlanEntry {
   axis: "groundFg" | "accent" | "textAlign";
   used: boolean;
   /** Present only when `used` is false AND there's a specific reason to name — never invented for the ordinary "nothing to report" case. */
-  reason?: "ring=1" | "accent-fails-inverted-ground" | "directive-pinned" | "no-ground-pair" | "reviewer-pinned";
+  reason?: "ring=1" | "carousel-wide" | "accent-fails-inverted-ground" | "directive-pinned" | "no-ground-pair" | "reviewer-pinned";
   /** The alignment this slide actually renders with. Only on the `textAlign` axis. */
   value?: "start" | "center" | "end";
 }
@@ -490,8 +532,38 @@ function resolveSlideAccent(
   accentRing: readonly string[] | undefined,
   paletteSeed: string | undefined,
   fallbackAccent: string,
+  /**
+   * ── PHASE 5.5, ITEM C: ONE ACCENT PER CAROUSEL. ──
+   *
+   * The ring walk is a per-SLIDE decision, and that is the axis the owner
+   * named: rendered with geektime's ring the accent was purple on slide 2,
+   * orange on 4, cyan on 6, orange on 7 and purple on 8 — *"לפעמים יש מרקר
+   * סגול ארוך ולפעמים קצר"*, four colours inside one eight-slide post. The
+   * phase whose title is ONE VISUAL SYSTEM PER CAROUSEL cut the accent down to
+   * three slides and left it three different colours on those three.
+   *
+   * When a `CarouselVisualSystem` is resolved the ring stops walking and every
+   * slide paints the ring's **anchor** — `ring[0]`, which `buildAccentRing`
+   * builds the ring around and which is the client's learned or brand accent.
+   * With no resolved system — a setup-time studio render, a fixture — the walk
+   * is untouched, which keeps every pre-phase caller byte-identical.
+   *
+   * THE ANCHOR RATHER THAN THE WALK'S SLIDE-0 MEMBER, and the difference
+   * matters. `paletteForSlide` phases the walk on the seed, so its index 0 is
+   * `ring[phase]` and not `ring[0]`: freezing on it would pin a carousel to an
+   * arbitrary member and break IGSTYLE-7's flywheel, whose whole claim is that
+   * a learned accent that IS a ring member reaches the slides. The anchor keeps
+   * that claim true and makes the carousel one colour at the same time.
+   *
+   * The per-RUN variety this gives up was never the axis the owner asked for —
+   * it is now carried by the twelve-entry visual-system catalog, which moves
+   * the ground, the cover form, the gutter, the accent's shape and the display
+   * face between runs and between clients.
+   */
+  carouselWide: boolean,
 ): { accent: string; rotates: boolean } {
   if (accentRing === undefined || accentRing.length === 0) return { accent: fallbackAccent, rotates: false };
+  if (carouselWide) return { accent: accentRing[0]!, rotates: false };
   // `paletteForSlide` returns `undefined` only for an empty ring, excluded above.
   const slidePalette = paletteForSlide({ palette: [...accentRing] }, { index, ...(paletteSeed !== undefined ? { seed: paletteSeed } : {}) })!;
   return { accent: slidePalette.accent, rotates: slidePalette.rotates };
@@ -549,12 +621,22 @@ export function buildVariationPlan(params: {
    * the gate payload says so.
    */
   slideStyleOverrides?: ReadonlyMap<number, SlideStyleOverride> | undefined;
+  /** True when a `CarouselVisualSystem` froze the accent for the whole post — see `resolveSlideAccent`. The plan must report what the plates rendered, not what the walk would have picked. */
+  carouselWideAccent?: boolean | undefined;
 }): VariationPlanEntry[] {
   const plan: VariationPlanEntry[] = [];
   const alignments = planTextAlign(params.slideNs.length, params.paletteSeed);
   params.slideNs.forEach((n, index) => {
-    const { accent, rotates } = resolveSlideAccent(n, params.accentRing, params.paletteSeed, params.brandAccentFallback);
-    plan.push({ slide: n, axis: "accent", used: rotates, ...(rotates ? {} : { reason: "ring=1" as const }) });
+    const { accent, rotates } = resolveSlideAccent(n, params.accentRing, params.paletteSeed, params.brandAccentFallback, params.carouselWideAccent === true);
+    plan.push({
+      slide: n,
+      axis: "accent",
+      used: rotates,
+      // `ring=1` still wins when there is only one member: a one-colour ring
+      // does not rotate whatever the system says, and that is the more
+      // informative reason for a reviewer reading the payload.
+      ...(rotates ? {} : { reason: params.carouselWideAccent === true && (params.accentRing?.length ?? 0) > 1 ? ("carousel-wide" as const) : ("ring=1" as const) }),
+    });
 
     const groundFg = decideGroundFgInversion(n, params.paletteSeed, accent, params.groundFgInversion);
     plan.push({ slide: n, axis: "groundFg", used: groundFg.used, ...(groundFg.reason !== undefined ? { reason: groundFg.reason } : {}) });
@@ -1076,6 +1158,8 @@ export function resolveLayout(
    * `custom` archetypes in one carousel are two different designs (not a
    * repeat) — the key for a custom slide is its own `archetypeId`, not the
    * literal `"custom"`.
+   *
+   * NOT applied to a slide the SERIES directed — see `seriesDirected`.
    */
   usedLayouts?: ReadonlySet<string>,
   /**
@@ -1098,6 +1182,46 @@ export function resolveLayout(
    * no honest answer to "does it have a hero" — see `SlidePosition`.
    */
   position?: SlidePosition,
+  /**
+   * The slide numbers whose layout THE SERIES chose, not the writer — built
+   * at the `04i2-select-series` call site by `seriesDirectedSlides`, which
+   * matches each slide's requested layout against `skeletonFor`'s entry for
+   * that position. A slide in this set is exempt from `usedLayouts`'s
+   * once-per-carousel rule, and from nothing else.
+   *
+   * ## Why the exemption exists
+   *
+   * REPETITION OF ONE ARCHETYPE ACROSS A POST IS WHAT A SERIES IS. Four of
+   * the six bundled series direct a repeat on purpose — `by_the_numbers` is
+   * three `stat_callout`s, `the_playbook` three `list_takeaway`s,
+   * `head_to_head` and `in_their_words` two each — so the singleton rule
+   * below guaranteed that those four formats shipped degraded plates every
+   * time. It is not a theory: prep run `pubsub-21868183257380937` (karoslabs,
+   * `by_the_numbers`, 2026-09-16) drafted
+   * `cover, stat_callout, photo, stat_callout, headline_focus, stat_callout,
+   * list_takeaway, closer` and rendered
+   * `cover, stat-callout, headline-focus, slide, slide, slide, list-takeaway,
+   * closer` — slides 4, 5 and 6 on the client's bare base plate. Those three
+   * plates are the owner's *"חלק מהשקפים ריקים"*.
+   *
+   * The cascade in that run is why this is the right place to fix it rather
+   * than downstream: slide 3 lost its photograph and degraded onto
+   * `headline_focus`, which then made slide 5's series-directed
+   * `headline_focus` a "repeat", and each degrade consumed the next slide's
+   * fallback until the ladder hit its floor.
+   *
+   * ## What the exemption does NOT cover
+   *
+   * The rule still binds a layout the WRITER chose off its own bat, which is
+   * what it was built for (the prep run that shipped two `stat_callout`s and
+   * two `comparison_card`s nobody asked for). And the exemption is only from
+   * the REPEAT check: the archetype's own content requirement below is
+   * untouched, so three stat callouts still need three different figures and
+   * a series that cannot fill one still degrades that slide, visibly. The
+   * `availableTemplates` check above is untouched too — a client whose
+   * `templateDir` lacks the file still degrades, series or no series.
+   */
+  seriesDirected?: ReadonlySet<number>,
 ): { layout: InstagramSlideLayout; downgradedFrom?: string } {
   /**
    * Walks the degrade ladder (`fallbackArchetypePreferences`) and takes the
@@ -1139,7 +1263,12 @@ export function resolveLayout(
     }
   }
 
-  if (slide.layout !== "photo" && slide.layout !== "text_only" && usedLayouts?.has(slide.layout)) {
+  // The singleton rule, and the one exemption from it: a layout the series
+  // assigned to THIS slide number is a repeat on purpose (see
+  // `seriesDirected`). Read here rather than folded into `usedLayouts` at the
+  // call site so the trace still records that the archetype was used twice —
+  // the set is built once, and only this check consults the exemption.
+  if (slide.layout !== "photo" && slide.layout !== "text_only" && usedLayouts?.has(slide.layout) && seriesDirected?.has(slide.n) !== true) {
     return degradeTo(`${slide.layout} (already used earlier in this carousel)`);
   }
 
@@ -1281,6 +1410,15 @@ function contentFor(
     bcp47?: string | undefined;
     /** RFC-17 (Phase 5) — this slide's mark ring, ground pair and seed. Absent means no marks at all, and every field renders exactly as it did before this phase. */
     marks?: SlideMarkPlan | undefined;
+    /**
+     * Phase 5.5, item C3 — the slide numbers this run's visual system allows a
+     * topical eyebrow on (`CarouselVisualSystem.eyebrow`).
+     *
+     * ABSENT MEANS "every slide that has a kicker", i.e. exactly the
+     * behaviour before this phase, so every existing fixture and every
+     * checkpoint resumed across the deploy composes byte-identically.
+     */
+    eyebrowSlides?: ReadonlySet<number> | undefined;
   },
 ): { fields: Record<string, string>; htmlFragments: Record<string, string>; marks: SlideMarkResult } {
   /**
@@ -1464,6 +1602,34 @@ function contentFor(
     kinds: markKinds,
   });
 
+  /**
+   * ── THE EYEBROW, AND WHAT IT REPLACED (Phase 5.5, item C3). ──
+   *
+   * Until this phase every bundled template printed `{{seriesBadge}}` in a
+   * top corner on EVERY slide: "BY THE NUMBERS", "{ FIELD NOTES }". Three
+   * things were wrong with it and the owner named all three on 2026-09-16.
+   * It is an internal label a reader cannot use. It is identical on all eight
+   * plates, which is the repetition a reader recognises as machine-made. And
+   * on geektime the `brackets` badge variant plus the brand logo disc in the
+   * same corner clipped it to `{ FIELD` on all eight slides.
+   *
+   * The slot is deleted from all eight templates. What survives is the slide's
+   * OWN topical line — the writer's `kicker` — on the slides this run's visual
+   * system allows one, and nowhere else. A label that belongs to the content
+   * is an eyebrow; the same label on every plate is furniture.
+   *
+   * Capped at `EYEBROW_MAX_CHARS` on a WORD boundary rather than refused: a
+   * schema max on model output is a coin flip that loses a whole step (the
+   * `altText` lesson, item G2), and a kicker is short by construction anyway —
+   * the cap is the guard against the one long one, not a routine trim.
+   */
+  const eyebrowText: string | undefined = ((): string | undefined => {
+    const raw = slide.kicker?.trim();
+    if (raw === undefined || raw.length === 0) return undefined;
+    if (context?.eyebrowSlides !== undefined && !context.eyebrowSlides.has(slide.n)) return undefined;
+    return clampEyebrow(raw);
+  })();
+
   const base: Record<string, string> = {
     accentColor,
     dir,
@@ -1480,7 +1646,7 @@ function contentFor(
     // slide's CONTENT ever sees them.
     groundStyle: context?.groundStyle ?? "grid",
     slideIndex: String(slide.n).padStart(2, "0"),
-    ...(slide.kicker ? { kicker: iso(slide.kicker) } : {}),
+    ...(eyebrowText !== undefined ? { kicker: iso(eyebrowText) } : {}),
     ...(brand?.handle !== undefined ? { brandHandle: brand.handle } : {}),
     ...(brand?.seriesBadge !== undefined ? { seriesBadge: brand.seriesBadge } : {}),
   };
@@ -1594,7 +1760,7 @@ function contentFor(
       return withDevice({
         fields: {
           ...base,
-          ...(slide.kicker ? { eyebrow: iso(slide.kicker) } : {}),
+          ...(eyebrowText !== undefined ? { eyebrow: iso(eyebrowText) } : {}),
           title: iso(slide.headline),
           subtitle: iso(slide.body),
         },
@@ -1612,16 +1778,33 @@ function contentFor(
     case "closer": {
       const recap = buildRecapFragment(context?.position?.earlier ?? []);
       const built = deviceFragment();
-      // ONE elastic middle, two possible code-built fragments. The recap
-      // strip is the closer's own device; a slide-level `device` fills the
-      // same slot when there is no recap to build, rather than the template
-      // growing a second slot the two would compete for.
-      const fragment = recap.length > 0 ? recap : (built?.device ?? "");
+      // ── ONE ELASTIC MIDDLE, TWO POSSIBLE CODE-BUILT FRAGMENTS, AND THE
+      //    DESIGNED OBJECT NOW WINS IT. ──
+      //
+      // It used to be the other way round — `recap.length > 0 ? recap : device`
+      // — on the reasoning that the recap strip IS the closer's device. Rendered,
+      // it is not: `buildRecapFragment` emits up to four `.rc-plate` cells whose
+      // `.item-title` sets at `--t-lead`'s smallest step on a 1440px plate, with
+      // `recapTextFor` truncating entries mid-phrase. Every closer in all six
+      // carousels on this tree carried one, and on karoslabs it read
+      // `01 GEO is not a future strategy · 03 The conversation your buyer has
+      // before… · 05 Awareness is not optimization · 07 Three things GEO
+      // readiness requires now` — a contents page where the payoff should be.
+      // Spec §4.5: *"The 8-cell recap strip … is not a payoff."*
+      //
+      // `MIN_RECAP_PLATES` earlier slides is true of every carousel this agent
+      // ships, so the old order meant the device branch was unreachable in
+      // practice and the recap was not a fallback but the only outcome. Flipped,
+      // a closer whose own copy carries a sourced figure with a complete label
+      // shows THAT, and the recap is what a closer with nothing of its own falls
+      // back to — which is also the plate the content-weight floor is now able
+      // to refuse (`CONTENT_WEIGHTS.recap`).
+      const fragment = built !== undefined && built.device.length > 0 ? built.device : recap;
       const closes = hasCloserVoice(slide);
       return {
         fields: {
           ...base,
-          ...(slide.kicker ? { eyebrow: iso(slide.kicker) } : {}),
+          ...(eyebrowText !== undefined ? { eyebrow: iso(eyebrowText) } : {}),
           takeaway: iso(slide.headline),
           // A question is set as an invitation in the display face, a CTA as
           // a line in the text face — two different typographic jobs, so the
@@ -2098,6 +2281,14 @@ export function assembleSlidesData(params: {
   /** Which `custom` archetypeIds passed their safety check THIS attempt. See `resolveLayout`'s own note. */
   validatedCustomArchetypeIds?: ReadonlySet<string>;
   /**
+   * The slide numbers the run's editorial series directed, from
+   * `seriesDirectedSlides(choice.series, copy.slides)`. Absent on a run with
+   * no series — every slide is then the writer's own choice and the
+   * once-per-carousel rule applies to all of them, exactly as before. See
+   * `resolveLayout`'s `seriesDirected`.
+   */
+  seriesDirected?: ReadonlySet<number>;
+  /**
    * The kit's derived accent, used — together with `brandTokens.accentColor`
    * — ONLY when `accentRing` is empty (see `resolveSlideAccent`). The accent
    * has exactly ONE channel — this per-slide field — and the brand token
@@ -2216,6 +2407,24 @@ export function assembleSlidesData(params: {
    * warning keeps its old unconditional behaviour for that caller.
    */
   markReportOut?: { hexesBySlide: Map<number, string[]>; issues: EmphasisIssue[]; kindsBySlide?: Map<number, string[]> | undefined } | undefined;
+  /**
+   * Phase 5.5, item C — this run's resolved visual system (`04p`,
+   * `pickVisualSystem`).
+   *
+   * TWO fields of it reach the composition: the ground (one material for the
+   * whole post) and the eyebrow's slide set. Everything else — which slides
+   * may paint an accent, whether the index prints, the type scale, the gutter
+   * — reaches the PIXELS through `visualSystemCssBlock`, because those are
+   * paint decisions and a paint decision routed through a per-slide field
+   * would need a new layout-metadata key in two files this package does not
+   * own, for no gain: the templates read the switch tokens directly.
+   *
+   * Absent means "no system resolved this run" and every slide composes
+   * exactly as it did before the phase (seeded ground, eyebrow wherever the
+   * writer wrote a kicker). That arm is what keeps ~30 existing fixtures and
+   * every in-flight checkpoint valid.
+   */
+  visualSystem?: CarouselVisualSystem | undefined;
 }): RenderCarouselInput {
   const selectionByN = new Map(params.selections.map((s) => [s.n, s]));
 
@@ -2238,7 +2447,9 @@ export function assembleSlidesData(params: {
   // Tracks which structured archetypes an earlier slide already claimed, in
   // carousel order, so a repeat degrades to `text_only` instead of shipping
   // two slides in the same fixed layout — see `resolveLayout`'s own doc
-  // comment on `usedLayouts`.
+  // comment on `usedLayouts`. A series-directed slide is still ADDED to the
+  // set (an un-directed later repeat of the same archetype is still a repeat)
+  // and is exempt only from being REFUSED by it — `seriesDirected`.
   const usedLayouts = new Set<string>();
   const lastIndex = params.copy.slides.length - 1;
 
@@ -2275,6 +2486,14 @@ export function assembleSlidesData(params: {
   // RFC-17 §5.5 — this run's seeded alignment walk, one entry per POSITION.
   const alignments = planTextAlign(params.copy.slides.length, params.paletteSeed);
 
+  // Phase 5.5, item C3 — the slides this run's system allows a topical eyebrow
+  // on. `undefined` (no system) keeps the pre-phase behaviour; a system whose
+  // eyebrow axis is `none` yields an EMPTY set, which is not the same thing
+  // and must not collapse to it — that is the client who has decided their
+  // slides carry no eyebrow at all.
+  const eyebrowSlides: ReadonlySet<number> | undefined =
+    params.visualSystem === undefined ? undefined : new Set(params.visualSystem.eyebrow.kind === "topical" ? params.visualSystem.eyebrow.slides : []);
+
   const slides: Slide[] = params.copy.slides.map((slide, index) => {
     const selection = selectionByN.get(slide.n);
     // Phase 2, item M: the two positional archetypes need to know where the
@@ -2289,7 +2508,7 @@ export function assembleSlidesData(params: {
       hasHeroImage: (selection?.imagePath ?? null) !== null,
       earlier: params.copy.slides.slice(0, index),
     };
-    const { layout } = resolveLayout(slide, params.availableTemplates, usedLayouts, params.validatedCustomArchetypeIds, position);
+    const { layout } = resolveLayout(slide, params.availableTemplates, usedLayouts, params.validatedCustomArchetypeIds, position, params.seriesDirected);
     if (layout === "custom") usedLayouts.add(slide.customArchetype!.archetypeId);
     else if (layout !== "photo" && layout !== "text_only") usedLayouts.add(layout);
     // IGSTYLE-7, §7a — a slide's accent comes from the ring whenever the kit
@@ -2297,7 +2516,7 @@ export function assembleSlidesData(params: {
     // when it cannot (never a manufactured "variation"). Only a client with
     // no ring at all paints the shared `accentColor` ladder above — see
     // `resolveSlideAccent` for why a one-member ring is no longer a fallback.
-    const { accent: slideAccentColor } = resolveSlideAccent(slide.n, params.accentRing, params.paletteSeed, accentColor);
+    const { accent: slideAccentColor } = resolveSlideAccent(slide.n, params.accentRing, params.paletteSeed, accentColor, params.visualSystem !== undefined);
     // IGSTYLE-10, §10a/10c — this slide's ground/fg pairing. Resolved BEFORE
     // `contentFor` now, because RFC-17's kind set is computed from the ground
     // this slide actually renders on: an inverted slide's ground is the kit's
@@ -2372,7 +2591,17 @@ export function assembleSlidesData(params: {
         // starts a different ground — and variety WITHIN the post is the series
         // layer's job (RFC-21 Part 3), which is where the reference accounts
         // get it.
-        groundStyle: isVariationSlot(1, GROUND_VARIATION_MIX, `${params.paletteSeed ?? ""}:ground`) ? "glyph" : "grid",
+        //
+        // ── 2026-09-16 (Phase 5.5): AND THE SEED NO LONGER DECIDES IT. ──
+        //
+        // The ground is `CarouselVisualSystem.ground` when a system resolved
+        // — still one material for the whole post, still deterministic, but
+        // now chosen by a rule that also knows what this client and every
+        // other client shipped recently, and that says WHY on the payload.
+        // The seeded walk stays as the no-system fallback so every existing
+        // fixture composes byte-identically.
+        groundStyle: params.visualSystem?.ground ?? (isVariationSlot(1, GROUND_VARIATION_MIX, `${params.paletteSeed ?? ""}:ground`) ? "glyph" : "grid"),
+        ...(eyebrowSlides !== undefined ? { eyebrowSlides } : {}),
         ...(params.targetLanguage !== undefined ? { targetLanguage: params.targetLanguage } : {}),
         ...(params.bcp47 !== undefined ? { bcp47: params.bcp47 } : {}),
       },

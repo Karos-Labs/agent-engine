@@ -7,7 +7,9 @@ import {
   EMPTY_RUN_BUDGET_HISTORY,
   BRIEF_REFRESH_SCRAPER_EXECUTIONS,
   GENERATED_IMAGES_PER_RUN_CAP,
+  IMAGE_CAP_STEPS,
   MAX_RUN_SPEND_USD,
+  MIN_GENERATED_IMAGES_PER_RUN,
   RUN_BUDGET_BELIEF_KEY,
   RunSpendMeter,
   STEP_COST_ESTIMATES_USD,
@@ -51,29 +53,31 @@ describe("RunSpendMeter.add — max(measured, estimate), never trusting a $0 rea
   it("counts the estimate when the step reported nothing", () => {
     const meter = new RunSpendMeter();
     meter.add("05-write-copy-attempt-1", undefined, STEP_COST_ESTIMATES_USD.copyAttempt);
-    expect(meter.totalUsd).toBe(0.185);
-    expect(meter.lines[0]).toMatchObject({ label: "05-write-copy-attempt-1", usd: 0.185, estimateUsd: 0.185, basis: "estimate" });
+    expect(meter.totalUsd).toBe(0.315);
+    expect(meter.lines[0]).toMatchObject({ label: "05-write-copy-attempt-1", usd: 0.315, estimateUsd: 0.315, basis: "estimate" });
     expect(meter.lines[0]).not.toHaveProperty("measuredUsd");
   });
 
   it("counts the estimate when the step reported exactly $0 — a Vertex step that certainly ran a model", () => {
     const meter = new RunSpendMeter();
     meter.add("06-vet-images-attempt-1", 0, STEP_COST_ESTIMATES_USD.vetCall);
-    expect(meter.totalUsd).toBe(0.0065);
+    expect(meter.totalUsd).toBe(0.023);
     expect(meter.lines[0]!.basis).toBe("estimate");
   });
 
   it("counts the measured figure when it exceeds the estimate", () => {
     const meter = new RunSpendMeter();
-    meter.add("05-write-copy-attempt-1", 0.31, STEP_COST_ESTIMATES_USD.copyAttempt);
-    expect(meter.totalUsd).toBe(0.31);
-    expect(meter.lines[0]).toMatchObject({ measuredUsd: 0.31, estimateUsd: 0.185, basis: "measured" });
+    // $0.468424 is karoslabs' dearest live copy attempt on 2026-09-16 — the
+    // real shape of this line, and the reason the estimate below it moved.
+    meter.add("05-write-copy-attempt-1", 0.468424, STEP_COST_ESTIMATES_USD.copyAttempt);
+    expect(meter.totalUsd).toBe(0.468424);
+    expect(meter.lines[0]).toMatchObject({ measuredUsd: 0.468424, estimateUsd: 0.315, basis: "measured" });
   });
 
   it("counts the estimate when the measured figure is below it — an under-reporting vendor is still bounded", () => {
     const meter = new RunSpendMeter();
     meter.add("05-write-copy-attempt-1", 0.02, STEP_COST_ESTIMATES_USD.copyAttempt);
-    expect(meter.totalUsd).toBe(0.185);
+    expect(meter.totalUsd).toBe(0.315);
     expect(meter.lines[0]).toMatchObject({ measuredUsd: 0.02, basis: "estimate" });
   });
 
@@ -122,29 +126,29 @@ describe("RunSpendMeter.totalUsd / lines", () => {
  * The ceiling moved 1.50 -> 1.60 on 2026-09-14, with the owner's ruling that
  * its purpose is to break an infinite loop and not to fail a run.
  */
-describe("RunSpendMeter.canAfford — flips exactly at the $1.60 ceiling", () => {
+describe("RunSpendMeter.canAfford — flips exactly at the $2.60 ceiling", () => {
   it("allows a step that lands exactly on the ceiling", () => {
     const meter = new RunSpendMeter();
-    meter.add("so far", undefined, 1.48);
+    meter.add("so far", undefined, 2.48);
     expect(meter.canAfford(0.12)).toEqual({ ok: true });
   });
 
   it("refuses a step that would cross it by a cent, naming the money", () => {
     const meter = new RunSpendMeter();
-    meter.add("so far", undefined, 1.49);
+    meter.add("so far", undefined, 2.49);
     const verdict = meter.canAfford(0.12);
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("$1.49 spent so far");
+    expect(verdict.reason).toContain("$2.49 spent so far");
     expect(verdict.reason).toContain("$0.12");
-    expect(verdict.reason).toContain("$1.61");
-    expect(verdict.reason).toContain("$1.60 per-run ceiling");
+    expect(verdict.reason).toContain("$2.61");
+    expect(verdict.reason).toContain("$2.60 per-run ceiling");
   });
 
   it("is not fooled by float summation near the boundary", () => {
     const meter = new RunSpendMeter();
-    // 0.1 x 16 = 1.6000000000000003 in floating point; the ceiling comparison must read it as 1.60.
-    for (let i = 0; i < 15; i++) meter.add(`step ${i}`, undefined, 0.1);
+    // 0.1 x 26 = 2.6000000000000005 in floating point; the ceiling comparison must read it as 2.60.
+    for (let i = 0; i < 25; i++) meter.add(`step ${i}`, undefined, 0.1);
     expect(meter.canAfford(0.1)).toEqual({ ok: true });
     // Comparisons are made at micro-dollar precision: a single cent over is refused, a sub-micro-dollar float artefact is not.
     expect(meter.canAfford(0.11).ok).toBe(false);
@@ -157,280 +161,169 @@ describe("RunSpendMeter.canAfford — flips exactly at the $1.60 ceiling", () =>
     expect(meter.canAfford(MAX_RUN_SPEND_USD + 0.01).ok).toBe(false);
   });
 
-  it("the pre-attempt bundle is copy + vet + visual QA, at the @18/@5 prompt sizes", () => {
-    // Phase 5 pays off both halves of Phase 4's deferral. `vetCall` is the
-    // honest 0.0065 — `instagram-image-vet@4 -> @5` put §1c in a STATIC system
-    // prompt, so every call pays its ~1,275 input tokens and not only the
-    // concept runs — and `copyAttempt` is @18's 0.184. Phase 4 measured this
-    // exact re-price and declined it because the next rung down was the
-    // ATTEMPT lever and it produced a budget-caused HOLD; the rung swap below
-    // is what made it safe, which is why the two land in one commit.
-    //
-    // The design system's §28 "Marking" then took it 0.174 -> 0.184 (+$0.00195
-    // of prompt, +$0.00780 of `emphasis` array). The base is @17's MEASURED
-    // 0.174, never RFC-18 §7.1's superseded 0.166 forecast — see `run-budget.ts`.
-    expect(STEP_COST_ESTIMATES_USD.vetCall).toBe(0.0065);
-    expect(DRAFT_ATTEMPT_ESTIMATE_USD).toBeCloseTo(0.185 + 0.0065 + 0.0041, 10);
+  it("the pre-attempt bundle is copy + vet + visual QA, at the Phase 5.5 MEASURED prices", () => {
+    // Phase 5.5 re-prices all three against the 2026-09-16 runs rather than
+    // against the prompt files: the copy draft off eight live attempts, the vet
+    // and the visual judge off their live flash calls converted to
+    // `gemini-2.5-pro` at the published rates. See `run-budget.ts` for each
+    // derivation; the block below pins that the three keys ARE those numbers.
+    expect(STEP_COST_ESTIMATES_USD.vetCall).toBe(0.023);
+    expect(STEP_COST_ESTIMATES_USD.visualQa).toBe(0.046);
+    expect(DRAFT_ATTEMPT_ESTIMATE_USD).toBeCloseTo(0.315 + 0.023 + 0.046, 10);
+    // The bundle quotes the COLD draft even though a second attempt inside one
+    // round bills the warm one. That is deliberate and it is not an oversight:
+    // this figure is read before a REVISION, which follows a human gate by
+    // minutes or hours, and the prompt cache holding the warm price lives five
+    // minutes. A quote read immediately before the spend may never be the cheap
+    // version of the truth.
+    expect(STEP_COST_ESTIMATES_USD.copyAttemptWarm).toBeLessThan(STEP_COST_ESTIMATES_USD.copyAttempt);
+    expect(DRAFT_ATTEMPT_ESTIMATE_USD).toBeGreaterThan(
+      STEP_COST_ESTIMATES_USD.copyAttemptWarm + STEP_COST_ESTIMATES_USD.vetCall + STEP_COST_ESTIMATES_USD.visualQa,
+    );
     // The bundle is the three lines EVERY attempt pays regardless of language. Phase 4's two new keys are
     // deliberately NOT in it: `copyLanguageBrief` and `nativeJudge` are conditional on a resolved
     // `targetLanguage`, and folding either in here would over-state every English revision quote.
     expect(DRAFT_ATTEMPT_ESTIMATE_USD).toBeLessThan(DRAFT_ATTEMPT_ESTIMATE_USD + STEP_COST_ESTIMATES_USD.copyLanguageBrief);
   });
 
-  // `copyAttempt` is priced on BOTH sides of the call, and both times the
-  // output side is the one that moved: an output token costs 5x an input one
-  // on Sonnet. @14 turned `customArchetype` from "a rare tool" into "at most
-  // two per carousel" (a `bodyHtml` fragment plus a `css` block each, on top
-  // of §19's device objects); @15 replaced a ~12-word `visualNeed` string
-  // with a four-key object on EVERY slide. Priced on input growth alone the
-  // estimate flattered itself by $0.0585 over three attempts at @14 and a
-  // further $0.036 at @15 — each more than the whole first image lever.
-  it("prices the copy call on its OUTPUT as well as its input, at the published Sonnet rates", () => {
+  /**
+   * ════════════════════════════════════════════════════════════════════════
+   * PHASE 5.5 — THE COPY KEY, MEASURED OFF THE CALL INSTEAD OF OFF THE PROMPT
+   * ════════════════════════════════════════════════════════════════════════
+   *
+   * Every version of this test from @14 to @19 derived `copyAttempt` from the
+   * PROMPT FILE's growth: `AT_16_IN` input tokens plus one quarter of the
+   * characters each new section added. The method is sound and the arithmetic
+   * was right. **The base was wrong**, and nobody re-measured it for five
+   * prompt versions: `AT_16_IN` is 22,260 tokens against a live call that bills
+   * 46,945 uncached input tokens, because the prompt file is one input among
+   * many (the fact cards, the client brief, the register card, the recent
+   * skeletons, the series directive and the reference posts all ride the same
+   * call, and every one of them grew).
+   *
+   * So the key tracked the prompt to three decimals while drifting 1.8x below
+   * the call it prices. This test is rewritten to assert the failure rather
+   * than to repeat it: the prompt-file derivation is KEPT, and what is asserted
+   * about it now is that it is not the price.
+   */
+  it("prices the copy call off the MEASURED call, and pins the prompt-file method that under-counted it by 1.8x", () => {
     const SONNET_IN_PER_1M = 3;
     const SONNET_OUT_PER_1M = 15;
-    /**
-     * The @18 call, built up in the order the versions shipped: @16's 22.26k in plus @17's MEASURED
-     * prompt growth plus @18's section 28, and @16's 6.3k out plus @17's ~10 tokens of `payloadKind`
-     * plus @18's ~520 tokens of `emphasis` array.
-     *
-     * ## THE CHARACTER COUNT IS THE PRICE, AND RFC-18's FORECAST OF IT IS NOT
-     *
-     * RFC-18 §7.1 wrote this key as 0.166 from an estimate of "+6,000 characters", made before @17 was
-     * written. The file that shipped is nearly three times that. Pricing the key at the RFC's number
-     * would under-count by $0.0078 an attempt and $0.023 a run — forty times the $0.0002 of headroom
-     * Phase 4 thought serious enough to defer `vetCall`'s re-price over an entire phase.
-     *
-     * ## WHY THIS IS A BAND AND NOT A SINGLE NUMBER
-     *
-     * @17 was measured three times while this was being written and moved twice, by tens of characters,
-     * because the prompt is under active editing. A test pinned to one exact character count would have
-     * gone red on an editorial tweak and taught the next reader to widen the tolerance until it stopped
-     * meaning anything — which is how a guard becomes decoration.
-     *
-     * So the assertion is: **across the whole plausible band, this key is right and every forecast of it
-     * is wrong.** A hundred characters either way cannot move a three-decimal key; five thousand can, and
-     * that is exactly the size of edit that must force a re-price. Break it by moving either bound past
-     * where 0.184 stops being the correct rounding, and it refuses.
-     */
+    const CACHE_WRITE_PREMIUM = 0.25;
+    /** `pricing.ts`'s `CACHE_READ_DISCOUNT`: an Anthropic cache read is 10% of the base input rate. */
+    const CACHE_READ_RATE_PER_1M = SONNET_IN_PER_1M * 0.1;
+
+    // ── THE MEASUREMENT. Eight completed `05-write-copy-attempt-N` steps
+    // ── across the six prep runs of 2026-09-16, `costUsd` off the step record.
+    const LIVE_ATTEMPTS = [0.468424, 0.402785, 0.400484, 0.358827, 0.347409, 0.334373, 0.279247, 0.110939];
+    const liveMean = LIVE_ATTEMPTS.reduce((a, b) => a + b, 0) / LIVE_ATTEMPTS.length;
+    expect(liveMean).toBeCloseTo(0.337811, 6);
+
+    // ── THE CALL, RECONSTRUCTED FROM ITS THREE TERMS. ──
+    //
+    // This is what makes the input figure a measurement rather than a guess:
+    // the same three terms at the MEASURED 16,305 output tokens reproduce
+    // karoslabs attempt 1 to the cent.
+    const UNCACHED_IN = 46_945;
+    const CACHE_WRITE = 23_167;
+    const priceCold = (outTokens: number) =>
+      (UNCACHED_IN * SONNET_IN_PER_1M + CACHE_WRITE * CACHE_WRITE_PREMIUM * SONNET_IN_PER_1M + outTokens * SONNET_OUT_PER_1M) / 1_000_000;
+    expect(priceCold(16_305)).toBeCloseTo(0.402785, 5);
+
+    // ── THE KEY. The call this prices is the POST-HOIST one (W1-B moves the
+    // ── custom archetype's markup to `05f` and bounds `headline`/`body`,
+    // ── taking the draft from ~16.3k output tokens to ~10k).
+    const HOISTED_OUT = 10_000;
+    // ── AND THE FOURTH TERM, added at wave-1 integration: the PROMPT is input
+    // ── too, and `instagram-copy@21` is +4,415 characters over @20 (79,348 ->
+    // ── 83,763, line endings normalised) = +1,206 tokens at the 3.66
+    // ── characters-a-token rate fitted across the same six runs. The live
+    // ── measurement above was taken on @20, so without this the key prices a
+    // ── prompt the run no longer sends. Charged in the worse of the two
+    // ── buckets it can land in — inside the cached prefix, where it pays the
+    // ── write premium as well.
+    const PROMPT_21_EXTRA_IN = 1_206;
+    const promptDelta = (PROMPT_21_EXTRA_IN * (1 + CACHE_WRITE_PREMIUM) * SONNET_IN_PER_1M) / 1_000_000;
+    expect(promptDelta).toBeCloseTo(0.0045225, 7);
+    const coldExact = priceCold(HOISTED_OUT) + promptDelta;
+    expect(priceCold(HOISTED_OUT)).toBeCloseTo(0.30821, 5);
+    expect(coldExact).toBeCloseTo(0.312733, 5);
+    // Never below the call — the one direction `run-budget.ts`'s header forbids.
+    expect(STEP_COST_ESTIMATES_USD.copyAttempt).toBeGreaterThanOrEqual(coldExact);
+    // And the residue stated as what it BUYS, so it is checkable rather than
+    // decorative: $0.00227 is 151 output tokens. A hoisted draft above 10,151
+    // output tokens puts this key under the call again, and
+    // `copy-schema-length.test.ts` (W1-B) is the test that measures that.
+    const headroomTokens = Math.floor(((STEP_COST_ESTIMATES_USD.copyAttempt - coldExact) * 1_000_000) / SONNET_OUT_PER_1M);
+    expect(headroomTokens).toBe(151);
+    expect(priceCold(HOISTED_OUT + headroomTokens) + promptDelta).toBeLessThanOrEqual(STEP_COST_ESTIMATES_USD.copyAttempt);
+    expect(priceCold(HOISTED_OUT + headroomTokens + 2) + promptDelta).toBeGreaterThan(STEP_COST_ESTIMATES_USD.copyAttempt);
+
+    // ── THE WARM KEY, and the fact the estimator has never known. Every later
+    // ── attempt of every run on 2026-09-16 reported `cached: 23,167`.
+    const WARM_UNCACHED_IN = 27_500;
+    const warmExact =
+      (WARM_UNCACHED_IN * SONNET_IN_PER_1M + CACHE_WRITE * CACHE_READ_RATE_PER_1M + HOISTED_OUT * SONNET_OUT_PER_1M) / 1_000_000;
+    expect(warmExact).toBeCloseTo(0.23945, 5);
+    expect(STEP_COST_ESTIMATES_USD.copyAttemptWarm).toBeGreaterThanOrEqual(warmExact);
+    expect(STEP_COST_ESTIMATES_USD.copyAttemptWarm - warmExact).toBeLessThan(0.001);
+    // A three-attempt run pays cold once and warm twice: $0.15 less than three
+    // cold drafts, which is a whole image rung's worth of over-statement the
+    // old single-key model carried.
+    expect(
+      3 * STEP_COST_ESTIMATES_USD.copyAttempt - (STEP_COST_ESTIMATES_USD.copyAttempt + 2 * STEP_COST_ESTIMATES_USD.copyAttemptWarm),
+    ).toBeCloseTo(0.15, 6);
+
+    // ── THE PROMPT-FILE METHOD, KEPT AND FALSIFIED. ──
+    //
+    // @16's base plus every measured prompt delta since, exactly as this test
+    // computed it through @19. It lands on $0.184 — which was the shipped key,
+    // and which is 1.8x below the live mean. Keeping the derivation means the
+    // next author can see WHICH input the method was blind to rather than being
+    // told that it was blind.
     const AT_16_IN = 22_260;
     const AT_16_OUT = 6_300;
     const CHARS_PER_TOKEN = 4;
-    /** @16 -> @17, measured 2026-09-13 on the shipped files with line endings normalised: 45,757 -> 62,057. */
+    /** @16 -> @17, measured on the shipped files with line endings normalised: 45,757 -> 62,057. */
     const PROMPT_CHAR_DELTA = 18_896;
-    /** `instagram-copy-agent.ts`'s @17 note counts the same two files as 46,539 -> 63,056 under a different convention. */
-    const PROMPT_CHAR_DELTA_BAND: readonly [number, number] = [18_750, 19_050];
-    /** @17 -> @18: section 28 "Marking", the ONE section the design system appends. */
+    /** @17 -> @18: section 28 "Marking". */
     const EMPHASIS_CHAR_DELTA = 3_276;
-    /** @18 -> @19: section 29 "Your series", plus its changelog note. RFC-21 Part 3. */
+    /** @18 -> @19: section 29 "Your series", plus its changelog note. */
     const SERIES_CHAR_DELTA = 3_715;
-    /** And the directive itself, which rides on the INPUT OBJECT rather than in the prompt file: the premise, the register, one numbered line per slide and the truncation rule. */
+    /** The series directive rides on the INPUT OBJECT rather than in the prompt file. */
     const SERIES_DIRECTIVE_TOKENS = 175;
-    /** The `emphasis` array: ~3.6 marks a slide at ~17 tokens, plus ~4 of array overhead, across 8 slides. */
+    /** The `emphasis` array: ~3.6 marks a slide at ~4.8 tokens, plus ~4 of array overhead, across 8 slides. */
     const EMPHASIS_OUT_TOKENS = 176;
-    const priceAt = (charDelta: number) =>
-      ((AT_16_IN + (charDelta + EMPHASIS_CHAR_DELTA + SERIES_CHAR_DELTA) / CHARS_PER_TOKEN + SERIES_DIRECTIVE_TOKENS) * SONNET_IN_PER_1M +
-        // @19 adds NO output token: the writer emits the same schema, and it
-        // was already emitting `layout`. What changed is that it no longer
-        // CHOOSES one.
-        (AT_16_OUT + 10 + EMPHASIS_OUT_TOKENS) * SONNET_OUT_PER_1M) /
-      1_000_000;
-    const exact = priceAt(PROMPT_CHAR_DELTA);
-    expect(PROMPT_CHAR_DELTA).toBeGreaterThanOrEqual(PROMPT_CHAR_DELTA_BAND[0]);
-    expect(PROMPT_CHAR_DELTA).toBeLessThanOrEqual(PROMPT_CHAR_DELTA_BAND[1]);
-    expect(18_900).toBeLessThanOrEqual(PROMPT_CHAR_DELTA_BAND[1]);
-    expect(exact).toBeCloseTo(0.184010, 6);
-    /**
-     * ## THE ROUNDING RULE IS CEILING, AND THE TEST NOW MODELS THAT RULE
-     *
-     * Through @17 this loop asserted `Number(price.toFixed(3)) === key` — to-NEAREST — and it agreed with
-     * the file's stated policy only because @17's $0.173655 rounds up either way. @18's $0.1834538 is the
-     * first exact price in this file's history where the two DISAGREE: to-nearest gives 0.183, which is
-     * BELOW the real call, and this file's header forbids exactly that direction ("an estimate that
-     * flatters itself pulls no lever"). So the key is 0.184 and the assertion below is ceiling, which is
-     * what `run-budget.ts` has claimed in prose since @17: "rounded UP, never truncated".
-     *
-     * The upper bound moves 0.0005 -> 0.001 for the same reason, and it is NOT a widened tolerance:
-     * 0.0005 is the largest over-count TO-NEAREST can produce, 0.001 is the largest CEILING can, and both
-     * say "one unit in this table's last place, no more". A key two units high still fails. The half that
-     * was never negotiable — key >= call — is unchanged, and is asserted FIRST.
-     */
-    const ceil3 = (usd: number) => Math.ceil(usd * 1000 - 1e-9) / 1000;
-    // AT THE MEASURED DELTA the key IS the ceiling, exactly. That is the rule,
-    // and it is asserted on the one number the rule is about.
-    expect(ceil3(exact)).toBe(STEP_COST_ESTIMATES_USD.copyAttempt);
-    // ## WHY THE BAND'S TOLERANCE WIDENED BY ONE UNIT AT @19
-    //
-    // The band exists because two files count the same two prompts under
-    // different conventions, and it is 300 characters wide — 75 tokens,
-    // $0.000225. Through @18 that width sat inside one 0.001 bucket, so
-    // `ceil3(price) === key` held at both edges. @19's $0.184010 sits 10
-    // MICRO-dollars above a bucket boundary, so the band's low edge
-    // ($0.183901) ceilings to 0.184 while its top edge ceilings to 0.185.
-    //
-    // The half that was never negotiable is unchanged and is asserted FIRST
-    // for every delta: **the key is never below the call.** The equality is
-    // the tighter "no more than one unit in the last place" check, and across
-    // a band that straddles a boundary that is what one unit of slack means.
-    // A key two units high still fails the line below.
-    for (const delta of [PROMPT_CHAR_DELTA_BAND[0], PROMPT_CHAR_DELTA, 18_900, PROMPT_CHAR_DELTA_BAND[1]]) {
-      expect(STEP_COST_ESTIMATES_USD.copyAttempt, `key below the call at delta ${delta}`).toBeGreaterThanOrEqual(priceAt(delta));
-      expect(STEP_COST_ESTIMATES_USD.copyAttempt - priceAt(delta), `key more than one last-place unit above the call at delta ${delta}`).toBeLessThan(0.002);
+    const methodInputTokens =
+      AT_16_IN + (PROMPT_CHAR_DELTA + EMPHASIS_CHAR_DELTA + SERIES_CHAR_DELTA) / CHARS_PER_TOKEN + SERIES_DIRECTIVE_TOKENS;
+    const promptFileMethod =
+      (methodInputTokens * SONNET_IN_PER_1M + (AT_16_OUT + 10 + EMPHASIS_OUT_TOKENS) * SONNET_OUT_PER_1M) / 1_000_000;
+    expect(promptFileMethod).toBeCloseTo(0.18401, 5);
+    // THE FINDING, as a number: the method under-counts the live call by 1.8x.
+    expect(liveMean / promptFileMethod).toBeGreaterThan(1.8);
+    // And the input half is where it all went: the prompt-file method thinks
+    // the call carries ~28.7k input tokens; it carries 46,945 plus a 23,167
+    // cache write.
+    expect(methodInputTokens).toBeLessThan(UNCACHED_IN);
+    expect(UNCACHED_IN - methodInputTokens).toBeGreaterThan(18_000);
+    // Every historical key this file argued over — 0.166, 0.171, 0.174, 0.176,
+    // 0.179, 0.180, 0.181, 0.184, 0.185 — is below the live mean. The argument
+    // was real and the answer was the same at every branch of it: too low.
+    for (const stale of [0.166, 0.171, 0.174, 0.176, 0.179, 0.18, 0.181, 0.184, 0.185]) {
+      expect(stale, "a historical key at or above the live mean would refute the finding").toBeLessThan(liveMean);
     }
-    // And the band still has TEETH: a prompt 5,000 characters bigger than the top of it no longer rounds
-    // here, so a real rewrite of the copy prompt fails this test instead of sliding through.
-    expect(ceil3(priceAt(PROMPT_CHAR_DELTA_BAND[1] + 5_000))).not.toBe(STEP_COST_ESTIMATES_USD.copyAttempt);
-    /**
-     * ## FIVE WRONG KEYS, AND THEY ARE WRONG IN TWO DIFFERENT DIRECTIONS
-     *
-     * This key has been mis-derived twice, both times downward, and both wrong answers are plausible
-     * enough that a later editor could "restore" one. They are priced here so the gap is a number rather
-     * than an argument:
-     *
-     *  - **0.166** — RFC-18 section 7.1's FORECAST of @17, from an estimate of "+6,000 characters" made
-     *    before @17 was written. The file shipped nearly three times that, so 0.166 was superseded by the
-     *    measured 0.174 BEFORE @17 merged.
-     *  - **0.171** — the design-system branch's own figure. Correct arithmetic on a stale base: it added
-     *    section 28's +$0.00975 to @16's 0.161, because it branched before Phase 5 and never saw @17.
-     *  - **0.176** — the trap in the middle, and the one to watch for: section 28's bump added to the
-     *    SUPERSEDED 0.166 forecast instead of to the measured 0.174. It looks like it accounts for both
-     *    phases and it accounts for neither.
-     */
-    const RFC_FORECAST = 0.166;
-    const STALE_AT_16_BASE = 0.171;
-    const STALE_FORECAST_BASE = 0.176;
-    /** This encoding priced on a SECTION-only input delta (2,836) instead of the whole-file delta. */
-    const SECTION_ONLY_DELTA_KEY = 0.179;
-    /** The refused TAGGED encoding (`"h:Anti-AI"`), also priced on a section-only delta. */
-    const TAGGED_ENCODING_KEY = 0.18;
-    for (const stale of [RFC_FORECAST, STALE_AT_16_BASE, STALE_FORECAST_BASE, SECTION_ONLY_DELTA_KEY, TAGGED_ENCODING_KEY]) {
-      expect(stale).toBeLessThan(priceAt(PROMPT_CHAR_DELTA_BAND[0]));
-    }
-    expect(3 * (exact - RFC_FORECAST)).toBeGreaterThan(0.02);
-    // 0.176's gap NARROWED at the re-encode, from $0.023 a run to $0.0141, because the key itself came
-    // down 0.184 -> 0.181. The threshold moves with the measurement rather than the measurement being
-    // rounded up to clear a threshold: $0.0141 a run is still 7x the $0.0002 Phase 4 deferred a re-price
-    // over, and the direction that matters (0.176 is BELOW the call) is asserted in the loop above.
-    expect(3 * (exact - STALE_FORECAST_BASE)).toBeGreaterThan(0.014);
-    /**
-     * **0.184 WAS the one wrong key that was wrong UPWARD, and at @19 it stopped being wrong upward.**
-     *
-     * It shipped in the Phase 5 merge and it correctly priced the STRUCTURED `{field, itemIndex, text}`
-     * encoding at ~17 output tokens a mark. That encoding is gone: a mark is now a bare verbatim string,
-     * and through @18 restoring 0.184 would have over-counted every attempt - which sounds harmless and
-     * is not, because this file's levers fire off the ESTIMATE and an estimate that over-counts pulls a
-     * lever the run did not need.
-     *
-     * @19's section 29 grew the call PAST it. $0.184010 at the measured delta, $0.184126 at the top of
-     * the band, so 0.184 is now BELOW the call at every point in the band and joins the family above.
-     * The note is kept rather than deleted: a reader who finds 0.184 in an old branch needs to know it
-     * was wrong in BOTH directions at different times, which is the whole argument for re-pricing a key
-     * in the same commit as the prompt that moved it.
-     */
-    const OBJECT_ENCODING_KEY = 0.184;
-    expect(OBJECT_ENCODING_KEY, "0.184 was the wrong-upward key through @18 and is below the call from @19 on").toBeLessThan(
-      priceAt(PROMPT_CHAR_DELTA_BAND[1]),
-    );
-    expect(OBJECT_ENCODING_KEY).toBeLessThan(STEP_COST_ESTIMATES_USD.copyAttempt);
-    /**
-     * ## INHERITED FROM MAIN, PINNED RATHER THAN FIXED: @17's OWN KEY UNDER-PRICES ITS OWN CALL
-     *
-     * `PROMPT_CHAR_DELTA` above is corrected in this PR from 16,300 to the MEASURED 18,896
-     * (`origin/main`'s 16.md is 45,757 LF characters and its 17.md is 64,653). The old constant was
-     * 2,196 above the top of its own band while claiming to be inside it, and it is what hid this:
-     *
-     *   @17 priced on the measured delta = (22,260 + 18,896/4) x $3/1e6 + 6,310 x $15/1e6 = $0.175602
-     *
-     * which ceilings to **0.176**, while the key `run-budget.ts` actually ships for @17 is **0.174**.
-     * So main's @17 is ~$0.002 an attempt BELOW the call it prices, for exactly the reason this whole
-     * block exists: a delta that measured part of the growth and was entered as all of it.
-     *
-     * **This PR does NOT fix that.** Re-pricing a shipped key changes the budget model for every run and
-     * every plan on main, and it deserves its own change where it can be reasoned about alone. It is
-     * pinned HERE rather than described in a PR body because a finding that lives in a test outlives one
-     * that lives in a description - if someone later "fixes" 0.174 or re-breaks the delta, this fails.
-     */
-    const AT_17_SHIPPED_KEY = 0.174;
-    const at17Exact = ((AT_16_IN + PROMPT_CHAR_DELTA / CHARS_PER_TOKEN) * SONNET_IN_PER_1M + (AT_16_OUT + 10) * SONNET_OUT_PER_1M) / 1_000_000;
-    expect(at17Exact).toBeCloseTo(0.175602, 6);
-    expect(AT_17_SHIPPED_KEY).toBeLessThan(at17Exact);
-    expect(at17Exact - AT_17_SHIPPED_KEY).toBeCloseTo(0.001602, 6);
-    // The output half is still the larger half of the CALL — the property an input-only re-price cannot have.
-    expect(AT_16_OUT * SONNET_OUT_PER_1M).toBeGreaterThan(AT_16_IN * SONNET_IN_PER_1M);
-    // @15's growth was priced on the side it landed on: the four-key `visualNeed` was ~800 more OUTPUT
-    // tokens a draft (~$0.012) against ~455 more input (~$0.0014).
-    const AT_14 = 0.1455;
-    const AT_15 = 0.159;
-    const AT_16 = 0.161;
-    expect(AT_15 - AT_14).toBeCloseTo((455 * SONNET_IN_PER_1M + 800 * SONNET_OUT_PER_1M) / 1_000_000, 3);
-    // @16's growth landed entirely on the INPUT side, the first time that had been true here: section 23
-    // tells the writer how to sound, it does not ask for more copy.
-    expect(AT_16 - AT_15).toBeCloseTo((760 * SONNET_IN_PER_1M) / 1_000_000, 3);
-    // @17's growth is BOTH SIDES, each asserted on its own line rather than as a lump — the house rule the
-    // @13 -> @14 note exists to enforce.
-    const INPUT_DELTA = ((PROMPT_CHAR_DELTA / CHARS_PER_TOKEN) * SONNET_IN_PER_1M) / 1_000_000;
-    const OUTPUT_DELTA = (10 * SONNET_OUT_PER_1M) / 1_000_000;
-    expect(INPUT_DELTA).toBeCloseTo(0.014172, 6);
-    expect(OUTPUT_DELTA).toBeCloseTo(0.00015, 10);
-    // @18's growth is BOTH SIDES TOO, and this time the OUTPUT half is the larger one by 4x — the exact
-    // shape @17 was not. Asserted apart for the same reason: an editor who later adds a second per-slide
-    // output array must not be able to hide it inside the input term.
-    const EMPHASIS_INPUT_DELTA = ((EMPHASIS_CHAR_DELTA / CHARS_PER_TOKEN) * SONNET_IN_PER_1M) / 1_000_000;
-    const EMPHASIS_OUTPUT_DELTA = (EMPHASIS_OUT_TOKENS * SONNET_OUT_PER_1M) / 1_000_000;
-    /**
-     * @18 -> @19, RFC-21 Part 3: section 29 plus the directive that rides on the
-     * input object. INPUT ONLY, and that asymmetry is why it is enumerated
-     * separately rather than folded into the rounding residue: the series layer
-     * moves WHERE a decision is made, not how much the writer emits, so the
-     * output half is exactly $0.
-     */
-    const SERIES_INPUT_DELTA = ((SERIES_CHAR_DELTA / CHARS_PER_TOKEN + SERIES_DIRECTIVE_TOKENS) * SONNET_IN_PER_1M) / 1_000_000;
-    expect(EMPHASIS_INPUT_DELTA).toBeCloseTo(0.002457, 8);
-    expect(EMPHASIS_OUTPUT_DELTA).toBeCloseTo(0.00264, 10);
-    // INVERTED at the re-encode, and kept rather than deleted: a guard that flips still guards.
-    // The object encoding's output half was 4x its input; the flat one's two halves are within 10%
-    // of each other, so "the output half dominates" is no longer true and must no longer pass.
-    expect(EMPHASIS_OUTPUT_DELTA).toBeLessThan(1.1 * EMPHASIS_INPUT_DELTA);
-    expect(EMPHASIS_INPUT_DELTA + EMPHASIS_OUTPUT_DELTA).toBeCloseTo(0.005097, 8);
-    // The two shipped keys, and every term between them, reconciled in one line. @16 rounded DOWN
-    // ($0.16128 -> 0.161) and @18 rounds UP ($0.1834538 -> 0.184); both rounding errors appear explicitly
-    // rather than being absorbed into a loose tolerance, because "the shipped keys differ by more than the
-    // real bump" is exactly the sort of $0.0006 this file has twice let grow into a $0.06 error.
-    const AT_16_EXACT = (AT_16_IN * SONNET_IN_PER_1M + AT_16_OUT * SONNET_OUT_PER_1M) / 1_000_000;
-    expect(AT_16_EXACT).toBeCloseTo(0.16128, 6);
-    expect(AT_16 - AT_16_EXACT).toBeCloseTo(-0.00028, 6);
-    // @19: $0.184010 ceilings to 0.185, so the rounding residue is $0.00099 -
-    // larger than @18's $0.000301 because the call landed 10 micro-dollars
-    // above a bucket boundary rather than just under the next one.
-    expect(STEP_COST_ESTIMATES_USD.copyAttempt - exact).toBeCloseTo(0.00099, 5);
-    expect(STEP_COST_ESTIMATES_USD.copyAttempt - AT_16).toBeCloseTo(
-      INPUT_DELTA +
-        OUTPUT_DELTA +
-        EMPHASIS_INPUT_DELTA +
-        EMPHASIS_OUTPUT_DELTA +
-        SERIES_INPUT_DELTA +
-        (STEP_COST_ESTIMATES_USD.copyAttempt - exact) +
-        (AT_16_EXACT - AT_16),
-      10,
-    );
-    // @17 is the one bump in this file's history where the INPUT half is larger by an order of magnitude,
-    // and @18 immediately points the other way again. Both are asserted, because the mistake this block
-    // warns about is assuming the LAST bump's shape is the next one's.
-    expect(INPUT_DELTA).toBeGreaterThan(50 * OUTPUT_DELTA);
-    expect(EMPHASIS_OUTPUT_DELTA).toBeGreaterThan(EMPHASIS_INPUT_DELTA);
-    // RFC-18 section 3.2's declined `soWhat` field, priced: ~250 output tokens on EVERY attempt is EXACTLY
-    // 25x @17's whole output delta, and it would have been the one text in the post nobody ever reads.
-    expect((250 * SONNET_OUT_PER_1M) / 1_000_000).toBeCloseTo(25 * OUTPUT_DELTA, 10);
-    // NO OPUS, stated as arithmetic where the writer's price is set. The identical @18 call on
-    // `claude-opus-4-8` ($5/$25 per 1M) is $0.3058 an attempt and $0.917 across three — 92% of the $1.00
-    // target before the post has a single image. The gap WIDENED again with @18: a longer prompt AND a
-    // bigger draft both cost more on a dearer model, so every character section 28 added is one more
-    // argument for buying the writing with the prompt instead of with the tier.
-    const OPUS =
-      ((AT_16_IN + (PROMPT_CHAR_DELTA + EMPHASIS_CHAR_DELTA) / CHARS_PER_TOKEN) * 5 +
-        (AT_16_OUT + 10 + EMPHASIS_OUT_TOKENS) * 25) /
-      1_000_000;
-    expect(OPUS).toBeCloseTo(0.301165, 6);
-    expect(3 * OPUS).toBeGreaterThan(0.9 * TARGET_RUN_SPEND_USD);
+
+    // ── NO OPUS, still, and now the arithmetic is even more one-sided. The
+    // ── identical post-hoist call on `claude-opus-4-8` ($5/$25 per 1M).
+    const opus = (UNCACHED_IN * 5 + CACHE_WRITE * CACHE_WRITE_PREMIUM * 5 + HOISTED_OUT * 25) / 1_000_000;
+    expect(opus).toBeCloseTo(0.513684, 6);
+    // The ratio, not a fitted multiplier: $0.513684 / $0.315 = 1.63x. It fell
+    // from 1.66x when `copyAttempt` picked up @21's own prompt tokens, which is
+    // the honest direction — Sonnet got dearer, Opus did not get cheaper.
+    expect(opus / STEP_COST_ESTIMATES_USD.copyAttempt).toBeGreaterThan(1.6);
+    // Three Opus attempts is $1.54 — 86% of the whole $1.80 target, before the
+    // post has a single image, which is the spend this phase exists to protect.
+    expect(3 * opus).toBeGreaterThan(0.85 * TARGET_RUN_SPEND_USD);
   });
 });
 
@@ -479,281 +372,157 @@ describe("estimateRunCost — every term priced off what the run actually bills"
     );
   });
 
-  it("the cold Phase 1 carousel does not fit the target, so the first lever fires on this phase's own spend", () => {
-    // $1.14 cold English. Every term of the $0.2015 Phase 1 fixed line is
-    // spend the estimator used to be blind to: 03e's eight signal
-    // executions, 04a2's six lane queries, 04a3's two page fetches, the
-    // re-priced scout and extraction, and 04i's angle. Priced at Phase 0's
-    // `fixed` ($0.049) the same run read as $0.99, `fits()` was true, and the
-    // adaptation the owner's amendment exists to trigger never fired.
+  it("the cold carousel does not fit the target, and what it gives up is OPTIONAL work — the pictures survive", () => {
+    // ════════════════════════════════════════════════════════════════════════
+    // THE ACCEPTANCE TEST OF PHASE 5.5, AND IT IS ONE LINE LONG:
+    //   `decision.plan.generatedImagesCap` is 8 on the cold English default.
+    // ════════════════════════════════════════════════════════════════════════
     //
-    // Phase 4 (RFC-16 §7.2) adds $0.030 on top — 04m's Sonnet concept call
-    // plus 06d1's vision inspect — priced UNCONDITIONALLY, because 02j builds
-    // the run shape long before 04l knows whether this story is eligible.
-    // That is deliberately the worst case, the same convention every other
-    // field of DEFAULT_RUN_SHAPE follows, and `ewmaRatio` washes it back out
-    // for a client whose selector keeps declining.
-    //
-    // Phase 5 (RFC-18 §7.1) adds $0.010 more to `fixed` on an English run:
-    // `08c-package-post` ($0.003) and `07i1-verify-lead-claim`'s one
-    // ScrappyCoco execution ($0.007). Both are once-per-run by construction —
-    // the packager because alt text for a slide a redraft is about to throw
-    // away is money burned, the verification because the store's cache key
-    // makes a repeat of the same URL free.
+    // Before 2026-09-16 this same shape landed on `generatedImagesCap: 0` after
+    // three image rungs, and that plan is what shipped six prep posts with no
+    // pictures in them. The ladder now spends the one rung it needs on rescue
+    // re-vets — work whose own name is optional — and buys every picture.
     const cold = estimateRunCost(DEFAULT_RUN_BUDGET_PLAN, DEFAULT_RUN_SHAPE);
-    expect(cold.breakdown.fixed).toBeCloseTo(0.2415, 6);
-    expect(cold.breakdown.fixed - 0.2315).toBeCloseTo(STEP_COST_ESTIMATES_USD.postPackage + STEP_COST_ESTIMATES_USD.scraperExecution, 6);
+    // `fixed` is $0.2745: Phase 1's $0.2015 of evidence and angle, Phase 4's
+    // $0.030 concept line, Phase 5's $0.010 packager and lead-claim
+    // verification, and Phase 5.5's two new once-per-run lines.
+    expect(cold.breakdown.fixed).toBeCloseTo(0.2745, 6);
+    expect(cold.breakdown.fixed - 0.2415).toBeCloseTo(STEP_COST_ESTIMATES_USD.entityExtract + STEP_COST_ESTIMATES_USD.customArchetype, 6);
+    expect(cold.estimatedUsd).toBeCloseTo(1.9605, 6);
     expect(cold.estimatedUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
+
     const decision = planRunBudget(DEFAULT_RUN_SHAPE);
-    // Phase 3's own arithmetic, and the reason `copyAttempt` had to be
-    // re-priced to the @15 call on BOTH sides: at an image cap of 4 the cold
-    // English shape estimates $1.1318, so `fits()` is FALSE and the first
-    // lever has to step three times — 4, then 2, then 0 — to land at
-    // $0.9758. Priced at @13's $0.12 the same shape read as $0.9845, `fits()`
-    // was true after one step, and the run still billed over the target.
-    // Priced at @14's $0.1455 it stopped at cap 2 and $0.9833, with $0.0405
-    // of §22 scene briefs unbudgeted behind it.
-    //
-    // The ladder's SHAPE is what this pins. Through Phase 4 it was three
-    // steps — 4 -> 2 -> 0 — landing under target. **Phase 5 added a fourth**,
-    // the EVIDENCE rung: at @17's measured 0.174 the cap-0 English plan was
-    // $1.0143 and reduced evidence landed it at $0.9933.
-    //
-    // **@18 adds a FIFTH.** Section 28's +$0.010 an attempt is +$0.030 across
-    // three, which is more than the $0.0067 of headroom the evidence rung left:
-    // cap-0 is now $1.0443, reduced evidence brings it to $1.0233, still over,
-    // so `optional rescue re-vets skipped` fires and lands it at $0.9143.
-    //
-    // This is the ladder working, not the ladder failing, and the assertion
-    // below says which rung is which. THE RUNG THAT STILL HAS NOT FIRED IS THE
-    // ONE THAT MATTERS: `maxSelfCheckAttempts` is still 3, so the run keeps
-    // every drafting attempt and no judgment gate can be starved into a hold.
-    // What was given up is work whose own name is "optional" — which is the
-    // order RFC-18 §7.3's swap exists to guarantee. If a later re-price ever
-    // pushes the ATTEMPT rung on the cold English default, that is a different
-    // and much worse event, and this test goes red naming it.
-    //
-    // The two figures differ because Phase 4 charges each rung for what that
-    // rung can actually buy:
-    //
-    //  - at cap 4 the concept mode is reachable, so its $0.030 is booked and
-    //    the estimate is the native-language phase's $1.1078 + $0.030 = $1.1378;
-    //  - at cap 0 the mode is UNREACHABLE — `conceptEligibility` declines with
-    //    "the run budget bought no generated images" — so the $0.030 is not
-    //    booked at all and the landing figure is **unchanged at $0.9518**.
-    //
-    // That equality is the point, and it is worth reading twice: the concept
-    // mode costs the fully-adapted cold plan NOTHING. Booking it on every rung
-    // instead would have charged $0.030 of spend the chosen plan had just made
-    // impossible — and $0.030 x the calibration ratio on the saturated ladder
-    // — dragging the landing figure to $0.9758 and the last three-rung ratio
-    // from 1.05 down to 1.02 for a mode that cannot fire there.
-    expect(estimateRunCost({ ...DEFAULT_RUN_BUDGET_PLAN, generatedImagesCap: 4 }, DEFAULT_RUN_SHAPE).estimatedUsd).toBeCloseTo(1.2333, 6);
-    expect(decision.adaptations).toEqual([
-      "images capped at 4",
-      "images capped at 2",
-      "no generated images (stock or text-only)",
-      "trend evidence reduced to the one cached industry query",
-      "optional rescue re-vets skipped",
-    ]);
-    expect(decision.plan.generatedImagesCap).toBe(0);
-    // $0.9518 -> $0.9933 was Phase 5's landing; @18's 3 x $0.007 of section 28
-    // takes the pre-adaptation figure past the evidence rung's headroom, so the
-    // re-vet rung fires too and it lands at $0.9123 — further UNDER target, not
-    // over, because each rung buys more than the overshoot that triggered it.
-    //
-    // $0.9123 -> $0.9243 is @19's series section; $0.9053 -> $0.9123 before it was
-    // `scraperExecution`: `07i1-verify-lead-claim` is no longer zeroed out of
-    // the estimate when rung 3 switches the rescue re-vets off, because it is
-    // no longer switched off with them. A plan that fires rung 3 now pays for
-    // the verification it is actually going to run.
-    expect(decision.estimate.estimatedUsd).toBeCloseTo(0.9243, 6);
-    // THE ASSERTION THAT MATTERS. Three attempts survive: the drafting loop is
-    // what every judgment gate returns into, so an attempt lost to the budget
-    // is a quality gate silently disarmed. `optionalRevets` going false is the
-    // cost that WAS paid, and it is named here rather than left to be noticed
-    // later — rescue re-vets are optional by their own name, the attempt rung
-    // is not, and the ordering that makes that true is RFC-18 §7.3's swap.
+    // ONE rung, and it is the one nobody can see: $0.201 of rescue re-vets
+    // (3 attempts x (3 scrapes + 2 pro vets)) takes $1.9605 to $1.7595.
+    expect(decision.adaptations).toEqual(["optional rescue re-vets skipped"]);
+    expect(decision.estimate.estimatedUsd).toBeCloseTo(1.7595, 6);
+    expect(decision.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
+    // THE ASSERTIONS THAT MATTER, and they are absences as much as values.
+    expect(decision.plan.generatedImagesCap).toBe(GENERATED_IMAGES_PER_RUN_CAP);
     expect(decision.plan.maxSelfCheckAttempts).toBe(3);
-    expect(decision.plan.optionalRevets).toBe(false);
-    expect(decision.plan.evidencePulls).toBe("reduced");
-    // The mechanism, asserted rather than described: the same shape prices
-    // $0.030 less in `fixed` once the plan can no longer buy the concept. The
-    // comparison is made against the CHOSEN plan with only the concept's own
-    // preconditions moved back, not against `DEFAULT_RUN_BUDGET_PLAN` — the
-    // chosen plan also has evidence reduced, and differencing two plans that
-    // differ in an unrelated way would quietly attribute $0.021 of trend
-    // evidence to the concept.
-    //
-    // `conceptPossible` has TWO plan-side preconditions and `run-budget.ts`
-    // states both: `generatedImagesCap > 0` AND `optionalRevets`. Through @17
-    // the chosen cold plan still had the rescue tiers on, so moving the cap
-    // alone isolated the concept. At @18 the re-vet rung fires too, so moving
-    // the cap alone would leave the concept declined by the OTHER precondition
-    // (difference $0). The re-vet flag is therefore held CONSTANT on both
-    // sides and only the cap moves — the same discipline the paragraph above
-    // states, difference one thing at a time, applied to a plan that differs
-    // in more than one.
-    //
-    // 2026-09-14 REMOVED a complication that used to live in this paragraph:
-    // flipping `optionalRevets` also used to switch `07i1`'s lead-claim
-    // verification on, so the two-sided comparison measured the concept plus
-    // an unrelated $0.007. `07i1` is now unconditional, so the flag moves one
-    // thing again and the line below is an equality rather than an offset.
-    const revetsOn = { ...decision.plan, optionalRevets: true };
-    const fixedAt = (cap: number) => estimateRunCost({ ...revetsOn, generatedImagesCap: cap }, DEFAULT_RUN_SHAPE).breakdown.fixed;
-    expect(fixedAt(4) - fixedAt(0)).toBeCloseTo(STEP_COST_ESTIMATES_USD.concept + STEP_COST_ESTIMATES_USD.visionInspectPerImage, 6);
-    // And the concept really is $0 on the plan that was CHOSEN, which is the
-    // claim the paragraph above actually makes. `optionalRevets` no longer
-    // moves a cent of `fixed`, which is asserted here rather than assumed.
-    expect(fixedAt(0)).toBeCloseTo(decision.estimate.breakdown.fixed, 6);
-    expect(estimateRunCost({ ...decision.plan, optionalRevets: true }, DEFAULT_RUN_SHAPE).breakdown.fixed).toBeCloseTo(
-      decision.estimate.breakdown.fixed,
+    expect(decision.plan.duplicateVisionPasses).toBe(true);
+    expect(decision.plan.evidencePulls).toBe("full");
+    expect(decision.adaptations.some((a) => /image/i.test(a))).toBe(false);
+
+    // The image rungs, priced, so the ladder's own stepping is pinned and not
+    // merely its endpoint. Each step is one to four generated pictures at
+    // $0.039 — the same order of money as the rungs above it, which is why the
+    // steps are 4 and 3 rather than 4 and 2.
+    const at = (cap: number) => estimateRunCost({ ...DEFAULT_RUN_BUDGET_PLAN, generatedImagesCap: cap }, DEFAULT_RUN_SHAPE).estimatedUsd;
+    expect(at(8)).toBeCloseTo(1.9605, 6);
+    expect(at(4)).toBeCloseTo(1.8045, 6);
+    expect(at(3)).toBeCloseTo(1.7655, 6);
+    expect(at(2)).toBeCloseTo(1.7265, 6);
+    expect(at(8) - at(4)).toBeCloseTo(4 * STEP_COST_ESTIMATES_USD.generatedImage, 6);
+
+    // The concept line is now booked on EVERY run the mode is reachable on,
+    // with no plan-side precondition. It used to be conditioned on
+    // `generatedImagesCap > 0 && optionalRevets`, which was honest while a rung
+    // could zero the cap and the workflow could decline the concept outright.
+    // Neither is true after this phase — `partitionGaps` makes the concept a
+    // guaranteed gap — so pricing it conditionally would under-count exactly
+    // the tightest plans.
+    const withoutConcept = estimateRunCost(DEFAULT_RUN_BUDGET_PLAN, { ...DEFAULT_RUN_SHAPE, conceptPossible: false });
+    expect(cold.breakdown.fixed - withoutConcept.breakdown.fixed).toBeCloseTo(
+      STEP_COST_ESTIMATES_USD.concept + STEP_COST_ESTIMATES_USD.visionInspectPerImage,
       6,
     );
-    // And the evidence rung, priced on its own, because it is the rung Phase 5
-    // newly fires on an English run and nothing else in this file pins it:
-    // three of the four trend queries, at the scraper's per-execution price.
-    const chosenButFullEvidence = { ...decision.plan, evidencePulls: "full" as const };
-    expect(estimateRunCost(chosenButFullEvidence, DEFAULT_RUN_SHAPE).breakdown.fixed - decision.estimate.breakdown.fixed).toBeCloseTo(0.021, 6);
-    expect(decision.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
-    // ── THE COLD HEBREW PLAN, AFTER THE OWNER'S 2026-09-14 RULING ──
+    for (const plan of [
+      { ...DEFAULT_RUN_BUDGET_PLAN, generatedImagesCap: MIN_GENERATED_IMAGES_PER_RUN },
+      { ...DEFAULT_RUN_BUDGET_PLAN, optionalRevets: false },
+      {
+        maxSelfCheckAttempts: 3,
+        generatedImagesCap: MIN_GENERATED_IMAGES_PER_RUN,
+        evidencePulls: "reduced" as const,
+        optionalRevets: false,
+        duplicateVisionPasses: false,
+      },
+    ]) {
+      // Differenced against the SAME plan with the mode switched off, so the
+      // evidence rung's own $0.021 (which also lives in `fixed`) cannot be
+      // mistaken for the concept moving.
+      const off = estimateRunCost({ ...plan }, { ...DEFAULT_RUN_SHAPE, conceptPossible: false }).breakdown.fixed;
+      expect(estimateRunCost(plan, DEFAULT_RUN_SHAPE).breakdown.fixed - off, "the concept is priced on the tightest plan too").toBeCloseTo(
+        STEP_COST_ESTIMATES_USD.concept + STEP_COST_ESTIMATES_USD.visionInspectPerImage,
+        6,
+      );
+    }
+
+    // ── THE COLD HEBREW PLAN: three rungs, and still every picture. ──
     //
-    // This is the shape the whole of RFC-18 §7.3 turned on, and it still
-    // carries the one hard acceptance condition in this file: **three
-    // attempts, and the only rung that paid for them is an optional one.**
-    // What changed is how that condition is now met.
-    //
-    // The history, because it is the reason the ladder looks the way it does.
-    // Before Phase 5 this shape sat $0.0002 under target with the re-vet rung
-    // still unspent, because the attempt lever ran FIRST. That $0.0002 is why
-    // Phase 4 refused to re-price `vetCall` at all: +$0.0045 fired the attempt
-    // lever, dropped `maxSelfCheckAttempts` 3 -> 2, and
-    // `language-compliance-gate.test.ts` produced `status: "held"` runs in the
-    // two cases named "NEVER holds". Phase 5 swapped the last two rungs so the
-    // optional one absorbed the cost instead, which bought a $0.0017 margin.
-    //
-    // The owner then removed the problem rather than the margin: the $1.00
-    // target may adapt OPTIONAL work only, so there is no attempt rung at all.
-    // The cold Hebrew plan now lands **$0.0053 OVER target on three attempts
-    // and runs anyway**, and the note says so. A margin that has to be
-    // defended by a test every time a prompt is re-priced was itself the
-    // defect; this is what replaced it.
+    // This is the shape the whole of RFC-18 §7.3 turned on and the tightest
+    // real plan the fleet produces. It carries the same acceptance condition as
+    // the English one plus the older one: three drafting attempts.
     const hebrew = planRunBudget({ ...DEFAULT_RUN_SHAPE, targetLanguage: true });
-    // The two halves of the acceptance condition FIRST, and in this order on
-    // purpose: if an attempt rung is ever re-introduced this line reads
-    // "expected 2 to be 3", which is the finding, rather than an array diff
-    // the reader has to interpret.
     expect(hebrew.plan.maxSelfCheckAttempts).toBe(3);
-    expect(hebrew.adaptations).toContain("optional rescue re-vets skipped");
-    expect(hebrew.adaptations).not.toContain("one return to step 05 instead of two");
+    expect(hebrew.plan.generatedImagesCap).toBe(GENERATED_IMAGES_PER_RUN_CAP);
     expect(hebrew.adaptations).toEqual([
-      "images capped at 4",
-      "images capped at 2",
-      "no generated images (stock or text-only)",
-      "trend evidence reduced to the one cached industry query",
       "optional rescue re-vets skipped",
+      "trend evidence reduced to the one cached industry query",
+      "duplicate vision passes skipped (candidates and slides are inspected once, not once per attempt)",
     ]);
-    // $1.0053 — over target by $0.0053, and that is the DESIGNED outcome, not
-    // a regression. Asserted as a literal so that any future re-price of this
-    // prompt, this language brief or any per-attempt step lands on a named
-    // number here first.
-    expect(hebrew.estimate.estimatedUsd).toBeCloseTo(1.0173, 6);
-    expect(hebrew.estimate.estimatedUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
-    expect(hebrew.estimate.estimatedUsd - TARGET_RUN_SPEND_USD).toBeCloseTo(0.0173, 6);
-    expect(hebrew.plan.maxSelfCheckAttempts).toBe(decision.plan.maxSelfCheckAttempts);
+    expect(hebrew.initialEstimateUsd).toBeCloseTo(2.0535, 6);
+    expect(hebrew.estimate.estimatedUsd).toBeCloseTo(1.7595, 6);
+    expect(hebrew.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
+    // And well under the hard max, which is the bound that still binds: over the
+    // target costs the run its optional work, over the ceiling would put it on
+    // the cheapest complete path before it started.
+    expect(MAX_RUN_SPEND_USD - hebrew.estimate.estimatedUsd).toBeGreaterThan(0.8);
+
+    // ── EACH RUNG, PRICED ON THE SHAPE THAT PULLS IT, IN ORDER. ──
     //
-    // == AND WELL UNDER THE HARD MAX, WHICH IS THE BOUND THAT STILL BINDS ==
-    //
-    // Over the $1.00 target costs the run its OPTIONAL work, through
-    // `essential-only`. Over the $1.60 ceiling would put it on the cheapest
-    // complete path before it started, which would be a real quality loss and
-    // is the thing to watch. $1.0053 against $1.60 is $0.59 of room; a change
-    // that eats it fails here, with a number.
-    expect(hebrew.estimate.estimatedUsd).toBeLessThan(MAX_RUN_SPEND_USD);
-    expect(MAX_RUN_SPEND_USD - hebrew.estimate.estimatedUsd).toBeGreaterThan(0.5);
-    // Phase 5's own Hebrew line, kept as the unit the next phase measures
-    // itself in: the overrun is a fifth of it.
-    const phase5HebrewLine = 3 * STEP_COST_ESTIMATES_USD.valueJudge + STEP_COST_ESTIMATES_USD.postPackage + STEP_COST_ESTIMATES_USD.packageNativeJudge;
-    expect(phase5HebrewLine).toBeCloseTo(0.024, 6);
-    // The bound that did NOT move, and the only one that was ever a product
-    // requirement rather than an editorial margin: the cold Hebrew run gets
-    // three full attempts and a complete deliverable. "Budgets adapt, never
-    // hold" is unaffected by all of the above — crossing the target pulls a
-    // lever, crossing the ceiling takes the cheapest path, neither refuses.
-    expect(hebrew.plan.maxSelfCheckAttempts).toBe(3);
-    // The rung that fired is worth what the module's comment says it is, and
-    // the rung that NO LONGER EXISTS was worth nearly three times more — which
-    // is the ordering argument, and then the deletion argument, in numbers
-    // rather than in prose.
-    const beforeLastTwo = { ...DEFAULT_RUN_BUDGET_PLAN, generatedImagesCap: 0, evidencePulls: "reduced" as const };
+    // Read the four numbers together: the ladder gives up $0.201 of rescue,
+    // then $0.021 of repeat evidence, then $0.072 of repeat vision, before it
+    // touches a single picture. The rung it no longer has — a drafting attempt
+    // — would have been $0.356, and the pictures it now protects are $0.312.
     const hebrewShape = { ...DEFAULT_RUN_SHAPE, targetLanguage: true };
-    const revetRung =
-      estimateRunCost(beforeLastTwo, hebrewShape).rawUsd - estimateRunCost({ ...beforeLastTwo, optionalRevets: false }, hebrewShape).rawUsd;
-    const attemptRung =
-      estimateRunCost(beforeLastTwo, hebrewShape).rawUsd - estimateRunCost({ ...beforeLastTwo, maxSelfCheckAttempts: 2 }, hebrewShape).rawUsd;
-    // $0.109 -> $0.102: the re-vet rung is now the rescue line and NOTHING
-    // else. `07i1`'s $0.007 verification used to ride this same flag and no
-    // longer does, which is the whole of 2026-09-14's priced change expressed
-    // as a rung.
-    expect(revetRung).toBeCloseTo(0.102, 6);
-    expect(revetRung).toBeCloseTo(3 * (3 * STEP_COST_ESTIMATES_USD.scraperExecution + 2 * STEP_COST_ESTIMATES_USD.vetCall), 6);
-    // An attempt carries one `copyAttempt` and one `nativeJudge` round, so
-    // every re-price of the copy call makes an attempt dearer. That only ever
-    // strengthened the case for deleting the rung that sold one.
-    expect(attemptRung).toBeCloseTo(0.3056, 6);
-    expect(attemptRung).toBeGreaterThan(2 * revetRung);
-    const perAttemptLanguage = STEP_COST_ESTIMATES_USD.copyLanguageBrief + STEP_COST_ESTIMATES_USD.nativeJudge;
-    // $0.081, up from $0.069: `copyLanguageBrief` $0.009 + the re-priced `nativeJudge` $0.018, x3.
-    expect(3 * perAttemptLanguage).toBeCloseTo(0.081, 6);
-    // And `fluency` is NOT what a Hebrew run is priced at any more — it is the cheapest-path degraded tier.
-    expect(3 * perAttemptLanguage).not.toBeCloseTo(3 * STEP_COST_ESTIMATES_USD.fluency, 6);
-    // ── THE TWO LADDERS THAT ARE NO LONGER SHIPPED, REPLAYED WITHOUT
-    // ── EDITING THE MODULE ──
+    const rawAt = (p: typeof DEFAULT_RUN_BUDGET_PLAN) => estimateRunCost(p, hebrewShape).rawUsd;
+    const full = DEFAULT_RUN_BUDGET_PLAN;
+    const afterRevets = { ...full, optionalRevets: false };
+    const afterEvidence = { ...afterRevets, evidencePulls: "reduced" as const };
+    const afterVision = { ...afterEvidence, duplicateVisionPasses: false };
+    expect(roundUsd(rawAt(full) - rawAt(afterRevets))).toBeCloseTo(0.201, 6);
+    expect(roundUsd(rawAt(full) - rawAt(afterRevets))).toBeCloseTo(
+      3 * (3 * STEP_COST_ESTIMATES_USD.scraperExecution + 2 * STEP_COST_ESTIMATES_USD.vetCall),
+      6,
+    );
+    expect(roundUsd(rawAt(afterRevets) - rawAt(afterEvidence))).toBeCloseTo(3 * STEP_COST_ESTIMATES_USD.scraperExecution, 6);
+    // The duplicate-vision rung is worth two re-inspections of the candidate
+    // pool — the pool the live `unitUsage` shows being re-described at an
+    // identical width on every attempt.
+    expect(roundUsd(rawAt(afterEvidence) - rawAt(afterVision))).toBeCloseTo(
+      2 * DEFAULT_RUN_SHAPE.photoSlides * CANDIDATES_PER_PHOTO_SLIDE * STEP_COST_ESTIMATES_USD.visionInspectPerImage,
+      6,
+    );
+    // The deleted attempt rung, and the pictures, measured against each other:
+    // the rung that no longer exists was worth more than everything the ladder
+    // now gives up before it reaches the images.
+    const attemptRung = roundUsd(rawAt(afterVision) - rawAt({ ...afterVision, maxSelfCheckAttempts: 2 }));
+    expect(attemptRung).toBeCloseTo(0.357, 6);
+    expect(attemptRung).toBeGreaterThan(roundUsd(rawAt(full) - rawAt(afterVision)));
+    const images = roundUsd(rawAt(afterVision) - rawAt({ ...afterVision, generatedImagesCap: MIN_GENERATED_IMAGES_PER_RUN }));
+    expect(images).toBeCloseTo((GENERATED_IMAGES_PER_RUN_CAP - MIN_GENERATED_IMAGES_PER_RUN) * STEP_COST_ESTIMATES_USD.generatedImage, 6);
+
+    // ── THE LADDER THAT IS NO LONGER SHIPPED, REPLAYED WITHOUT EDITING THE
+    // ── MODULE — the technique this file has used since Phase 5, and for the
+    // ── same reason: "it goes red if you break it" is a claim until someone
+    // ── breaks it, and the reader of this file cannot.
     //
-    // "It goes red if you break it" is only a claim until someone breaks it,
-    // and the reader of this file cannot. So both superseded ladders are
-    // replayed here by hand, on the same shape, at the same calibration ratio,
-    // against the same `fits()` rule. Each lands on a different plan, in the
-    // file, permanently.
+    // The PRE-PHASE-5.5 order: images FIRST, stepping 4 -> 2 -> 0, then
+    // evidence, then the optional re-vets. Applied to the same shape at the
+    // same prices it lands on `generatedImagesCap: 0` — the plan that shipped
+    // the posts the owner returned.
     const ratio = hebrew.calibration.ratio;
     const fitsAt = (p: typeof DEFAULT_RUN_BUDGET_PLAN) => estimateRunCost(p, hebrewShape, ratio).estimatedUsd <= TARGET_RUN_SPEND_USD;
-    // (a) The PRE-PHASE-5 order: attempt rung third, optional re-vets last.
     let old = { ...DEFAULT_RUN_BUDGET_PLAN };
     for (const cap of [4, 2, 0]) if (!fitsAt(old) && old.generatedImagesCap > cap) old = { ...old, generatedImagesCap: cap };
     if (!fitsAt(old) && old.evidencePulls === "full") old = { ...old, evidencePulls: "reduced" };
-    if (!fitsAt(old) && old.maxSelfCheckAttempts > 2) old = { ...old, maxSelfCheckAttempts: 2 };
     if (!fitsAt(old) && old.optionalRevets) old = { ...old, optionalRevets: false };
-    // The finding that motivated the swap: it gives up a drafting attempt
-    // while $0.102 of work whose own name is "optional" is still sitting
-    // there unspent.
-    expect(old.maxSelfCheckAttempts).toBe(2);
-    expect(old.optionalRevets).toBe(true);
-    expect(estimateRunCost(old, hebrewShape, ratio).estimatedUsd).toBeCloseTo(0.8137, 6);
-    // (b) The PHASE-5 order — the swap, but with the attempt rung still there
-    // at the bottom. This is the ladder that shipped between 2026-09-13 and
-    // the owner's ruling, and it is the one the ruling deleted. Applied to
-    // TODAY's chosen plan it would land at $0.7377: **a $0.2676 overshoot, a
-    // quarter of the whole target given back, to recover the $0.0053 this run
-    // is over by.** There is no proportionate version of crossing that line,
-    // which is the argument for deleting the rung rather than re-tuning it.
-    const withDeletedRung = { ...hebrew.plan, maxSelfCheckAttempts: 2 };
-    expect(estimateRunCost(withDeletedRung, hebrewShape, ratio).estimatedUsd).toBeCloseTo(0.7457, 6);
-    expect(hebrew.estimate.estimatedUsd - estimateRunCost(withDeletedRung, hebrewShape, ratio).estimatedUsd).toBeCloseTo(0.2716, 6);
-    // The overrun the rung would have been "fixing" against what fixing it
-    // would have cost. It was 50x at @18 and is 15x at @19, because the
-    // overrun grew with the prompt while the attempt's worth grew only with
-    // its own share of it. The ratio is what makes the argument, so it is
-    // asserted as a ratio and restated when it moves rather than left at a
-    // number that used to be true.
-    expect(hebrew.estimate.estimatedUsd - TARGET_RUN_SPEND_USD).toBeLessThan(
-      (hebrew.estimate.estimatedUsd - estimateRunCost(withDeletedRung, hebrewShape, ratio).estimatedUsd) / 15,
-    );
-    // (c) And what actually ships: neither of them.
-    expect(hebrew.plan.maxSelfCheckAttempts).toBe(3);
+    expect(old.generatedImagesCap, "the superseded ladder reaches zero images on the shape that ships today").toBe(0);
+    expect(old.optionalRevets, "and it does it with $0.201 of optional work still unspent").toBe(true);
+    // (c) And what actually ships: not that.
+    expect(hebrew.plan.generatedImagesCap).toBeGreaterThan(old.generatedImagesCap);
     expect(hebrew.plan.optionalRevets).toBe(false);
-    expect(old.maxSelfCheckAttempts).toBeLessThan(hebrew.plan.maxSelfCheckAttempts);
-    expect(withDeletedRung.maxSelfCheckAttempts).toBeLessThan(hebrew.plan.maxSelfCheckAttempts);
   });
 
   it("prices every once-per-run line Phase 1 added, each one off the step that bills it", () => {
@@ -797,17 +566,30 @@ describe("estimateRunCost — every term priced off what the run actually bills"
     expect(decision.adaptations.length).toBeGreaterThan(1);
     expect(decision.spentBeforePlanUsd).toBe(0);
 
-    // The assertion here USED to be `estimatedUsd <= TARGET`, and it held only
-    // because the ladder would spend a drafting attempt to make it hold. With
-    // the attempt rung deleted (owner, 2026-09-14) the tightest plan for a
-    // brand-new client is $1.09, so what this test guards is now two things
-    // rather than one: the ladder pulls everything it has, and when that is
-    // still not enough the run goes anyway and SAYS SO. A plan that came in
-    // silently under target would now be the suspicious outcome.
-    expect(decision.plan).toEqual({ maxSelfCheckAttempts: 3, generatedImagesCap: 0, evidencePulls: "reduced", optionalRevets: false });
-    expect(decision.estimate.estimatedUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
+    // A brand-new client is the one ordinary shape that reaches the image rung
+    // at all — $0.176 of brief writing and source scraping has to come from
+    // somewhere — and it reaches it having spent all three optional rungs
+    // first. It stops at 4, four pictures above the floor, and the plan FITS.
+    //
+    // Until 2026-09-16 this same shape landed on `generatedImagesCap: 0` after
+    // the FIRST rung, with $0.201 of rescue re-vets still unspent.
+    expect(decision.plan).toEqual({
+      maxSelfCheckAttempts: 3,
+      generatedImagesCap: 4,
+      evidencePulls: "reduced",
+      optionalRevets: false,
+      duplicateVisionPasses: false,
+    });
+    expect(decision.adaptations).toEqual([
+      "optional rescue re-vets skipped",
+      "trend evidence reduced to the one cached industry query",
+      "duplicate vision passes skipped (candidates and slides are inspected once, not once per attempt)",
+      "images capped at 4",
+    ]);
+    expect(decision.estimate.estimatedUsd).toBeCloseTo(1.6865, 6);
+    expect(decision.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
     expect(decision.estimate.estimatedUsd).toBeLessThan(MAX_RUN_SPEND_USD);
-    expect(decision.note).toMatch(/still \$1\.10 on the tightest plan — running anyway/);
+    expect(decision.plan.generatedImagesCap).toBeGreaterThan(MIN_GENERATED_IMAGES_PER_RUN);
   });
 
   it("money already billed before the plan is money the plan cannot spend: the target left is what it fits", () => {
@@ -815,25 +597,25 @@ describe("estimateRunCost — every term priced off what the run actually bills"
     // paid step is ever added above it, the lever still fires.
     const warmFits = planRunBudget(WARM_RUN_SHAPE, CALIBRATED_HISTORY);
     expect(warmFits.adaptations).toEqual([]);
-    const withSpend = planRunBudget(WARM_RUN_SHAPE, CALIBRATED_HISTORY, { spentUsd: 0.6 });
+    const withSpend = planRunBudget(WARM_RUN_SHAPE, CALIBRATED_HISTORY, { spentUsd: 0.9 });
     expect(withSpend.adaptations).not.toEqual([]);
-    expect(withSpend.spentBeforePlanUsd).toBe(0.6);
-    expect(withSpend.note).toContain("$0.60 was already spent before the plan");
-    // THE LEVER FIRED, which is what this belt is for. It no longer lands
-    // UNDER the target, and that is the 2026-09-14 ruling rather than a
-    // regression: with $0.60 already billed there is $0.40 left, the tightest
-    // honest plan is $0.92, and the attempt rung that used to close that gap
-    // is deleted. The run goes anyway. What must stay true is that the plan
-    // ADAPTED and that it is nowhere near the hard max.
+    expect(withSpend.spentBeforePlanUsd).toBe(0.9);
+    expect(withSpend.note).toContain("$0.90 was already spent before the plan");
+    // THE LEVER FIRED, which is what this belt is for, and it fired on the
+    // OPTIONAL rung: $0.90 already billed leaves $0.90, the full warm plan is
+    // $0.91, and dropping the rescue re-vets closes it. The pictures are
+    // untouched — which is the property this phase adds to this old belt.
+    expect(withSpend.adaptations).toEqual(["optional rescue re-vets skipped"]);
+    expect(withSpend.plan.generatedImagesCap).toBe(GENERATED_IMAGES_PER_RUN_CAP);
     expect(withSpend.estimate.estimatedUsd).toBeLessThan(planRunBudget(WARM_RUN_SHAPE, CALIBRATED_HISTORY).estimate.estimatedUsd);
-    expect(withSpend.estimate.estimatedUsd + 0.6).toBeLessThan(MAX_RUN_SPEND_USD);
+    expect(withSpend.estimate.estimatedUsd + 0.9).toBeLessThan(MAX_RUN_SPEND_USD);
     // A nonsensical figure is read as nothing spent rather than thrown on.
     expect(planRunBudget(WARM_RUN_SHAPE, CALIBRATED_HISTORY, { spentUsd: Number.NaN }).spentBeforePlanUsd).toBe(0);
   });
 });
 
 describe("planRunBudget — the owner's levers, in order, never a hold", () => {
-  it("a warm run for a calibrated client fits the $1.00 target with no adaptation and says so", () => {
+  it("a warm run for a calibrated client fits the $1.80 target with no adaptation and says so", () => {
     // The steady state: caches warm, and one delivered run's worth of history
     // saying the cold worst case over-predicts. This is the shape that gets
     // the full plan — a first, cold, uncalibrated run does not, and the test
@@ -843,7 +625,7 @@ describe("planRunBudget — the owner's levers, in order, never a hold", () => {
     expect(decision.adaptations).toEqual([]);
     expect(decision.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
     expect(decision.estimate.estimatedUsd).toBeGreaterThan(0.3);
-    expect(decision.note).toMatch(/^budget: estimate \$0\.\d\d ≤ \$1\.00 → full plan$/);
+    expect(decision.note).toMatch(/^budget: estimate \$0\.\d\d ≤ \$1\.80 → full plan$/);
     expect(decision.calibration).toEqual({ ratio: 0.5, posture: "default", pastRuns: 0 });
   });
 
@@ -911,109 +693,160 @@ describe("planRunBudget — the owner's levers, in order, never a hold", () => {
     expect(plannerDelta).toBeCloseTo(3 * (c.copyLanguageBrief + c.nativeJudge) + c.packageNativeJudge, 6);
   });
 
-  it("over the target it caps images FIRST, stepping 8 -> 4 -> 2 -> 0, and only then reaches for the cheapest rung below", () => {
-    // The cold @18 default ($1.3863): the image lever is pulled first and steps
-    // three times — 8 -> 4 is $1.2303 and 4 -> 2 is $1.1523, both over the
-    // target, and 2 -> 0 lands at $1.0443, STILL $0.0443 over. Reduced trend
-    // evidence takes $0.021 of that ($1.0233, still over), and the re-vet rung
-    // takes the rest, landing at $0.9143.
+  it("pulls the rungs in the owner's Phase 5.5 order — re-vets, evidence, duplicate vision, and LAST the images", () => {
+    // The order is the whole of brief item A1, so it is asserted as an ORDER
+    // and not as a set. A ratio of 1.45 is what it takes to reach every rung on
+    // the cold English shape: the full plan prices at $2.83 calibrated, and the
+    // ladder walks all six steps down to the floor.
     //
-    // Through Phase 4 the image lever alone was enough here. @17's measured
-    // prompt (+$0.0122 an attempt) pushed it onto the EVIDENCE rung; @18's
-    // section 28 (+$0.010 an attempt, +$0.030 across three) pushes it one
-    // further, onto the optional-rescue rung. Both are the ladder doing its
-    // job in the owner's order. What this test pins is the rung that is STILL
-    // untouched: the run keeps all three drafting attempts.
-    const decision = planRunBudget(DEFAULT_RUN_SHAPE);
-    expect(decision.initialEstimateUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
-    expect(decision.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
-    expect(decision.plan.generatedImagesCap).toBe(0);
-    expect(decision.plan.maxSelfCheckAttempts).toBe(3);
-    expect(decision.plan.evidencePulls).toBe("reduced");
-    expect(decision.plan.optionalRevets).toBe(false);
-    expect(decision.adaptations).toEqual([
-      "images capped at 4",
-      "images capped at 2",
-      "no generated images (stock or text-only)",
-      "trend evidence reduced to the one cached industry query",
-      "optional rescue re-vets skipped",
-    ]);
-    expect(decision.note).toMatch(
-      /^budget: estimate \$1\.\d\d > \$1\.00 → images capped at 4, images capped at 2, no generated images \(stock or text-only\), trend evidence reduced to the one cached industry query, optional rescue re-vets skipped \(now \$0\.\d\d\)$/,
-    );
-    // The three image rungs, each one still over target, so the ladder's own
-    // stepping is pinned and not merely its endpoint.
-    const at = (cap: number) => estimateRunCost({ ...DEFAULT_RUN_BUDGET_PLAN, generatedImagesCap: cap }, DEFAULT_RUN_SHAPE).estimatedUsd;
-    expect(at(4)).toBeCloseTo(1.2333, 6);
-    expect(at(2)).toBeCloseTo(1.1553, 6);
-    expect(at(0)).toBeCloseTo(1.0473, 6);
-    expect(at(0)).toBeGreaterThan(TARGET_RUN_SPEND_USD);
-  });
-
-  it("pulls every lever in the owner's order when one is not enough: images, evidence pulls, and LAST the optional re-vets", () => {
-    // ## The ladder is four rungs long, and there is deliberately no fifth
-    //
-    // Until 2026-09-14 a fifth rung cut `maxSelfCheckAttempts` 3 -> 2 whenever
-    // the first four were not enough. The owner deleted it: the $1.00 target
-    // may adapt OPTIONAL work only, and a drafting attempt is the loop every
-    // judgment gate in this workflow returns INTO. So the last rung this test
-    // can observe is the re-vet rung, and what happens after it is not another
-    // cut — it is the run proceeding over target with the overrun recorded.
-    //
-    // The ratio moved 1.8 -> 1.7 -> 1.6 -> 1.55 -> 1.5 -> 1.45 with each of
-    // `copyAttempt`'s honest re-prices (@14's and @15's OUTPUT grew, @17's
-    // INPUT grew by 16,300 characters, @18's `emphasis` array grew the OUTPUT
-    // again) and with RFC-16's $0.030 concept line. It stays at 1.45 here so
-    // the ratio this file asserts about is the one the incident record above
-    // refers to; what it now demonstrates is saturation rather than a fit.
+    // The ratio moved 1.8 -> 1.45 over Phase 4 and 5 with each honest re-price
+    // of `copyAttempt`; it is kept at 1.45 here so the regime this test names is
+    // the one the incident record refers to.
     const history = { ...EMPTY_RUN_BUDGET_HISTORY, ewmaRatio: 1.45, runs: [] };
     const decision = planRunBudget(DEFAULT_RUN_SHAPE, history);
     expect(decision.adaptations).toEqual([
-      "images capped at 4",
-      "images capped at 2",
-      "no generated images (stock or text-only)",
-      "trend evidence reduced to the one cached industry query",
       "optional rescue re-vets skipped",
+      "trend evidence reduced to the one cached industry query",
+      "duplicate vision passes skipped (candidates and slides are inspected once, not once per attempt)",
+      "images capped at 4",
+      "images capped at 3",
+      "images capped at 2 — the floor no lever may cross",
     ]);
-    // THE ASSERTION THAT MATTERS, and it is an absence: no rung below the
-    // re-vets. A future lever that trades a drafting attempt would append a
-    // sixth string here and fail this line before it reached production.
-    expect(decision.adaptations.at(-1)).toBe("optional rescue re-vets skipped");
-    expect(decision.plan).toEqual({ maxSelfCheckAttempts: 3, generatedImagesCap: 0, evidencePulls: "reduced", optionalRevets: false });
-
-    // ## Saturation, asserted rather than described
-    //
-    // The tightest plan's own raw figure is what decides where every regime in
-    // this file begins, so it is read from the module rather than restated.
-    // NOTE THE SIZE OF THE MOVE: the tightest plan went $0.6647 -> $0.9123,
-    // because "tightest" now means three attempts and not two (plus $0.007 for
-    // the lead-claim verification rung 3 no longer switches off). Saturation
-    // therefore fell from ratio 1.50444 to 1.09613 — i.e. ANY client whose
-    // calibrated ratio is above ~1.10 now plans over the $1.00 target, and
-    // that is the owner's ruling working as specified rather than a
-    // regression. `ewmaRatio` is what closes the gap afterwards.
-    const tightest = { maxSelfCheckAttempts: 3, generatedImagesCap: 0, evidencePulls: "reduced" as const, optionalRevets: false };
-    expect(estimateRunCost(tightest, DEFAULT_RUN_SHAPE).rawUsd).toBeCloseTo(0.9243, 6);
-    expect(TARGET_RUN_SPEND_USD / estimateRunCost(tightest, DEFAULT_RUN_SHAPE).rawUsd).toBeCloseTo(1.08190, 5);
-    expect(history.ewmaRatio).toBeGreaterThan(TARGET_RUN_SPEND_USD / estimateRunCost(tightest, DEFAULT_RUN_SHAPE).rawUsd);
+    // The three rungs that fire BEFORE any picture is given up, in order, and
+    // the fact that no image rung appears among them.
+    expect(decision.adaptations.slice(0, 3).some((a) => /image/i.test(a))).toBe(false);
+    expect(decision.adaptations.findIndex((a) => /images capped/.test(a))).toBe(3);
+    // THE ASSERTION THAT MATTERS, and it is where the ladder STOPS: at the
+    // floor, with three attempts, on a plan that still does not fit.
+    expect(decision.plan).toEqual({
+      maxSelfCheckAttempts: 3,
+      generatedImagesCap: MIN_GENERATED_IMAGES_PER_RUN,
+      evidencePulls: "reduced",
+      optionalRevets: false,
+      duplicateVisionPasses: false,
+    });
+    expect(decision.adaptations.at(-1)).toMatch(/the floor no lever may cross/);
     expect(decision.estimate.estimatedUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
-    expect(decision.estimate.estimatedUsd).toBeCloseTo(1.340235, 6);
-    // Over target, and still WELL under the hard max — so nothing about this
-    // plan puts the run on the cheapest path before it has drawn a breath.
+    expect(decision.estimate.estimatedUsd).toBeCloseTo(2.077125, 6);
+    expect(decision.note).toMatch(/running anyway/);
+    // Over target and still under the hard max, so nothing about this plan puts
+    // the run on the cheapest path before it has drawn a breath.
     expect(decision.estimate.estimatedUsd).toBeLessThan(MAX_RUN_SPEND_USD);
-    // And the ratio this test USES is the one the history carries — asserted,
-    // so that editing one and not the other is a failure rather than a test
-    // that silently stops testing the regime it names.
+    // The ratio this test USES is the one the history carries — asserted, so
+    // that editing one and not the other is a failure rather than a test that
+    // silently stops testing the regime it names.
     expect(history.ewmaRatio).toBe(1.45);
+  });
+
+  it("drives the spend up rung by rung so a target of $1.80 that rarely fires cannot let the ladder rot", () => {
+    // ## Why this test exists at all
+    //
+    // At $1.00 every cold run walked the whole ladder, so every rung was
+    // exercised by the ordinary cases above. At $1.80 the cold English plan
+    // stops after ONE rung and the cold Hebrew plan after three — which is the
+    // intended outcome and is also how a ladder rots: a rung nothing reaches is
+    // a rung nobody notices is broken.
+    //
+    // So this walks `spentUsd` up and asserts the plan at each step. `spentUsd`
+    // is the honest lever for it: `planRunBudget` fits the plan to what is LEFT
+    // of the target, so money already billed reaches every rung in order
+    // without touching a single price.
+    /** The ladder, in the owner's order. Every plan's `adaptations` must be a PREFIX of this. */
+    const LADDER = [
+      "optional rescue re-vets skipped",
+      "trend evidence reduced to the one cached industry query",
+      "duplicate vision passes skipped (candidates and slides are inspected once, not once per attempt)",
+      "images capped at 4",
+      "images capped at 3",
+      "images capped at 2 — the floor no lever may cross",
+    ];
+
+    // Nothing spent on the warm calibrated shape: the full plan, every picture,
+    // no adaptation — the one end of the range.
+    expect(planRunBudget(WARM_RUN_SHAPE, CALIBRATED_HISTORY).adaptations).toEqual([]);
+    expect(planRunBudget(WARM_RUN_SHAPE, CALIBRATED_HISTORY).plan).toEqual(DEFAULT_RUN_BUDGET_PLAN);
+
+    const planAt = (spentUsd: number) => planRunBudget(WARM_RUN_SHAPE, CALIBRATED_HISTORY, { spentUsd });
+    let seen = 0;
+    const capsSeen = new Set<number>();
+    for (let spent = 0; spent <= 1.8; spent = roundUsd(spent + 0.02)) {
+      const plan = planAt(spent);
+      // THE ORDER, asserted at every point rather than at hand-picked ones. A
+      // prefix check is the right shape because two rungs can fire on the same
+      // call when the first frees nothing (on a warm shape the evidence rung
+      // frees exactly $0, since there are no cold trend queries to drop) — and
+      // "they fired together" must still mean "in this order".
+      expect(plan.adaptations, `out-of-order ladder at $${spent} spent`).toEqual(LADDER.slice(0, plan.adaptations.length));
+      // MONOTONE in the money already spent: more spent is never fewer rungs.
+      expect(plan.adaptations.length, `rung count went DOWN at $${spent} spent`).toBeGreaterThanOrEqual(seen);
+      seen = plan.adaptations.length;
+      capsSeen.add(plan.plan.generatedImagesCap);
+      // And the two things no rung may take, at every point on the sweep.
+      expect(plan.plan.maxSelfCheckAttempts, `attempts sold at $${spent} spent`).toBe(3);
+      expect(plan.plan.generatedImagesCap, `images cut below the floor at $${spent} spent`).toBeGreaterThanOrEqual(MIN_GENERATED_IMAGES_PER_RUN);
+    }
+    // The sweep reached the BOTTOM of the ladder, which is what makes the
+    // assertions above worth anything: a sweep that only ever saw the full plan
+    // would pass every line in this test.
+    expect(seen).toBe(LADDER.length);
+    // Every cap on the ladder was actually visited, and nothing below the floor
+    // ever was.
+    expect([...capsSeen].sort((a, b) => b - a)).toEqual([GENERATED_IMAGES_PER_RUN_CAP, ...IMAGE_CAP_STEPS]);
+    expect(Math.min(...capsSeen)).toBe(MIN_GENERATED_IMAGES_PER_RUN);
+  });
+
+  it("never plans zero generated images, on ANY shape, and the cap steps contain no zero", () => {
+    // ## The one-line version of brief item A1
+    //
+    // `04m-concept-eligibility` declines with the reason `"generatedImagesCap 0"`,
+    // and on 2026-09-16 that reason appeared on all six prep runs. The cap
+    // cannot be zero any more, and this sweeps for it rather than asserting it
+    // about the two shapes that happen to be in front of us.
+    expect(IMAGE_CAP_STEPS).not.toContain(0);
+    expect(Math.min(...IMAGE_CAP_STEPS)).toBe(MIN_GENERATED_IMAGES_PER_RUN);
+    expect(MIN_GENERATED_IMAGES_PER_RUN).toBeGreaterThan(0);
+
+    const shapes = [
+      DEFAULT_RUN_SHAPE,
+      WARM_RUN_SHAPE,
+      { ...DEFAULT_RUN_SHAPE, targetLanguage: true },
+      { ...DEFAULT_RUN_SHAPE, targetLanguage: true, briefRefresh: true, photoSlides: 8, socialAccounts: 6 },
+      { ...DEFAULT_RUN_SHAPE, photoSlides: 8, slideCount: 8, angleRounds: 2 },
+      { ...WARM_RUN_SHAPE, targetLanguage: true, conceptPossible: false },
+    ];
+    const histories = [
+      EMPTY_RUN_BUDGET_HISTORY,
+      CALIBRATED_HISTORY,
+      { ...EMPTY_RUN_BUDGET_HISTORY, ewmaRatio: 1.45, runs: [] },
+      { ...EMPTY_RUN_BUDGET_HISTORY, ewmaRatio: 3, runs: [] },
+      { ...EMPTY_RUN_BUDGET_HISTORY, ewmaRatio: 3, overrunStreak: 4, runs: [] },
+    ];
+    for (const shape of shapes) {
+      for (const history of histories) {
+        for (const spentUsd of [0, 0.5, 1.2, 2.5, 40]) {
+          const d = planRunBudget(shape, history, { spentUsd });
+          expect(d.plan.generatedImagesCap, `zero images planned at spent $${spentUsd}`).toBeGreaterThanOrEqual(MIN_GENERATED_IMAGES_PER_RUN);
+          expect(d.plan.maxSelfCheckAttempts).toBe(3);
+          // And the words the reviewer reads never promise a post with no
+          // pictures in it. `"no generated images (stock or text-only)"` was
+          // the adaptation string on every prep run of 2026-09-16.
+          for (const note of d.adaptations) expect(note).not.toMatch(/no generated images/);
+          expect(d.note).not.toMatch(/no generated images/);
+        }
+      }
+    }
   });
 
   it("when even the tightest plan does not fit, it still returns a plan — the run proceeds and the note says so", () => {
     const history = { ...EMPTY_RUN_BUDGET_HISTORY, ewmaRatio: 3, runs: [] };
     const decision = planRunBudget({ ...DEFAULT_RUN_SHAPE, targetLanguage: true, photoSlides: 8 }, history);
-    // "Tightest" means every OPTIONAL lever pulled. It does not, and since
-    // 2026-09-14 cannot, mean fewer drafting attempts.
+    // "Tightest" means every OPTIONAL lever pulled and the image cap at its
+    // floor. It does not, and since 2026-09-14 cannot, mean fewer drafting
+    // attempts; and since 2026-09-16 it cannot mean a post with no pictures.
     expect(decision.plan.maxSelfCheckAttempts).toBe(3);
     expect(decision.plan.optionalRevets).toBe(false);
+    expect(decision.plan.duplicateVisionPasses).toBe(false);
+    expect(decision.plan.generatedImagesCap).toBe(MIN_GENERATED_IMAGES_PER_RUN);
     expect(decision.estimate.estimatedUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
     expect(decision.note).toMatch(/still \$\d\.\d\d on the tightest plan — running anyway/);
   });
@@ -1126,32 +959,32 @@ describe("RunSpendMeter posture and the notes — the live meter adapts, it does
     expect(meter.targetUsd).toBe(TARGET_RUN_SPEND_USD);
     expect(meter.maxUsd).toBe(MAX_RUN_SPEND_USD);
     expect(meter.scope).toBe("run");
-    meter.add("05-write-copy-attempt-1", undefined, 1.01);
+    meter.add("05-write-copy-attempt-1", undefined, 1.81);
     expect(meter.crossedTarget).toBe(true);
     expect(meter.crossedMax).toBe(false);
   });
 
   it("normal under the target, essential-only over it, cheapest-path over the hard max", () => {
     const meter = new RunSpendMeter();
-    meter.add("a", undefined, 0.9);
+    meter.add("a", undefined, 1.7);
     expect(meter.posture).toBe("normal");
     expect(meter.crossedTarget).toBe(false);
     meter.add("b", undefined, 0.2);
     expect(meter.posture).toBe("essential-only");
     expect(meter.crossedTarget).toBe(true);
     expect(meter.crossedMax).toBe(false);
-    // $1.60 exactly is still `essential-only`: the ceiling is crossed only
+    // $2.60 exactly is still `essential-only`: the ceiling is crossed only
     // when it is EXCEEDED, which is the same rule that makes "a step that
     // lands exactly on the ceiling" affordable in the block above.
-    meter.add("c", 0.5, 0.01);
-    expect(meter.totalUsd).toBe(1.6);
+    meter.add("c", 0.7, 0.01);
+    expect(meter.totalUsd).toBe(2.6);
     expect(meter.crossedMax).toBe(false);
     expect(meter.posture).toBe("essential-only");
     meter.add("d", 0.2, 0.01);
     expect(meter.posture).toBe("cheapest-path");
     expect(meter.crossedMax).toBe(true);
-    expect(targetCrossedNote(meter, "06d-generate-images-attempt-2")).toMatch(/^budget: \$1\.80 spent at 06d-generate-images-attempt-2, over the \$1\.00 target — optional work stopped/);
-    expect(maxCrossedNote(meter, "05-write-copy-attempt-3")).toMatch(/over the \$1\.60 hard max — finishing on the cheapest complete path .* never held$/);
+    expect(targetCrossedNote(meter, "06d-generate-images-attempt-2")).toMatch(/^budget: \$2\.80 spent at 06d-generate-images-attempt-2, over the \$1\.80 target — optional work stopped/);
+    expect(maxCrossedNote(meter, "05-write-copy-attempt-3")).toMatch(/over the \$2\.60 hard max — finishing on the cheapest complete path .* never held$/);
   });
 
   it("summarizes estimate vs actual for the gate, the deliverable and the ledger", () => {
@@ -1159,7 +992,7 @@ describe("RunSpendMeter posture and the notes — the live meter adapts, it does
     const meter = new RunSpendMeter();
     meter.add("05-write-copy-attempt-1", undefined, STEP_COST_ESTIMATES_USD.copyAttempt);
     const summary = summarizeRunBudget(decision, meter, [decision.note]);
-    expect(summary).toMatchObject({ estimatedUsd: decision.estimate.estimatedUsd, actualUsd: STEP_COST_ESTIMATES_USD.copyAttempt, targetUsd: 1, maxUsd: 1.6, crossedTarget: false, crossedMax: false, posture: "normal", adaptations: [] });
+    expect(summary).toMatchObject({ estimatedUsd: decision.estimate.estimatedUsd, actualUsd: STEP_COST_ESTIMATES_USD.copyAttempt, targetUsd: 1.8, maxUsd: 2.6, crossedTarget: false, crossedMax: false, posture: "normal", adaptations: [] });
     expect(summary.lines).toHaveLength(1);
     expect(estimateVsActualLine(summary)).toBe(
       `budget: estimated $${decision.estimate.estimatedUsd.toFixed(2)}, actual $${STEP_COST_ESTIMATES_USD.copyAttempt.toFixed(2)} (under target)`,
@@ -1175,7 +1008,11 @@ describe("the estimate table", () => {
         "brief",
         "concept",
         "copyAttempt",
+        "copyAttemptWarm",
         "copyLanguageBrief",
+        "customArchetype",
+        "entityExtract",
+        "entitySource",
         "extraction",
         "fluency",
         "generatedImage",
@@ -1374,7 +1211,7 @@ describe("the estimate table", () => {
  * a reviewer can check by reading a diff of a 10,000-line workflow file. It is
  * a claim about four numbers, and the four numbers are pinned below.
  */
-describe("RFC-19 §8.4 — there is no attempt rung, so no per-attempt cost can buy itself a drafting attempt", () => {
+describe("RFC-19 §8.4 — there is no attempt rung and no zero-image rung, so no cost can buy itself either one", () => {
   /** The shape RFC-19 §7.3 turns on, and the one `planRunBudget` is handed for a Hebrew client. */
   const COLD_HEBREW_SHAPE = { ...DEFAULT_RUN_SHAPE, targetLanguage: true };
 
@@ -1390,11 +1227,11 @@ describe("RFC-19 §8.4 — there is no attempt rung, so no per-attempt cost can 
     // key to `rawEstimate.perAttempt` AND to the derivation, and a
     // derivation-only test still passes while every plan in production moves.
     // The literal is the half that cannot be told the answer.
-    expect(raw.breakdown.fixed).toBe(0.2535);
-    expect(raw.breakdown.attempts).toBe(0.8148);
-    expect(raw.breakdown.rescue).toBe(0.102);
+    expect(raw.breakdown.fixed).toBe(0.2865);
+    expect(raw.breakdown.attempts).toBe(1.254);
+    expect(raw.breakdown.rescue).toBe(0.201);
     expect(raw.breakdown.images).toBe(0.312);
-    expect(raw.rawUsd).toBe(1.4823);
+    expect(raw.rawUsd).toBe(2.0535);
     // `estimateRunCost`'s third argument defaults to a calibration ratio of 1,
     // so on a client with no history the raw figure IS the planned figure.
     expect(raw.estimatedUsd).toBe(raw.rawUsd);
@@ -1402,41 +1239,51 @@ describe("RFC-19 §8.4 — there is no attempt rung, so no per-attempt cost can 
 
     // ── The derivation, term by term, ENUMERATED and not observed. ──
     //
-    // Every term `rawEstimate`'s `perAttempt` carries is written out here. A
-    // Phase 6 that added a priced step inside the attempt loop — a re-ask, a
-    // second judge round, a repair that bills — would have to appear on this
-    // list to keep the equality, and the moment it does the LITERAL above
-    // refuses. The two assertions fail together and say different things:
-    // the literal says "the plan moved", this one says "by which term".
-    const perAttempt =
-      c.copyAttempt +
+    // Every term `rawEstimate` carries is written out here. A phase that added
+    // a priced step inside the attempt loop — a re-ask, a second judge round, a
+    // repair that bills — would have to appear on this list to keep the
+    // equality, and the moment it does the LITERAL above refuses. The two
+    // assertions fail together and say different things: the literal says "the
+    // plan moved", this one says "by which term".
+    //
+    // Phase 5.5 splits what used to be one `perAttempt` figure into three, and
+    // the split is the point: the DRAFT is priced cold once and warm after
+    // that, the candidate POOL is priced once per attempt or once per run
+    // depending on the duplicate-vision rung, and everything else is flat.
+    const perAttemptFlat =
       c.vetCall +
       c.relevance +
       c.valueJudge +
       // Hebrew: the `languageBrief` field plus ONE native-editor round. The
-      // planner prices one and `revisionEstimateUsd` prices two, deliberately
-      // (`run-budget.ts:1176-1191`), and RFC-19 moves neither.
+      // planner prices one and `revisionEstimateUsd` prices two, deliberately.
       c.copyLanguageBrief +
       c.nativeJudge +
       c.visualQa +
-      // 05c inspects the whole candidate POOL, six per photo slide.
-      COLD_HEBREW_SHAPE.photoSlides * CANDIDATES_PER_PHOTO_SLIDE * c.visionInspectPerImage +
+      // Phase 5.5 (spec §4.8): `08b1-compose-contact-sheet` — one vision read
+      // of ONE composite of all eight plates, which is what makes
+      // `instagram-visual-qa@5`'s five CMO questions answerable (rhythm and
+      // repetition are properties of the SEQUENCE). The composite itself is a
+      // local browser screenshot at $0; only the read is priced.
+      c.visionInspectPerImage +
+      // Phase 5.5 (W2-A): one ScrappyCoco execution for the entity's own press
+      // page. Every other tier of the entity ladder is $0.
+      c.entitySource +
       // 08a4 inspects every rendered slide, capped at 12 by the step itself.
       Math.min(COLD_HEBREW_SHAPE.slideCount, 12) * c.visionInspectPerImage;
-    expect(perAttempt).toBeCloseTo(0.2716, 10);
-    expect(raw.breakdown.attempts).toBeCloseTo(DEFAULT_RUN_BUDGET_PLAN.maxSelfCheckAttempts * perAttempt, 10);
+    // 05c inspects the whole candidate POOL, six per photo slide.
+    const pool = COLD_HEBREW_SHAPE.photoSlides * CANDIDATES_PER_PHOTO_SLIDE * c.visionInspectPerImage;
+    const drafts = c.copyAttempt + 2 * c.copyAttemptWarm;
+    expect(perAttemptFlat).toBeCloseTo(0.117, 10);
+    expect(raw.breakdown.attempts).toBeCloseTo(3 * perAttemptFlat + drafts + 3 * pool, 10);
     // The three free steps, named so nobody "completes" the list above with
     // them: `07i`, `07i2`, `07e2`, `08c1` and RFC-19's two salvage steps are
     // `wf.step.code` with no model call and no tool call, and they contribute
-    // nothing BY CONSTRUCTION rather than by omission (`run-budget.ts:1167`).
-    // RFC-19 §7.6 makes the same promise for `repairSourceRefs` and the
-    // salvage render: if either ever bills, this pin is where it surfaces.
+    // nothing BY CONSTRUCTION rather than by omission.
     expect(raw.rawUsd).toBeCloseTo(raw.breakdown.fixed + raw.breakdown.attempts + raw.breakdown.rescue + raw.breakdown.images, 10);
 
     // The English cold shape differs by exactly the two language lines and
-    // nothing else — differencing one thing at a time, the discipline the
-    // block at line 519 states. This is what makes "Hebrew is the tight one"
-    // a measured fact rather than an assumption.
+    // nothing else — differencing one thing at a time. This is what makes
+    // "Hebrew is the tight one" a measured fact rather than an assumption.
     const english = estimateRunCost(DEFAULT_RUN_BUDGET_PLAN, DEFAULT_RUN_SHAPE);
     expect(raw.breakdown.fixed - english.breakdown.fixed).toBeCloseTo(c.packageNativeJudge, 10);
     expect(raw.breakdown.attempts - english.breakdown.attempts).toBeCloseTo(3 * (c.copyLanguageBrief + c.nativeJudge), 10);
@@ -1444,46 +1291,41 @@ describe("RFC-19 §8.4 — there is no attempt rung, so no per-attempt cost can 
     expect(raw.breakdown.images).toBe(english.breakdown.images);
   });
 
-  it("keeps three attempts on the cold Hebrew plan — and since 2026-09-14 there is no cliff on the other side", () => {
+  it("keeps three attempts AND every picture on the cold Hebrew plan, and sweeps for a cliff on either", () => {
     const hebrew = planRunBudget(COLD_HEBREW_SHAPE);
 
-    // ── The acceptance condition, first and on its own line. ──
+    // ── The acceptance conditions, first and each on its own line. ──
     expect(hebrew.plan.maxSelfCheckAttempts).toBe(3);
+    expect(hebrew.plan.generatedImagesCap).toBe(GENERATED_IMAGES_PER_RUN_CAP);
     expect(hebrew.adaptations).not.toContain("one return to step 05 instead of two");
+    expect(hebrew.adaptations.some((a) => /image/i.test(a))).toBe(false);
 
     // ── WHAT CHANGED, AND WHY THIS TEST SURVIVES ITS OWN PREMISE. ──
     //
-    // Everything above this line used to be defended by a $0.0017 margin. The
-    // owner's 2026-09-14 ruling deleted the attempt rung outright: the $1.00
-    // target may adapt OPTIONAL work only, and a drafting attempt is not
-    // optional work. So the cold Hebrew plan now lands $0.0053 OVER target and
-    // runs at three attempts ANYWAY — the ruling stated as a number:
-    // *"let it finish, deliver the post, log the overrun so we learn."*
-    //
-    // The test is kept and it is now a STRONGER guard than it was. It used to
-    // assert where the cliff was. It now asserts there is no cliff to find.
-    expect(hebrew.estimate.estimatedUsd).toBe(1.0173);
-    expect(hebrew.estimate.estimatedUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
-    expect(roundUsd(hebrew.estimate.estimatedUsd - TARGET_RUN_SPEND_USD)).toBe(0.0173);
-    expect(hebrew.note).toMatch(/running anyway/);
+    // This block was written to defend a $0.0017 margin, and the owner deleted
+    // the thing being defended: the attempt rung. Phase 5.5 does the same to
+    // the image rung's bottom step. Both assertions are now sweeps — "look for
+    // a cliff and find none" — rather than pins on where a cliff was.
+    expect(hebrew.estimate.estimatedUsd).toBe(1.7595);
+    expect(hebrew.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
 
-    // ── THE LADDER, REPLAYED — the same technique the block at line 665 uses,
-    // ── and for the same reason: "it goes red if you break it" is a claim
-    // ── until someone breaks it, and the reader of this file cannot.
+    // ── THE LADDER, REPLAYED — "it goes red if you break it" is a claim until
+    // ── someone breaks it, and the reader of this file cannot.
     //
-    // `addedPerAttempt` is what RFC-19 promised not to spend. Feeding it
-    // through the real `estimateRunCost` and the real `fits()` rule answers
-    // the only question that matters — how much is a drafting attempt worth in
-    // cents — with the module's own arithmetic instead of with a forecast.
-    // The answer is now: it is not for sale at any price.
+    // `addedPerAttempt` is money a future phase might spend inside the attempt
+    // loop. Feeding it through the real `estimateRunCost` and the real `fits()`
+    // rule answers the only question that matters — what does a drafting
+    // attempt, or a picture, cost in cents — with the module's own arithmetic
+    // instead of with a forecast. The answer is: neither is for sale.
     const replayLadder = (addedPerAttempt: number) => {
       const at = (p: typeof DEFAULT_RUN_BUDGET_PLAN) =>
         roundUsd(estimateRunCost(p, COLD_HEBREW_SHAPE, EMPTY_RUN_BUDGET_HISTORY.ewmaRatio).estimatedUsd + p.maxSelfCheckAttempts * addedPerAttempt);
       const fits = (p: typeof DEFAULT_RUN_BUDGET_PLAN) => at(p) <= TARGET_RUN_SPEND_USD;
       let plan = { ...DEFAULT_RUN_BUDGET_PLAN };
-      for (const cap of [4, 2, 0]) if (!fits(plan) && plan.generatedImagesCap > cap) plan = { ...plan, generatedImagesCap: cap };
-      if (!fits(plan) && plan.evidencePulls === "full") plan = { ...plan, evidencePulls: "reduced" };
       if (!fits(plan) && plan.optionalRevets) plan = { ...plan, optionalRevets: false };
+      if (!fits(plan) && plan.evidencePulls === "full") plan = { ...plan, evidencePulls: "reduced" };
+      if (!fits(plan) && plan.duplicateVisionPasses) plan = { ...plan, duplicateVisionPasses: false };
+      for (const cap of IMAGE_CAP_STEPS) if (!fits(plan) && plan.generatedImagesCap > cap) plan = { ...plan, generatedImagesCap: cap };
       // There is no rung below this one, and that ABSENCE is what is under test.
       return { plan, landedUsd: at(plan) };
     };
@@ -1491,46 +1333,51 @@ describe("RFC-19 §8.4 — there is no attempt rung, so no per-attempt cost can 
     // ── ASSERT THE PREMISE. ──
     //
     // A replay that has drifted from the module proves nothing about the
-    // module, and a guard built on a stale replay is one of the six recorded
-    // ways this codebase has produced a guard that cannot fail. So the replay
-    // at ZERO added cost must land on `planRunBudget`'s OWN answer, plan field
-    // for plan field and dollar for dollar, before anything below it is
-    // allowed to mean anything. Re-order the rungs in `run-budget.ts`, or add
-    // one back underneath the re-vet rung, and THIS line fails first.
+    // module, and a guard built on a stale replay is one of the recorded ways
+    // this codebase has produced a guard that cannot fail. So the replay at
+    // ZERO added cost must land on `planRunBudget`'s OWN answer, plan field for
+    // plan field and dollar for dollar, before anything below it is allowed to
+    // mean anything. Re-order the rungs in `run-budget.ts` and THIS line fails
+    // first.
     const unchanged = replayLadder(0);
     expect(unchanged.plan).toEqual(hebrew.plan);
     expect(unchanged.landedUsd).toBe(hebrew.estimate.estimatedUsd);
 
-    // ── AND THE CLIFF, SWEPT FOR RATHER THAN PINNED. ──
+    // ── AND THE TWO CLIFFS, SWEPT FOR RATHER THAN PINNED. ──
     //
-    // The old version of this test pinned the exact half-cent at which a
-    // drafting attempt got sold: $0.0006 an attempt bought a $0.2679
-    // overshoot, a quarter of the target given back to claw a fifth of a cent.
-    // Pinning that one point was the best guard available while the rung
-    // existed. The honest assertion now is a SWEEP — across four orders of
-    // magnitude of added per-attempt cost, from a tenth of a cent to a whole
-    // dollar, far past anything the ladder could ever absorb, the plan keeps
-    // three attempts. Re-introduce any attempt lever and one of these fails.
+    // Across four orders of magnitude of added per-attempt cost — from a tenth
+    // of a cent to a whole dollar, far past anything the ladder could ever
+    // absorb — the plan keeps three attempts AND at least the floor of
+    // generated images. Re-introduce an attempt lever, or a zero in
+    // `IMAGE_CAP_STEPS`, and one of these fails.
     for (const added of [0.0005, 0.0006, 0.001, 0.01, 0.1, 1]) {
       const replayed = replayLadder(added);
       expect(replayed.plan.maxSelfCheckAttempts, `$${added}/attempt must not buy a drafting attempt`).toBe(3);
+      expect(replayed.plan.generatedImagesCap, `$${added}/attempt must not buy the last two pictures`).toBeGreaterThanOrEqual(
+        MIN_GENERATED_IMAGES_PER_RUN,
+      );
     }
 
     // The module itself and not only the replay: a shape expensive enough that
-    // every remaining rung fires still plans three attempts.
+    // every remaining rung fires still plans three attempts and still buys the
+    // floor.
     const saturated = planRunBudget({ ...COLD_HEBREW_SHAPE, photoSlides: 8 }, { ...EMPTY_RUN_BUDGET_HISTORY, ewmaRatio: 3, runs: [] });
-    expect(saturated.plan.generatedImagesCap).toBe(0);
+    expect(saturated.plan.generatedImagesCap).toBe(MIN_GENERATED_IMAGES_PER_RUN);
     expect(saturated.plan.evidencePulls).toBe("reduced");
     expect(saturated.plan.optionalRevets).toBe(false);
+    expect(saturated.plan.duplicateVisionPasses).toBe(false);
     expect(saturated.plan.maxSelfCheckAttempts).toBe(3);
     expect(saturated.estimate.estimatedUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
 
-    // What the deleted rung would have taken, named in gates rather than in
-    // dollars — because this is the sentence the next author needs and a
-    // dollar figure does not say it. Every one of RFC-19's fall-throughs fires
-    // on `isFinalAttempt`, so cutting 3 to 2 never made the run cheaper by a
-    // third: it made the gate that returns work on attempt 2 the LAST word,
-    // which is the difference between a redraft and a degraded delivery.
+    // What the deleted rungs would have taken, named in deliverables rather
+    // than in dollars — because this is the sentence the next author needs and
+    // a dollar figure does not say it. Cutting 3 attempts to 2 never made the
+    // run cheaper by a third: it made the gate that returns work on attempt 2
+    // the LAST word, which is the difference between a redraft and a degraded
+    // delivery. Cutting the image cap to 0 never made the run cheaper by
+    // $0.312 either: it made the post a carousel of type, which is the post the
+    // owner sent back.
     expect(saturated.plan.maxSelfCheckAttempts).toBe(hebrew.plan.maxSelfCheckAttempts);
+    expect(saturated.plan.generatedImagesCap).toBeGreaterThan(0);
   });
 });

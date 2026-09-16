@@ -83,6 +83,6 @@ export class InstagramPostPackagerAgent extends BaseAgent<PostPackage> {
     outputSchema: PostPackageSchema,
     maxSteps: 1,
     modelPolicy: resolveModelPolicy("instagram-post-packager", { policy: "pinned", model: "gemini-2.5-flash", vendor: "gemini" }),
-    skillRef: "instagram-post-package@1",
+    skillRef: "instagram-post-package@2",
   };
 }

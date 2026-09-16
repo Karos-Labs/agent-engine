@@ -48,10 +48,11 @@ import { ACCENT_GROUND_CONTRAST_FLOOR, contrastRatio, DEFAULT_TEMPLATE_GROUND } 
 /**
  * The treatments, in ascending order of how much they change a photograph.
  *
- * `none` is the default and the only value a client can reach without both a
- * brand kit that has colour to spare and a direction that asked for a look.
- * Doing nothing is a legitimate house style, and it is the one option that
- * cannot make a photograph worse.
+ * `none` is reserved, from Phase 5.5, for a client whose visual direction
+ * FORBIDS treatment. Doing nothing is a legitimate house style and it is the
+ * one option that cannot make a photograph worse — but it is a house style a
+ * client has to choose, not a default the fleet falls into, which is what it
+ * had silently become (see `explainImageTreatment`'s ladder).
  */
 export const IMAGE_TREATMENTS = ["none", "warm-desaturate", "duotone-scrim"] as const;
 
@@ -247,38 +248,64 @@ function anchorAccent(kit: TreatmentKit): string | undefined {
  * The ladder, in order, and each rung is a refusal rather than a preference:
  *
  * 1. **A forbid entry naming image manipulation** → `none`. The client said
- *    no; this half of the pipeline is ours to obey rather than to ask.
- * 2. **No kit at all** → `none`. A brandless client has told us nothing about
- *    how it wants photographs handled, and inventing a grade for it is the
- *    "never silently invent a hex" rule wearing a different hat.
- * 3. **A one-colour ring** → `none`. This is the "no treatment latitude"
- *    case: a kit whose ring could not promote a second colour (see
- *    `buildAccentRing`, where every non-anchor candidate must clear
- *    `ACCENT_GROUND_CONTRAST_FLOOR`) is a kit with one mark and nothing
- *    spare. Grading its photographs spends colour it does not have.
- * 4. **No cue in the frozen style text** → `none`. Silence is not consent to
- *    grade; the direction has to ask.
- * 5. **A duotone asked for, but the anchor accent fails
- *    `ACCENT_GROUND_CONTRAST_FLOOR` against the ground** → demoted to
- *    `warm-desaturate`. A tint that close to the ground would pull the
- *    photograph toward the background exactly where the scrim already sits,
- *    which is how a treatment makes type illegible. Demoting rather than
- *    dropping to `none` keeps the set reading as ONE set, which is the
- *    requirement; it just reads as one quieter set.
+ *    no; this half of the pipeline is ours to obey rather than to ask. **This
+ *    is now the ONLY rung that reaches `none`** — see below.
+ * 2. **A duotone asked for, and a legible duotone pair to paint it with** →
+ *    `duotone-scrim`.
+ * 3. **Everything else** → `warm-desaturate`.
+ *
+ * ## Phase 5.5, item A4: why `none` stopped being the default
+ *
+ * This ladder used to refuse a treatment at four separate rungs, and the third
+ * of them — `palette.length < 2`, "a one-colour accent ring has no treatment
+ * latitude" — fired on **every client in the fleet**. It is not a
+ * reconstruction: `04k-freeze-generation-style` on all three 2026-09-16 prep
+ * runs returned, verbatim,
+ *
+ * ```
+ * { treatment: "none", treatmentReason: "a one-colour accent ring has no treatment latitude" }
+ * ```
+ *
+ * for karoslabs, thepitchbydeel and geektime alike — while all three frozen
+ * style lines opened on the word "documentary", which is a `WARM_CUES` entry.
+ * Every client asked for a grade and no client got one. `none` was the
+ * fleet-wide default rather than a decision, and what the owner then looked at
+ * was thepitchbydeel's three photographs — a warm-neutral conference lobby, a
+ * cyan-and-magenta neon keyboard and a yellow industrial gantry — sitting in
+ * one carousel looking like three different photographers, which is exactly
+ * the defect the style lock was built to prevent.
+ *
+ * Two changes, and each is a rung deleted rather than a threshold moved:
+ *
+ * - **The pair test replaces the count.** "Does this kit have colour to
+ *   spend" was proxied by "does the accent ring hold two entries", and a ring
+ *   of one plus a derived ground and foreground IS a legible duotone pair —
+ *   the tint is painted in the anchor accent and read against `--bg`, and
+ *   neither of those needs a second accent to exist. The real question was
+ *   always the contrast one, and the ladder already asks it two rungs down.
+ * - **The fallback is `warm-desaturate`, not `none`.** `warm-desaturate`
+ *   makes no colour claim at all (`saturate(0.82) sepia(0.06) contrast(1.03)`
+ *   — a gentle unification, not a look), so there is nothing for a brandless
+ *   client or a silent direction to have consented to. The thing that needs
+ *   consent is a treatment that asserts a house style, and the client who does
+ *   not want one has a channel that says so: `forbid`, which still vetoes
+ *   outright and is now the only thing that does.
  */
 export function explainImageTreatment(kit: TreatmentKit | undefined, styleLock?: string, options: { forbid?: readonly string[] } = {}): ImageTreatmentDecision {
   const forbidden = (options.forbid ?? []).map(normalise).find((entry) => mentionsAny(entry, TREATMENT_VETO_CUES));
   if (forbidden !== undefined) return { treatment: "none", reason: `forbidden by the client's visual direction: "${forbidden}"` };
 
-  if (kit === undefined) return { treatment: "none", reason: "no derived brand kit, so no treatment latitude" };
-  if (kit.palette.length < 2) return { treatment: "none", reason: "a one-colour accent ring has no treatment latitude" };
+  // A brandless client still renders on the default ground and still ships a
+  // mixed set of retrieved and generated pictures; unifying them costs it
+  // nothing it has not got, which is why this is no longer a refusal.
+  if (kit === undefined) return { treatment: "warm-desaturate", reason: "no derived brand kit, so the set is unified with the grade that makes no colour claim" };
 
   const text = normalise(styleLock ?? "");
-  if (text.length === 0) return { treatment: "none", reason: "no frozen generation style to take a treatment cue from" };
+  if (text.length === 0) return { treatment: "warm-desaturate", reason: "no frozen generation style to take a treatment cue from, so the set takes the colour-neutral grade" };
 
   const wantsDuotone = mentionsAny(text, DUOTONE_CUES);
   const wantsWarm = mentionsAny(text, WARM_CUES);
-  if (!wantsDuotone && !wantsWarm) return { treatment: "none", reason: "the frozen style asks for no image treatment" };
+  if (!wantsDuotone && !wantsWarm) return { treatment: "warm-desaturate", reason: "the frozen style names no treatment, so the set takes the colour-neutral grade rather than three pictures from three photographers" };
 
   if (!wantsDuotone) return { treatment: "warm-desaturate", reason: "the frozen style asks for a film/desaturated grade" };
 
@@ -500,6 +527,302 @@ export function imageTreatmentVars(style: Pick<GenerationStyle, "treatment" | "t
  * substituted as `src=""` (`render-carousel.ts:193`), and a 12% accent wash
  * over a bare ground is a defect rather than a grade.
  */
+// ────────────────────────────────────────────────────────────────────────────
+// Phase 5.5, item A4 — ONE SET, and type that can be read on top of it
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The per-slide field `06g-grade-picture-set-attempt-N` writes for EVERY hero,
+ * retrieved or generated.
+ *
+ * The distinction from `IMAGE_TREATMENT_FIELD` is the whole point of item A4.
+ * `imageTreatment` is the CLIENT's decision and is spread onto every slide;
+ * `heroTreatment` is written only onto the slides that actually carry a
+ * photograph, which is what makes it a statement about the picture set rather
+ * than about the client — and it is written whatever the picture's provenance,
+ * because a stock lobby and a generated corridor sitting in one carousel
+ * ungraded is precisely the "three different photographers" defect the owner
+ * looked at on 2026-09-16.
+ */
+export const HERO_TREATMENT_FIELD = "heroTreatment";
+
+/** The per-slide veil strength `06g` writes beside it. */
+export const HERO_SCRIM_FIELD = "heroScrimStrength";
+
+/**
+ * Every field name this module writes onto a slide — and a list that exists
+ * for one reason.
+ *
+ * `countContentElements` (`visual-qa-pre-checks.ts`) counts a slide's content
+ * elements as *every* `fields` entry that is not in `LAYOUT_FIELD_KEYS`. These
+ * three are layout metadata: they say how a photograph is graded and veiled,
+ * and a reader cannot read them. **If they are not in `LAYOUT_FIELD_KEYS`,
+ * every photo slide in the fleet gains two free content elements and the
+ * interest floor becomes satisfiable by grading a picture** — which is the
+ * furniture-gaming defect V15 describes, arriving through a new door.
+ *
+ * `imageTreatment` is on this list too, and it is not new: it has never been
+ * declared as layout, and it got away with it only because
+ * `explainImageTreatment` returned `none` for every client in the fleet, so
+ * `imageTreatmentFields` returned `{}` and the key never reached a slide. Item
+ * A4 makes it reach every slide of every client.
+ *
+ * `style-lock.test.ts` asserts this list against `gradePictureSet`'s real
+ * output, so it cannot drift from what is actually written.
+ */
+export const HERO_GRADE_FIELD_KEYS: readonly string[] = ["imageTreatment", "heroTreatment", "heroScrimStrength"];
+
+export const HERO_SCRIM_STRENGTHS = ["none", "standard", "strong"] as const;
+export const HeroScrimStrengthSchema = z.enum(HERO_SCRIM_STRENGTHS);
+export type HeroScrimStrength = z.infer<typeof HeroScrimStrengthSchema>;
+
+/**
+ * WCAG AA for large text is 3:1; this floor is 4.5 and the extra step is not
+ * conservatism.
+ *
+ * A headline over a photograph is not text on a flat colour: the background
+ * under one glyph is not the background under the next, the reader is
+ * scrolling, and the plate is looked at at about 400px wide in a feed. 3:1
+ * against the AVERAGE of a varying region is 1.5:1 against parts of it. 4.5
+ * against the region's worst percentile is the honest equivalent.
+ */
+export const HERO_TEXT_CONTRAST_FLOOR = 4.5;
+
+/**
+ * The veil's alpha per strength, MEASURED.
+ *
+ * Calibration plate: thepitchbydeel's slide 4 of 2026-09-16 — the headline
+ * *"One LLM call for all tasks cuts corners on the facts that decide
+ * eligibility"* over a stock photograph of a backlit neon keyboard, rendered
+ * at 2160×2880. Over the headline's own band the near-black type measures
+ * `L = 0.011` and the photograph behind it runs from `L = 0.17` at its first
+ * percentile to `L = 0.53` at its median. So the plate is comfortable on
+ * average (9.6:1) and fails where it matters (**3.64:1** at the first
+ * percentile, under this floor), which is why an average-based check would
+ * have passed it.
+ *
+ * Compositing the client's own ground (`#FAF4EE`) over that band at increasing
+ * alpha, per channel, on the real pixels:
+ *
+ * | alpha | p1 contrast | p5 | median |
+ * |-------|-------------|----|--------|
+ * | 0.00  | 3.64        | 5.78 | 9.55 |
+ * | 0.15  | 4.77        | 6.89 | 10.36 |
+ * | 0.25  | 5.65        | 7.70 | 10.92 |
+ * | 0.45  | 7.72        | 9.51 | 12.11 |
+ *
+ * The minimum that clears 4.5 on that plate is **0.117**. `standard` is 0.22,
+ * a little under twice it, so a picture of comparable difficulty is covered
+ * without re-measuring and the photograph still reads as a photograph (its
+ * median contrast moves by 1.4 points across the whole range above — the veil
+ * is doing its work in the shadows, not washing the frame). `strong` is 0.45,
+ * which buys 7.7:1 on the same plate.
+ *
+ * There is deliberately nothing above 0.45. See `requiredHeroScrim`.
+ */
+export const HERO_SCRIM_ALPHA: Readonly<Record<HeroScrimStrength, number>> = {
+  none: 0,
+  standard: 0.22,
+  strong: 0.45,
+};
+
+/** sRGB transfer function, scalar. The composite below has to happen in the space the browser composites in, not in linear light. */
+function srgbEncode(linear: number): number {
+  return linear <= 0.0031308 ? linear * 12.92 : 1.055 * Math.pow(linear, 1 / 2.4) - 0.055;
+}
+
+function srgbDecode(encoded: number): number {
+  return encoded <= 0.04045 ? encoded / 12.92 : Math.pow((encoded + 0.055) / 1.055, 2.4);
+}
+
+function ratio(a: number, b: number): number {
+  const [hi, lo] = a > b ? [a, b] : [b, a];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+export interface HeroScrimRequirement {
+  strength: HeroScrimStrength;
+  /** The exact alpha the solve returned, before quantisation. Reported so a near-miss is visible rather than rounded away. */
+  requiredAlpha: number;
+  /** Contrast the quantised strength actually achieves. */
+  achieved: number;
+  /**
+   * FALSE when no veil inside the ladder reaches the floor. The remedy then is
+   * the picture or the layout, never more veil — and that is a finding for
+   * `05`, not a knob.
+   */
+  reaches: boolean;
+  reason: string;
+}
+
+/**
+ * The veil this headline needs over this picture, or `none`.
+ *
+ * Takes WCAG relative luminances, not colours, because the region's luminance
+ * comes from the render probe's own measurement of the pixels the text box
+ * actually sits on — item A4's new pre-check — and the ink's comes from the
+ * computed style. Everything here is arithmetic on those three numbers, which
+ * is what makes it testable without a browser.
+ *
+ * The composite is modelled by treating each luminance as its grey equivalent
+ * and mixing in sRGB space. That is an approximation of a per-channel
+ * composite, and it was checked against one: on the calibration plate above it
+ * reproduces the real per-channel measurement to two decimal places at every
+ * alpha in the table (4.77 at 0.15, 5.65 at 0.25, 6.63 at 0.35).
+ * `style-lock.test.ts` pins that agreement.
+ */
+export function requiredHeroScrim(input: { inkLuminance: number; regionLuminance: number; groundLuminance: number }): HeroScrimRequirement {
+  const { inkLuminance, regionLuminance, groundLuminance } = input;
+
+  if (ratio(inkLuminance, regionLuminance) >= HERO_TEXT_CONTRAST_FLOOR) {
+    return {
+      strength: "none",
+      requiredAlpha: 0,
+      achieved: ratio(inkLuminance, regionLuminance),
+      reaches: true,
+      reason: `the type already clears ${HERO_TEXT_CONTRAST_FLOOR}:1 against the region it sits on`,
+    };
+  }
+
+  const inkEncoded = srgbEncode(inkLuminance);
+  const regionEncoded = srgbEncode(regionLuminance);
+  const groundEncoded = srgbEncode(groundLuminance);
+  const contrastAt = (alpha: number): number => ratio(inkLuminance, srgbDecode((1 - alpha) * regionEncoded + alpha * groundEncoded));
+
+  // A veil in the client's own ground only helps when the ground is on the far
+  // side of the type from the region — a pale veil under dark type over a dark
+  // photograph, or a dark one under pale type over a bright photograph. When it
+  // is not (a pale-ground client whose type is also pale, say), no alpha
+  // reaches the floor, and a FULL veil is the best case by definition. Testing
+  // that case first keeps the bisection below on the monotonic branch it
+  // assumes, instead of converging on an arbitrary point of a curve that
+  // never crosses.
+  const requiredAlpha = ((): number => {
+    if (contrastAt(1) < HERO_TEXT_CONTRAST_FLOOR) return Number.POSITIVE_INFINITY;
+    let lo = 0;
+    let hi = 1;
+    for (let i = 0; i < 40; i++) {
+      const mid = (lo + hi) / 2;
+      if (contrastAt(mid) >= HERO_TEXT_CONTRAST_FLOOR) hi = mid;
+      else lo = mid;
+    }
+    return hi;
+  })();
+
+  // Two rungs and no third. Past `strong` the photograph has stopped being a
+  // photograph, and the honest remedy is a different picture or a different
+  // place for the copy — `reaches: false` is how this function says so rather
+  // than inventing a heavier veil that would hide the problem by hiding the
+  // picture.
+  const strength: HeroScrimStrength = requiredAlpha <= HERO_SCRIM_ALPHA.standard ? "standard" : "strong";
+  const achieved = contrastAt(HERO_SCRIM_ALPHA[strength]);
+  const reaches = achieved >= HERO_TEXT_CONTRAST_FLOOR;
+
+  return {
+    strength,
+    requiredAlpha,
+    achieved,
+    reaches,
+    reason: reaches
+      ? `a ${strength} veil (${HERO_SCRIM_ALPHA[strength]} of the ground) lifts the type to ${achieved.toFixed(2)}:1`
+      : `no veil in the ladder reaches ${HERO_TEXT_CONTRAST_FLOOR}:1 (the heaviest gets ${achieved.toFixed(2)}:1) — this picture cannot carry this type, so move the copy off the hero or brief another picture`,
+  };
+}
+
+/** One assembled slide, as the grading step reads it. A `Slide` from `@agent-engine/tool-karos-publish` satisfies it structurally. */
+export interface GradeableSlide {
+  n: number;
+  images?: Record<string, string>;
+  fields?: Record<string, string>;
+}
+
+/** What `06g` writes, per slide. Empty for a slide with no hero — a field on a plate with no photograph is a field a template can only misread. */
+export interface HeroGrade {
+  n: number;
+  fields: Record<string, string>;
+}
+
+/**
+ * `06g-grade-picture-set-attempt-N` — `wf.step.code`, **$0**.
+ *
+ * Writes the run's ONE treatment onto every slide that carries a hero,
+ * regardless of where that hero came from. Today the treatment reaches only
+ * `image.generate`'s `art.styleLock`, so a retrieved photograph inherits
+ * nothing and a carousel that mixes the two sources cannot read as a set. This
+ * is CSS on a render the run is already paying for, and it is the cheapest
+ * thing in this phase that changes what the owner sees.
+ *
+ * `scrimFor` is injected. Pre-render, the honest answer to "does type sit on
+ * this hero" is structural (the slide has a headline and a full-bleed
+ * photograph), and after the render the probe can measure it properly with
+ * `requiredHeroScrim`. The default is `"standard"` for every hero: a veil that
+ * was not needed costs a picture 0.22 of its shadows, and a veil that was
+ * needed and absent costs a reader the headline.
+ */
+export function gradePictureSet(
+  style: Pick<GenerationStyle, "treatment">,
+  slides: readonly GradeableSlide[],
+  options: { scrimFor?: (slide: GradeableSlide) => HeroScrimStrength } = {},
+): HeroGrade[] {
+  const scrimFor = options.scrimFor ?? ((): HeroScrimStrength => "standard");
+  return slides.map((slide) => {
+    const hero = (slide.images?.["hero"] ?? "").trim();
+    if (hero.length === 0) return { n: slide.n, fields: {} };
+    const scrim = scrimFor(slide);
+    return {
+      n: slide.n,
+      fields: {
+        [HERO_TREATMENT_FIELD]: style.treatment,
+        [HERO_SCRIM_FIELD]: scrim,
+      },
+    };
+  });
+}
+
+/**
+ * The code-owned veil sheet, for the same `extraHeadHtml` channel
+ * `imageTreatmentCssBlock` rides.
+ *
+ * ## Why it is separate from the treatment sheet
+ *
+ * The treatment is a look and a client may forbid it. The veil is legibility,
+ * and a client that has forbidden colour grading has not thereby consented to
+ * an unreadable headline. They are two decisions and they ship as two sheets.
+ *
+ * ## Why the veil is painted in `--bg`
+ *
+ * A veil is only useful when it moves the photograph AWAY from the type, and
+ * which direction that is depends on the client: karoslabs sets pale type on a
+ * near-black ground, thepitchbydeel dark type on a near-white one. `--bg` is
+ * the ground the client's own type was designed to be read against, so a veil
+ * in it moves every photograph toward the exact luminance the type already
+ * works on — for both, from one rule.
+ *
+ * ## What it attaches to, and what that does not cover
+ *
+ * The bundled `slide.html` and `cover.html` each already carry a `.scrim`
+ * element whose whole job is this, with `cover.html` adding `.scrim-top`. The
+ * veil is an `::after` on those, so the template's own gradient is strengthened
+ * rather than replaced. **A client or studio template with no scrim element
+ * gets no veil** — and that is visible rather than silent, because the
+ * post-render pre-check measures the real pixels and reports the shortfall as
+ * an imagery finding.
+ */
+export function heroScrimCssBlock(): string {
+  const scrims = [".scrim", ".scrim-top", ".scrim-bottom"];
+  const rules: string[] = [
+    "/* instagram-agent hero legibility veil (Phase 5.5, item A4) — built by style-lock.ts. */",
+    `/* Painted in the client's own ground, so one rule serves a dark-ground and a light-ground client. */`,
+    `${scrims.map((s) => `body[data-hero-scrim="standard"] ${s}::after, body[data-hero-scrim="strong"] ${s}::after`).join(",\n")} {`,
+    `  content: ""; position: absolute; inset: 0; pointer-events: none;`,
+    `  background-color: var(--bg);`,
+    `}`,
+    `${scrims.map((s) => `body[data-hero-scrim="standard"] ${s}::after`).join(",\n")} { opacity: ${HERO_SCRIM_ALPHA.standard}; }`,
+    `${scrims.map((s) => `body[data-hero-scrim="strong"] ${s}::after`).join(",\n")} { opacity: ${HERO_SCRIM_ALPHA.strong}; }`,
+  ];
+  return `<style>\n${rules.join("\n")}\n</style>`;
+}
+
 export function imageTreatmentCssBlock(style: Pick<GenerationStyle, "treatment" | "tintHex">): string {
   if (style.treatment === "none") return "";
 

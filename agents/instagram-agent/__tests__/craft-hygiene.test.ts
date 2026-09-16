@@ -19,7 +19,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
-import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
+import { DEFAULT_ENTITIES_TURN, DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 const ctx: AgentContext = { runId: "run_1", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring", metadata: {} };
@@ -319,7 +319,7 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       const emDashCopy = copyWith("Teams saved time — every single week, without fail.");
       const cleanCopy = goodCopyOutput();
       const router = fakeRouterSequence([
-        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
         finalTurn(emDashCopy),
         finalTurn(goodImageVettingOutput()),
         finalTurn(cleanCopy),
@@ -376,7 +376,7 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       const promptStore = makePromptStore();
       const shoutyCopy = copyWith("Four hours back every week!");
       const router = fakeRouterSequence([
-        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
         finalTurn(shoutyCopy),
         finalTurn(goodImageVettingOutput()),
         finalTurn(shoutyCopy),
@@ -422,7 +422,8 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       expect(craft!["detail"]).toBe(hygiene3.output.reason);
       expect(craft!["step"]).toBe("07b-craft-hygiene-attempt-3");
 
-      expect(router.complete).toHaveBeenCalledTimes(13);
+      // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+      expect(router.complete).toHaveBeenCalledTimes(14);
     }, 60000);
 
     /**
@@ -436,7 +437,7 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       const promptStore = makePromptStore();
       const cleanCopy = goodCopyOutput();
       const router = fakeRouterSequence([
-        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
         finalTurn(cleanCopy),
         finalTurn(goodImageVettingOutput()),
         finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
@@ -473,7 +474,7 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       const promptStore = makePromptStore();
       const emDashCopy = copyWith("Teams saved time — every week, reliably.");
       const router = fakeRouterSequence([
-        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
         finalTurn(emDashCopy),
         finalTurn(goodImageVettingOutput()),
         finalTurn(emDashCopy),

@@ -150,9 +150,18 @@ describe("InstagramArtDirectorAgent", () => {
     expect(config.maxSteps).toBe(1);
     // 16_384, not the 3_000 this asserted until 2026-09-16: that ceiling
     // truncated the direction on both prep runs of that morning and sent both
-    // clients to `fallbackVisualDirection` for a quarter.
+    // clients to `fallbackVisualDirection` for a quarter, because the marker
+    // each failure wrote then suppressed the retry for seven days.
+    // `setup-ceilings.test.ts` measures the maximal instance the schema permits
+    // (~10,100 characters, ~2,795 tokens = 93% of the old ceiling).
     expect(config.maxTokens).toBe(16_384);
-    expect(config.skillRef).toBe("instagram-art-director@1");
+    // PHASE 5.5 (item C/D): @1 -> @2. The director now also derives the six
+    // frozen axes of `ClientVisualSystem` — the per-client half of the visual
+    // system, which is what stops two clients' posts reading as one machine's
+    // output. The ceiling does NOT move with it: the axes are six enums and
+    // six short sentences, about 900 characters at their maximum, inside the
+    // headroom the ten lines already bought.
+    expect(config.skillRef).toBe("instagram-art-director@2");
     // No Opus in a run or a setup, per the owner's standing rule.
     expect(JSON.stringify(config.modelPolicy)).toContain("claude-sonnet-4-6");
     expect(JSON.stringify(config.modelPolicy)).not.toContain("opus");

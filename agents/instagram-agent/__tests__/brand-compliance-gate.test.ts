@@ -20,7 +20,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
-import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
+import { DEFAULT_ENTITIES_TURN, DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 const ctx: AgentContext = { runId: "run_1", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring", metadata: {} };
@@ -169,7 +169,7 @@ describe("SCRUM-301/AU17: step 07's banned-word/char + compliance checks now cal
       const rocketCopy = copyWith(`${goodCopyOutput().slides[0]!.body} Growth incoming 🚀`);
       const cleanCopy = goodCopyOutput();
       const router = fakeRouterSequence([
-        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
         finalTurn(rocketCopy),
         finalTurn(goodImageVettingOutput()),
         finalTurn(cleanCopy),
@@ -227,7 +227,7 @@ describe("SCRUM-301/AU17: step 07's banned-word/char + compliance checks now cal
       const promptStore = makePromptStore();
       const badCopy = goodCopyOutput();
       const router = fakeRouterSequence([
-        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
         finalTurn(badCopy),
         finalTurn(goodImageVettingOutput()),
         finalTurn(badCopy),
@@ -274,7 +274,8 @@ describe("SCRUM-301/AU17: step 07's banned-word/char + compliance checks now cal
       // The gate's OWN sentence, verbatim — never re-worded on the way out.
       expect(selfCheck?.checks[0]?.["detail"]).toBe(selfCheck3.output.reason);
 
-      expect(router.complete).toHaveBeenCalledTimes(13);
+      // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+      expect(router.complete).toHaveBeenCalledTimes(14);
     }, 60000);
 
     /**
@@ -301,7 +302,7 @@ describe("SCRUM-301/AU17: step 07's banned-word/char + compliance checks now cal
       const promptStore = makePromptStore();
       const badCopy = goodCopyOutput();
       const router = fakeRouterSequence([
-        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
         finalTurn(badCopy),
         finalTurn(goodImageVettingOutput()),
         finalTurn(badCopy),
@@ -347,7 +348,7 @@ describe("SCRUM-301/AU17: step 07's banned-word/char + compliance checks now cal
       const promptStore = makePromptStore();
       const rocketCopy = copyWith(`${goodCopyOutput().slides[0]!.body} Growth incoming 🚀`);
       const router = fakeRouterSequence([
-        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+        finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
         finalTurn(rocketCopy),
         finalTurn(goodImageVettingOutput()),
         finalTurn(rocketCopy),

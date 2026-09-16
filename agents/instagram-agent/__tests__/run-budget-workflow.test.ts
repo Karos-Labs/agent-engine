@@ -1,20 +1,22 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import * as nodePath from "node:path";
 import type { AgentTool, AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
-import { RUN_BUDGET_BELIEF_KEY, type RunBudgetDecision, type RunBudgetSummary } from "../src/workflow/run-budget.js";
+import { MIN_GENERATED_IMAGES_PER_RUN, RUN_BUDGET_BELIEF_KEY, type RunBudgetDecision, type RunBudgetSummary } from "../src/workflow/run-budget.js";
 import { DEFAULT_RENDER_RULES } from "../src/workflow/visual-qa-pre-checks.js";
 import type { InstagramCopyOutput, StyleConfig } from "../src/workflow/types.js";
 import { copyTurnInputs, fakeRenderCarousel, fakeRouterSequence, finalTurn, fixtureHeadline, goodBrandTokens, goodCopyOutput, goodImageCandidatePool, goodImageVettingOutput, goodRelevanceVerdict, goodResearchOutput, goodStyleConfig, goodTrendScoutOutput, goodVisualQaOutput, makePromptStore, qaTurnInputs, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
-import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS, happyTurns, standardTurns } from "./turns.js";
+import { DEFAULT_ENTITIES_TURN, DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS, happyTurns, standardTurns } from "./turns.js";
 
 /**
  * Phase 0 cost controls and default render rules, through the real workflow.
  *
  * The owner's rule (2026-09-09 amendment, binding): the budget ADAPTS and
- * never holds. An estimate over the $1.00 target adapts the plan before the
- * attempt loop and records a note; an actual spend over the $1.60 hard max
+ * never holds. An estimate over the $1.80 target adapts the plan before the
+ * attempt loop and records a note; an actual spend over the $2.60 hard max
  * finishes the run on the cheapest complete path and DELIVERS, marked
  * degraded, with a ledger row; the next run reads that history and starts
  * tighter. A test that asserts a budget hold is wrong by definition.
@@ -102,18 +104,22 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     // for a picture or for a trend query: the two rungs that cost the post
     // something are still untouched, and one delivered run's history relaxes
     // all of it again (the "UNDER the estimate" test below).
-    const COLD_ADAPTATIONS = [
-      "images capped at 4",
-      "images capped at 2",
-      "no generated images (stock or text-only)",
-      "trend evidence reduced to the one cached industry query",
-      "optional rescue re-vets skipped",
-    ];
+    //
+    // PHASE 5.5 RE-BASELINE (spec §2 A1). The ladder is re-ordered so that
+    // OPTIONAL work goes first and the image cap goes LAST with a floor of
+    // two. The cold English plan now costs $1.95 against a $1.80 target and
+    // fits after a single rung whose own name is "optional", landing at $1.75
+    // WITH ALL EIGHT GENERATED IMAGES STILL ON THE TABLE.
+    //
+    // The three lines this list used to open with — `images capped at 4`,
+    // `images capped at 2`, `no generated images (stock or text-only)` — were
+    // rungs 1 to 3, and they are why all six prep runs of 2026-09-16 shipped
+    // a post with no pictures in it. The last of them is now unreachable from
+    // any plan.
+    const COLD_ADAPTATIONS = ["optional rescue re-vets skipped"];
     expect(plan?.adaptations).toEqual(COLD_ADAPTATIONS);
-    expect(plan?.plan).toEqual({ maxSelfCheckAttempts: 3, generatedImagesCap: 0, evidencePulls: "reduced", optionalRevets: false });
-    expect(plan?.note).toMatch(
-      /^budget: estimate \$1\.\d\d > \$1\.00 → images capped at 4, images capped at 2, no generated images \(stock or text-only\), trend evidence reduced to the one cached industry query, optional rescue re-vets skipped \(now \$0\.\d\d\)$/,
-    );
+    expect(plan?.plan).toEqual({ maxSelfCheckAttempts: 3, generatedImagesCap: 8, evidencePulls: "full", optionalRevets: false, duplicateVisionPasses: true });
+    expect(plan?.note).toMatch(/^budget: estimate \$1\.\d\d > \$1\.80 → optional rescue re-vets skipped \(now \$1\.\d\d\)$/);
     expect(plan?.spentBeforePlanUsd).toBe(0);
     expect(deliverable?.budget).toMatchObject({
       crossedTarget: false,
@@ -131,9 +137,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     expect(history.map((r) => r.runId)).toEqual(["budget_fresh"]);
     const budgetEvent = await env.store.readJson<{ level: string; message: string }>("acme", ["ledger", "events", "budget_fresh", "budget_fresh__budget"]);
     expect(budgetEvent?.level).toBe("info");
-    expect(budgetEvent?.message).toMatch(
-      /^budget: estimated \$0\.\d\d, actual \$0\.\d\d \(under target\); adaptations: images capped at 4, images capped at 2, no generated images \(stock or text-only\), trend evidence reduced to the one cached industry query, optional rescue re-vets skipped$/,
-    );
+    expect(budgetEvent?.message).toMatch(/^budget: estimated \$1\.\d\d, actual \$\d\.\d\d \(under target\); adaptations: optional rescue re-vets skipped$/);
     // The ledger's adaptation list is the reviewer's copy of the plan's, so it
     // is asserted to be that list rather than a hand-retyped one — the two
     // drifting apart is how a reviewer ends up reading last phase's ladder.
@@ -148,8 +152,8 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     const { result, plan, deliverable } = await run(env, "budget_calibrated", fakeRouterSequence(happyTurns()));
     expect(result.status, JSON.stringify(result)).toBe("completed");
     expect(plan?.adaptations).toEqual([]);
-    expect(plan?.plan).toEqual({ maxSelfCheckAttempts: 3, generatedImagesCap: 8, evidencePulls: "full", optionalRevets: true });
-    expect(plan?.note).toMatch(/^budget: estimate \$0\.\d\d ≤ \$1\.00 → full plan$/);
+    expect(plan?.plan).toEqual({ maxSelfCheckAttempts: 3, generatedImagesCap: 8, evidencePulls: "full", optionalRevets: true, duplicateVisionPasses: true });
+    expect(plan?.note).toMatch(/^budget: estimate \$0\.\d\d ≤ \$1\.80 → full plan$/);
     expect(deliverable?.budget.adaptations).toEqual([]);
   });
 
@@ -174,19 +178,31 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     // +$0.0124 an attempt now takes even the EMPTY-history ratio of 1.0 past
     // the image rungs. Do not walk the ratio again to keep an old rung count:
     // the rung count is not the invariant, the rung ORDER is.)
-    await env.tools["memory.updateBeliefs"]!.execute({ diff: { [RUN_BUDGET_BELIEF_KEY]: { version: 1, ewmaRatio: 1.01, overrunStreak: 0, underTargetStreak: 0, runs: [] } } }, { ctx });
+    //
+    // PHASE 5.5 RE-BASELINE (spec §2 A1). The ratio moved 1.01 -> 1.25 and the
+    // rung ORDER — which is this test's stated invariant, not the rung count —
+    // is now the reverse of what it was: optional work first, images LAST, and
+    // the image rung stops at a floor of two rather than at zero. At 1.01 the
+    // new ladder fits after a single rung, which would have made this test
+    // assert nothing; 1.25 is the ratio that walks the whole ladder, so the
+    // assertion still reads "every optional rung is spent and the run still
+    // gets three drafts" AND now also "and it still buys two pictures".
+    await env.tools["memory.updateBeliefs"]!.execute({ diff: { [RUN_BUDGET_BELIEF_KEY]: { version: 1, ewmaRatio: 1.25, overrunStreak: 0, underTargetStreak: 0, runs: [] } } }, { ctx });
     const { result, plan, deliverable } = await run(env, "budget_adapted", fakeRouterSequence(happyTurns()));
     expect(result.status, JSON.stringify(result)).toBe("completed");
-    expect(plan?.initialEstimateUsd).toBeGreaterThan(1);
-    expect(plan?.estimate.estimatedUsd).toBeLessThanOrEqual(1);
+    expect(plan?.initialEstimateUsd).toBeGreaterThan(1.8);
+    expect(plan?.estimate.estimatedUsd).toBeLessThanOrEqual(1.8);
     expect(plan?.adaptations).toEqual([
-      "images capped at 4",
-      "images capped at 2",
-      "no generated images (stock or text-only)",
-      "trend evidence reduced to the one cached industry query",
       "optional rescue re-vets skipped",
+      "trend evidence reduced to the one cached industry query",
+      "duplicate vision passes skipped (candidates and slides are inspected once, not once per attempt)",
+      "images capped at 4",
+      "images capped at 3",
+      "images capped at 2 — the floor no lever may cross",
     ]);
-    expect(plan?.plan.generatedImagesCap).toBe(0);
+    // THE FLOOR, not zero. This is the single number the owner's "there are no
+    // images although we said there would be" complaint reduces to.
+    expect(plan?.plan.generatedImagesCap).toBe(MIN_GENERATED_IMAGES_PER_RUN);
     // THE assertion of this test. Every optional rung is spent and the run
     // still gets three drafts. Swap the last two rungs back in `run-budget.ts`
     // and this reads 2 with `optionalRevets` still true — an attempt traded
@@ -204,34 +220,50 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     // `[01]` — which would also accept "$1.99", i.e. a ladder that ran every
     // rung and still never adapted enough.
     const adaptedNote = plan?.note ?? "";
-    const adapted =
-      /^budget: estimate \$(\d+\.\d\d) > \$1\.00 → images capped at 4, images capped at 2, no generated images \(stock or text-only\), trend evidence reduced to the one cached industry query, optional rescue re-vets skipped \(now \$(\d+\.\d\d)\)$/.exec(
-        adaptedNote,
-      );
+    const adapted = /^budget: estimate \$(\d+\.\d\d) > \$1\.80 → (?:.+) \(now \$(\d+\.\d\d)\)$/.exec(adaptedNote);
     expect(adapted, `the note did not have the adapted shape: ${adaptedNote}`).not.toBeNull();
-    expect(Number(adapted![1]), "the cold estimate must be over target, or there was nothing to adapt").toBeGreaterThan(1);
-    expect(Number(adapted![2]), "the adapted estimate must land at or under the $1.00 target").toBeLessThanOrEqual(1);
-    expect(deliverable?.budget.plan.generatedImagesCap).toBe(0);
+    expect(Number(adapted![1]), "the cold estimate must be over target, or there was nothing to adapt").toBeGreaterThan(1.8);
+    expect(Number(adapted![2]), "the adapted estimate must land at or under the $1.80 target").toBeLessThanOrEqual(1.8);
+    expect(deliverable?.budget.plan.generatedImagesCap).toBe(MIN_GENERATED_IMAGES_PER_RUN);
   });
 
   it("actual over the hard max mid-run -> the run COMPLETES degraded with a full deliverable on the cheapest path, writes the ledger row, and the NEXT run starts tighter", async () => {
-    // The copy turn reports 120k output tokens on Sonnet ($15/1M): $1.80 measured, straight through $1.00 and $1.60.
+    // The copy turn reports 220k output tokens on Sonnet ($15/1M): $3.30
+    // measured, straight through the $1.80 target and the $2.60 hard max.
+    // (120k was the figure against the pre-Phase-5.5 $1.00/$1.60 pair; the
+    // ceilings moved for the reason `concept-budget-and-art.test.ts` records,
+    // so the fixture that has to cross them moved with them.)
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()),
-      finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
-      finalTurn(goodCopyOutput(), { outputTokens: 120_000 }),
+      finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
+      finalTurn(goodCopyOutput(), { outputTokens: 220_000 }),
       finalTurn(goodImageVettingOutput()),
-      finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
-      // No visual-QA turn: over the hard max the optional model QA is skipped. A further call would exhaust the router and fail this test.
+      finalTurn(goodRelevanceVerdict()),
+      // No visual-QA turn and no value-judge turn: over the hard max both
+      // optional model judgements are skipped. The last turn is the PACKAGER's.
+      //
+      // Phase 5.5: it used to be a `VALUE_TURN_NO_FINDINGS` that `07j` never
+      // consumed, so `08c-package-post` pulled a value verdict, failed its
+      // schema, and the run shipped with no hashtags — the exact 2026-09-16
+      // defect. That was invisible while a failed package had no re-ask; now
+      // it buys one (spec §6 G2), so the queue says honestly which turn each
+      // call consumes and the count below stays at seven.
+      finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const { result, stepIds, steps, deliverable } = await run(env, "budget_overrun", router);
     expect(result.status).toBe("completed");
     if (result.status !== "completed") throw new Error("unreachable");
     expect(result.output.renderedCount).toBe(6);
     expect(result.output.budget?.status).toBe("degraded");
-    expect(result.output.budget?.reason).toMatch(/^budget: estimated \$0\.\d\d, actual \$1\.\d\d \(over the hard max\); budget: \$1\.\d\d spent at 05-write-copy-attempt-1, over the \$1\.60 hard max — finishing on the cheapest complete path/);
-    // scout + research + angle + copy + vet + relevance; no visual-QA turn.
-    expect(router.complete).toHaveBeenCalledTimes(7);
+    expect(result.output.budget?.reason).toMatch(/^budget: estimated \$1\.\d\d, actual \$3\.\d\d \(over the hard max\); budget: \$3\.\d\d spent at 05-write-copy-attempt-1, over the \$2\.60 hard max — finishing on the cheapest complete path/);
+    // scout + research + angle + copy + vet + relevance + packager; no
+    // visual-QA turn and no value-judge turn.
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(8);
+    // And the packaging re-ask was NOT bought, because the first call worked:
+    // the unconditional retry (spec §6 G2) is a rescue, not a second call the
+    // cheapest path pays for on every run.
+    expect(stepIds).not.toContain("08c-package-post-retry");
     // Every mandatory gate still ran; the optional model QA was consciously skipped under its own id.
     for (const id of ["06-vet-images-attempt-1", "07-self-check-attempt-1", "07b-craft-hygiene-attempt-1", "07g-relevance-attempt-1", "08-render-carousel-attempt-1", "08a2-visual-qa-pre-checks-attempt-1", "08b-visual-qa-attempt-1", "09b-deliver-and-log"]) {
       expect(stepIds).toContain(id);
@@ -243,17 +275,15 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     expect(deliverable?.budget).toMatchObject({ crossedTarget: true, crossedMax: true, posture: "cheapest-path" });
     expect(deliverable?.budget.actualUsd).toBeGreaterThan(1.5);
     expect(deliverable?.budget.notes).toHaveLength(3);
-    expect(deliverable?.budget.notes[1]).toMatch(/over the \$1\.00 target — optional work stopped/);
-    expect(deliverable?.budget.notes[2]).toMatch(/over the \$1\.60 hard max — finishing on the cheapest complete path/);
+    expect(deliverable?.budget.notes[1]).toMatch(/over the \$1\.80 target — optional work stopped/);
+    expect(deliverable?.budget.notes[2]).toMatch(/over the \$2\.60 hard max — finishing on the cheapest complete path/);
     const copyLine = deliverable?.budget.lines.find((l) => l.label === "05-write-copy-attempt-1");
     expect(copyLine?.basis).toBe("measured");
-    // $1.80 of output tokens plus the 100 input tokens the fixture reports.
-    expect(copyLine?.measuredUsd).toBeGreaterThanOrEqual(1.8);
+    // $3.30 of output tokens plus the 100 input tokens the fixture reports.
+    expect(copyLine?.measuredUsd).toBeGreaterThanOrEqual(3.3);
     const budgetEvent = await env.store.readJson<{ level: string; message: string }>("acme", ["ledger", "events", "budget_overrun", "budget_overrun__budget"]);
     expect(budgetEvent?.level).toBe("warn");
-    expect(budgetEvent?.message).toMatch(
-      /\(over the hard max\); adaptations: images capped at 4, images capped at 2, no generated images \(stock or text-only\), trend evidence reduced to the one cached industry query, optional rescue re-vets skipped; delivered degraded on the cheapest complete path$/,
-    );
+    expect(budgetEvent?.message).toMatch(/\(over the hard max\); adaptations: optional rescue re-vets skipped; delivered degraded on the cheapest complete path$/);
 
     // The next run reads the history and starts tight: images capped at 4 before any estimate, and the calibration ratio now reflects the overrun.
     // (A different post than run 1's, so 07d's dedupe check against the shipped-output window does not spend an attempt.)
@@ -308,7 +338,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     const failingQa = { pass: false, findings: [{ ruleId: "font-hierarchy", slide: 6, passed: false, note: "the closer's headline and body are the same size" }] };
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()),
-      finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       // attempt 1: copy, vet (4 gaps), generate re-vet, relevance, QA fails
       finalTurn(copy), finalTurn(vetWithGaps()), finalTurn(revetRejects()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(failingQa),
       // attempt 2: same — the second four images spend the cap
@@ -340,7 +370,145 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     // scout + research + angle, then attempts of 6 + 6 + 5 turns, then the
     // packager. Each attempt gained Phase 5's value judge (`07j`), and the
     // delivering round gained one `08c-package-post` call after the loop.
-    expect(router.complete).toHaveBeenCalledTimes(3 + 6 + 6 + 5 + 1);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per
+    // REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(3 + 1 + 6 + 6 + 5 + 1);
+  });
+
+  /**
+   * ════════════════════════════════════════════════════════════════════════
+   * THE IMAGE FLOOR, OBSERVED THROUGH THE REAL WORKFLOW
+   * ════════════════════════════════════════════════════════════════════════
+   *
+   * `image-floor-never-cut.test.ts` unit-tests `partitionGaps` and simulates
+   * the three generation gates with a private copy of their shape. It cannot
+   * see the workflow, and for a while it read as though it could: change the
+   * three `skipOptional(...)` calls in
+   * `create-instagram-agent-workflow.ts` back to the bare `continue` they
+   * replaced and every assertion in that file stays green — on the owner's
+   * loudest complaint, *"אין תמונות למרות שאמרנו שיהיו"*.
+   *
+   * These two cases drive the real workflow. They share one fixture, because
+   * the two defects they pin are two halves of one run: a plan that pulled the
+   * optional rung must still buy the guaranteed images, and the floor step must
+   * then judge what LANDED rather than what was attempted.
+   *
+   * The client is deliberately FRESH — no `RUN_BUDGET_BELIEF_KEY` seeded — so
+   * the cold estimate is over the $1.80 target and `planRunBudget` pulls rung 1,
+   * `optionalRevets: true → false`. That is the exact plan shape all six prep
+   * runs of 2026-09-16 ran under, and the first gate in the loop reads it.
+   */
+  describe("the generation guarantee and the floor step, through the real workflow", () => {
+    /** Four of the six slides lose their picture at `06`; the generated frames are then refused too. */
+    function imageFixture() {
+      const copy = goodCopyOutput();
+      const pool = goodImageCandidatePool();
+      const gaps = [1, 2, 3, 4];
+      /** Every `image.generate` call's need count, in order. */
+      const requested: number[][] = [];
+      const generate: AgentTool = {
+        name: "image.generate",
+        version: "1.0.0",
+        async execute(args: unknown) {
+          const needs = (args as { needs: Array<{ n: number; prompt: string }> }).needs;
+          requested.push(needs.map((need) => need.n));
+          return {
+            status: "success",
+            result: {
+              model: "gemini-2.5-flash-image",
+              unmet: [],
+              candidates: needs.map((g) => ({ path: pool[0]!.path, description: `generated for slide ${g.n}`, provider: "gemini", licenseConfidence: "generated" })),
+            },
+          };
+        },
+      } as unknown as AgentTool;
+      const vetWithGaps = () => ({
+        selections: copy.slides.map((s) =>
+          gaps.includes(s.n)
+            ? { n: s.n, imagePath: null, reason: "no candidate matched", license: "n/a", rightsUsable: false, watermarkFree: false, claimMatch: 1, claimMatchReason: "nothing shows the claim" }
+            : { n: s.n, imagePath: pool[0]!.path, reason: "matches", license: "CC0", rightsUsable: true, watermarkFree: true, claimMatch: 5, claimMatchReason: "shows the claimed subject" },
+        ),
+      });
+      /** THE VET REFUSES EVERY GENERATED FRAME — the case `06h`'s own doc comment names and could not see. */
+      const revetRejects = () => ({
+        selections: gaps.map((n) => ({ n, imagePath: null, reason: "the generated picture does not show the claim", license: "n/a", rightsUsable: false, watermarkFree: false, claimMatch: 1, claimMatchReason: "generic illustration" })),
+      });
+      const failingQa = { pass: false, findings: [{ ruleId: "font-hierarchy", slide: 6, passed: false, note: "the closer's headline and body are the same size" }] };
+      const router = fakeRouterSequence([
+        finalTurn(goodTrendScoutOutput()),
+        finalTurn(goodResearchOutput()),
+        finalTurn(goodAngleProposal()),
+        finalTurn(DEFAULT_ENTITIES_TURN),
+        // attempt 1: copy, vet (4 gaps), generate re-vet (refuses all), relevance, value, QA fails
+        finalTurn(copy), finalTurn(vetWithGaps()), finalTurn(revetRejects()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(failingQa),
+        // attempt 2: the run's whole generation guarantee is already spent, so no generate call and no re-vet turn
+        finalTurn(copy), finalTurn(vetWithGaps()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(failingQa),
+        // attempt 3: ships
+        finalTurn(copy), finalTurn(vetWithGaps()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
+      ]);
+      return { copy, gaps, requested, generate, router };
+    }
+
+    it("a plan that turned optional rescue work off still generates the run's guaranteed images", async () => {
+      const { requested, generate, router } = imageFixture();
+      const { result, plan, stepIds } = await run(env, "floor_guarantee", router, { tools: testTools(env, { "image.generate": generate }) });
+      expect(result.status).toBe("completed");
+
+      // ── THE PREMISE, ASSERTED BEFORE THE CONCLUSION. ──
+      // Without this the case would pass against a plan that never pulled the
+      // rung, which is a test of nothing.
+      expect(plan?.plan.optionalRevets).toBe(false);
+
+      // THE CLAIM. The gate whose pre-phase form was a bare `continue` over the
+      // whole tier now skips the OPTIONAL gaps and falls through with the
+      // guarantee. Four gaps, two guaranteed.
+      expect(stepIds).toContain("06d-generate-images-attempt-1");
+      expect(requested).toHaveLength(1);
+      expect(requested[0]).toHaveLength(MIN_GENERATED_IMAGES_PER_RUN);
+      // Lowest-first within the tier — an early picture earns the swipe — and
+      // this run carries no concept, which `04m` declines on the canonical story.
+      expect(requested[0]).toEqual([1, 2]);
+
+      // ── THE TWO CONTROLS, both in-band. ──
+      // A pre-phase `continue` produces ZERO generate calls; a partition that
+      // returned everything as optional produces the same. Either would fail here.
+      expect(requested[0]!.length).toBeGreaterThan(0);
+      // And a gate that had simply stopped gating would have asked for all four.
+      expect(requested[0]!.length).toBeLessThan(4);
+      // The guarantee is per RUN, not per attempt: attempt 2 buys none.
+      expect(stepIds).not.toContain("06d-generate-images-attempt-2");
+    });
+
+    it("`06h` reports the floor on pictures that LANDED, so a run whose generated frames were all refused is not `ok`", async () => {
+      const { requested, generate, router } = imageFixture();
+      const { result, steps } = await run(env, "floor_outcome", router, { tools: testTools(env, { "image.generate": generate }) });
+      expect(result.status).toBe("completed");
+
+      // THE PREMISE: generation ran and produced the guarantee's worth of
+      // candidates, and the vet then refused every one of them.
+      expect(requested[0]).toHaveLength(MIN_GENERATED_IMAGES_PER_RUN);
+      const floor = steps.find((s) => s.stepId === "06h-imagery-floor-check-attempt-1")?.output as
+        | { action: string; pictureSlides: number; generated: number; reason?: string }
+        | undefined;
+      expect(floor, "06h did not run").toBeDefined();
+      expect(floor!.generated).toBe(MIN_GENERATED_IMAGES_PER_RUN);
+
+      // THE CLAIM. `pictureSlides` is the OUTCOME and it is under the floor, so
+      // the step must not say the floor is met. Before this fix the pass
+      // condition was `withPicture >= MIN_PICTURE_SLIDES || generatedSoFar >=
+      // MIN_GENERATED_IMAGES_PER_RUN`, and the right-hand disjunct — an INTENT
+      // counter incremented from the tool's candidate count before anything vets
+      // it — made this exact run report `{ action: "ok", pictureSlides: 2 }`.
+      expect(floor!.pictureSlides).toBeLessThan(3);
+      expect(floor!.action).not.toBe("ok");
+      expect(floor!.action).toBe("unfilled");
+      // And it says WHY, in the run's own numbers, rather than silently passing.
+      expect(floor!.reason).toMatch(/already generated 2 image\(s\)/u);
+      // It never holds: the run completed above, and the slides took the
+      // text-only downgrade exactly as they did before.
+      const downgrade = steps.find((s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-1")?.output as { downgraded: number[] } | undefined;
+      expect(downgrade?.downgraded).toEqual([1, 2, 3, 4]);
+    });
   });
 });
 
@@ -400,7 +568,8 @@ describe("default render rules through the workflow (WP0-4's workflow-level proo
     expect(stepIds).toContain("08-render-carousel-attempt-2");
     expect(stepIds).toContain("08b-visual-qa-attempt-2");
     // scout + research + angle + (copy + vet + relevance) + (copy + vet + relevance + QA): zero QA turns on attempt 1.
-    expect(router.complete).toHaveBeenCalledTimes(13);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(14);
     // The redraft is told WHICH rule and WHICH slide failed (prompt §16), not
     // just asked again: the SECOND copy turn is attempt 2's.
     expect(copyInputAt(router, 0)["selfCheckSteer"]).toBeUndefined();
@@ -417,3 +586,40 @@ describe("default render rules through the workflow (WP0-4's workflow-level proo
   });
 });
 
+/**
+ * ── A RUNG THAT LOWERS THE ESTIMATE AND CHANGES NO WORK IS A PHANTOM SAVING. ──
+ *
+ * `duplicateVisionPasses` is the one lever the owner's cost ruling names as
+ * genuinely optional: *"duplicate vision passes, redundant re-vets"*. It was
+ * implemented on the ESTIMATOR only — `estimateRunCost` multiplies the
+ * pool-inspection term by the attempt count when the flag is set, and
+ * `planRunBudget` pulls the rung AHEAD of the image cap — while
+ * `05c-inspect-candidates-attempt-N` and `08a4-inspect-rendered-attempt-N`
+ * re-inspected on every attempt regardless. So a plan was made to "fit" by a
+ * saving of 2 x $0.018 the run never made, and the image cap then stayed high
+ * on an estimate that was wrong, in a phase whose whole thesis is that the
+ * meter was lying.
+ *
+ * This is a SOURCE scan and it is the cheap half on purpose: what went wrong
+ * was not a subtle behaviour, it was that the name appeared in exactly one file
+ * and its own tests (`grep -rn duplicateVisionPasses` over the repo). The
+ * behaviour itself is asserted by the caches' own comments at the two step
+ * sites, and by the fact that a plan that pulls this rung now skips a candidate
+ * it has already described and a plate whose slides-data has not changed.
+ */
+describe("the budget's optional rungs are read by the run, not only by the estimate", () => {
+  const WORKFLOW = nodePath.resolve(__dirname, "..", "src", "workflow", "create-instagram-agent-workflow.ts");
+
+  it("the workflow reads every lever `planRunBudget` can pull", () => {
+    const source = readFileSync(WORKFLOW, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/(^|[^:])\/\/.*$/gm, "$1");
+    for (const lever of ["duplicateVisionPasses", "optionalRevets", "generatedImagesCap", "evidencePulls"] as const) {
+      expect(
+        source.includes(`budgetPlan.${lever}`),
+        `\`${lever}\` is a rung \`planRunBudget\` pulls to make a plan fit, and no step in the workflow reads it — ` +
+          "so the estimate goes down and the work does not. Either the lever is implemented or the rung comes out of the plan.",
+      ).toBe(true);
+    }
+  });
+});

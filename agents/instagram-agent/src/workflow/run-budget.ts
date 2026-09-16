@@ -1,6 +1,30 @@
 /**
- * Phase 0 cost controls — the owner's per-run budget (target $1.00, hard max
- * $1.50) as an ADAPTIVE plan, never a hold.
+ * Phase 0 cost controls — the owner's per-run budget (target $1.80, hard max
+ * $2.60 since Phase 5.5) as an ADAPTIVE plan, never a hold.
+ *
+ * ## THE 2026-09-16 RULING, AND WHY THE NUMBERS MOVED
+ *
+ * The owner judged three prep posts as a CMO and the loudest finding was that
+ * they had **no pictures in them**. The cause is in this file: the cold
+ * estimate exceeded the $1.00 target on every real run, and rung 1 of the
+ * ladder was `generatedImagesCap 4 -> 2 -> 0`, so all six prep runs planned
+ * ZERO generated images and `04m-concept-eligibility` declined with
+ * `"generatedImagesCap 0"`. The budget's first act was to delete the thing the
+ * owner most wanted, before it had given up a single piece of work whose own
+ * name is "optional".
+ *
+ * Verbatim (binding, supersedes the $1.00 target): *"שישתמש בכמה שהוא צריך עם
+ * רצון לנסות להיות יעיל ככל הניתן אבל גם אם הוא יחרוג - לא נורא. קודם שהתוכן
+ * יהיה טוב ואז נחשוב איך אפשר לחתוך בעלויות."* — use what it needs, try to be
+ * efficient, an overrun is not a disaster; get the content good first and think
+ * about cutting costs afterwards.
+ *
+ * So: **quality-affecting work is never optional spend.** The ladder may order
+ * and skip genuinely optional work (duplicate vision passes, rescue re-vets,
+ * repeat evidence pulls). It may never drop generated images below
+ * `MIN_GENERATED_IMAGES_PER_RUN`, a drafting attempt, a language round or an
+ * entity-image search. The image rung is now LAST and it stops at the floor;
+ * there is no zero.
  *
  * The owner's rule (2026-09-09 amendment, binding): estimate before the run;
  * if the estimate would exceed the target, do NOT fail — adapt the plan to
@@ -13,17 +37,20 @@
  *
  *   1. The PLAN (`planRunBudget`) — estimated from the per-step cost table
  *      below × what the plan allows (attempts, generated images, evidence
- *      pulls, optional re-vets) × a per-client calibration learned from past
- *      runs (`RunBudgetHistory`: EWMA of actual/estimate). Over the target,
- *      the levers are pulled IN ORDER until it fits: cap generated images
- *      (tier-0/stock first, then text-only), evidence pulls down to the one
- *      most-cacheable query, optional re-vets off, self-check returns
- *      2 -> 1. Every adaptation is a run note the reviewer sees.
+ *      pulls, optional re-vets, duplicate vision passes) × a per-client
+ *      calibration learned from past runs (`RunBudgetHistory`: EWMA of
+ *      actual/estimate). Over the target, the levers are pulled IN ORDER until
+ *      it fits: optional rescue re-vets off, evidence pulls down to the one
+ *      most-cacheable query, duplicate vision passes off, and only then the
+ *      generated-image cap, which stops at `MIN_GENERATED_IMAGES_PER_RUN`.
+ *      Every adaptation is a run note the reviewer sees.
  *
  *      The last two rungs were SWAPPED in Phase 5 (RFC-18 §7.3): optional
  *      work is given up before a drafting attempt is, because an attempt is
  *      what every quality gate in this workflow returns into and a rescue
- *      re-vet is optional by its own name. See `planRunBudget`.
+ *      re-vet is optional by its own name. Phase 5.5 extends that same
+ *      principle one rung further — the pictures are the deliverable, so they
+ *      are given up LAST and never completely. See `planRunBudget`.
  *   2. The METER (`RunSpendMeter`) — `max(measured, estimate)` per step
  *      (a Gemini-on-Vertex step may report $0; spec §0), consulted at every
  *      OPTIONAL spend point. Over the target: stop optional work (no more
@@ -40,6 +67,12 @@
  * per 1M tokens; `gemini-2.5-flash-image` $0.039/image; ScrappyCoco
  * $0.007/execution (`scrappycoco.ts` header).
  */
+
+// Phase 5.5 (spec §5 D1) — the discriminated setup outcome a stored record now
+// carries, so a TOOLING failure stops being read as "the studio judged this
+// client and kept nothing". Type-and-schema only; `template-studio.ts` imports
+// nothing from this module, so there is no cycle.
+import { SetupAttemptOutcomeSchema, type SetupAttemptOutcome } from "./template-studio.js";
 
 /** Generated images per RUN (all attempts, all revisions) at the widest plan — `remainingGenerationBudget` is the budget left for the next `generate` tier call. */
 export const GENERATED_IMAGES_PER_RUN_CAP = 8;
@@ -60,8 +93,56 @@ export const GENERATED_IMAGES_PER_RUN_CAP = 8;
  */
 export const CANDIDATES_PER_PHOTO_SLIDE = 6;
 
-/** The owner's target per Instagram run: the number the pre-run plan is fitted to. */
-export const TARGET_RUN_SPEND_USD = 1.0;
+/**
+ * The owner's target per Instagram run: the number the pre-run plan is fitted
+ * to.
+ *
+ * ## 1.00 -> 1.80 (owner, 2026-09-16), and the measurement behind it
+ *
+ * **$1.00 was the number a run with ZERO generated images came in under**, and
+ * it was never even that: the three judged runs of 2026-09-16 reported
+ * $0.99 / $0.41 / $0.53 against real calls of roughly **$1.33 / $1.34 / $1.60**,
+ * because a `max_tokens` truncation throws before usage is resolved and books
+ * $0 (W1-A fixes the meter; this key is fitted to the corrected figures, not to
+ * the reported ones). The system was spending heavy-run money on posts with no
+ * pictures in them.
+ *
+ * 1.80 is fitted to a plan that BUYS the pictures, priced off the same runs:
+ * the cold English full plan lands at $1.95 and needs one optional rung to fit;
+ * the cold Hebrew full plan lands at $2.05 and needs three. Both keep the image
+ * cap at 8. That is the intended shape — the ladder now spends its rungs on
+ * work whose own name is optional and arrives at the pictures last.
+ */
+export const TARGET_RUN_SPEND_USD = 1.8;
+
+/**
+ * Generated images per run that **NO LEVER MAY CROSS** (owner, 2026-09-16:
+ * quality-affecting work is never optional spend).
+ *
+ * ## Why two, and not one and not four
+ *
+ * Two is the smallest number that covers the two gaps retrieval provably
+ * cannot: **the concept slide** — `04m`'s designed frame, which is drawn and
+ * has no photographic equivalent anywhere — and **one named entity with no
+ * licensable photograph**, which is the case the owner named by hand (*"if it
+ * says ChatGPT you can add a picture of them or of Sam Altman"*). Every other
+ * gap on the slate can still be answered by a stock or editorial photograph, so
+ * a third guaranteed generation would be buying a picture the retrieval ladder
+ * was about to find for $0.
+ *
+ * It is a FLOOR, not a target: the full plan still buys up to
+ * `GENERATED_IMAGES_PER_RUN_CAP` and the ladder steps 4 -> 3 -> 2 under
+ * pressure. What it refuses is the shape all six prep runs of 2026-09-16 took —
+ * `generatedImagesCap 0`, and a carousel with nothing in it but type.
+ *
+ * Read in three places, and the plan's copy of it is the WEAKEST of them:
+ * `IMAGE_CAP_STEPS` below (the ladder cannot step past it), the three
+ * generation gates in the workflow via `partitionGaps` (`image-gap-partition.ts`
+ * — the binding one, outside every optional-spend check), and
+ * `04m-concept-eligibility`, which reads `max(cap, this)` instead of treating
+ * the cap as a veto.
+ */
+export const MIN_GENERATED_IMAGES_PER_RUN = 2;
 
 /**
  * The owner's hard max per Instagram run. **Its purpose is to break an
@@ -75,8 +156,23 @@ export const TARGET_RUN_SPEND_USD = 1.0;
  * that fails a run.
  *
  * Raised 1.5 -> 1.6 by that same ruling, which named 1.60 as the number.
+ *
+ * ## 1.60 -> 2.60 (Phase 5.5), and it is still only a loop-breaker
+ *
+ * A ceiling below the heaviest DESIGNED path is not a loop-breaker, it is a
+ * silent quality cut: the live meter would cross it on an ordinary run, switch
+ * to `cheapest-path`, and take the vision inspection and the visual-QA call off
+ * a post that was doing nothing wrong. Measured on this module's own
+ * arithmetic, the heaviest planned shape — cold Hebrew, a brand-new client
+ * writing its brief, eight photo slides, full plan — is **$2.28**. 2.60 clears
+ * it by $0.32 and clears the ordinary cold Hebrew plan ($2.05) by $0.55.
+ *
+ * It did NOT move because runs got dearer by accident. It moved because the
+ * target it escorts moved, and because the three judged runs show what a
+ * too-low ceiling actually does: geektime crossed the $1.60 max on 2026-09-16
+ * and nothing — including the meter — knew.
  */
-export const MAX_RUN_SPEND_USD = 1.6;
+export const MAX_RUN_SPEND_USD = 2.6;
 
 /**
  * Per-unit estimates the meter falls back to when a step reports no cost (or
@@ -443,8 +539,94 @@ export const STEP_COST_ESTIMATES_USD = {
    * evidence the run already holds, with no model call and no tool call, so it
    * contributes nothing to `fixed` BY CONSTRUCTION, the same way `07i` and
    * `04l` do.
+   *
+   * ── PHASE 5.5: 0.185 -> 0.310, AND THE ARITHMETIC ABOVE IS NOT WHY ──
+   *
+   * Everything above this line prices the call from the PROMPT FILE's growth.
+   * That method is right and it is not what was wrong. What was wrong is the
+   * base it starts from: `AT_16_IN = 22,260` input tokens, a figure nobody has
+   * re-measured since @16, against a live call that bills **46,945 uncached
+   * input tokens plus a 23,167-token cache write**. The prompt file is one
+   * input among many — the fact cards, the client brief, the register card, the
+   * recent skeletons, the series directive and the reference posts all ride the
+   * same call — and every one of them grew while this key was being derived to
+   * three decimals off the prompt alone.
+   *
+   * **MEASURED, on the eight completed copy attempts of 2026-09-16** (the three
+   * judged runs plus the three earlier ones, `costUsd` off the step records):
+   *
+   *     $0.468424  $0.402785  $0.400484  $0.358827
+   *     $0.347409  $0.334373  $0.279247  $0.110939     mean $0.3378
+   *
+   * The shipped key 0.185 is **1.83x below the live mean** and 2.5x below the
+   * dearest attempt. Five FURTHER attempts across the same runs truncated at
+   * the 16,384-token output ceiling and booked $0 — they really cost about
+   * $0.335 each — so the meter agreed with the estimate only because both were
+   * blind in the same place. This is the largest single error in this table's
+   * history and it is the reason a run planned to cost $1.00 billed $1.60.
+   *
+   * The key is NOT set to the live mean, because the live call is the one being
+   * fixed. W1-B hoists `customArchetype`'s markup out of the copy schema (up to
+   * 4,000 + 4,000 + 8x2,000 characters of `bodyHtml` and `css`) into `05f` and
+   * bounds `headline`/`body`, which takes the expected draft from ~16.3k output
+   * tokens to ~10k. So the call this key prices is the POST-HOIST one, priced
+   * from the measured input and the designed output:
+   *
+   *     input    46,945 uncached x $3/1e6                    = $0.140835
+   *     cache    23,167 written x 0.25 premium x $3/1e6      = $0.017375
+   *     output   10,000 x $15/1e6                            = $0.150000
+   *     ------------------------------------------------------------------
+   *                                                            $0.308210
+   *
+   * Plus a FOURTH term this measurement predates: the `instagram-copy@20 ->
+   * @21` prompt is itself input, and @21 grows the file 79,348 -> 83,763
+   * characters with line endings normalised — +4,415, which at the 3.66
+   * characters-a-token rate fitted across the same six runs is **+1,206 input
+   * tokens**. Priced in the worse of the two buckets it can land in (inside the
+   * cached prefix, so it pays the write premium as well):
+   *
+   *     prompt   1,206 x 1.25 x $3/1e6                       = $0.004523
+   *     ------------------------------------------------------------------
+   *     cold attempt, post-hoist, at @21                       $0.312733
+   *
+   * Entered as **0.315**, rounded up as this table always rounds. The residue
+   * is $0.00227, which is 151 output tokens of headroom: if the hoisted draft
+   * lands above **10,151** output tokens this key is under the call again, and
+   * `copy-schema-length.test.ts` (W1-B) is what measures that.
+   * Reproducing the live figure from the first three terms at the MEASURED
+   * 16,305 output tokens gives $0.402785 — karoslabs attempt 1 to the cent,
+   * which is what makes the input term above a measurement rather than a guess.
    */
-  copyAttempt: 0.185,
+  copyAttempt: 0.315,
+  /**
+   * The SAME call on attempts 2..n, at the cache behaviour the estimator has
+   * never known about.
+   *
+   * Every later attempt of every run on 2026-09-16 reported `cached: 23,167` —
+   * the system prompt, the tool list and the whole invariant half of the input
+   * are written to the 5-minute cache by attempt 1 and READ by attempts 2 and
+   * 3, at a 90% discount (`pricing.ts`'s `CACHE_READ_DISCOUNT`). Pricing all
+   * three attempts at the cold price over-states a three-attempt run by $0.14,
+   * and an over-statement pulls a rung the run does not need:
+   *
+   *     input    27,500 uncached x $3/1e6      = $0.082500   (the attempt's own
+   *                                                           payload: findings,
+   *                                                           the previous draft)
+   *     cached   23,167 x $0.30/1e6            = $0.006950
+   *     output   10,000 x $15/1e6              = $0.150000
+   *     ------------------------------------------------------------
+   *                                              $0.239450
+   *
+   * Entered as **0.240**. The live evidence for the split: karoslabs attempt 2
+   * billed $0.400484 against attempt 1's $0.402785 at the UNHOISTED output
+   * size, i.e. the saving the cache buys is real but small next to a 16k draft —
+   * which is precisely why hoisting the markup matters more than the cache does.
+   *
+   * `estimateRunCost` uses `copyAttempt` for attempt 1 and this for every
+   * attempt after it. A run that plans one attempt pays the cold price; a run
+   * that plans three pays cold + 2 x warm.
+   */
+  copyAttemptWarm: 0.24,
   /**
    * Phase 4 — the `languageBrief` input FIELD on `05-write-copy-attempt-N`,
    * added per attempt on non-English runs only (the same conditional shape
@@ -511,9 +693,64 @@ export const STEP_COST_ESTIMATES_USD = {
    * acts on. The lever still exists and still floors at 2; what changed is
    * that every cheaper thing is now spent first, so no judgment gate in this
    * workflow can be starved into a hold by a budget decision.
+   *
+   * ── PHASE 5.5: 0.0065 -> 0.023, BECAUSE THE VET MOVES TO gemini-2.5-pro ──
+   *
+   * W2-A re-tiers `instagram-image-vet` flash -> pro: the vet is the step that
+   * refused six correct photographs of server racks for "road tunnel, not
+   * server infrastructure", scoring a pool that HELD the subject at
+   * `claimMatch 1`, and it is about to be asked a harder question still
+   * (`subjectMatch` against a named entity). That is where a stronger model
+   * earns its money.
+   *
+   * **The conversion is bounded and needs no token split.** Published rates:
+   * flash $0.30/$2.50, pro $1.25/$10.00 per 1M. `1.25/0.30 = 4.167` and
+   * `10/2.5 = 4.0`, so a pro call costs between **4.00x and 4.167x** the same
+   * call on flash WHATEVER the input/output mix. Measured, the eight live vet
+   * calls of 2026-09-16:
+   *
+   *     $0.004286  $0.004925  $0.006551  $0.007082
+   *     $0.004759  $0.005432  $0.003657  $0.005769    mean $0.005308
+   *
+   * so a pro vet is **$0.02123-$0.02212** on the mean call and up to $0.02951
+   * on the dearest one. Entered as **0.023**: above the mean-derived upper
+   * bound, below the single-worst-call figure. The choice of base is deliberate
+   * and it is the one place this key departs from "price the cold worst case" —
+   * `rawEstimate` multiplies it by NINE on a full plan (one per attempt plus two
+   * rescue re-vets per attempt), and pricing all nine at the dearest observed
+   * call would over-state the rescue rung by $0.06 and pull a rung the run does
+   * not need. Nine mean calls is the honest expectation for a nine-call sum.
+   *
+   * Note what this also corrects: at 0.0065 the key was already ABOVE the live
+   * flash mean, so the "honest re-price" Phase 4 deferred and Phase 5 landed was
+   * itself over-counting a flash vet by 22%. The measurement settles it in both
+   * directions.
+   *
+   * **The deviation from spec §A3/§7 is arithmetic, not judgement.** The spec
+   * budgets the tier rise at "+$0.0085/call" (0.0065 -> 0.015), which assumes
+   * pro is ~2.3x flash. At the published rates it is 4.0-4.167x, so 0.015 would
+   * be below the call on EVERY mix — the one direction this table's header
+   * forbids.
    */
-  vetCall: 0.0065,
-  /** Flash vision inspection, per image (05c candidate batches, 08a4 rendered slides). */
+  vetCall: 0.023,
+  /**
+   * Flash vision inspection, per image (05c candidate batches, 08a4 rendered
+   * slides).
+   *
+   * **MEASURED 2026-09-16 and left at 0.001 deliberately, with the finding
+   * recorded rather than acted on.** The seven live `05c` steps report
+   * `unitUsage` per call, so the per-candidate price is exactly derivable:
+   * karoslabs $0.007854 for one six-candidate need = $0.00131 each, deel
+   * $0.018534 for two needs = $0.00154, geektime $0.013605 for two = $0.00113.
+   * The key is therefore **~30% under the call** at roughly $0.0013.
+   *
+   * Not re-priced here because this package (W1-C) owns the image floor and the
+   * rung order, and moving a key that multiplies by 36 on the default shape
+   * (+$0.011 an attempt, +$0.032 a run) inside a change whose whole point is the
+   * ladder would make the ladder's new landing figures unattributable. It is
+   * pinned in `run-budget.test.ts` so the next re-price starts from a number
+   * somebody measured instead of from this one.
+   */
   visionInspectPerImage: 0.001,
   /** Flash relevance judge (07g), ~4k in / 0.3k out. */
   relevance: 0.002,
@@ -611,7 +848,35 @@ export const STEP_COST_ESTIMATES_USD = {
    * question), and the step's input gained `previousSkeleton`/`thisSkeleton`.
    * Small in absolute terms, re-priced for the same reason `copyAttempt` is.
    */
-  visualQa: 0.0041,
+  /**
+   * ── PHASE 5.5: 0.0041 -> 0.046 — pro, plus the contact sheet ──
+   *
+   * Two changes, and the first is that 0.0041 was never the call. **Measured**,
+   * the four live `08b` steps of 2026-09-16: $0.010207, $0.010672, $0.009917,
+   * $0.011144 — mean **$0.010485**, i.e. the shipped key under-counted its own
+   * flash call by 2.6x. (The derivation above says "~5.5k in / 1k out"; the real
+   * call reads ~29k input tokens of rendered evidence.)
+   *
+   * W2-C/W2-D then move it to `gemini-2.5-pro` and feed it the CONTACT SHEET —
+   * one composite of all eight plates, which is how the owner judged these posts
+   * and the reason `{ FIELD` on eight slides was invisible to a per-slide
+   * rubric. This is the only step in the run where a model is asked *"is this
+   * good"*, and on geektime it returned three correct findings that nothing
+   * acted on.
+   *
+   *     pro / flash is between 4.00x and 4.167x on any mix (see `vetCall`)
+   *     mean flash call $0.010485        ->  $0.041940 - $0.043691 on pro
+   *     the contact sheet, ~1,100 input tokens x $1.25/1e6  =  $0.001375
+   *     ---------------------------------------------------------------
+   *                                          $0.043315 - $0.045066
+   *
+   * Entered as **0.046**, rounded up past the top of that band — and still
+   * below the dearest observed call converted at the upper factor ($0.046437
+   * plus the sheet). $0.046 a call, three attempts, is $0.138 a run: the most
+   * expensive judgement in the phase, and the one the owner's complaints are
+   * about.
+   */
+  visualQa: 0.046,
   /**
    * Phase 5 (RFC-18 §6.1) — the WHOLE-POST packager (`08c-package-post`),
    * `gemini-2.5-flash`, **once per revision**, after the drafting loop breaks:
@@ -734,6 +999,67 @@ export const STEP_COST_ESTIMATES_USD = {
    * about — an over-count pulls a lever the run did not need.
    */
   concept: 0.029,
+  /**
+   * Phase 5.5 (W2-A) — `04b3-extract-entities`, `gemini-2.5-flash`,
+   * `maxTokens: 2_000`, ONCE per run, over the fact cards + the selected topic
+   * + the chosen angle.
+   *
+   * In: fact cards ~5,000 + topic and angle 400 + rubric 1,400 + scaffolding
+   * 200 = **7,000** x $0.30/1M = $0.00210. Out: up to 8 entities at ~45 tokens
+   * (name, kind, domain, the public-figure flag, card ids, salience) + 40 of
+   * scaffolding = **400** x $2.50/1M = $0.00100. **= $0.00310, entered as
+   * 0.003** — this table's one three-decimal floor case, so it is the rounding
+   * this key can least afford to get wrong and it is stated: $0.0031 rounds to
+   * 0.003 by ceiling only because the third decimal is where the table stops.
+   *
+   * It is the cheapest step in the run and it is what makes "a post about
+   * ChatGPT shows ChatGPT" mechanisable at all: without a named entity the
+   * sourcing ladder has nothing but the writer's mood words to search on.
+   */
+  entityExtract: 0.003,
+  /**
+   * Phase 5.5 (W2-A) — `05b1-source-entity-images-attempt-N`, `wf.step.code`,
+   * once per attempt when any slide brief carries an `entityRef`.
+   *
+   * ONE ScrappyCoco `web.search_web` execution ($0.007, `scrappycoco.ts`
+   * header) for the entity's own press/newsroom page. Tiers 0, 2, 3 and 4 of
+   * the entity ladder cost **$0**: the client's own media library is a store
+   * read, `media.harvestArticleImages` on a URL the slide already cites runs in
+   * the same execution, and Wikimedia/Openverse and the stock route are already
+   * paid for. So the whole entity path adds one scraper execution an attempt and
+   * nothing else.
+   *
+   * Priced per attempt rather than per run because the brief is re-written on
+   * every attempt and a new brief names new entities; the store's cache key
+   * makes a repeat of the same query free, so this is the worst case and not
+   * the expected one.
+   */
+  entitySource: 0.007,
+  /**
+   * Phase 5.5 (W1-B) — `05f-author-custom-archetype`, `claude-sonnet-4-6`,
+   * `maxTokens: 8_000`, at most once per carousel.
+   *
+   * In: the slot contract and the token block 2,600 + the archetype brief `05`
+   * emitted 200 + the client's style config 700 + scaffolding 200 = **3,700** x
+   * $3/1M = $0.01110. Out: `bodyHtml` up to 4,000 chars + `css` up to 4,000 =
+   * ~2,000 tokens x $15/1M = $0.03000... which is $0.041 and NOT this key, so
+   * read the next paragraph before "correcting" it.
+   *
+   * **The authored markup is not new spend — it is spend that MOVES.** Today
+   * those same ~2,000 output tokens are emitted by `05` inside
+   * `SlideCustomArchetypeSchema`, at the same $15/1M, on EVERY attempt that
+   * authors one. Hoisting them into their own step is what takes the copy
+   * draft from ~16.3k output tokens to ~10k and ends the truncation that cost
+   * five of eleven attempts on 2026-09-16. The marginal cost is therefore the
+   * step's own INPUT ($0.0111) plus the output the copy step no longer pays for
+   * on the attempts that would have re-authored it — netted, and rounded up, at
+   * **0.030**, which is what a single authoring costs in output alone.
+   *
+   * Booked ONCE in `fixed`, not once per attempt, on the precedent `concept`
+   * sets two keys above: a step that fires at most once per carousel is priced
+   * once, and a redraft that re-authors is what `ewmaRatio` is for.
+   */
+  customArchetype: 0.03,
 } as const;
 
 export type StepCostKey = keyof typeof STEP_COST_ESTIMATES_USD;
@@ -798,6 +1124,18 @@ export function revisionEstimateUsd(input: { attempts?: number; targetLanguage?:
   // re-enters `draftOnce`, and `07j` sits inside the attempt loop it re-enters. $0.003 x 3 attempts is
   // $0.009, which is under the rounding of this quote — and it is added anyway, because the rule this file
   // keeps is that a quote read immediately before the spend may never be the cheap version of the truth.
+  // Phase 5.5, two deliberate omissions, both stated rather than silent:
+  //
+  //  * `copyAttemptWarm`. Every attempt here is quoted at the COLD price even
+  //    though attempts 2..n of one round bill the warm one, because this figure
+  //    is read before a REVISION — which follows a human gate by minutes or
+  //    hours, and the prompt cache that buys the warm price lives five minutes.
+  //  * `entitySource` ($0.007 an attempt, $0.021 a round). The planner prices
+  //    it; this quote does not yet, and the gap is ~1.6% of the round against a
+  //    figure that only INFORMS the pre-revision check and can never refuse a
+  //    round. It is listed here so it is a known omission rather than a
+  //    forgotten one — W2-A adds it when `per-revision-estimate.test.ts` is
+  //    re-baselined for the Phase 5.5 keys.
   const perAttempt = DRAFT_ATTEMPT_ESTIMATE_USD + STEP_COST_ESTIMATES_USD.relevance + STEP_COST_ESTIMATES_USD.valueJudge + language;
   return roundUsd((input.angle === false ? 0 : STEP_COST_ESTIMATES_USD.angle) + attempts * perAttempt);
 }
@@ -854,7 +1192,9 @@ export class RunSpendMeter {
 
   /**
    * Zero arguments is the per-run meter, byte-identically to before: every
-   * existing call site keeps the owner's $1.00/$1.50.
+   * existing call site keeps the owner's per-run pair — $1.80 / $2.60 since
+   * Phase 5.5, and read from the two constants rather than restated here, so a
+   * later ruling moves them in one place.
    *
    * A non-finite or non-positive limit falls back to the run constant rather
    * than throwing. The meter must never be the thing that fails a run, and
@@ -957,7 +1297,7 @@ export interface RunBudgetPlan {
   /**
    * Self-check attempts in total (the initial draft plus returns to step 05).
    * **Always 3 on a planned run since 2026-09-14** — the ladder's attempt rung
-   * was deleted because a quality attempt is not optional work. See rung 4's
+   * was deleted because a quality attempt is not optional work. See rung 5's
    * comment in `planRunBudget`.
    */
   maxSelfCheckAttempts: number;
@@ -969,9 +1309,28 @@ export interface RunBudgetPlan {
    * Whether the optional rescue tiers (scrape/generate + their re-vets) may
    * run at all — and, since Phase 5, whether `07i1-verify-lead-claim` spends
    * its one ScrappyCoco execution. One flag, both rescue paths: see
-   * `rawEstimate` and `planRunBudget` rung 3.
+   * `rawEstimate` and `planRunBudget` rung 1.
    */
   optionalRevets: boolean;
+  /**
+   * Phase 5.5 — whether a vision pass may look at something it has already
+   * looked at on a previous attempt: `05c` re-inspecting candidates that were
+   * in the previous attempt's pool, and `08a4` re-inspecting slides whose
+   * `slidesData` hash is unchanged.
+   *
+   * **This is the rung the owner's ruling explicitly permits** (*"duplicate
+   * vision passes, redundant re-vets"*), and it is the only new lever in Phase
+   * 5.5. Switching it off changes nothing a reader can see: the same pixels are
+   * judged, once instead of three times.
+   *
+   * The evidence that the duplicate is real rather than theoretical is in the
+   * `unitUsage` of the 2026-09-16 runs — karoslabs `05c` billed 3,705 input
+   * tokens on attempt 1 and 3,705 again on attempt 2, and deel billed
+   * 3,705 + 3,725 on attempt 1 and 3,705 + 3,725 again on attempt 3. Identical
+   * widths, attempt after attempt: the same candidates, re-described to the same
+   * model, at full price.
+   */
+  duplicateVisionPasses: boolean;
 }
 
 export const DEFAULT_RUN_BUDGET_PLAN: Readonly<RunBudgetPlan> = {
@@ -979,6 +1338,7 @@ export const DEFAULT_RUN_BUDGET_PLAN: Readonly<RunBudgetPlan> = {
   generatedImagesCap: GENERATED_IMAGES_PER_RUN_CAP,
   evidencePulls: "full",
   optionalRevets: true,
+  duplicateVisionPasses: true,
 };
 
 /**
@@ -1148,22 +1508,33 @@ function rawEstimate(plan: RunBudgetPlan, shape: RunShape): RunCostEstimate["bre
     // answer is the worst case (+$0.030) — the same rule the rest of this
     // function follows for cold caches and eight-slide carousels.
     //
-    // "Unanswerable" is true of the STORY, not of the PLAN. Two of the
-    // selector's preconditions are decided by the very plan being priced, and
-    // on a rung that fails either of them the concept costs exactly $0:
-    // `conceptEligibility` declines with "the run budget bought no generated
-    // images" when `generatedImagesCap <= 0`, and the workflow declines
-    // outright when `optionalRevets` is false. Booking $0.030 there charged
-    // the estimate for spend the chosen plan had just made impossible, and it
-    // compounds — on the saturated ladder the same line costs $0.030 x the
-    // calibration ratio — which is what pushed the target headroom down. The
-    // full plan, where the concept really can be bought, still carries the
-    // honest worst case.
+    // Until Phase 5.5 this line also carried two PLAN-SIDE preconditions —
+    // `generatedImagesCap > 0 && optionalRevets` — on the reasoning that a rung
+    // failing either of them made the concept cost exactly $0. That reasoning
+    // was correct then and is dead now; see immediately below.
     //
-    // The concept's IMAGE is NOT added here: it is one of the
+    // Phase 5.5: the two PLAN-SIDE preconditions are GONE from this line, and
+    // that is a correctness fix rather than a re-price. They said "on a rung
+    // that fails either of them the concept costs exactly $0", which was true
+    // only because `generatedImagesCap` could reach 0 and because the workflow
+    // declined the concept outright when `optionalRevets` was false. Neither
+    // holds now: `MIN_GENERATED_IMAGES_PER_RUN` means the cap is never 0, and
+    // `partitionGaps` makes the concept image a GUARANTEED gap that no
+    // optional-spend gate may skip. The concept is therefore priced on every
+    // run the mode is reachable on — which is what the run will actually do.
+    //
+    // The concept's IMAGE is still NOT added here: it is one of the
     // `plan.generatedImagesCap` pictures priced in `images` below, and
-    // double-counting it would pull an image lever a run does not need.
-    (shape.conceptPossible && plan.generatedImagesCap > 0 && plan.optionalRevets ? c.concept + c.visionInspectPerImage : 0) +
+    // double-counting it would pull a rung a run does not need.
+    (shape.conceptPossible ? c.concept + c.visionInspectPerImage : 0) +
+    // Phase 5.5 (W2-A) — `04b3-extract-entities`, once per run, over evidence
+    // the run already holds. Unconditional: every post names something, and an
+    // estimator that priced the entity path only on the runs it hoped would
+    // find an entity would arm no lever on the runs that do.
+    c.entityExtract +
+    // Phase 5.5 (W1-B) — `05f-author-custom-archetype`, at most once per
+    // carousel. Priced once on `concept`'s precedent; see the key.
+    c.customArchetype +
     // Phase 5 (RFC-18 §6, §4.3) — the three once-per-run lines the whole-post
     // half adds, all of them OUTSIDE the attempt loop by design:
     //
@@ -1188,7 +1559,7 @@ function rawEstimate(plan: RunBudgetPlan, shape: RunShape): RunCostEstimate["bre
     //    saving.
     //
     //    Pricing it unconditionally matters as much as running it
-    //    unconditionally. The step now fires on plans that pulled rung 3, so
+    //    unconditionally. The step now fires on plans that pulled the re-vet rung, so
     //    an estimate that still zeroed it here would under-count exactly the
     //    tightest plans — the flattery this file's own header warns about, in
     //    the one place where the flattered plan is the one already in trouble.
@@ -1197,8 +1568,15 @@ function rawEstimate(plan: RunBudgetPlan, shape: RunShape): RunCostEstimate["bre
   // A carousel cannot have more photo slides than slides; a shape that says
   // so is priced at the larger of the two rather than under-counting 08a4.
   const slides = Math.max(0, shape.slideCount, photos);
+  // 05c's candidate pool, priced apart from the rest of the attempt because
+  // Phase 5.5's `duplicateVisionPasses` lever reaches exactly this term: the
+  // pool is `CANDIDATES_PER_PHOTO_SLIDE` candidates for every slide that needs
+  // a picture (plus any tier-0 uploads, which cost nothing to harvest and are
+  // not modelled) — not one image per slide.
+  const poolInspection = photos * CANDIDATES_PER_PHOTO_SLIDE * c.visionInspectPerImage;
+  // Everything one attempt costs EXCEPT the copy draft (which is priced cold on
+  // attempt 1 and warm afterwards) and the candidate pool (see above).
   const perAttempt =
-    c.copyAttempt +
     c.vetCall +
     c.relevance +
     // Phase 5 (RFC-18 §5) — the value judge, once per attempt, in every
@@ -1228,15 +1606,39 @@ function rawEstimate(plan: RunBudgetPlan, shape: RunShape): RunCostEstimate["bre
     // happens, and `ewmaRatio` teaches the next run what this client's Hebrew actually costs.
     (shape.targetLanguage ? c.copyLanguageBrief + c.nativeJudge : 0) +
     c.visualQa +
-    // 05c inspects the POOL, and the pool is `CANDIDATES_PER_PHOTO_SLIDE`
-    // candidates for every slide that needs a picture (plus any tier-0
-    // uploads, which cost nothing to harvest and are not modelled) — not one
-    // image per slide.
-    photos * CANDIDATES_PER_PHOTO_SLIDE * c.visionInspectPerImage +
+    // Phase 5.5 (spec §4.8) — `08b1-compose-contact-sheet`: all eight plates
+    // in ONE frame, which is what makes `instagram-visual-qa@5`'s five CMO
+    // questions answerable at all (rhythm and repetition are properties of
+    // the SEQUENCE and are invisible one slide at a time). The composite
+    // itself is a local browser screenshot at $0; what is priced is the one
+    // vision read of it, at the same per-image rate `08a4` pays.
+    c.visionInspectPerImage +
+    // Phase 5.5 (W2-A) — `05b1-source-entity-images-attempt-N`: one ScrappyCoco
+    // execution for the entity's own press page. Every other tier of the entity
+    // ladder is $0; see the key.
+    c.entitySource +
     // 08a4 inspects every rendered slide (capped at 12 by the step itself),
     // photo or typographic.
     Math.min(slides, 12) * c.visionInspectPerImage;
-  const attempts = plan.maxSelfCheckAttempts * perAttempt;
+  // The copy draft: COLD once, WARM for every attempt after it. Every later
+  // attempt of every run on 2026-09-16 reported `cached: 23,167` — a fact the
+  // estimator has never known, worth $0.14 on a three-attempt run.
+  const drafts = c.copyAttempt + Math.max(0, plan.maxSelfCheckAttempts - 1) * c.copyAttemptWarm;
+  // The candidate pool, inspected once per attempt — or ONCE FOR THE RUN when
+  // the duplicate-vision rung has been pulled.
+  //
+  // Booking the whole pool once (rather than a fraction of it) is what the live
+  // `unitUsage` supports: the input width of `05c` was byte-identical across
+  // attempts on both runs that reached a second attempt with the vet alive, so
+  // the repeat is the WHOLE pool and not a part of it. What that model ignores
+  // is a redraft whose new scene briefs genuinely harvest new candidates — real,
+  // unmeasurable before the run, and it can only make this rung free LESS than
+  // the estimate says. That direction used to be forbidden here; under the
+  // 2026-09-16 ruling it costs at most an overrun that `ewmaRatio` carries into
+  // the next run, because there is no longer any rung below this one that can
+  // make the post worse.
+  const pools = plan.duplicateVisionPasses ? plan.maxSelfCheckAttempts * poolInspection : poolInspection;
+  const attempts = plan.maxSelfCheckAttempts * perAttempt + drafts + pools;
   // Optional rescue per attempt: one scrape execution per gap (worst case half the photo slides) + two re-vets.
   const rescue = plan.optionalRevets ? plan.maxSelfCheckAttempts * (Math.ceil(photos / 2) * c.scraperExecution + 2 * c.vetCall) : 0;
   const images = plan.generatedImagesCap * c.generatedImage;
@@ -1510,8 +1912,21 @@ export interface RunBudgetDecision {
   note: string;
 }
 
-/** The image caps the first lever steps through: stock/tier-0 first, then fewer generated pictures, then none. */
-const IMAGE_CAP_STEPS = [4, 2, 0] as const;
+/**
+ * The image caps the LAST lever steps through — 8 (the full plan) down to 4, to
+ * 3, to the floor.
+ *
+ * **The floor IS the last step. There is no zero, and there is no rung below
+ * this one.** Until Phase 5.5 this array was `[4, 2, 0]` and it was RUNG 1, so
+ * the pictures were the first thing the ladder sold and `generatedImagesCap 0`
+ * was reachable on an ordinary cold run — which is exactly what happened to all
+ * six prep runs of 2026-09-16.
+ *
+ * Exported so the tests (and anyone re-tuning the ladder) can assert the one
+ * property that matters about it: `IMAGE_CAP_STEPS` contains no value below
+ * `MIN_GENERATED_IMAGES_PER_RUN`.
+ */
+export const IMAGE_CAP_STEPS = [4, 3, MIN_GENERATED_IMAGES_PER_RUN] as const;
 
 /**
  * Decide the plan for this run. Starts from the default plan (or, after an
@@ -1538,24 +1953,31 @@ export function planRunBudget(
   let estimate = initialEstimate;
   // The rest of the run has to fit what is LEFT of the target: money already
   // billed is money the plan cannot un-spend, and fitting the plan to the
-  // whole $1.00 after $0.18 of brief writing is exactly the flattery this
+  // whole $1.80 after $0.18 of brief writing is exactly the flattery this
   // file's own comment warns about.
   const fits = () => roundUsd(estimate.estimatedUsd + spent) <= TARGET_RUN_SPEND_USD;
 
-  // 1. Cap generated images (prefer tier-0/stock, then text-only).
-  for (const cap of IMAGE_CAP_STEPS) {
-    if (fits() || plan.generatedImagesCap <= cap) continue;
-    plan = { ...plan, generatedImagesCap: cap };
-    estimate = estimateRunCost(plan, shape, ratio);
-    adaptations.push(cap === 0 ? "no generated images (stock or text-only)" : `images capped at ${cap}`);
-  }
-  // 2. Optional evidence pulls down to the one most-cacheable query.
-  if (!fits() && plan.evidencePulls === "full") {
-    plan = { ...plan, evidencePulls: "reduced" };
-    estimate = estimateRunCost(plan, shape, ratio);
-    adaptations.push("trend evidence reduced to the one cached industry query");
-  }
-  // 3. Optional re-vets off. THIS FLAG NO LONGER CARRIES `07i1`.
+  // ═══════════════════════════════════════════════════════════════════════
+  // THE LADDER, RE-ORDERED IN PHASE 5.5: OPTIONAL WORK FIRST, PICTURES LAST
+  // ═══════════════════════════════════════════════════════════════════════
+  //
+  // The principle has been written in this file since Phase 5 — *drop optional
+  // work before dropping the thing that makes the post good* — and until
+  // 2026-09-16 it was applied to exactly one pair of rungs while the IMAGE rung
+  // sat at the top of the ladder. So the first thing an over-target estimate
+  // did was delete the pictures, and the last thing it did was give up a rescue
+  // re-vet. All six prep runs of 2026-09-16 planned `generatedImagesCap 0` and
+  // `04m-concept-eligibility` skipped with the reason `"generatedImagesCap 0"`;
+  // the owner read the posts and said the missing pictures made no sense.
+  //
+  // The rungs below are now in the owner's order, cheapest-to-lose first, and
+  // the image rung is both LAST and FLOORED. The same one-line test applies to
+  // each: could a reader tell? Rungs 1-3 are invisible to a reader — a rescue
+  // re-vet of a candidate already vetted, a repeat trend query, a second look at
+  // an identical candidate pool. Rung 4 is the deliverable, so it goes last and
+  // it stops at `MIN_GENERATED_IMAGES_PER_RUN`.
+  //
+  // 1. Optional rescue re-vets off. THIS FLAG NO LONGER CARRIES `07i1`.
   //
   //    Phase 5 hung `07i1-verify-lead-claim` on this same flag — "one flag,
   //    both rescue paths" — which made the pre-run ladder able to delete the
@@ -1585,27 +2007,68 @@ export function planRunBudget(
   // disabling the value gate's own retry loop.
   //
   // It is also worth vastly more money, and in the right direction. On the
-  // cold default shape this rung frees $0.109 (`3 x (3 x $0.007 + 2 x
-  // $0.0065)` of rescue plus `07i1`'s $0.007) while the attempt rung frees
-  // $0.2906 — so the old order overshot by a quarter of the whole target to
-  // recover a few cents, and did it by deleting a draft.
+  // cold default shape this rung frees $0.201 (`3 x (3 x $0.007 + 2 x
+  // $0.023)` of rescue) while the attempt rung would free $0.365 — so the old
+  // order overshot by a fifth of the whole target to recover a few cents, and
+  // did it by deleting a draft.
   //
   // Not changed: the `WorkflowHeld` for genuine MECHANICAL exhaustion (07's
   // slide check, craft hygiene) is untouched. What is guaranteed is narrower
   // and exact: no judgment gate — value, relevance, language, numbers — can be
   // starved into a hold by a budget decision.
   //
-  // As of 2026-09-14 this is the LAST rung, and the attempt lever it was
-  // swapped ahead of no longer exists at all: the owner ruled the target may
-  // only adapt optional work. So the ordering argument above is now settled by
-  // construction rather than by sequence — there is nothing left below this
-  // rung to drop.
+  // As of 2026-09-16 this is the FIRST rung, not the last. That is the same
+  // argument carried one step further rather than a new one: if optional work
+  // goes before a drafting attempt, it also goes before the pictures. Three
+  // rungs now sit between it and the deliverable.
   if (!fits() && plan.optionalRevets) {
     plan = { ...plan, optionalRevets: false };
     estimate = estimateRunCost(plan, shape, ratio);
     adaptations.push("optional rescue re-vets skipped");
   }
-  // 4. THERE IS NO RUNG 4. The attempt lever is DELETED (owner, 2026-09-14).
+  // 2. Optional evidence pulls down to the one most-cacheable query.
+  if (!fits() && plan.evidencePulls === "full") {
+    plan = { ...plan, evidencePulls: "reduced" };
+    estimate = estimateRunCost(plan, shape, ratio);
+    adaptations.push("trend evidence reduced to the one cached industry query");
+  }
+  // 3. Duplicate vision passes off (Phase 5.5, and the owner's ruling names
+  //    this rung by hand as the sort of thing the plan MAY skip).
+  //
+  //    `05c` re-inspecting candidates it inspected on a previous attempt, and
+  //    `08a4` re-inspecting slides whose `slidesData` hash is unchanged. It is
+  //    the one rung on this ladder a reader could not detect even in principle:
+  //    the same pixels are judged, once instead of three times, and the verdict
+  //    is the same verdict. On the cold default shape it frees $0.072.
+  if (!fits() && plan.duplicateVisionPasses) {
+    plan = { ...plan, duplicateVisionPasses: false };
+    estimate = estimateRunCost(plan, shape, ratio);
+    adaptations.push("duplicate vision passes skipped (candidates and slides are inspected once, not once per attempt)");
+  }
+  // 4. AND LAST, the generated-image cap: 8 -> 4 -> 3 -> the floor.
+  //
+  //    This rung was RUNG 1 until 2026-09-16 and its bottom step was zero. It
+  //    is now the last thing the ladder reaches for and it cannot go below
+  //    `MIN_GENERATED_IMAGES_PER_RUN`, because a post with no pictures in it is
+  //    not a cheaper version of the deliverable — it is a different and worse
+  //    one, and it is the exact defect the owner returned three posts over.
+  //
+  //    The steps are 4 and 3 rather than 4 and 2 so the ladder has somewhere to
+  //    stand between "most of the pictures" and "the floor": at $0.039 an image
+  //    each step is worth $0.039-$0.156, which is the same order as the rungs
+  //    above it, and a ladder whose last rung is worth four times its
+  //    neighbours overshoots every time it fires.
+  for (const cap of IMAGE_CAP_STEPS) {
+    if (fits() || plan.generatedImagesCap <= cap) continue;
+    plan = { ...plan, generatedImagesCap: cap };
+    estimate = estimateRunCost(plan, shape, ratio);
+    adaptations.push(
+      cap === MIN_GENERATED_IMAGES_PER_RUN
+        ? `images capped at ${cap} — the floor no lever may cross`
+        : `images capped at ${cap}`,
+    );
+  }
+  // 5. THERE IS NO RUNG 5, and the attempt lever is DELETED (owner, 2026-09-14).
   //
   // It used to cut `maxSelfCheckAttempts` 3 -> 2 here, and its own comment
   // above already conceded what it was: "the only rung that makes the
@@ -1620,7 +2083,8 @@ export function planRunBudget(
   // any of them were load-bearing.
   //
   // What replaces it is not another lever but the RECORD: a plan that does
-  // not fit after rungs 1-3 runs anyway at three attempts, says so in `note`,
+  // not fit after rungs 1-4 runs anyway at three attempts and at the image
+  // floor — never at zero images and never at two attempts — says so in `note`,
   // and `recordRunOutcome` carries estimate-vs-actual into the next run's
   // `ewmaRatio` and `overrunStreak`. That is the owner's "let it finish,
   // deliver the post, log the overrun so we learn" — calibration after the
@@ -1884,6 +2348,22 @@ export interface SetupBudgetRecord {
   crossedTarget: boolean;
   crossedMax: boolean;
   adaptations: number;
+  /**
+   * Phase 5.5 (spec §5 D1) — WHY this setup stored what it stored.
+   *
+   * `templatesStored === 0` used to be read as one thing and is two: a studio
+   * that ran, judged every candidate and kept none (`empty` — a real judgement,
+   * and what `STUDIO_EMPTY_SETUP_COOLDOWN_DAYS` was written for), and a studio
+   * whose model steps never completed (`failed` — a tooling error, which must
+   * retry). On 2026-09-16 all three clients took the second path and were then
+   * locked out of the first for 30 days by it.
+   *
+   * OPTIONAL, and absent means `unknown`, which suppresses NOTHING. Every
+   * record on disk today was written by the defect this field exists to fix, so
+   * reading one as a judgement would preserve the lockout for exactly the
+   * clients that are already in it.
+   */
+  outcome?: SetupAttemptOutcome;
 }
 
 export interface SetupBudgetHistory {
@@ -1920,6 +2400,11 @@ export function readSetupBudgetHistory(beliefs: unknown): SetupBudgetHistory {
             crossedTarget: e["crossedTarget"] === true,
             crossedMax: e["crossedMax"] === true,
             adaptations: Math.max(0, Math.floor(num(e["adaptations"], 0))),
+            // Phase 5.5 (spec §5 D1). Parsed through the schema rather than
+            // cast, because this value decides whether a client is allowed to
+            // try again: an unreadable one must read as ABSENT (retry), never
+            // as a judgement (30 days of silence).
+            ...(SetupAttemptOutcomeSchema.safeParse(e["outcome"]).success ? { outcome: SetupAttemptOutcomeSchema.parse(e["outcome"]) } : {}),
           },
         ];
       })

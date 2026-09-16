@@ -7,6 +7,8 @@ import {
   createKarosMediaTools,
   createUnsplashProvider,
   ImageProviderError,
+  MEDIA_ROUTES,
+  ROUTE_CHAINS,
   type ImageSearchHit,
 } from "../src/index.js";
 
@@ -322,5 +324,114 @@ describe("unsplash provider", () => {
     const hits = await provider.search("x", 5);
 
     expect(hits.map((h) => h.id)).toEqual(["b"]);
+  });
+});
+
+/**
+ * Phase 5.5, item A2 — the `entity` route and the two need-level filters.
+ *
+ * The filters are the half that makes an entity route worth having: a chain
+ * ranked by "whose records NAME the subject" is only a ranking until something
+ * checks that a hit really does name it.
+ */
+describe("media.findImages — the entity route's identification and licence filters", () => {
+  const named: ImageSearchHit = {
+    id: "wm-1",
+    url: "https://images.example/commons-chatgpt.jpg",
+    description: "The ChatGPT interface running on a laptop, 2026",
+    license: "CC BY-SA 4.0",
+    credit: "A Photographer",
+    licenseConfidence: "attributable",
+  };
+  const unnamed: ImageSearchHit = {
+    id: "st-1",
+    url: "https://images.example/generic-desk.jpg",
+    description: "a laptop on a wooden desk",
+    license: "Unsplash License",
+    credit: "Someone",
+    licenseConfidence: "blanket",
+  };
+  const unknownProvenance: ImageSearchHit = {
+    id: "ddg-1",
+    url: "https://images.example/found-on-bing.jpg",
+    description: "Dana Levi at her desk",
+    license: "UNKNOWN — web search result, licence not established",
+    credit: "",
+    licenseConfidence: "unknown",
+  };
+
+  it("`entity` is a real route, ranked Commons first, with the stock libraries deliberately absent", () => {
+    expect(MEDIA_ROUTES).toContain("entity");
+    expect(ROUTE_CHAINS.entity).toEqual(["wikimedia", "openverse", "google_places", "ddg_images"]);
+    // Unsplash/Pexels/Pixabay answer any query with something plausible and
+    // nothing identified, and a hit from them would interleave ahead of a
+    // correctly-named Commons record on a chain whose whole job is
+    // identification. A slide falls through to `default` for those.
+    for (const stock of ["unsplash", "pexels", "pixabay"]) expect(ROUTE_CHAINS.entity).not.toContain(stock);
+    expect(ROUTE_CHAINS.entity.at(-1)).toBe("ddg_images");
+  });
+
+  it("requireTerm drops a hit whose own record does not name the subject — BEFORE the download", async () => {
+    let fetched = 0;
+    const tools = createKarosMediaTools({
+      provider: fakeProvider([unnamed, named]),
+      fetchImpl: async () => {
+        fetched += 1;
+        return jpeg();
+      },
+    });
+
+    const outcome = await tools["media.findImages"]!.execute(
+      { repoRoot, runId: "run_1", perNeed: 5, needs: [{ n: 1, query: "ChatGPT", route: "entity", requireTerm: "ChatGPT" }] },
+      { ctx: CTX },
+    );
+
+    expect(outcome.status).toBe("success");
+    const result = (outcome as { result: { candidates: { description: string }[] } }).result;
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]!.description).toContain("The ChatGPT interface");
+    // The unnamed hit cost nothing: the filter runs before `downloadHit`, so a
+    // candidate that cannot be used is never fetched.
+    expect(fetched).toBe(1);
+  });
+
+  it("matches exactly, never fuzzily — 'Atlas' must not resolve to 'Atlassian'", async () => {
+    const atlassian: ImageSearchHit = { ...unnamed, id: "at-1", url: "https://images.example/atlassian.jpg", description: "The Atlassian office in Sydney" };
+    const tools = createKarosMediaTools({ provider: fakeProvider([atlassian]), fetchImpl: async () => jpeg() });
+
+    const outcome = await tools["media.findImages"]!.execute(
+      { repoRoot, runId: "run_1", needs: [{ n: 1, query: "Atlas", route: "entity", requireTerm: "Atlas Corporation" }] },
+      { ctx: CTX },
+    );
+    // Content, not tooling: every provider answered honestly and nothing named
+    // the subject. The reason has to say that, or a rights/identification
+    // filter gets debugged as an outage.
+    expect(outcome.status).toBe("content_fail");
+    expect((outcome as { reason: string }).reason).toContain('name "Atlas Corporation" in their own record');
+  });
+
+  it("allowUnknownLicence: false drops every unknown-provenance hit — the private-person path", async () => {
+    const tools = createKarosMediaTools({ provider: fakeProvider([unknownProvenance]), fetchImpl: async () => jpeg() });
+
+    const refused = await tools["media.findImages"]!.execute(
+      { repoRoot, runId: "run_1", needs: [{ n: 1, query: "Dana Levi", route: "entity", allowUnknownLicence: false }] },
+      { ctx: CTX },
+    );
+    expect(refused.status).toBe("content_fail");
+    expect((refused as { reason: string }).reason).toContain("carry an established licence");
+
+    // And the default is unchanged, so no existing caller loses a candidate.
+    const allowed = await tools["media.findImages"]!.execute(
+      { repoRoot, runId: "run_2", needs: [{ n: 1, query: "Dana Levi", route: "entity" }] },
+      { ctx: CTX },
+    );
+    expect(allowed.status).toBe("success");
+  });
+
+  it("neither filter changes anything for a caller that sets neither", async () => {
+    const tools = createKarosMediaTools({ provider: fakeProvider([unnamed, unknownProvenance]), fetchImpl: async () => jpeg() });
+    const outcome = await tools["media.findImages"]!.execute({ repoRoot, runId: "run_1", perNeed: 5, needs: [{ n: 1, query: "anything" }] }, { ctx: CTX });
+    expect(outcome.status).toBe("success");
+    expect((outcome as { result: { candidates: unknown[] } }).result.candidates).toHaveLength(2);
   });
 });

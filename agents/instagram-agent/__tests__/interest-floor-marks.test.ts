@@ -429,7 +429,24 @@ const PINNED_SCALARS: Readonly<Record<string, number>> = {
   CLIPPED_EDGE_SHARE_CEILING: 0.004,
   MIN_QUANTISED_COLOUR_COUNT: 3,
   IMAGERY_SHARE_FOR_PALETTE_WARNING: 0.1,
-  FULL_BLEED_IMAGERY_SHARE: 0.5,
+  // ── MOVED 2026-09-16 (Phase 5.5), AND THIS IS THE DIFF THE PIN EXISTS FOR. ──
+  //
+  // 0.5 was set from ONE synthetic full-frame photograph at `imageryShare`
+  // 0.829 — a reading so far above the band that it said nothing about where
+  // the band ends. The three live runs measured the real one: photo plates at
+  // 0.329 / 0.452 / 0.468 / 0.573 / 0.593 against every typographic plate at
+  // 0.022-0.145. Gap 0.184, no overlap, so §5.6 rule 1 applies literally —
+  // midpoint 0.237, rounded toward the PHOTO band for safety: 0.28.
+  //
+  // What the old number cost: THREE OF THE FIVE REAL PHOTO SLIDES WERE FAILED
+  // AS `clipped` WHILE `probe.overflow` WAS FALSE. Nothing was running off
+  // those plates; a photograph reaching the frame edge was being read as type
+  // spilling out of its box, on the one thing the owner asked for more of.
+  //
+  // The exemption also gained a DOM limb (`InterestFloorOptions.hasHero`), so
+  // the lower share can only be claimed by a plate that actually carries a
+  // photograph. `probe.overflow` is untouched.
+  FULL_BLEED_IMAGERY_SHARE: 0.28,
   // ── ADDED 2026-09-15 WITH CLAUSE H, THE SEMANTIC FLOOR (RFC-21 Part 2). ──
   //
   // The only threshold in this file that is not a share, a distance or a
@@ -468,6 +485,41 @@ const PINNED_SCALARS: Readonly<Record<string, number>> = {
   // all.
   SPANNING_HOLE_AXIS_SHARE: 0.9,
   SUBJECT_IMAGERY_MULTIPLE: 1,
+  // ── ADDED 2026-09-16 (Phase 5.5) WITH CLAUSE I, THE COVER'S SUBJECT. ──
+  //
+  // Both are BOX shares read off the assembled DOM
+  // (`probe.subjectBoxes`), not pixel shares, which is why they can exist at
+  // all: the cover this phase has to refuse is a gradient with a title on it,
+  // and `IMAGERY_OR_DEVICE_FLOOR` stays at 0.10 rather than being raised to
+  // catch it — raising a pixel share to refuse one palette's gradient is the
+  // mistake this file has made and measured away six times.
+  //
+  // 0.45 sits below every full-bleed hero (`cover.html`'s `body:has(.hero)`
+  // branch runs the photograph at ~1.0 of the canvas) and above every inset
+  // one. 0.12 admits `.cov-device`'s slot at ~2x when it carries a figure
+  // (the measured empty band is `{x: 0, y: 236, w: 1080, h: 376}` = 0.26 of
+  // the canvas) and refuses a rule, a badge or a hairline, none of which
+  // reaches 1%.
+  COVER_HERO_BOX_SHARE: 0.45,
+  COVER_OBJECT_BOX_SHARE: 0.12,
+  // ── ADDED 2026-09-16, REPORTING-ONLY, AND THAT IS THE POINT. ──
+  //
+  // Three type-discipline numbers from `docs/instagram-restraint-reference.md`
+  // (two or three steps per plate, a real jump between the first two,
+  // everything ranged against one or two columns). They ship behind
+  // `TYPE_STEP_CEILING_ARMED` / `TYPE_CONTRAST_FLOOR_ARMED` /
+  // `ALIGNMENT_COLUMN_CEILING_ARMED`, all `false`, and gate nothing until the
+  // gate-zero sweep has published the distribution on the de-furnished tree.
+  // `instagram-floor-candidates-falsified` is why: three separators are dead
+  // in this file, each killed by the control that measured it, and every one
+  // of them looked obvious before the sweep ran.
+  //
+  // The boolean flags are not scanned by the regex below (it matches numeric
+  // literals), so arming one is a diff a reviewer reads in the source rather
+  // than a number that moves here.
+  TYPE_STEP_CEILING: 3,
+  TYPE_CONTRAST_FLOOR: 1.8,
+  ALIGNMENT_COLUMN_CEILING: 2,
 };
 
 /**
@@ -512,6 +564,23 @@ const PINNED_ROLE_RECORDS: Readonly<Record<string, Readonly<Record<SlideRole, nu
   // went back to 0.42 when `closer.html` reverted - a constant derived from a
   // plate this PR no longer changes has no business moving.
   OCCUPIED_SHARE_FLOOR: { cover: 0.18, interior: 0.3, closer: 0.42 },
+  // ── ADDED 2026-09-16 (Phase 5.5): CLAUSE H'S WEIGHTED FLOOR. ──
+  //
+  // `CONTENT_ELEMENT_FLOOR` stays 2 above and keeps its meaning for a caller
+  // that supplies only a count; what refuses a plate now is the WEIGHT, and
+  // the weighting is not a refinement. `LAYOUT_FIELD_KEYS` excludes eleven
+  // metadata keys and no more, so `kicker`, `eyebrow`, `sourceLine` and
+  // `subLabel` each counted a whole element — which made a flat floor of 3
+  // clearable by PRINTING A KICKER, i.e. by adding the exact brand furniture
+  // the owner named on 2026-09-16 as the clearest tell that a post was made
+  // by a machine.
+  //
+  // 4.0 / 3.0 / 4.0 is set by a reproduction, not by an opinion: scored
+  // against the karoslabs post's archived `07c-emit-slides-data` output it
+  // fails slides 1, 3, 4, 6 and 8 and passes 2, 5 and 7 — every plate the
+  // owner named by hand, and no plate he did not.
+  // `content-weight-floor.test.ts` asserts exactly that table.
+  CONTENT_WEIGHT_FLOOR: { cover: 4, interior: 3, closer: 3.5 },
 };
 
 describe("RFC-17 Part 3 / RFC-20 §5.6: exactly one threshold record moved, and nothing else", () => {

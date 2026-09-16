@@ -149,6 +149,28 @@ export interface SkeletonEntry {
    * Two keys would let them disagree about which run was last.
    */
   seriesId?: string;
+  /**
+   * Phase 5.5, item C — the VISUAL SYSTEM this post shipped in
+   * (`CarouselVisualSystem.systemId`), when it shipped in one.
+   *
+   * Optional for exactly the reason `seriesId` above is: every entry written
+   * before the system layer existed has none, and `recentSystemIds` treats
+   * absent as "not this system" rather than padding the hold window with a
+   * gap. Recorded here rather than in a sibling belief for the same reason
+   * too — the series, the system and the signature are one fact at three
+   * resolutions, and two keys would let them disagree about which run was last.
+   */
+  systemId?: string;
+  /**
+   * Phase 5.5, item G4 — the FIGURE this post's cover led with, when its cover
+   * carried a figure device.
+   *
+   * Optional for the reason `seriesId` and `systemId` above are, and read by
+   * `checkCoverFigureDevice`'s fourth rule: karoslabs shipped the SAME `7.2%`
+   * on the covers of two posts about different topics, and a check that cannot
+   * see last week's number cannot notice.
+   */
+  coverFigure?: string;
 }
 
 export interface SkeletonHistory {
@@ -317,6 +339,8 @@ export function readSkeletonHistory(beliefs: unknown): SkeletonHistory {
             // Same tolerant posture as every field above: a row written
             // before the series layer existed simply has none.
             ...(typeof e["seriesId"] === "string" && e["seriesId"].length > 0 ? { seriesId: e["seriesId"] } : {}),
+            ...(typeof e["systemId"] === "string" && e["systemId"].length > 0 ? { systemId: e["systemId"] } : {}),
+            ...(typeof e["coverFigure"] === "string" && e["coverFigure"].length > 0 ? { coverFigure: e["coverFigure"] } : {}),
           },
         ];
       })
@@ -360,6 +384,21 @@ export function recentSeriesIds(history: SkeletonHistory): string[] {
   return [...history.entries]
     .reverse()
     .map((entry) => entry.seriesId)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+}
+
+/**
+ * Phase 5.5, item C — the VISUAL SYSTEMS of the recently shipped posts, NEWEST
+ * FIRST, which is the rotation input `pickVisualSystem` holds a system out on.
+ *
+ * Skips entries with no `systemId` for the reason `recentSeriesIds` skips
+ * entries with no `seriesId`, stated there in full: a padded `undefined` would
+ * occupy a slot in the hold and silently shorten the real window.
+ */
+export function recentSystemIds(history: SkeletonHistory): string[] {
+  return [...history.entries]
+    .reverse()
+    .map((entry) => entry.systemId)
     .filter((id): id is string => typeof id === "string" && id.length > 0);
 }
 
@@ -592,6 +631,10 @@ export function buildSkeletonEntry(input: {
   edited: boolean;
   /** RFC-21 Part 3 — the editorial series this post shipped in. Absent on a run whose series step failed open. */
   seriesId?: string | undefined;
+  /** Phase 5.5, item C — the visual system this post shipped in, so the next run can hold it out (`recentSystemIds`). */
+  systemId?: string | undefined;
+  /** Phase 5.5, item G4 — the figure this post's cover led with, so the next post cannot lead with the same one. */
+  coverFigure?: string | undefined;
 }): SkeletonEntry {
   const roles = input.roles ?? rolesForSlideCount(input.slides.length);
   const devices = input.devices ?? [];
@@ -604,6 +647,8 @@ export function buildSkeletonEntry(input: {
     roles: [...roles],
     occupancy: (input.occupancy ?? []).map((n) => Math.round(n * 100) / 100),
     ...(input.seriesId !== undefined && input.seriesId.length > 0 ? { seriesId: input.seriesId } : {}),
+    ...(input.systemId !== undefined && input.systemId.length > 0 ? { systemId: input.systemId } : {}),
+    ...(input.coverFigure !== undefined && input.coverFigure.length > 0 ? { coverFigure: input.coverFigure } : {}),
     edited: input.edited,
   };
 }

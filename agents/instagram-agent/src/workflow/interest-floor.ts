@@ -209,6 +209,67 @@ export interface SlideProbe {
    * abstain on a document that never measured it.
    */
   displayTypeScale?: number | undefined;
+  /**
+   * ── PHASE 5.5: WHAT THE COVER IS CARRYING, AS BOXES RATHER THAN PIXELS. ──
+   *
+   * The owner, 2026-09-16: *"השקף הראשון יחסית ריק ומשעמם"* — the first slide
+   * is fairly empty and boring. The cover that drew that sentence was a
+   * gradient with a title in the lower third, and it passed every clause in
+   * this file, including clause E, because `cover.html`'s own ramp measures
+   * `imageryOrDeviceShare` 0.165-0.188 before any content lands on it. **The
+   * ramp satisfies a pixel share; it is not a subject.**
+   *
+   * Raising `IMAGERY_OR_DEVICE_FLOOR` to refuse that plate would be fitting a
+   * threshold to one palette, which this project has refused six times
+   * (`instagram-floor-candidates-falsified`). So the cover question is asked
+   * of the DOM instead: three box areas as fractions of the canvas, summed
+   * per class of subject, from `probeSubjectBoxes` below.
+   *
+   * ABSENT MEANS UNMEASURED AND CLAUSE I ABSTAINS — the same contract
+   * `markRuns` and `displayTypeScale` already hold. `probePage` does not emit
+   * these yet (see the integration note on `probeSubjectBoxes`), so the clause
+   * ships inert on the live path and live in the tests that measure it, which
+   * is the honest order: the policy is reviewable before it can refuse
+   * anything.
+   */
+  subjectBoxes?: SubjectBoxes | undefined;
+  /**
+   * How many DISTINCT rendered `font-size` values the plate's text leaves use,
+   * and the ratio of the largest to the second largest.
+   *
+   * Reporting-only this phase (`TYPE_STEP_CEILING`, `TYPE_CONTRAST_FLOOR`) and
+   * armed only once the de-furnished distribution has been read — three
+   * separators are already dead in this file, each killed by the control that
+   * measured it, and a fourth shipped armed would be the same mistake a fourth
+   * time.
+   */
+  typeSteps?: readonly number[] | undefined;
+  /**
+   * How many distinct inline start edges the plate's text leaves are set
+   * against — the "ranged left, one column" discipline
+   * `docs/instagram-restraint-reference.md` read off `@semrush` and
+   * `@buffer`. Reporting-only, same contract as `typeSteps`.
+   */
+  alignmentColumns?: number | undefined;
+}
+
+/**
+ * The three classes of subject a plate can carry, each as the summed area of
+ * its boxes over the canvas area.
+ *
+ * Summed rather than "the largest box" because a diagram is legitimately
+ * several `<svg>`s or several `.dv` blocks, and a hero split across a diptych
+ * is two `<img>`s. Overlap is not subtracted: the question is "how much
+ * subject was laid out", not "how much of it survived z-order", and a plate
+ * that stacks its subject on itself is not the failure this measures.
+ */
+export interface SubjectBoxes {
+  /** `img.hero`, `.bg img`, `img[data-role="hero"]` — a photograph. */
+  hero: number;
+  /** `.dv`, `.dv-figure-block`, `[data-device]` — a built number device. */
+  device: number;
+  /** `svg`, `.cl-art`, `.dv-bars` and the other drawn objects that are not a device. */
+  graphic: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1375,14 +1436,44 @@ export const IMAGERY_SHARE_FOR_PALETTE_WARNING = 0.1;
  * intent, and it would read as "the floor does not work" rather than as a
  * threshold bug.
  *
- * 0.5 rather than something lower, because half the frame is the share at
- * which an element cannot be a panel sitting inside the 64px margin frame —
- * it has to be reaching the edges. The two bands this deliberately leaves
- * INSIDE the rule are the ones where clipped type is the likelier
- * explanation: the smallest legitimate device (0.04-0.06) and a scrimmed
- * photo PANEL (~0.45), neither of which bleeds.
+ * ## 2026-09-16, PHASE 5.5: 0.5 → 0.28, AND A SECOND, DOM-ANCHORED LIMB
+ *
+ * 0.5 was set from ONE synthetic full-frame photograph at `imageryShare`
+ * 0.829 — a number so far above the band that it said nothing about where the
+ * band ends. The three live runs measured the real one. Photo slides:
+ *
+ * ```
+ *   PHOTO      0.329  0.452  0.468  0.573  0.593     (five real hero plates)
+ *   NON-PHOTO  0.022 .. 0.145                        (every typographic plate)
+ * ```
+ *
+ * Gap 0.184, no overlap, so RFC-20 §5.6 rule 1 applies literally: the midpoint
+ * is 0.237 and it is rounded TOWARD THE PHOTO BAND for safety — **0.28**.
+ *
+ * What 0.5 cost is the reason this is the most important number in the phase.
+ * **Three of the five real photo slides measured between 0.329 and 0.468 and
+ * were failed as `clipped` while `probe.overflow` was FALSE** — nothing was
+ * running off the plate, and a photograph reaching the frame edge was being
+ * read as type spilling out of its box. A false `clipped` costs a drafting
+ * attempt and sends the writer to cut copy that fits, on the one thing the
+ * owner asked for more of.
+ *
+ * The rounding direction is the honest one for the OPPOSITE error: between
+ * 0.28 and 0.5 the exemption now covers a scrimmed photo PANEL that does not
+ * bleed, so genuinely clipped type on such a plate loses its pixel limb. That
+ * is what the second limb is for. `InterestFloorOptions.hasHero` is read off
+ * the ASSEMBLED document (`slide.images.hero !== undefined`), not off the
+ * pixels, so the exemption can only be claimed by a plate that actually
+ * carries a photograph and never by a drawn field that happens to measure
+ * like one. `probe.overflow` is untouched and still fires on every plate
+ * whatever it carries, which is the limb that catches real Hebrew overflow.
+ *
+ * `hasHero` ABSENT means unknown and the exemption stands on the share alone —
+ * the same abstention every other supplied input in this file takes, and the
+ * safe direction: a caller that cannot say what the plate carries must not
+ * have a photograph refused on its behalf.
  */
-export const FULL_BLEED_IMAGERY_SHARE = 0.5;
+export const FULL_BLEED_IMAGERY_SHARE = 0.28;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Findings
@@ -1393,7 +1484,17 @@ export const FULL_BLEED_IMAGERY_SHARE = 0.5;
  * (`interest-relayout.ts`) can switch on it and the ledger row can be
  * grouped by it.
  */
-export type InterestFailureKind = "render-integrity" | "marks-missing" | "clipped" | "dead-space" | "empty" | "no-device" | "text-wall" | "one-element";
+export type InterestFailureKind =
+  | "render-integrity"
+  | "marks-missing"
+  | "clipped"
+  | "dead-space"
+  | "empty"
+  | "no-device"
+  | "text-wall"
+  | "one-element"
+  /** Phase 5.5, clause I — the cover carries no subject the DOM can name. See `COVER_HERO_BOX_SHARE`. */
+  | "cover-subject";
 
 /**
  * ── CLAUSE H: HOW MANY THINGS ARE ON THIS PLATE. THE SEMANTIC FLOOR. ──
@@ -1456,6 +1557,278 @@ export type InterestFailureKind = "render-integrity" | "marks-missing" | "clippe
  */
 export const CONTENT_ELEMENT_FLOOR = 2;
 
+/**
+ * ── CLAUSE H, PHASE 5.5: THE COUNT BECOMES A WEIGHT, AND THAT IS NOT A
+ *    REFINEMENT — IT IS WHAT MAKES THE FLOOR UN-GAMEABLE. ──
+ *
+ * The owner, 2026-09-16, on three prep posts: *"חלק מהשקפים ריקים"* — some of
+ * the slides are empty — and, of the cover, *"השקף הראשון יחסית ריק ומשעמם"*.
+ * Every one of those plates cleared `CONTENT_ELEMENT_FLOOR = 2`: a headline
+ * and two lines of body counts 2.
+ *
+ * **Raising the flat floor to 3 is satisfied by adding a kicker.**
+ * `LAYOUT_FIELD_KEYS` (`visual-qa-pre-checks.ts`) excludes eleven metadata
+ * keys and no more, so `kicker`, `eyebrow`, `sourceLine` and `subLabel` each
+ * count a whole element today — which means the cheapest way past a flat floor
+ * of 3 is to print exactly the brand furniture the same owner called the
+ * clearest tell that a post was made by an AI. A floor a plate can clear by
+ * getting worse is not a floor.
+ *
+ * So each element is weighted by what it is worth to a reader:
+ *
+ *   * **2.0 — the plate's subject.** A photograph, a list's rows, a
+ *     quotation set at display size. Things a reader looks AT.
+ *   * **1.5 — a designed object.** A built number device, a closer's recap
+ *     strip, a stat callout's own big numeral. Smaller than a subject because
+ *     it sits beside the copy rather than carrying the plate.
+ *   * **1.0 — a block of prose.** Headline, body, title, subtitle, takeaway,
+ *     CTA, and any prose field this table does not name (the default, so a new
+ *     field is never silently treated as furniture).
+ *   * **0.25 — furniture.** Kicker, eyebrow, source line, sub-label. Not zero:
+ *     a source line is real and a reader reads it. Four of them together are
+ *     still worth less than one sentence, which is the whole point.
+ *
+ * ## The floor, and the reproduction that sets it
+ *
+ * Scored against the karoslabs post's archived `07c-emit-slides-data` output
+ * (pinned as a fixture in `__tests__/fixtures/live-2026-09-16/`):
+ *
+ * ```
+ *   1 cover    title+subtitle+kicker+eyebrow          2.50  FAIL   "ריק ומשעמם"
+ *   2 stat     figure+subLabel+body+sourceLine        3.00  pass
+ *   3 headline headline+body                          2.00  FAIL   (lost its photo)
+ *   4 slide    headline+body                          2.00  FAIL   "שקפים ריקים"
+ *   5 slide    headline+body+device                   3.50  pass
+ *   6 slide    headline+body                          2.00  FAIL   "שקפים ריקים"
+ *   7 list     headline+itemRows                      3.00  pass
+ *   8 closer   takeaway+cta+recap                     3.50  pass  (see the closer note below)
+ * ```
+ *
+ * Four failures. **Every plate the owner named by hand is among them, and no
+ * plate he did not name fails.** That reproduction — not an opinion about what
+ * a good slide is — is the justification for moving this threshold, and
+ * `__tests__/content-weight-floor.test.ts` asserts exactly this table.
+ *
+ * Slide 8 was a fifth failure in the package as written and is a PASS here:
+ * the closer floor was 4.0, which no closer can reach. The next section is the
+ * arithmetic.
+ *
+ * ## Why the cover sits at 4.0, and why the closer does NOT
+ *
+ * The cover is the grid thumbnail the whole audience sees, so it must carry a
+ * subject as well as words: 4.0 is what "a subject (2.0) plus two blocks of
+ * prose" comes to. It is REACHABLE three ways — the cover with a photograph
+ * reads 4.5, the cover with a figure device reads 4.0 — and the
+ * gradient-with-a-title cover reads 2.5 and is refused. That is a bar.
+ *
+ * **The closer sits at 3.5, and what moved to make that a bar was the PRICE OF
+ * THE RECAP, not the threshold.** The arithmetic is two lines of
+ * `slides-data.ts` away: `closer` is NOT in `HERO_IMAGE_LAYOUTS`, so the
+ * archetype declares no `{{image:hero}}` slot and no closer can ever carry the
+ * 2.0 a hero is worth; and `contentFor`'s closer branch emits exactly TWO prose
+ * slots — `takeaway` (the headline) and whichever of `question`/`cta` the body
+ * is — into ONE elastic middle that a recap strip or a device fills, never
+ * both.
+ *
+ * With the recap priced at `device` (1.5), as it shipped, EVERY closer this
+ * agent produces reads exactly 3.5: `buildRecapFragment` needs
+ * `MIN_RECAP_PLATES` earlier slides and every carousel has them, so the recap
+ * was not a fallback but the only outcome, and a floor of 3.5 sat precisely on
+ * the fixed point. Every closer passed, on every post, forever. A threshold
+ * that only ever meets one value is not separating anything, and the plate this
+ * table's own row 8 was written to refuse — the truncated contents strip under
+ * two short lines — passed it.
+ *
+ * Two changes make it a bar, and neither of them touches the number:
+ *
+ * 1. **`recap` is priced as prose (1.0), not as a device.** See
+ *    `CONTENT_WEIGHTS.recap` for the render it is priced against.
+ * 2. **`contentFor`'s closer now prefers the designed object to the recap**
+ *    (spec §4.5), so a closer whose own copy carries a sourced figure with a
+ *    complete label reaches 3.5 honestly and the recap is what a closer with
+ *    nothing of its own falls back to.
+ *
+ * ```
+ *   takeaway 1.0 + ask 1.0 + device 1.5 [+ eyebrow 0.25]   = 3.50 / 3.75   pass
+ *   takeaway 1.0 + ask 1.0 + recap  1.0 [+ eyebrow 0.25]   = 3.00 / 3.25   FAIL
+ *   takeaway 1.0 + ask 1.0                                 = 2.00          FAIL
+ * ```
+ *
+ * The floor therefore sits strictly BELOW what a closer can weigh (a reachable
+ * 3.75 where `eyebrowFor` puts a topical eyebrow on the last slide, 3.5 where
+ * it does not) and strictly ABOVE the shipping composition the owner
+ * complained about — and `eyebrow`'s 0.25 cannot lift a 3.00 recap closer over
+ * 3.5, which is the same un-gameability the weights exist for everywhere else.
+ * `content-weight-floor.test.ts` asserts both ends rather than asserting the
+ * floor equals the maximum.
+ *
+ * The 4.0 this package first shipped is still wrong for the reason it always
+ * was: no closer can reach it, so it would fire on the last slide of every post
+ * on every attempt — a redraft tax wearing a bar's clothes, and the "a floor
+ * that a correctly composed plate cannot clear is a false refusal that costs a
+ * drafting attempt" rule this file already states two paragraphs down about
+ * `quoteText`.
+ *
+ * ## What the bundled archetypes measure against it
+ *
+ * Every structured archetype clears the interior floor on its own content, and
+ * every shapeless one does not until something is on it:
+ *
+ * ```
+ *   stat_callout     1.5 + 0.25 + 1.0 + 0.25        = 3.00  pass
+ *   quote_card       2.0 + 1.0                      = 3.00  pass
+ *   list_takeaway    1.0 + 2.0                      = 3.00  pass
+ *   comparison_card  1.0 + 1.0 + 4 x 1.0            = 6.00  pass
+ *   headline_focus   1.0 + 1.0                      = 2.00  FAIL until it carries an object
+ *   slide/text_only  1.0 + 1.0                      = 2.00  FAIL until it carries an object
+ *   photo            1.0 + 1.0 + hero 2.0           = 4.00  pass
+ *   cover            1.0 + 1.0 + 0.25 + 0.25        = 2.50  FAIL until it carries a subject
+ * ```
+ *
+ * That is the floor stated in one line: **a structured object and its words.**
+ * `bounded-object.ts` already composes a device onto a thin `headline_focus`
+ * or `text_only` plate before the first render, which takes those two to 3.5 —
+ * so the plates this refuses are the ones where that composition found nothing
+ * to build from either, which is precisely "there is nothing on this slide".
+ *
+ * ## Why `quoteText` is 2.0 and not 1.0
+ *
+ * A pull quote is the plate's subject, set at display size across the frame
+ * with its own rail — it is an object the reader looks at, not a block of
+ * prose beside one. At 1.0 a `quote_card` (its only other field is a
+ * one-line attribution) would read 2.0 and fail on every post that used it,
+ * which would make this floor refuse a designed bundled archetype for
+ * existing. A floor that a correctly composed plate cannot clear is a false
+ * refusal that costs a drafting attempt, and this file has that rule already.
+ *
+ * ## Why `recap` is 1.0 and not 1.5
+ *
+ * It shipped at `device`, on the reasoning that the recap strip is the closer's
+ * own designed object. Rendered, it is not one. `buildRecapFragment` emits up
+ * to four `.rc-plate` cells, each a two-digit index and one earlier headline
+ * put through `recapTextFor`'s `MAX_RECAP_PLATE_CHARS` truncation, set at
+ * `.item-title`'s step inside `closer.html`'s already-competed-for middle —
+ * ~22px on a 1440px plate. Read on every closer of all six carousels on this
+ * tree; on karoslabs it reads `01 GEO is not a future strategy · 03 The
+ * conversation your buyer has before… · 05 Awareness is not optimization · 07
+ * Three things GEO readiness requires now`, with an entry cut mid-phrase. That
+ * is the post's own earlier prose, re-set small — prose the reader has already
+ * read — and `prose` is what it is worth.
+ *
+ * It is NOT furniture (0.25): a recap carries the argument, where a kicker
+ * carries a label. The pricing separates a payoff from a contents page, which
+ * is the distinction the closer floor was unable to make at 1.5 — see
+ * `CONTENT_WEIGHT_FLOOR` for the arithmetic.
+ *
+ * A closer's own DEVICE keeps `device` (1.5) even though `contentFor` routes it
+ * through the same `htmlFragments.recap` slot: `weighContentElements` reads
+ * `deviceKind`, which that branch sets exactly when the fragment is the device,
+ * so the two are told apart by a fact rather than by a guess.
+ */
+export const CONTENT_WEIGHTS = {
+  hero: 2.0,
+  itemRows: 2.0,
+  quote: 2.0,
+  device: 1.5,
+  recap: 1.0,
+  figureAsDevice: 1.5,
+  prose: 1.0,
+  furniture: 0.25,
+} as const;
+
+/**
+ * The per-field half of `CONTENT_WEIGHTS`, keyed by the field names
+ * `contentFor` (`slides-data.ts`) actually emits.
+ *
+ * Only two classes are named: the figure a stat callout paints as its own
+ * device, and the four furniture fields. **Everything else defaults to
+ * `prose` (1.0) by omission** — the safe direction, because a field added to a
+ * template later is a content element until somebody argues otherwise, never
+ * furniture by accident.
+ */
+export const CONTENT_FIELD_WEIGHTS: Readonly<Record<string, number>> = {
+  // A stat callout's `figure` IS the device on that plate: `contentFor` routes
+  // it into `.num-figure`, which is why `rendersFigureAsDevice` counts it as a
+  // rendered device rather than as prose.
+  figure: CONTENT_WEIGHTS.figureAsDevice,
+  // The quotation a `quote_card` sets at display size — see the block above.
+  quoteText: CONTENT_WEIGHTS.quote,
+  kicker: CONTENT_WEIGHTS.furniture,
+  eyebrow: CONTENT_WEIGHTS.furniture,
+  sourceLine: CONTENT_WEIGHTS.furniture,
+  subLabel: CONTENT_WEIGHTS.furniture,
+};
+
+/** The weighted floor, per role. See `CONTENT_WEIGHTS` for the table that sets these three numbers. */
+export const CONTENT_WEIGHT_FLOOR: Readonly<Record<SlideRole, number>> = { cover: 4.0, interior: 3.0, closer: 3.5 };
+
+/**
+ * ── CLAUSE I: WHAT THE COVER IS CARRYING, READ OFF THE DOM. ──
+ *
+ * A hero whose box covers at least 45% of the canvas, OR a device element at
+ * 12%, OR a drawn graphic at 12%. **A gradient satisfies none of them**, which
+ * is the entire point: `IMAGERY_OR_DEVICE_FLOOR` stays at 0.10 and keeps
+ * reporting, because raising a PIXEL share to refuse a gradient cover would be
+ * fitting a threshold to one palette — the mistake this file has made and
+ * measured away six times.
+ *
+ * ## Where the two numbers come from — MEASURED, on the real `cover.html`
+ *
+ * `__tests__/cover-subject.test.ts` composes the shipped template, opens it at
+ * 1080x1440 in real Chromium and runs `probeSubjectBoxes` on it. The same
+ * document, three ways:
+ *
+ * ```
+ *   gradient cover, title + subtitle   hero 0.000   device 0.000   graphic 0.000
+ *   + a full-bleed photograph          hero 1.000   device 0.000   graphic 0.000
+ *   + a figure device, no photograph   hero 0.000   device 0.251   graphic 0.000
+ * ```
+ *
+ * The bands could not be further apart, and the reason is structural rather
+ * than lucky: `cover.html`'s `.hero` is `position: absolute; inset: 0` and its
+ * `.cov-device` slot is a full-width band, so a cover either carries an object
+ * or it carries nothing. **The plate the owner called empty measures zero on
+ * all three limbs** — its ramp, rail and eyebrow are grounds and rules, and
+ * none of them is in a subject group.
+ *
+ * 0.45 therefore sits below every full-bleed hero (1.000) and above the
+ * failure it separates them from: a thumbnail-sized picture in the corner of a
+ * title card, which is the shape a custom archetype can produce. 0.12 admits
+ * the measured device at 2.1x and refuses a rule, a badge or a hairline, none
+ * of which reaches 1% of the canvas.
+ *
+ * **Both are BOX areas, not ink**, so a palette cannot move either one — the
+ * property six pixel candidates could not offer.
+ */
+export const COVER_HERO_BOX_SHARE = 0.45;
+export const COVER_OBJECT_BOX_SHARE = 0.12;
+
+/**
+ * ── THE THREE REPORTING-ONLY TYPE CLAUSES, AND WHY THEY SHIP DISARMED. ──
+ *
+ * `docs/instagram-restraint-reference.md` read two professional accounts and
+ * came back with three numbers: two or three type steps per plate, a real jump
+ * between the largest and the next, and everything ranged against one or two
+ * columns. Our own set uses about twenty-six distinct sizes across eight
+ * templates, because type size is a function of which FILE the writer landed
+ * on rather than of the element's role.
+ *
+ * They are measured here and they gate nothing. `instagram-floor-candidates-falsified`
+ * records three separators already dead, each killed by the control that
+ * measured it, and every one of them looked this obvious before the sweep ran.
+ * The rule this file has adopted is that a threshold is armed from a
+ * DISTRIBUTION and never from an argument — so these ship behind `ARMED` flags
+ * defaulting to false, the gate-zero sweep prints them on every row, and the
+ * integrator arms them once W2-B's de-furnished tree has published the band.
+ */
+export const TYPE_STEP_CEILING = 3;
+export const TYPE_CONTRAST_FLOOR = 1.8;
+export const ALIGNMENT_COLUMN_CEILING = 2;
+/** Flip to `true` only with the sweep's distribution in the diff. See the block above. */
+export const TYPE_STEP_CEILING_ARMED = false;
+export const TYPE_CONTRAST_FLOOR_ARMED = false;
+export const ALIGNMENT_COLUMN_CEILING_ARMED = false;
+
 /** Facts a reviewer and `08b` should see, that must never fail an attempt. */
 export type InterestWarningKind =
   | "low-occupancy"
@@ -1464,7 +1837,9 @@ export type InterestWarningKind =
   | "low-colour-count"
   | "low-edge-density"
   | "marks-not-visible"
-  | "composition-evidence";
+  | "composition-evidence"
+  /** Phase 5.5, reporting-only until the sweep's distribution arms them. See `TYPE_STEP_CEILING`. */
+  | "type-discipline";
 
 export interface InterestFinding {
   slide: number;
@@ -1509,6 +1884,29 @@ export interface InterestFloorOptions {
    * probe legitimately has no assembled slide to count.
    */
   contentElements?: number | undefined;
+  /**
+   * The SAME assembled slide, weighted (`weighContentElements` in
+   * `visual-qa-pre-checks.ts`) — clause H's real input since Phase 5.5.
+   *
+   * Supplied on the same contract as `contentElements`, and it takes
+   * precedence when both are present. With only the count, the clause falls
+   * back to `CONTENT_ELEMENT_FLOOR` and keeps its pre-5.5 behaviour, which is
+   * what a caller that has not been rewired yet (and every fixture written
+   * before this phase) gets: the grey screen is still refused, the empty
+   * plates the owner named are not. That fallback is a transition, not a
+   * design — `content-weight-floor.test.ts` asserts the weighted limb is the
+   * one that reproduces his verdicts, and the workflow must pass this.
+   */
+  contentWeight?: number | undefined;
+  /**
+   * Whether the ASSEMBLED slide carries a photograph (`slide.images.hero`).
+   *
+   * Clause B's full-bleed exemption reads it: a plate may only claim "that ink
+   * in the bleed band is my photograph reaching the edge" when it actually has
+   * one. Absent means unknown and the exemption stands on the pixel share
+   * alone — see `FULL_BLEED_IMAGERY_SHARE`.
+   */
+  hasHero?: boolean | undefined;
   /**
    * `downgradedForImagesThisAttempt` from the workflow — which slides THIS
    * attempt shipped text-only for want of a picture.
@@ -1625,6 +2023,116 @@ export const SPANNING_HOLE_AXIS_SHARE = 0.9;
  */
 export function holeSpansFrame(rect: SlideMetrics["largestEmptyRect"], canvas: { w: number; h: number } = DESIGN_CANVAS): boolean {
   return rect.w >= canvas.w * SPANNING_HOLE_AXIS_SHARE || rect.h >= canvas.h * SPANNING_HOLE_AXIS_SHARE;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// The DOM measurement clause I reads
+//
+// These three declarations mirror `render-carousel.ts`'s own, for the same
+// reason it gives: this repo's tsconfig has no DOM lib, and the function
+// below runs INSIDE the Chromium page rather than in this process. They are
+// ambient types and emit nothing.
+// ─────────────────────────────────────────────────────────────────────────
+
+interface SubjectProbeRect {
+  width: number;
+  height: number;
+}
+interface SubjectProbeElement {
+  tagName: string;
+  className: unknown;
+  parentElement: SubjectProbeElement | null;
+  getBoundingClientRect(): SubjectProbeRect;
+}
+declare const document: {
+  querySelectorAll(selector: string): SubjectProbeElement[];
+};
+
+/**
+ * The cover's subject, measured as LAID-OUT BOXES in the page.
+ *
+ * ## Why this is a DOM read and not another share
+ *
+ * Six pixel separators are dead in this file, each killed by its own control,
+ * and the cause was always the same: every mask in `slide-metrics.ts` is cut
+ * at an ABSOLUTE distance, so on a quiet plate nothing derived from the pixels
+ * is palette-invariant. A `getBoundingClientRect()` is. Re-skin the whole kit
+ * and these three numbers do not move — which is what the owner asked for in
+ * words on 2026-09-14 (*metrics agnostic to colour, resting on the absence of
+ * elements and structure*) and what clause H already gets from counting
+ * elements.
+ *
+ * ## The three groups, and why each selector is in its group
+ *
+ * `hero` is a photograph: `.hero` is the class every bundled template gives
+ * the full-bleed `<img>` (`cover.html:185`, `slide.html`), and `.bg img`
+ * covers a client template that wraps it. A photograph is the strongest
+ * subject a cover can have, which is why its floor is the highest.
+ *
+ * `device` is a BUILT number device: `slide-devices.ts` emits every fragment
+ * with a `dv` root class, and `.cov-device`/`.sl-device` are the slots
+ * `contentFor` drops them into. Counting the SLOT rather than the fragment
+ * would credit an empty slot, so the fragment's own class leads and the slots
+ * are counted only when they carry a child that is not a `dv` (a client
+ * template with its own markup in the same slot).
+ *
+ * `graphic` is everything else drawn: an `<svg>`, a `<canvas>`, `closer.html`'s
+ * `.cl-art` field. NOT `.ground`, `.scrim`, `.cov-field` or `.stat-band` —
+ * those are grounds and rules, and admitting them is exactly how a gradient
+ * cover passed clause E in the first place.
+ *
+ * Boxes are summed per group and NESTED matches inside the same group are
+ * skipped, so a `.dv` inside `.cov-device` is counted once.
+ *
+ * ## How it runs
+ *
+ * Self-contained by construction — every helper and constant it uses is
+ * declared inside it — so Playwright can serialise it by source and run it in
+ * the page the renderer already has open, exactly as `probePage` does.
+ * `__tests__/cover-subject.test.ts` runs it against real Chromium, and
+ * `interest-floor.ts` itself never calls it: the workflow gets these numbers
+ * on `probe.subjectBoxes` once `probePage` emits them (see this package's
+ * integration notes).
+ */
+export function probeSubjectBoxes(canvas: { w: number; h: number }): SubjectBoxes {
+  const frame = canvas.w * canvas.h;
+  const classesOf = (element: SubjectProbeElement): string[] =>
+    typeof element.className === "string" ? element.className.trim().split(/\s+/u) : [];
+  const isIn = (element: SubjectProbeElement, group: string[]): boolean => {
+    const tag = String(element.tagName || "").toLowerCase();
+    if (group.indexOf(tag) !== -1) return true;
+    const classes = classesOf(element);
+    for (const name of classes) if (group.indexOf(`.${name}`) !== -1) return true;
+    return false;
+  };
+  const share = (group: string[]): number => {
+    if (frame <= 0) return 0;
+    let area = 0;
+    for (const element of document.querySelectorAll("*")) {
+      if (!isIn(element, group)) continue;
+      // Skip a match nested inside another match of the SAME group: a `.dv`
+      // fragment inside `.cov-device` is one object, not two.
+      let ancestor: SubjectProbeElement | null = element.parentElement ?? null;
+      let nested = false;
+      while (ancestor !== null && !nested) {
+        if (isIn(ancestor, group)) nested = true;
+        ancestor = ancestor.parentElement ?? null;
+      }
+      if (nested) continue;
+      const rect = element.getBoundingClientRect();
+      area += Math.max(0, rect.width) * Math.max(0, rect.height);
+    }
+    return Math.min(1, area / frame);
+  };
+  return {
+    // `.hero` only: a tag name would count every `<img>` on the plate,
+    // including a logo disc, and `cover.html`'s `onerror` REMOVES the element
+    // when the photograph did not load, so the class is present exactly when
+    // a picture rendered.
+    hero: share([".hero"]),
+    device: share([".dv", ".cov-device", ".sl-device", ".cl-recap"]),
+    graphic: share(["svg", "canvas", ".cl-art"]),
+  };
 }
 
 /**
@@ -1887,8 +2395,17 @@ export function checkInterestFloor(
   // in the bleed band against a ceiling set at "about one clipped line of
   // body text". See `FULL_BLEED_IMAGERY_SHARE` for the measurement and for
   // why the exemption starts at half the frame rather than lower.
+  //
+  // ── 2026-09-16: THE SHARE MOVED AND A DOM LIMB JOINED IT. ──
+  //
+  // `FULL_BLEED_IMAGERY_SHARE` carries the measurement: three of five real
+  // photo slides measured 0.329-0.468 and were failed as `clipped` with
+  // `probe.overflow` FALSE. The exemption now also asks the assembled document
+  // whether this plate HAS a photograph, so the lower share cannot be claimed
+  // by a drawn field that happens to measure like one. `hasHero` absent means
+  // unknown, and the exemption then stands on the share alone.
   const overflowing = probe?.overflowing ?? [];
-  const bleedsByDesign = metrics.imageryOrDeviceShare >= FULL_BLEED_IMAGERY_SHARE;
+  const bleedsByDesign = metrics.imageryOrDeviceShare >= FULL_BLEED_IMAGERY_SHARE && opts.hasHero !== false;
   if (probe?.overflow === true || (!bleedsByDesign && metrics.clippedEdgeShare > CLIPPED_EDGE_SHARE_CEILING)) {
     const named = overflowing.length > 0 ? ` (${overflowing.slice(0, 3).join(", ")})` : "";
     findings.push({
@@ -1952,7 +2469,7 @@ export function checkInterestFloor(
   // share; one sits in a corner and the other cuts the plate in two. See
   // `holeSpansFrame`.
   const subject = holeSpansFrame(metrics.largestEmptyRect) ? undefined : plateSubject(metrics, probe);
-  const rectCeiling = LARGEST_EMPTY_RECT_CEILING[role];
+  const rectCeiling = LARGEST_EMPTY_RECT_CEILING[role];
   // ── C REPORTS AT THE INTERIOR ROLE. CLAUSE H CARRIES THE REFUSAL. ──
   //
   // RFC-21 §2.9 is the owner's colour-agnosticism test made executable — one
@@ -2215,9 +2732,65 @@ export function checkInterestFloor(
   // ABSTAINS when the caller supplied no count. A clause that guesses at its
   // own input is worse than one that sits out, and `interest-floor.test.ts`
   // asserts the abstention so it cannot become an accidental pass.
+  //
+  // ── PHASE 5.5: THE COUNT IS WEIGHTED, AND THE WEIGHT IS WHY IT WORKS. ──
+  //
+  // `CONTENT_WEIGHTS` carries the argument and the reproduction. In one
+  // sentence: a flat floor of 3 is satisfied by printing a kicker, which is
+  // the exact furniture the owner named as the tell that a post was made by a
+  // machine, so the floor has to price a kicker at a quarter of a sentence.
+  //
+  // The unweighted limb below is the pre-5.5 behaviour, kept for a caller that
+  // supplies only a count — see `InterestFloorOptions.contentWeight`.
+  const weight = opts.contentWeight;
   const elements = opts.contentElements;
-  if (elements !== undefined && elements < CONTENT_ELEMENT_FLOOR) {
-    findings.push({
+  const weightFloor = CONTENT_WEIGHT_FLOOR[role];
+  // ── A SLIDE THAT LOST ITS PHOTOGRAPH IS WAIVED HERE TOO. ──
+  //
+  // The SAME waiver clause E takes, for the same reason, and it is not a
+  // softening: a hero is worth 2.0, so a plate that asked for a photograph and
+  // got none is short by exactly the picture nobody could find — and NO
+  // REDRAFT CAN PRODUCE ONE. Without this, a run whose media tier is down
+  // fails its cover on every attempt, burns the whole drafting budget arguing
+  // with a sourcing outage, and ships degraded anyway. That is a hold
+  // generator wearing a gate's clothes, which is the pattern this file's own
+  // clause-E waiver exists to refuse, and `zero-held-guarantee.test.ts` is
+  // where it was caught.
+  //
+  // The finding is still REPORTED, on `waived`, so `08b`'s judge and the human
+  // at `09a` both see that the plate is thin and why. What it no longer does
+  // is spend an attempt.
+  const weightWaivedForLostPicture = opts.downgradedForImages?.has(slide) === true;
+  const pushWeightFinding = (finding: InterestFinding): void => {
+    if (weightWaivedForLostPicture) {
+      waived.push({
+        ...finding,
+        waivedReason: `waived: slide ${slide} lost its photograph to image sourcing this attempt, and a hero is worth ${CONTENT_WEIGHTS.hero.toFixed(2)} of this floor — no redraft can find a picture, so this is never a hold`,
+      });
+      return;
+    }
+    findings.push(finding);
+  };
+  if (weight !== undefined && weight < weightFloor) {
+    pushWeightFinding({
+      slide,
+      role,
+      kind: "one-element",
+      measured: { contentWeight: weight, ...(elements !== undefined ? { contentElements: elements } : {}) },
+      threshold: weightFloor,
+      sentence:
+        `${where} — the plate's content weighs ${weight.toFixed(2)} against a floor of ${weightFloor.toFixed(2)} for ${roleNoun(role)} ` +
+        `(a photograph or a list counts 2, a device or a recap 1.5, a line of prose 1, a kicker or a source line 0.25): ` +
+        `${role === "cover" ? "a title over a gradient is not a cover" : "a headline and a body on bare ground is not a slide"}, whatever the ground is doing.`,
+      steer:
+        `Give slide ${slide} something a reader looks AT, from what the post already has: a photograph, ` +
+        `${deviceSteer("a device built from a figure in its own copy")}, the list its body is really making, or the quotation it is paraphrasing. ` +
+        `A kicker, an eyebrow or a source line will not lift it — they are priced at a quarter of a sentence for exactly that reason. ` +
+        `If there is nothing to add, merge slide ${slide} into ${slide > 1 ? `slide ${slide - 1}` : "the next slide"} and let the carousel be one slide shorter — ` +
+        `the reference accounts carry three or four element groups per plate, never one.`,
+    });
+  } else if (weight === undefined && elements !== undefined && elements < CONTENT_ELEMENT_FLOOR) {
+    pushWeightFinding({
       slide,
       role,
       kind: "one-element",
@@ -2231,6 +2804,48 @@ export function checkInterestFloor(
         `${deviceSteer("a device built from a figure in its own copy")}, a photograph, or the source it is citing. ` +
         `If there is nothing to add, merge it into ${slide > 1 ? `slide ${slide - 1}` : "the next slide"} — the reference accounts carry three or four element groups per plate, never one.`,
     });
+  }
+
+  // ── I — the cover carries a SUBJECT, measured as boxes. (Phase 5.5) ──
+  //
+  // See `COVER_HERO_BOX_SHARE` for the two numbers and for why this is a DOM
+  // test rather than a raised pixel share. It runs on the cover only: an
+  // interior slide is allowed to be a quiet typographic turn (that is what
+  // clause E's role guard has always said), and the closer's payoff is scored
+  // by the weighted floor above.
+  //
+  // ABSTAINS when the probe reported no boxes, which is every caller until
+  // `probePage` emits `subjectBoxes`. An inert clause is visible in the tests
+  // that measure it; a clause that guessed would be invisible everywhere.
+  const boxes = probe?.subjectBoxes;
+  if (role === "cover" && boxes !== undefined) {
+    const carriesSubject =
+      boxes.hero >= COVER_HERO_BOX_SHARE || boxes.device >= COVER_OBJECT_BOX_SHARE || boxes.graphic >= COVER_OBJECT_BOX_SHARE;
+    if (!carriesSubject) {
+      findings.push({
+        slide,
+        role,
+        kind: "cover-subject",
+        measured: { heroBoxShare: boxes.hero, deviceBoxShare: boxes.device, graphicBoxShare: boxes.graphic, imageryOrDeviceShare: metrics.imageryOrDeviceShare },
+        threshold: COVER_OBJECT_BOX_SHARE,
+        sentence:
+          `${where} — the cover carries no subject: its photograph covers ${pct(boxes.hero)} of the canvas (floor ${pct(COVER_HERO_BOX_SHARE)}), ` +
+          `its device ${pct(boxes.device)} and its graphics ${pct(boxes.graphic)} (floor ${pct(COVER_OBJECT_BOX_SHARE)} for either); ` +
+          `a gradient with a title on it is a ground, not a subject.`,
+        // NO DEVICE IS OFFERED HERE, and that is the point of the clause.
+        // `interest-relayout.ts`'s cover `attach-device` limb fabricated the
+        // digit `2` out of the middle of the word `B2B` on run
+        // pubsub-21839432908803804, and shipped a cover reading
+        // `7.2% / "Only of organizations respond… meaning"` on 2026-09-16 —
+        // a figure unrelated to the post's own topic with a truncated label.
+        // The remedy for a cover with nothing on it is a picture, or the
+        // writer's own strongest number written as a device by the writer.
+        steer:
+          `Slide ${slide} is the only slide most of the audience will see. Give it a real subject: a photograph of what this post is actually about ` +
+          `(name it in the slide's visualNeed subject), or a figure device built from THIS post's own strongest sourced number with its complete label. ` +
+          `Not a gradient with a title in the lower third.`,
+      });
+    }
   }
 
   return { slide, role, ok: findings.length === 0, findings, waived, warnings: interestWarningsFor(metrics, role, slide, probe, opts.markKinds), metrics };
@@ -2396,6 +3011,49 @@ export function interestWarningsFor(
   // `probe.elementCount` rides along because it is the "few elements placed
   // with intent" half, it has been measured on every slide since 1.1.0, and
   // until now it was read by nobody.
+  // ── TYPE DISCIPLINE: three numbers, compared against thresholds that are
+  //    PRINTED and not applied. (Phase 5.5) ──
+  //
+  // See `TYPE_STEP_CEILING` for why they are disarmed. The row is emitted
+  // whenever the probe measured them AND at least one is out of band, so the
+  // sweep's distribution is the union of the interesting rows rather than
+  // every row — and the three `*_ARMED` flags are read HERE so that arming one
+  // is a one-line diff with the distribution beside it. While they are false
+  // this can only ever add a warning, and a warning has never failed an
+  // attempt in this file.
+  const steps = probe?.typeSteps;
+  const columns = probe?.alignmentColumns;
+  if (steps !== undefined || columns !== undefined) {
+    const distinct = steps === undefined ? 0 : new Set(steps).size;
+    const sorted = steps === undefined ? [] : [...new Set(steps)].sort((a, b) => b - a);
+    // 1 when there is no second step to compare against: a one-step plate has
+    // no type contrast to fail, which is a fact about it and not a defect.
+    const contrast = sorted.length >= 2 && sorted[1]! > 0 ? sorted[0]! / sorted[1]! : 1;
+    const tooManySteps = steps !== undefined && distinct > TYPE_STEP_CEILING;
+    const tooFlat = steps !== undefined && sorted.length >= 2 && contrast < TYPE_CONTRAST_FLOOR;
+    const tooManyColumns = columns !== undefined && columns > ALIGNMENT_COLUMN_CEILING;
+    if (tooManySteps || tooFlat || tooManyColumns) {
+      warnings.push({
+        slide,
+        role,
+        kind: "type-discipline",
+        measured: {
+          typeSteps: distinct,
+          typeContrast: contrast,
+          ...(columns !== undefined ? { alignmentColumns: columns } : {}),
+          typeStepCeiling: TYPE_STEP_CEILING,
+          typeContrastFloor: TYPE_CONTRAST_FLOOR,
+          alignmentColumnCeiling: ALIGNMENT_COLUMN_CEILING,
+          armed: TYPE_STEP_CEILING_ARMED || TYPE_CONTRAST_FLOOR_ARMED || ALIGNMENT_COLUMN_CEILING_ARMED ? 1 : 0,
+        },
+        sentence:
+          `slide ${slide} — type discipline (gates nothing this phase): ${distinct} distinct type step(s) (ceiling ${TYPE_STEP_CEILING})` +
+          `, largest/second ${contrast.toFixed(2)}x (floor ${TYPE_CONTRAST_FLOOR}x)` +
+          `${columns !== undefined ? `, ${columns} alignment column(s) (ceiling ${ALIGNMENT_COLUMN_CEILING})` : ""}` +
+          `; the reference plates set two or three steps with a real jump between the first two, ranged against one or two columns.`,
+      });
+    }
+  }
   const centroid = metrics.contentCentroid ?? { x: 0.5, y: 0.5 };
   const bbox = metrics.contentBBox ?? { x: 0, y: 0, w: 0, h: 0 };
   const groundInkContrast = metrics.groundInkContrast ?? 0;
@@ -2482,6 +3140,14 @@ export function checkSlidesInterestFloor(
      * document. Clause H's whole input; absent slides make it abstain.
      */
     contentElementsBySlide?: ReadonlyMap<number, number> | undefined;
+    /**
+     * Phase 5.5 — `weighContentElements` per slide, from the same assembled
+     * document. Clause H's real input; see `InterestFloorOptions.contentWeight`
+     * for what happens on a call site that still supplies only the count.
+     */
+    contentWeightBySlide?: ReadonlyMap<number, number> | undefined;
+    /** Phase 5.5 — `slide.images.hero !== undefined` per slide, for clause B's full-bleed exemption. */
+    heroBySlide?: ReadonlyMap<number, boolean> | undefined;
     /** RFC-17 — `assembleSlidesData`'s `markReportOut.kindsBySlide`. See `InterestFloorOptions.markKinds`. */
     markKindsBySlide?: ReadonlyMap<number, readonly string[]> | undefined;
   } = {},
@@ -2503,6 +3169,8 @@ export function checkSlidesInterestFloor(
         ...(opts.downgradedForImages !== undefined ? { downgradedForImages: opts.downgradedForImages } : {}),
         ...(archetype !== undefined ? { archetype } : {}),
         ...(opts.contentElementsBySlide?.get(slide.n) !== undefined ? { contentElements: opts.contentElementsBySlide.get(slide.n)! } : {}),
+        ...(opts.contentWeightBySlide?.get(slide.n) !== undefined ? { contentWeight: opts.contentWeightBySlide.get(slide.n)! } : {}),
+        ...(opts.heroBySlide?.get(slide.n) !== undefined ? { hasHero: opts.heroBySlide.get(slide.n)! } : {}),
         ...(markKinds !== undefined ? { markKinds } : {}),
       }),
     );

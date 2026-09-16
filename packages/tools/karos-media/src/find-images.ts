@@ -7,7 +7,13 @@ import { ImageProviderError, type ImageSearchHit, type ImageSearchProvider } fro
 import { MEDIA_ROUTES, singleProviderSource, type ImageSource, type MediaRoute } from "./routing.js";
 
 // 1.0.1 (SCRUM-296/AU11): removed the redundant re-parse of already-validated input.
-const TOOL_VERSION = "1.0.1";
+// 1.1.0 (Phase 5.5, item A2): the `entity` route joins `MEDIA_ROUTES` — which
+// this tool's own input schema enumerates, so the wire contract widens — and a
+// need gains two new optional fields, `requireTerm` and `allowUnknownLicence`.
+// Both default to today's behaviour, so every existing caller is unaffected;
+// the MINOR digit is what says so. (`routing.ts` declares no `TOOL_VERSION` of
+// its own, so this is the file the push gate diffs for that change too.)
+const TOOL_VERSION = "1.1.0";
 
 /**
  * Every downloaded file lands under this repo-relative prefix. Kept in one
@@ -29,6 +35,20 @@ export const FindImagesInputSchema = z.object({
           .default("default")
           .describe(
             "What this slide needs a picture of, which decides the provider order. Optional and defaulted so every existing caller keeps working unchanged on the general-purpose chain.",
+          ),
+        requireTerm: z
+          .string()
+          .min(1)
+          .max(80)
+          .optional()
+          .describe(
+            "A term every hit must NAME in its own description. The identification test for the `entity` route: a Wikimedia record says who or what is in the file, so requiring the name is a real filter there. Applied before download, so a hit that fails it costs nothing.",
+          ),
+        allowUnknownLicence: z
+          .boolean()
+          .default(true)
+          .describe(
+            "False drops every hit whose `licenseConfidence` is `unknown` before download. Set false for a picture of a private individual: an unidentified web image of a person is the one candidate class where being wrong is not an editorial mistake.",
           ),
       }),
     )
@@ -231,7 +251,28 @@ export function createFindImages(source: ImageSource | ImageSearchProvider, fetc
             throw error;
           }
 
-          const hits = result.value;
+          const offered = result.value;
+
+          // ── The two need-level filters, BEFORE the download ──
+          //
+          // Both are `undefined`/`true` by default, so an existing caller's
+          // hits reach the interleave exactly as they did. They run here
+          // rather than after `downloadHit` because a hit that cannot be used
+          // should not cost a fetch, and because a filtered-out hit must not
+          // consume a `maxPerNeed` slot — filtering after the round-robin
+          // would silently shrink the pool a caller asked for.
+          const named = need.requireTerm === undefined ? offered : offered.filter((h) => namesTerm(h, need.requireTerm!));
+          const hits = need.allowUnknownLicence ? named : named.filter((h) => (h.licenseConfidence ?? "unknown") !== "unknown");
+
+          if (hits.length === 0 && offered.length > 0) {
+            // Named separately from "no results": a chain that returned
+            // pictures we then refused is a different diagnosis from a chain
+            // that had none, and collapsing the two is how a rights filter
+            // gets debugged as an outage.
+            attempts.push(`${provider.name}: ${offered.length} result(s), none of which ${filterDescription(need)}`);
+            continue;
+          }
+
           // The same photo can surface from two providers — Openverse
           // aggregates Wikimedia among others. Deduping on the byte URL keeps
           // the interleave honest; otherwise one image quietly consumes two
@@ -312,6 +353,34 @@ export function createFindImages(source: ImageSource | ImageSearchProvider, fetc
       });
     },
   });
+}
+
+/**
+ * Does this hit's own record NAME the term?
+ *
+ * Searched across the description, the credit and the licence line, because a
+ * Wikimedia record puts the subject's name in different places depending on
+ * how the file was catalogued — the title for a portrait, the credit for a
+ * press release, the description for an event photo.
+ *
+ * Case- and whitespace-folded, substring, and deliberately NOT fuzzy: the
+ * whole value of this filter on the `entity` route is that it is exact.
+ * Matching "Atlas" against "Atlassian" would hand the vet the wrong company's
+ * office and a confident caption saying so.
+ */
+function namesTerm(hit: { description: string; credit?: string; license?: string }, term: string): boolean {
+  const wanted = term.toLowerCase().replace(/\s+/gu, " ").trim();
+  if (wanted.length === 0) return true;
+  const haystack = [hit.description, hit.credit ?? "", hit.license ?? ""].join(" ").toLowerCase().replace(/\s+/gu, " ");
+  return haystack.includes(wanted);
+}
+
+/** The half-sentence that completes "N result(s), none of which …" — so the reason names the filter that actually ran. */
+function filterDescription(need: { requireTerm?: string | undefined; allowUnknownLicence: boolean }): string {
+  const clauses: string[] = [];
+  if (need.requireTerm !== undefined) clauses.push(`name "${need.requireTerm}" in their own record`);
+  if (!need.allowUnknownLicence) clauses.push("carry an established licence");
+  return clauses.length > 0 ? clauses.join(" and ") : "qualified";
 }
 
 /**

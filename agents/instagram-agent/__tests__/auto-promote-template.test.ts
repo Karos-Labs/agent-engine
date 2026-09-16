@@ -113,20 +113,24 @@ function copyWithCustomArchetype(seed: string, overrides: { bodyHtml?: string; s
             device: { kind: "figure" as const, value: `${40 + i}%`, label: `of the ${seed} cohort`, source: "internal data, 2026" },
           }
         : {}),
+      // PHASE 5.5 (spec §3 B3): the WRITER emits a brief — which archetype,
+      // called what, why, and which slots — and `05f-author-custom-archetype`
+      // authors the markup in its own bounded step. The markup was hoisted out
+      // of the copy schema because it was ~6k tokens of a 16,384-token ceiling
+      // that the drafting loop kept hitting, so a fixture that fed
+      // `customArchetype` through the COPY turn can no longer reach a render:
+      // `InstagramCopyDraftSchema` omits (and therefore strips) the key.
       ...(i === 1
         ? {
             layout: "custom" as const,
-            customArchetype: {
+            customArchetypeBrief: {
               archetypeId: ARCHETYPE_ID,
               name: "Pull rail",
               rationale: "the supporting line has to sit inside the headline's own counter, which no archetype stacks",
-              bodyHtml: overrides.bodyHtml ?? BODY_HTML,
-              css: CSS,
               // Derived from the markup, because `assertSafeMarkup` refuses a
               // `{{key}}` that is not a declared slot: the two fixtures below
               // read different names and both have to be legal.
               slots: slotsOf(overrides.bodyHtml ?? BODY_HTML),
-              fields: Object.fromEntries(slotsOf(overrides.bodyHtml ?? BODY_HTML).map((name) => [name, `a supporting ${name} line for the ${seed} run`])),
             },
           }
         : {}),
@@ -134,10 +138,22 @@ function copyWithCustomArchetype(seed: string, overrides: { bodyHtml?: string; s
   };
 }
 
-function roundTurns(copy: InstagramCopyOutput) {
+/** The `05f` turn this round buys: the MARKUP half only, joined to the brief above by `composeCustomArchetype`. */
+function markupTurn(seed: string, overrides: { bodyHtml?: string } = {}) {
+  const slots = slotsOf(overrides.bodyHtml ?? BODY_HTML);
+  return {
+    bodyHtml: overrides.bodyHtml ?? BODY_HTML,
+    css: CSS,
+    slots,
+    fields: Object.fromEntries(slots.map((name) => [name, `a supporting ${name} line for the ${seed} run`])),
+  };
+}
+
+function roundTurns(copy: InstagramCopyOutput, seed: string, overrides: { bodyHtml?: string } = {}) {
   return standardTurns({
     angle: goodAngleProposal(),
     copy,
+    customArchetype: markupTurn(seed, overrides),
     vet: goodImageVettingOutput(),
     relevance: goodRelevanceVerdict(),
     qa: goodVisualQaOutput(),
@@ -167,8 +183,12 @@ describe("09f-auto-promote-templates (item O): two clean ships promote, a third 
       edits?: { slides?: Array<{ n: number; fields: Record<string, string> }> };
       templateFeedback?: Array<{ slide: number; templateId: string; verdict: "approved" | "revise"; note: string; promote: boolean }>;
     },
+    // Phase 5.5: the markup half now arrives on its own `05f` turn, so a
+    // fixture that varies the MARKUP (the two `bodyHtml` cases below) has to
+    // say so here as well as in the brief's slot list.
+    markup: { bodyHtml?: string } = {},
   ): Promise<string[]> {
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...roundTurns(copy)]);
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...roundTurns(copy, runId, markup)]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) },
       promptStore: makePromptStore(),
@@ -260,10 +280,20 @@ describe("09f-auto-promote-templates (item O): two clean ships promote, a third 
     // either cannot be picked or renders a hole where the rail should be. So
     // the ledger keeps counting and `09f` records why it stopped there.
     const store = new MemoryTemplateStore([pendingStudioRow()]);
-    await shipOnce("unroutable_run_1", store, copyWithCustomArchetype("first", { shape: 0, bodyHtml: UNROUTABLE_BODY_HTML }), { decision: "approve" });
-    const ids = await shipOnce("unroutable_run_2", store, copyWithCustomArchetype("second", { shape: 1, bodyHtml: UNROUTABLE_BODY_HTML }), {
-      decision: "approve",
-    });
+    // Phase 5.5: the brief's SLOT LIST and `05f`'s MARKUP are two separate
+    // turns now, so a fixture that varies the markup has to say so twice —
+    // once in the copy turn's brief (which slots the writer asked for) and
+    // once here (what `05f` actually authored). Passing only the first would
+    // leave the run reading the routable default and this case would assert
+    // nothing.
+    await shipOnce("unroutable_run_1", store, copyWithCustomArchetype("first", { shape: 0, bodyHtml: UNROUTABLE_BODY_HTML }), { decision: "approve" }, { bodyHtml: UNROUTABLE_BODY_HTML });
+    const ids = await shipOnce(
+      "unroutable_run_2",
+      store,
+      copyWithCustomArchetype("second", { shape: 1, bodyHtml: UNROUTABLE_BODY_HTML }),
+      { decision: "approve" },
+      { bodyHtml: UNROUTABLE_BODY_HTML },
+    );
     expect(ids).toContain("09f-auto-promote-templates");
     expect(await store.get(templateId)).toBeUndefined();
 
@@ -321,9 +351,11 @@ describe("09f-auto-promote-templates (item O): two clean ships promote, a third 
     // `materializeTemplates`, so nothing about the renders changes.
     const store = new MemoryTemplateStore([pendingStudioRow()]);
     await shipOnce("promo_hash_1", store, copyWithCustomArchetype("theta", { shape: 0 }), { decision: "approve" });
-    await shipOnce("promo_hash_2", store, copyWithCustomArchetype("iota", { shape: 1, bodyHtml: `<section class="grid"><h1>{{kicker}}</h1><em>{{note}}</em></section>` }), {
-      decision: "approve",
-    });
+    // Phase 5.5: the changed markup has to reach `05f`'s turn as well as the
+    // brief's slot list — the hash this case is about is computed on what was
+    // AUTHORED, and that is the markup turn's output.
+    const changedBodyHtml = `<section class="grid"><h1>{{kicker}}</h1><em>{{note}}</em></section>`;
+    await shipOnce("promo_hash_2", store, copyWithCustomArchetype("iota", { shape: 1, bodyHtml: changedBodyHtml }), { decision: "approve" }, { bodyHtml: changedBodyHtml });
     expect(await store.get(templateId)).toBeUndefined();
     const history = readCustomArchetypeHistory(await env.store.readJson<Record<string, unknown>>("acme", ["memory", "beliefs"]));
     expect(history.records[0]?.cleanShips).toBe(1);

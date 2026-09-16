@@ -1,5 +1,57 @@
 import { BaseAgent, resolveModelPolicy, type AgentStepConfig } from "@agent-engine/core";
-import { InstagramCopyOutputSchema, type InstagramCopyOutput } from "../workflow/types.js";
+import { InstagramCopyDraftSchema, type InstagramCopyDraft } from "../workflow/types.js";
+
+/**
+ * The output ceiling for `05-write-copy-attempt-N`, and the number
+ * `__tests__/copy-schema-length.test.ts` holds the schema against.
+ *
+ * ## What actually happened, measured from the six prep runs of 2026-09-16
+ *
+ * This step declared no `maxTokens` and therefore inherited
+ * `DEFAULT_MAX_TOKENS = 16384` — a default chosen for "the longest output
+ * schema in this system" by a comment written before this schema existed. Five
+ * of six later attempts across three runs died on it, each for a reported $0
+ * (`messages-api-adapter.ts` threw before resolving usage; fixed in the same
+ * phase). The run then re-judged an EARLIER draft, failed the same gates with
+ * the same words, and shipped `degraded`. Every "findings return to the draft"
+ * mechanism in this workflow was inert in production.
+ *
+ * ## Where the 16,384 tokens actually went, which is NOT where the brief assumed
+ *
+ * Reading the archived turns of the eight attempts that did complete:
+ *
+ * | run / attempt | output tokens | `thought` chars | `finalOutput` chars |
+ * |---|---|---|---|
+ * | karoslabs 21868183257380937 a1 | 16,305 | 50,520 | 8,109 |
+ * | karoslabs 21868183257380937 a2 | 16,120 | 52,159 | 7,721 |
+ * | geektime 21868533047825082 a3 | 16,323 | 37,814 | 5,256 |
+ * | karoslabs 21850131523417857 a1 | 13,869 | 41,697 | 8,803 |
+ *
+ * **The copy is 1,500 to 2,400 tokens. The model's own planning prose is
+ * 10,000 to 14,300.** Between 84% and 88% of the budget is `thought`, and the
+ * three attempts that got closest to the wall are the three that planned
+ * longest. Bounding the schema (item B3, and it is right to do) buys back at
+ * most a tenth of the ceiling; **raising the ceiling is the fix, and the schema
+ * bound is the guard that keeps it a fix.**
+ *
+ * ## Why 32,000 and not 20,000 or 64,000
+ *
+ * The worst observed demand is 16,323 tokens in a turn that was still cut off,
+ * so the true demand is unknown and above it. 32,000 is 2.0x the largest turn
+ * ever completed here and ~2.2x the largest `thought` plus the largest
+ * `finalOutput` ever seen together (14,300 + 2,400). It costs $0 until it is
+ * used — an output ceiling is a limit, not a purchase — and the pathological
+ * case of a model that fills it is $0.48 of output against the $0.24 the
+ * measured attempts booked, which under the 2026-09-16 cost ruling (quality
+ * first, budgets adapt and never hold) is the right side to be wrong on.
+ * `run-budget.ts`'s `copyAttempt` key is re-priced for the SCHEMA and PROMPT
+ * deltas, not for this: a ceiling nobody reaches bills nothing.
+ *
+ * Going further, to 64,000, would be fitting the ceiling to the schema's
+ * theoretical maximum rather than to measured demand, and would make the guard
+ * test's 60% assertion vacuous.
+ */
+export const COPY_MAX_TOKENS = 32_000;
 
 /**
  * RFC-03 §3 step 05: "write the copy — six to eight slides, one idea each"
@@ -22,12 +74,26 @@ import { InstagramCopyOutputSchema, type InstagramCopyOutput } from "../workflow
  * inside the agent itself — RFC-03 §3 step 07's "RETURN: 05" is a Layer 1
  * concern (which checkpointed step to re-run), not a Layer 2 one.
  */
-export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
-  protected readonly config: AgentStepConfig<InstagramCopyOutput> = {
+export class InstagramCopyAgent extends BaseAgent<InstagramCopyDraft> {
+  protected readonly config: AgentStepConfig<InstagramCopyDraft> = {
     id: "instagram-copy",
     description: "Write an Instagram post in the requested format: 6-8 carousel slides (one idea each) or one designed slide with a deep caption, every claim traced to a sourced research fact.",
     allowedTools: [],
-    outputSchema: InstagramCopyOutputSchema,
+    // The DRAFT schema, which is `InstagramCopyOutputSchema` minus the authored
+    // `customArchetype` markup — see `InstagramCopyDraftSchema`. A draft is
+    // assignable to `InstagramCopyOutput`, so the workflow's own type is
+    // unchanged; what changed is what the model is asked to produce.
+    outputSchema: InstagramCopyDraftSchema,
+    maxTokens: COPY_MAX_TOKENS,
+    // Default is 1. A malformed turn on THIS step is a quality event, not a
+    // tooling failure: the model answered and its answer did not clear a
+    // schema, which `opus-drops-type-discriminator`-class truncation and a
+    // missing `type` discriminator both look like. One more turn costs ~$0.24
+    // against a whole $0.35 attempt AND against the attempt budget itself,
+    // which is the scarce resource (three attempts, and a spent one is a
+    // redraft the post never gets). Raised here and nowhere else, because this
+    // is the only step whose retry is cheaper than its failure.
+    maxMalformedTurns: 2,
     // Pinned — RFC-02 §5's rationale applies identically here: drafting/
     // brand-voice judgment is never a fallback-eligible step.
     //
@@ -351,6 +417,62 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyOutput> {
     // It FAILS OPEN, which is why it is additive rather than a rewrite: a run
     // whose series step did not complete sends no `seriesDirective`, §29 says
     // so explicitly, and the draft reads identically to @18.
-    skillRef: "instagram-copy@20",
+    //
+    // v21 (Phase 5.5, brief items B and A3, 2026-09-16): the first bump whose
+    // job is to make the OUTPUT SMALLER and the ceiling reachable. Four edits,
+    // three of them subtractive:
+    //
+    //   1. §20 no longer asks for markup. The writer emits
+    //      `customArchetypeBrief` (archetype id, name, rationale, slots) and
+    //      `05f-author-custom-archetype` writes the `bodyHtml`/`css`/`fields`.
+    //      That is the largest single block removed from an output schema that
+    //      had no maximum, and ~800 characters given back on the input side.
+    //   2. §5 states the new field bounds, so a writer knows where the schema
+    //      wall is rather than discovering it as a lost draft.
+    //   3. §7 gains the `unfillable` rule, which is the field half of the fix
+    //      for the work-note geektime's slide 4 shipped to the reader. The
+    //      instruction that produced it lives in `editorial-series.ts` and is
+    //      changed there; this is where the writer is told where to put it.
+    //   4. §7's cover rule is tightened to spec §4.5: a cover carries ONE
+    //      subject and no furniture. The 2026-09-16 covers were a gradient, a
+    //      small device and a title in the lower third, and the owner's verdict
+    //      on the first slide was "יחסית ריק ומשעמם".
+    //
+    // Cost, BOTH halves, MEASURED off the two files (the rule this ledger has
+    // followed since the @14 -> @15 error, which priced an output-heavy bump on
+    // its input alone and under-counted by nine tenths):
+    //
+    //   Input:  +4,415 prompt characters (78,829 -> 83,244, line endings
+    //           normalised, WHOLE FILE as always) = +1,104 tokens x $3/1e6 =
+    //           +$0.0033 an attempt, paid on English runs too because the
+    //           prompt file is one file. §20 gives back 805 characters; the
+    //           field-bound table, the cover rules, the `unfillable` rule and
+    //           the ledger itself spend 5,220. The prompt's own version ledger
+    //           states the same four numbers and the two must agree.
+    //   Output: the `customArchetype` block is GONE from this step's schema.
+    //           None of the six 2026-09-16 runs emitted one, so the MEASURED
+    //           saving on those runs is $0.000 and it is stated that way rather
+    //           than claimed: what changes is the WORST CASE, from an uncapped
+    //           record plus 8,000 characters of markup (~2,200 tokens on a
+    //           single slide) to a ~60-token brief. `unfillable` is optional
+    //           and was emitted zero times in 61 measured slides.
+    //   Total:  +$0.0033 an attempt, and the thing the phase actually buys is
+    //           the attempt that stops being lost: five of six redrafts on
+    //           2026-09-16 died at the ceiling, each one a ~$0.33 draft that
+    //           bought the post nothing.
+    //
+    // `STEP_COST_ESTIMATES_USD.copyAttempt` is NOT re-priced here, and that is
+    // a reported obligation rather than an omission. `run-budget.ts` belongs to
+    // W1-C in this phase and two hands on that file is the collision this
+    // phase's rules exist to stop. The number it needs is `0.185 -> 0.189`
+    // (+$0.0033, rounded up), and it is the SMALLER of the two corrections that
+    // key is owed: the larger one is the one W1-A's cost fix exposes, since a
+    // truncated attempt now books ~$0.33 where it used to book $0. Stated in
+    // the package's integration notes so it cannot be lost between the two.
+    //
+    // `05f-author-custom-archetype` is priced separately at $0.030, at most
+    // once per carousel and only when a draft asks for it. See
+    // `InstagramCustomArchetypeAgent`.
+    skillRef: "instagram-copy@22",
   };
 }

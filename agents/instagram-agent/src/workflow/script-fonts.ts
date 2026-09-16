@@ -158,6 +158,28 @@ export function scriptTypographyFor(targetLanguage: string | undefined): { scrip
   return spec === undefined ? undefined : { script: script.name, spec };
 }
 
+/**
+ * The run's SCRIPT NAME, for callers that need to know which script the plate
+ * is in without needing a font table for it.
+ *
+ * Deliberately NOT `scriptTypographyFor(...)?.script`: that returns
+ * `undefined` for a non-Latin script `SCRIPT_TYPOGRAPHY` has no row for, which
+ * is the right answer for "which families do I load" and the wrong one for
+ * "can this display register set this script". A register whose family carries
+ * no glyph for the script is the wrong face whether or not this module has a
+ * replacement for it — `visual-system.ts`'s `DISPLAY_REGISTER_SCRIPTS` carries
+ * the argument — so the question is asked of the script, not of the table.
+ *
+ * `"Latin"` for every Latin language, `undefined` for a language
+ * `SCRIPT_TABLE` has never heard of and for no language at all: an unknown
+ * language is treated as Latin by every other reader here, and inventing a
+ * script for it would silently disable an axis on a run nobody measured.
+ */
+export function targetScriptName(targetLanguage: string | undefined): string | undefined {
+  if (targetLanguage === undefined) return undefined;
+  return resolveExpectedScript(targetLanguage)?.name;
+}
+
 /** The family a client declared per role, if any — read back out of the kit's already-emitted `--f-*` stacks. */
 export interface ClientFontFamilies {
   display?: string | undefined;

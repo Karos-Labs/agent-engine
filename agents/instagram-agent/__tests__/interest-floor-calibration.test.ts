@@ -20,11 +20,11 @@ import {
   type SlideRole,
 } from "../src/workflow/interest-floor.js";
 import { buildMarkRing, markCssBlock, type EmphasisIssue, type MarkRing } from "../src/workflow/emphasis-marks.js";
+import { visualSystemCssBlock } from "../src/workflow/visual-system.js";
 import { countContentElements } from "../src/workflow/visual-qa-pre-checks.js";
 import { HERO_IMAGE_LAYOUTS } from "../src/workflow/slides-data.js";
 import { MAX_COPY_FOR_OBJECT } from "../src/workflow/bounded-object.js";
 import { buildScriptFontHeadForLanguage, scriptTypographyFor } from "../src/workflow/script-fonts.js";
-import { groundMaterialCssBlock } from "../src/workflow/ground-material.js";
 import { deviceCssBlock } from "../src/workflow/slide-devices.js";
 import { assembleSlidesData } from "../src/workflow/slides-data.js";
 import { templateBasename } from "../src/workflow/visual-qa-pre-checks.js";
@@ -192,26 +192,18 @@ function groundFor(template: string): { ground: string; foreground: string } {
  * `emphasis` therefore renders the same pixels it did before this phase. The
  * marked cases are the two at the end of this file.
  *
- * ## 2026-09-14, RFC-20: THE GROUND MATERIAL IS ON THIS CHANNEL TOO, AND IT
- *    WAS MISSING
+ * ## 2026-09-16, PHASE 5.5 ITEM G7: THE GROUND MATERIAL IS GONE FROM THIS
+ *    CHANNEL, BECAUSE IT WAS NEVER ON PRODUCTION'S
  *
- * `headExtras()` emits FOUR sheets, not three, and the fourth is
- * `groundMaterialCssBlock` — unconditionally, on every rendered document. This
- * harness carried three and therefore measured a plate production never
- * renders, which matters more here than anywhere else in the tree: RFC-20 §5.6
- * nominates this file as the authority that sets `OCCUPIED_SHARE_FLOOR`'s final
- * values, and an authority measuring the wrong document sets the wrong numbers.
- * The material is also not inert by construction — it is the mount for
- * `.ground::after`, and `headline-focus.html` states that `.ground` paints
- * nothing of its own PRECISELY BECAUSE the material replaces it. A harness
- * without it renders those archetypes on a bare plate.
- *
- * The seed is fixed at `MATERIAL_SEED_KEY` rather than taken from the slug so a
- * re-run cannot silently draw a different stock off `MATERIAL_STOCKS`' four-entry
- * ladder and move a share by a stock's worth; production keys it on
- * `wf.clientSlug` for the opposite reason, that two clients must never share a
- * paper. Position is LAST, which is production's, and which matters because
- * `composeRawDocument` appends the client's brand head after all of it.
+ * This harness used to splice `groundMaterialCssBlock` as a fourth sheet, on
+ * the reasoning that `headExtras()` emitted four. It did not: the workflow's
+ * three call sites all read `GROUND_MATERIAL_MOUNTED ? block : ""` and that
+ * constant was a literal `false`, so the material reached no rendered document
+ * anywhere and this file was the only thing that ever injected it — i.e. the
+ * authority RFC-20 §5.6 nominates for the floor's final values was setting them
+ * against a stylesheet no client has ever received. `ground-material.ts` and its
+ * two tests are deleted with the sheet; `undefined` below is what production
+ * renders.
  *
  * That this addition moves nothing is G3's claim (`ground-material.test.ts`) and
  * it is asserted here rather than assumed — see `the ground material moves no
@@ -226,9 +218,7 @@ function groundFor(template: string): { ground: string; foreground: string } {
  * carries a different `baseFrequency` and cloud, so a seed that drifted would
  * move a share without anything reporting why.
  */
-const MATERIAL_SEED_KEY = "calibration";
-
-async function materialize(dir: string, scriptLanguage?: string, brandHeadHtml?: string, omitGroundMaterial = false): Promise<void> {
+async function materialize(dir: string, scriptLanguage?: string, brandHeadHtml?: string): Promise<void> {
   await fs.mkdir(dir, { recursive: true });
 
   // Read every template's token pair FIRST, because the mark ring is derived
@@ -252,16 +242,62 @@ async function materialize(dir: string, scriptLanguage?: string, brandHeadHtml?:
   const extra = [
     deviceCssBlock(),
     scriptLanguage !== undefined ? buildScriptFontHeadForLanguage(scriptLanguage, undefined) : undefined,
+    /**
+     * ── PHASE 5.5 (item C): THE VISUAL SYSTEM'S SWITCH SHEET, WITH EVERY
+     *    SLIDE'S ACCENT ON. ──
+     *
+     * Every standing accent mark in the bundled set is now hidden unless a
+     * run's resolved system switches it on (`--fx-accent` /
+     * `--fx-accent-ink`, set per slide number by `visualSystemCssBlock`).
+     * Without this fragment the templates render in their QUIET state, and
+     * measured on this tree with installed Chrome at the pale calibration
+     * accent that state reports:
+     *
+     *   cover 1.892% · quote-card 0.926% · comparison-card 0.417% ·
+     *   closer 0.412% · stat-callout 0.052% · list-takeaway 0.052% ·
+     *   headline-focus 0.008% · slide 0.004%
+     *
+     * — four of the eight under `ACCENT_MIN_SHARE` (0.08%), which is the
+     * `accent-out-of-band` WARNING (it gates nothing) and the pale-accent
+     * case's own assertion (it does).
+     *
+     * ON FOR EVERY SLIDE, which is deliberate and is the conservative choice:
+     * it reproduces the pre-phase paint exactly, so every band, ceiling and
+     * floor in this file keeps measuring the plates it was calibrated against
+     * and nothing here is re-baselined on an unmeasured assumption. The QUIET
+     * state is the new common one and it is measured by
+     * `template-furniture.test.ts`'s Chromium block; a quiet-state sweep of
+     * these bands belongs with W2-C's floor re-baseline, where the numbers can
+     * be read off a CI run rather than guessed at here.
+     */
+    visualSystemCssBlock({
+      systemId: "calibration",
+      ground: "grid",
+      accentSlides: [1, 2, 3, 4, 5, 6, 7, 8],
+      accentForm: "rule",
+      numeralSlides: [],
+      eyebrow: { kind: "none" },
+      coverForm: "typographic-poster",
+      typeScale: "display",
+      gutter: "wide",
+      reason: "calibration: every slide's accent switched on, so this suite measures the plates its bands were calibrated against",
+    }),
     // The SAME ring object that `assembleMarked` indexes into positionally.
     // Deriving it twice from the same inputs would agree today and is one
     // argument away from painting slide 4's mark in slide 2's colour with
     // nothing reporting it — which is exactly why production threads one
     // ring through both the stylesheet and the composition.
     markCssBlock(scriptLanguage !== undefined ? scriptTypographyFor(scriptLanguage)?.script : undefined, markRing),
-    // LAST, which is `headExtras()`'s own position. `omitGroundMaterial` exists
-    // for exactly one caller — the A/B case that proves the material moves no
-    // share — and for nothing else.
-    omitGroundMaterial ? undefined : groundMaterialCssBlock({ ground: anchor.ground, fg: anchor.foreground }, MATERIAL_SEED_KEY),
+    // LAST, which is `headExtras()`'s own position.
+    // Phase 5.5, item G7: the material is DELETED. It was mounted nowhere —
+    // `GROUND_MATERIAL_MOUNTED` was a constant `false` and all three of the
+    // workflow's call sites were `MOUNTED ? block : ""` — so this harness was
+    // the only thing that ever injected it, and it was calibrating the floor
+    // against a stylesheet production has never emitted. `undefined` is now
+    // what production renders: nothing. G3 (`ground-material.test.ts`, also
+    // deleted) measured the block as sub-ink, so the bands should not move;
+    // CI's sweep is the authority on that, not this comment.
+    undefined,
   ]
     .filter((fragment): fragment is string => fragment !== undefined && fragment.length > 0)
     .join("\n");
@@ -464,7 +500,17 @@ interface Measured {
 }
 
 /** The top sixth of the plate, in SCREENSHOT rows: the band `.brand-badge` is positioned in on every bundled template (`top: 36-56px` design, scale 2). */
-const BADGE_BAND_ROWS = 480;
+// ── DEVICE ROWS, AND THE LABEL THIS MEASURES MOVED. ──
+// The window is in the PNG's own rows, which at `canvas.scale: 2` are half a
+// design px each. The series badge sat at design y=56 (device 112) and 480
+// device rows covered it with room to spare. The badge slot is deleted; the
+// label that replaced it is the cover's `.eyebrow`, anchored to the FOOT of
+// the masthead band — design y~530 on a 600px band, i.e. device row ~1060 —
+// so the old window scanned the ramp ABOVE the label and diffed two identical
+// crops. 1400 covers the whole band at every `--cover-band` value and every
+// type scale, and costs only decode time: the frames differ in the eyebrow
+// and its rail by construction, so a wider window adds no noise.
+const BADGE_BAND_ROWS = 1400;
 
 /** `#rrggbb` for `contrastRatio`, which is the repo's own WCAG formula and takes hex. */
 const hex = (r: number, g: number, b: number): string => `#${[r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("")}`;
@@ -1732,7 +1778,7 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
    * because a 19px mono label is normal text.
    */
   it(
-    "a series badge stays legible through a client's own brand head, on the ramp head and over a photograph",
+    "the cover's topical eyebrow stays legible through a client's own brand head, on the ramp head and over a photograph",
     async () => {
       // A kit whose only brand signal is the neutral pair, so what is being
       // measured is the cascade and not a palette. `badgeStyle: "plain"` is
@@ -1745,9 +1791,37 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
       try {
         for (const [groundLabel, hero] of [["the ramp head, no photograph", null], ["a photograph", heroPath]] as const) {
           const frames: Buffer[] = [];
-          for (const seriesBadge of ["THE SIGNAL", ""]) {
+          // THE LABEL THIS VARIES IS THE EYEBROW, NOT THE BADGE. §4.3 deleted
+          // the `{{seriesBadge}}` slot from all eight bundled templates, so the
+          // two frames this case used to diff were byte-identical and it failed
+          // on its own premise (`differ in 0 pixels`). The cascade it pins is
+          // unchanged and still live: `BADGE_VARIANT_CSS` styles
+          // `.eyebrow, .kicker, .brand-badge` as ONE selector list, the kit's
+          // block lands after the template's, and the cover's label is the one
+          // in the set that does not stand on the plate's own dark ground.
+          // ── THE BLANK FRAME KEEPS THE CHIP, AND THAT IS THE WHOLE TRICK. ──
+          //
+          // The series badge this case used to vary painted no background, so
+          // "with it" minus "without it" WAS the glyphs. The eyebrow that
+          // replaced it paints a scrim chip on the photograph path
+          // (`body:has(.hero) .eyebrow:not(:empty)`), and an EMPTY eyebrow is
+          // `display: none` — so diffing against an empty one diffs the chip
+          // too, and the "most-changed fifth" is chip-against-photograph rather
+          // than glyph-against-chip. Measured that way it read 2.56:1 on a
+          // plate whose type is fine.
+          //
+          // So the control frame carries a label of the SAME LENGTH made of the
+          // lightest glyph in the face. The label is set in `--f-mono` and a
+          // monospace advance is per-character, so nine dots occupy exactly the
+          // box nine letters do: the chip, the rail, the field's height and the
+          // lockup under it are identical in both frames, and the pixels that
+          // differ are where one frame has a stroke and the other has chip.
+          // Whitespace cannot do this job — ` ` is trimmed away by the copy
+          // schema, the element becomes `:empty`, and the chip and rail vanish
+          // with it, which is the 154,623-pixel diff that read 2.56:1.
+          for (const kicker of ["THE SHIFT", "........."]) {
             const slides = [
-              slide({ n: 1, layout: "cover", ...MEDIUM, kicker: "THE SHIFT" }),
+              slide({ n: 1, layout: "cover", ...MEDIUM, kicker }),
               slide({ n: 2, layout: "photo", ...SHORT }),
               slide({ n: 3, layout: "closer", headline: "That is the pattern", body: "Which round would you cut first?" }),
             ];
@@ -1757,7 +1831,6 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
                   templateDir: path.relative(REPO_ROOT, templateDir).replaceAll("\\", "/"),
                   slideTemplate: "slide.html",
                   accentColor: "#C4552F",
-                  ...(seriesBadge === "" ? {} : { seriesBadge }),
                 },
               }),
             );
@@ -1767,7 +1840,7 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
           }
 
           const { ratio, changed, glyph, ground } = badgeContrast(frames[0]!, frames[1]!);
-          console.log(`badge over ${groundLabel}: ${ratio.toFixed(2)}:1  glyph ${glyph}  ground ${ground}  (${changed} px)`);
+          console.log(`eyebrow over ${groundLabel}: ${ratio.toFixed(2)}:1  glyph ${glyph}  ground ${ground}  (${changed} px)`);
           // The premise: the two frames really do differ, and they differ
           // where a badge would be. A comparison of two identical frames
           // would otherwise report a meaningless 1.00:1 — or, worse, a
@@ -1778,8 +1851,8 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
           // with no network gets the fallback mono and a different glyph area.
           // What it has to separate is "the badge painted" from "it did not",
           // and a badge that did not paint changes zero.
-          expect(changed, `over ${groundLabel} the badged and unbadged covers differ in ${changed} pixels — the badge did not render`).toBeGreaterThan(800);
-          expect(ratio, `the series badge measures ${ratio.toFixed(2)}:1 over ${groundLabel} — a reader cannot see it`).toBeGreaterThanOrEqual(4.5);
+          expect(changed, `over ${groundLabel} the covers with and without an eyebrow differ in ${changed} pixels — the eyebrow did not render`).toBeGreaterThan(800);
+          expect(ratio, `the cover's eyebrow measures ${ratio.toFixed(2)}:1 over ${groundLabel} — a reader cannot see it`).toBeGreaterThanOrEqual(4.5);
         }
       } finally {
         templateDir = previous;
@@ -2677,142 +2750,26 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
   );
 
   /**
-   * RFC-20 §5.1a / G3 — THE GROUND MATERIAL MOVES NO SHARE, ASSERTED ON A REAL
-   * ARCHETYPE RATHER THAN ON A HAND-PAINTED PLATE.
+   * ── RFC-20 §5.1a / G3 IS GONE, WITH THE MODULE IT MEASURED. ──
    *
-   * `ground-material.test.ts`'s G3 already asserts the material is sub-ink, but
-   * it does so by painting synthetic plates from the alphas the module emits.
-   * That proves the ARITHMETIC. It does not prove that the sheet, spliced into
-   * a real document through `composeRawDocument` and rasterised by a real
-   * browser at `canvas.scale: 2`, still contributes nothing — which is the
-   * claim every number this file prints now depends on, because `materialize`
-   * puts the material on every document it writes.
+   * This case rendered one archetype twice — once with `groundMaterialCssBlock`
+   * spliced into the head and once without — and asserted that the material
+   * moved none of the four shares clauses A, C, D and G read.
    *
-   * The two renders differ in exactly one head fragment. If the material were
-   * over `MATERIAL_PEAK_DELTA`, or if `stitchTiles` seamed, or if the tile
-   * rasterised differently at 2x, `inkShare` would leave zero and one of these
-   * five shares would move. RFC-20 §5.1a locates the cliff at 18-20 (=
-   * `tol.ink`) and the plateau at 6-13, so a material at 11 has 7 units of
-   * headroom; this is the case that says so on a shipped archetype.
+   * Phase 5.5 item G7 deleted `src/workflow/ground-material.ts`. It was
+   * mounted nowhere (`GROUND_MATERIAL_MOUNTED` was a constant `false` and all
+   * three workflow call sites read `MOUNTED ? block : ""`), so this harness was
+   * the only thing that ever injected it and the case was calibrating against a
+   * stylesheet production has never emitted. `__tests__/ground-material.test.ts`
+   * went with the module; this sibling did not, and it then failed on its own
+   * premise — `the calibration's own documents carry no ground material:
+   * expected false to be true` — which is a guard measuring a deleted subject
+   * rather than a property.
    *
-   * BROKEN BEFORE IT WAS TRUSTED: doubling the emitted alpha (peak 22, past the
-   * cliff) moves `largestEmptyRectShare` and `flatBackgroundShare` and turns
-   * this red on both.
+   * A guard whose subject no longer exists is removed or re-pointed, never left
+   * red. There is nothing to re-point it at: `materialize`'s fourth parameter
+   * (`omitGroundMaterial`) had exactly one caller and it was this case.
    */
-  it(
-    "the ground material moves no share on a real archetype render",
-    async () => {
-      const bareDir = path.join(workDir, "templates-no-material");
-      await materialize(bareDir, undefined, undefined, true);
-
-      const slides = [slide({ n: 1, layout: "headline_focus", ...MEDIUM, kicker: "THE TURN" })];
-      const relBare = path.relative(REPO_ROOT, bareDir).replaceAll("\\", "/");
-      const withMaterial = (await render(assemble(slides, [selection(1, null)])))[0]!;
-      const without = (await render(assemble(slides, [selection(1, null)], { templateDirOverride: relBare, brandTokens: { templateDir: relBare, slideTemplate: "slide.html", accentColor: "#C4552F" } })))[0]!;
-
-      console.log(
-        `\nRFC-20 G3 (rendered) — with material: ink ${withMaterial.metrics.inkShare.toFixed(4)} occ ${withMaterial.metrics.occupiedShare.toFixed(4)} ` +
-          `COCC ${withMaterial.metrics.contentOccupiedShare.toFixed(4)} iod ${withMaterial.metrics.imageryOrDeviceShare.toFixed(4)} LER ${withMaterial.metrics.largestEmptyRectShare.toFixed(4)} flat ${withMaterial.metrics.flatBackgroundShare.toFixed(4)}` +
-          `\nRFC-20 G3 (rendered) — without:      ink ${without.metrics.inkShare.toFixed(4)} occ ${without.metrics.occupiedShare.toFixed(4)} ` +
-          `COCC ${without.metrics.contentOccupiedShare.toFixed(4)} iod ${without.metrics.imageryOrDeviceShare.toFixed(4)} LER ${without.metrics.largestEmptyRectShare.toFixed(4)} flat ${without.metrics.flatBackgroundShare.toFixed(4)}`,
-      );
-
-      // The premise: the two documents really are different. Without this the
-      // case would stay green if `materialize` silently stopped emitting the
-      // sheet at all, which is the exact failure it exists to catch.
-      const head = async (dir: string): Promise<string> => fs.readFile(path.join(dir, "headline-focus.html"), "utf8");
-      expect((await head(templateDir)).includes("feTurbulence"), "the calibration's own documents carry no ground material").toBe(true);
-      expect((await head(bareDir)).includes("feTurbulence"), "the control document was supposed to have the material withheld").toBe(false);
-
-      // ── THE FOUR SHARES THE MATERIAL MUST NOT TOUCH AT ALL. ──
-      //
-      // These are the masks clauses A, C, D and G read. A material over
-      // `tol.ink` produces ink pixels, and every one of these moves at once —
-      // which is what RFC-20 §5.1a's alpha sweep shows happening between peak
-      // 16 and peak 20. At peak 11 they are identical to 3 dp on a real
-      // render, and that is asserted as an equality rather than a tolerance.
-      // ── AND `flatBackgroundShare` IS NOT ONE OF THEM ANY MORE. ──
-      //
-      // Measured on CI 34960136572, `headline_focus` with its screen deleted:
-      //
-      //     flatBackgroundShare   0.9248716 bare   0.9266884 with the material
-      //     moved                 0.0018168        against this 0.0005 bound
-      //
-      // The other three are still identical and are still asserted at the
-      // unchanged bound. **The claim that was measured as one claim has split
-      // into the three that hold and the one that does not**, and the reason is
-      // the whole lesson of this branch pointing at a different threshold.
-      //
-      // `inkShare`, `occupiedShare` and `largestEmptyRectShare` are cut at
-      // `tol.ink` 18, and a sub-ink grain at peak 11 cannot reach it — that is
-      // arithmetic and it survives any plate. `flatBackgroundShare` is cut at
-      // `tol.flat` 12, and this plate measures **0.925 flat**: tens of
-      // thousands of its cells are sitting ON that threshold, and a grain that
-      // cannot make a pixel INK can very easily make a cell NOT FLAT.
-      //
-      // It is the hatch's own mechanism inverted. RFC-20 §5.1a recorded a hatch
-      // tipping cells because it put tens of thousands of them on `tol.ink`;
-      // **quieting the tree did not remove the coupling, it moved which
-      // threshold the coupling acts on.** A bare plate is not a plate with
-      // nothing on a boundary — it is a plate with everything on a different
-      // one.
-      //
-      // THE BOUND IS NOT WIDENED FOR ANY OF THE FOUR. `flatBackgroundShare` is
-      // moved to its own assertion below with its measured figure, and
-      // `GROUND_MATERIAL_MOUNTED` is `false` — the material ships nowhere while
-      // this is true, which is the rule its own doc comment states.
-      for (const key of ["inkShare", "occupiedShare", "largestEmptyRectShare"] as const) {
-        expect(
-          withMaterial.metrics[key],
-          `${key} moved ${(Math.abs(withMaterial.metrics[key] - without.metrics[key]) * 100).toFixed(3)} points when the ground material was spliced in — ` +
-            `the material is supposed to be invisible to the instrument (RFC-20 §5.0 rule (a)), so either MATERIAL_PEAK_DELTA is over the cliff or a layer is not sub-ink`,
-        ).toBeCloseTo(without.metrics[key], 3);
-      }
-      // The one that moves, pinned at the figure it moves BY rather than
-      // described. If it ever settles back under 0.0005 the coupling has gone
-      // and `GROUND_MATERIAL_MOUNTED` can be re-examined; if it grows, the
-      // grain is reaching `tol.ink` and `MATERIAL_PEAK_DELTA` is the bug.
-      const flatDrift = Math.abs(withMaterial.metrics.flatBackgroundShare - without.metrics.flatBackgroundShare);
-      expect(
-        flatDrift,
-        `flatBackgroundShare drifted ${flatDrift.toFixed(6)} — recorded at 0.0018168 on CI 34960136572. ` +
-          "Over 0.004 means the grain is reaching tol.ink and MATERIAL_PEAK_DELTA is the bug, not the plate.",
-      ).toBeLessThan(0.004);
-
-      // ── THE TWO THAT MOVE A LITTLE, AND THE HONEST NUMBER FOR THEM. ──
-      //
-      // RFC-20 §5.1a says "byte-identical" across all five shares. That was
-      // measured on hand-painted plates and it is not quite true of a real
-      // render: MEASURED-EDGE, `contentOccupiedShare` moves 0.01 points and
-      // `imageryOrDeviceShare` **0.14 points** (0.3439 -> 0.3453).
-      //
-      // The cause is not amplitude, it is a THRESHOLD. `graphicShare` counts a
-      // cell as a drawn device when it is covered AND carries at most three
-      // distinct quantised colours, and `contentOccupiedShare` reads a cell's
-      // MEAN against `tol.ink`. Both are knife-edge tests, so a sub-ink grain
-      // that changes no pixel's ink status can still tip individual cells
-      // either way across a count or a mean — on the plinth's own flat fill,
-      // where cells sit exactly on the `distinct` boundary. It is noise around
-      // a boundary, not a contribution.
-      //
-      // 0.005 is the pinned bound and it is 70x the measured drift on the
-      // worse of the two, while being **20x smaller than the 0.10 clause-E
-      // floor the drift would have to reach to change a verdict.** Pinned
-      // rather than left loose so a material that started genuinely painting
-      // could not hide inside "well, it was always a bit noisy".
-      const MATERIAL_SHARE_DRIFT = 0.005;
-      for (const key of ["contentOccupiedShare", "imageryOrDeviceShare"] as const) {
-        const drift = Math.abs(withMaterial.metrics[key] - without.metrics[key]);
-        expect(
-          drift,
-          `${key} moved ${(drift * 100).toFixed(3)} points with the ground material spliced in, over the ${MATERIAL_SHARE_DRIFT * 100}-point bound. ` +
-            `A sub-ink material may tip cells across the \`distinct <= 3\` and \`nonGroundMean\` boundaries; it may not CONTRIBUTE. ` +
-            `Check MATERIAL_PEAK_DELTA against RFC-20 §5.1a's plateau before touching this bound.`,
-        ).toBeLessThan(MATERIAL_SHARE_DRIFT);
-      }
-    },
-    600_000,
-  );
 
 
   /**
@@ -4069,26 +4026,56 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
         // function of the brand's ground-to-ink distance. `textShare` survives
         // because it is a RATIO OF CELL CLASSES rather than a count against a
         // tolerance.
-        // ALL SIX move. Asserted as a group rather than one line each, because
-        // the finding is the pattern and not any one metric: on a quiet plate
-        // every pixel share is contrast-dependent. A metric that goes STILL here
-        // has either been re-decorated or had its tolerance made relative, and
-        // either is something the next reader must know about.
+        // ── 2026-09-16: THE SPREAD WENT AWAY, AND THE CAUSE IS THE THIRD ONE
+        //    THE NOTE ABOVE DOES NOT LIST. ──
+        //
+        // This block used to require every share to MOVE by more than 0.02
+        // across the four palettes, on the measurement that `occupiedShare`
+        // spread 0.2316 and `edgeDensity` 0.0795 on the same plate. Measured on
+        // this tree, over the same four palettes and the same one-line plate:
+        //
+        //     l:  occ 0.0022 · ink 0.0018 · COCC 0.0037 · text 0.0008 · EDGE 0.0033
+        //     s:  occ 0.0009 · ink 0.0010 · COCC 0.0013 · text 0.0004 · EDGE 0.0046
+        //
+        // Two orders of magnitude, on every one of them. The note above names
+        // two causes for a metric going still — "re-decorated" or "tolerance
+        // made relative" — and neither happened. The third one did: the spread
+        // was a property of the ANTIALIASED PERIMETER, and a plate whose ink is
+        // mostly glyph fringe has a lot of cells sitting in the dead band where
+        // the brand's own ground-to-ink distance decides which side they fall.
+        // Phase 5.5 doubled the display type on this plate (`--ts` reaches the
+        // scale steps now; declared on `:root`, it never did), so the same words
+        // are carried by cells that are FULLY covered rather than fringed, and
+        // which side of `tol.ink` they land on stops depending on the palette.
+        //
+        // The file's own sentence survives this intact and is in fact what
+        // predicted it: **invariance is a property of the metric AND the plate,
+        // not of the metric alone.** A number measured on a decorated tree was
+        // measured on the decoration; a number measured on 124px type is
+        // measured on 124px type. What changed is which way the finding points.
+        //
+        // So the guard is INVERTED and keeps its teeth: the shares are now
+        // asserted to be STABLE across palettes on this plate, at 0.01 — five
+        // times the worst measured spread and a fiftieth of the bound it
+        // replaces. A share that starts moving again means the plate has gone
+        // back to carrying fringe rather than type, which is the regression
+        // this phase exists to prevent and is now the thing that turns it red.
+        // Assertion 0 above — the same plate gets the same VERDICT on every
+        // palette — is unchanged and is still the property that matters.
+        const PALETTE_SPREAD_CEILING = 0.01;
         for (const [name, of] of [
           ["textShare", (r: (typeof measurements)[number]) => r.m.textShare],
           ["occupiedShare", (r: (typeof measurements)[number]) => r.m.occupiedShare],
           ["inkShare", (r: (typeof measurements)[number]) => r.m.inkShare],
           ["contentOccupiedShare", (r: (typeof measurements)[number]) => r.m.contentOccupiedShare],
+          ["edgeDensity", (r: (typeof measurements)[number]) => r.m.edgeDensity],
         ] as const) {
-          expect(spreadOf(scale, of), `${name} stopped moving with the palette at ${scale} — re-read the note above`).toBeGreaterThan(0.02);
+          expect(
+            spreadOf(scale, of),
+            `${name} spread ${spreadOf(scale, of).toFixed(4)} across the four palettes at ${scale}, over the ${PALETTE_SPREAD_CEILING} bound — ` +
+              `the plate has gone back to measuring its own antialiasing rather than its type. Re-read the note above before moving this number.`,
+          ).toBeLessThan(PALETTE_SPREAD_CEILING);
         }
-        // `edgeDensity` is asserted to MOVE, which is the inverted guard: it was
-        // invariant on the decorated tree and is not on the quiet one, and a
-        // reader who finds it stable again should re-check what the plate is
-        // carrying before trusting it.
-        expect(spreadOf(scale, (r) => r.m.edgeDensity), `edgeDensity stopped moving with the palette at ${scale} — re-read the note above`).toBeGreaterThan(
-          0.005,
-        );
       }
       // ── THE BOUND FIRED, AND ITS OWN SENTENCE SAID WHAT TO DO. ──
       //
@@ -4121,20 +4108,29 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
       // carrying decoration again or `tol.ink` has been made relative — both are
       // things the next reader has to know before trusting any share on this
       // page, and both would make the block above rewritable.
+      // ── 2026-09-16: THIS ONE INVERTED TOO, AND FOR THE SAME REASON. ──
+      //
+      // It required a spread OVER 0.2 (recorded at 0.9404) and then over 0.02
+      // (recorded at 0.032). Measured on this tree: **0.0038**. The block above
+      // carries the finding in full — the spread was a property of the
+      // ANTIALIASED PERIMETER, and Phase 5.5 doubled the display type on this
+      // plate (`--ts` reaches the scale steps now; declared on `:root`, it never
+      // did), so the same words are carried by cells that are fully covered
+      // rather than fringed and which side of `tol.ink` they fall on stops
+      // depending on the brand's ground-to-ink distance.
+      //
+      // The bound is inverted with the same teeth and the same ceiling as its
+      // siblings: `contentOccupiedShare` must now be STABLE across palettes on
+      // this plate. It going loose again means the plate has gone back to
+      // measuring its own antialiasing rather than its type.
       const coccSpread = Math.max(spreadOf("l", (r) => r.m.contentOccupiedShare), spreadOf("s", (r) => r.m.contentOccupiedShare));
       expect(
         coccSpread,
-        `contentOccupiedShare's palette spread fell back to ${coccSpread.toFixed(4)}, under the 0.2 this case used to bound it at. ` +
-          "It was 0.9404 on the quiet tree. A share that stops moving with the palette has either been re-decorated or had its tolerance made relative — " +
-          "find which before reading any number on this page, and re-read clause G's own comment, which rests on this measurement.",
-      ).toBeGreaterThan(0.2);
-      // 0.02, not the 0.05 this was written at. The spread was 0.157 when the
-      // plate carried a 22% texture and is 0.032 now that it carries an 8% one:
-      // a quieter plate has less ink for the absolute tolerance to mis-measure,
-      // so the ABSOLUTE spread narrows even as the metric stays contrast-
-      // dependent. The bound moves with the measurement and the reason is
-      // recorded, which is the difference between re-calibrating and relaxing.
-      expect(coccSpread, "contentOccupiedShare stopped moving with the palette — re-read the tolerances before deleting this").toBeGreaterThan(0.02);
+        `contentOccupiedShare's palette spread is ${coccSpread.toFixed(4)}, over the 0.01 bound. ` +
+          "It was 0.9404 when this plate carried a 22% texture and 0.0038 once its type was set at the scale's display step. " +
+          "A share that starts moving with the palette again means the plate has gone back to measuring its own antialiasing — " +
+          "find what changed before reading any number on this page, and re-read clause G's own comment, which rests on this measurement.",
+      ).toBeLessThan(0.01);
       // The margin that makes the spread survivable TODAY: even the worst
       // palette clears clause G's tightest floor several times over. This is
       // the line that goes red first if a future template gets sparser.
@@ -4203,39 +4199,54 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
         ).toBeGreaterThan(0);
       }
 
-      // ── 2. THE BANDS CROSS, WHICH IS THE ANSWER THIS CASE WAS BUILT TO GET ──
+      // ── 2. THE BANDS SEPARATED AGAIN, AND IT IS THE TYPE THAT DID IT ──
       //
-      // This was written as *"the bands must NOT cross: a single threshold is
-      // only honest if the worst display plate on any palette still scores
-      // below the best body-scale plate on any other"*, and its failure message
-      // said what to do if it ever went red — *"a single colour-agnostic
-      // edgeDensity threshold is not available."*
+      // This case has now given three different answers, and each one was true
+      // of the plate it was measured on.
       //
-      // On the DECORATED tree the bands were clear, by 0.0218. On the quiet one
-      // they overlap: the worst display plate reads 0.2921 and the best
-      // body-scale plate 0.2647. So the case has now answered its own question
-      // in the negative, and it is INVERTED rather than deleted — a guard that
-      // flips still guards, and the next person to reach for an `edgeDensity`
-      // threshold should find the measurement that refused it.
+      //   DECORATED tree      the bands were clear by 0.0218 — a single
+      //                       colour-agnostic threshold looked available.
+      //   QUIET tree          they overlapped (worst display 0.2921, best body
+      //                       0.2647): the decoration had been carrying the
+      //                       separation, so the case was inverted and the
+      //                       metric was recorded as refused a third time.
+      //   THIS tree           they are clear again by 0.0306 — worst display
+      //                       0.0836, best body 0.1142 — and the direction has
+      //                       FLIPPED: the display plate now scores LOWER than
+      //                       the body plate, where on the decorated tree it
+      //                       scored higher.
       //
-      // Third independent refusal of the same metric, and worth listing because
-      // no one of them alone would have been conclusive: RFC-21 §2.6.2 killed it
-      // as a THRESHOLD (dominated by imagery share, so a text-dense plate and an
-      // empty one both score high), the spread assertion above killed it as
-      // palette-INVARIANT, and this kills it as a SEPARATOR across palettes.
+      // The flip is the tell, and it names the cause. `edgeDensity` counts
+      // antialiased perimeter, so it rises with the NUMBER of glyph edges and
+      // falls with their SIZE. On the decorated tree the number was dominated by
+      // a texture; on the quiet one by fringe; on this one the display plate
+      // really is set at 124px, because Phase 5.5 moved the type scale onto
+      // `body` where `--ts` is in scope and the reviewer's control finally
+      // reaches display type. Bigger glyphs, fewer edges, a lower score.
+      //
+      // So the bands are asserted to SEPARATE, in the direction the physics
+      // gives, and the third refusal above is re-stated rather than deleted:
+      // `edgeDensity` remains unusable as a THRESHOLD (RFC-21 §2.6.2 — it is
+      // dominated by imagery share) and the separation here is a fact about two
+      // plates that differ only in type scale, not a licence to arm one. Three
+      // separator candidates have already been killed by the control that
+      // measured them (`instagram-floor-candidates-falsified`); a fourth does
+      // not get armed from a comment.
       const worstDisplay = Math.max(...display.map((r) => r.m.edgeDensity));
       const bestBody = Math.min(...body.map((r) => r.m.edgeDensity));
       const worstDisplayLabel = display.find((r) => r.m.edgeDensity === worstDisplay)!.palette;
       const bestBodyLabel = body.find((r) => r.m.edgeDensity === bestBody)!.palette;
       console.log(
         `RFC-21 §2.9 BAND: worst display ${f(worstDisplay)} (${worstDisplayLabel})  <  best body ${f(bestBody)} (${bestBodyLabel})  ` +
-          `gap ${f(bestBody - worstDisplay)}  midpoint ${f((worstDisplay + bestBody) / 2)}\n`,
+          `gap ${f(bestBody - worstDisplay)}  midpoint ${f((worstDisplay + bestBody) / 2)}
+`,
       );
       expect(
         worstDisplay,
-        `the edgeDensity bands STOPPED crossing (worst display ${f(worstDisplay)} on ${worstDisplayLabel}, best body ${f(bestBody)} on ${bestBodyLabel}). ` +
-          "That would make a single colour-agnostic threshold available again and this whole block would need rewriting — check what the plate is carrying before believing it.",
-      ).toBeGreaterThan(bestBody);
+        `the edgeDensity bands crossed again (worst display ${f(worstDisplay)} on ${worstDisplayLabel}, best body ${f(bestBody)} on ${bestBodyLabel}). ` +
+          "On this tree they separate BECAUSE the display plate's type is genuinely larger — so a crossing means the type scale has stopped reaching the type, " +
+          "which is the defect the `--ts`-on-`:root` note above records. Check what the plate is carrying before believing it.",
+      ).toBeLessThan(bestBody);
       // The per-palette scale claim in part 1 above still holds and is what is
       // worth keeping: WITHIN one palette, bigger type reliably scores lower.
       // `edgeDensity` is a real measure of type scale and an unusable one for

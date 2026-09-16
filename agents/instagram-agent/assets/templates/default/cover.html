@@ -128,7 +128,6 @@
     --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
     --f-body: 'Inter', system-ui, -apple-system, sans-serif;
     --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
-    --mx: 64px;
     --ts: 1;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -140,6 +139,41 @@
      font-size on an older checkpointed slides-data re-rendered post-deploy. */
   body.ts-s { --ts: 0.85; }
   body.ts-l { --ts: 1.18; }
+  /* ── PHASE 5.5: THE ONE TYPE SCALE (`visual-system.ts`, `TYPE_SCALE_PX`). ──
+     Six steps for the whole archetype set, against the 45 distinct `font-size`
+     values the eight bundled templates declared between them. A plate picks a
+     step by ROLE rather than by which file the writer's layout landed on.
+     `visualSystemCssBlock` overrides these per run with the resolved system's
+     type flavour; these are the self-contained defaults a brandless render
+     uses.
+
+     ── ON `body`, NOT ON `:root`, AND THAT IS NOT A STYLE CHOICE. ──
+     A custom property's `var()` references are substituted AT THE ELEMENT THAT
+     DECLARES IT. `--ts` is `1` on `:root` and is overridden on `body.ts-s` /
+     `body.ts-l`, so a `--t-*` declared on `:root` resolves `var(--ts, 1)`
+     against the ROOT's value — always 1 — and then inherits down already
+     substituted. Declared there, the reviewer's whole type-scale control
+     silently stopped reaching every size that reads a step: measured, this
+     plate rendered its 300px figure at 300px at `ts-s`, where the literal it
+     replaced rendered 255px, and the calibration's own s-vs-l control pair
+     reported the two plates painting identical ink (0.4175 both). Declared
+     HERE the substitution happens on `body`, where `body.ts-s` is in force. */
+  body {
+    /* ── PHASE 5.5: THE PAGE MARGIN IS THE VISUAL SYSTEM'S `gutter` AXIS. ──
+       `--gutter` is emitted per run by `visualSystemCssBlock` (`wide` 64px,
+       `tight` 48px) and was read by nothing: every template hard-coded its own
+       margin, so two catalog entries that differ ONLY in gutter rendered the
+       same plate and the twelve-entry catalog was a variety claim a reader
+       could not see. The literal stays as the fallback, so a document composed
+       without the run sheet is byte-identical. */
+    --mx: var(--gutter, 64px);
+    --t-micro: calc(22px * var(--ts, 1));
+    --t-label: calc(32px * var(--ts, 1));
+    --t-lead: calc(46px * var(--ts, 1));
+    --t-statement: calc(84px * var(--ts, 1));
+    --t-display: calc(124px * var(--ts, 1));
+    --t-figure: calc(220px * var(--ts, 1));
+  }
   body.ta-center { text-align: center; }
   body.ta-end { text-align: end; }
   html, body { width: 1080px; height: 1440px; }
@@ -175,8 +209,8 @@
     position: absolute; inset: 0; z-index: 0;
     background-image: linear-gradient(178deg,
       color-mix(in srgb, var(--wash) 2%, transparent) 0%,
-      color-mix(in srgb, var(--wash) 8%, transparent) 26%,
-      color-mix(in srgb, var(--wash) 8%, transparent) 100%);
+      color-mix(in srgb, var(--wash) var(--ground-texture-alpha, 8%), transparent) 26%,
+      color-mix(in srgb, var(--wash) var(--ground-texture-alpha, 8%), transparent) 100%);
   }
   /* Layer 1: the photograph. `onerror="this.remove()"` rather than
      `display:none` (slide.html's older approach) because a removed node
@@ -492,14 +526,28 @@
        both scripts (worst row `he long s` 0.1157), accent share 0.042
        against a 0.45 ceiling, and the largest empty rectangle is unchanged
        to the cell. */
+    /* ── PHASE 5.5: THE MASTHEAD ENDS ON AN EDGE INSTEAD OF DISSOLVING. ──
+       The five-stop fade ran to `transparent` at 480px, and everything past
+       ~260px measured as GROUND (`slide-metrics.ts` calls a cell occupied when
+       its mean is more than 18 units from the ground token, and at 92 units of
+       accent-to-ground separation that is an alpha of ~0.20). So the band's
+       own lower 220px joined the hole under it and the two measured as ONE
+       rectangle — which is most of the 0.2833 the cover was refused for.
+
+       The block is now 300px and its last stop is 26% rather than nothing, so
+       the masthead has a defined foot and every cell inside it is occupied.
+       It is SHORTER than the old fade, not longer: this is a bounded object
+       with an edge, not the half-plate accent field RFC-20 P2 deleted (that
+       one measured 45.7% accent on a pale kit, over `ACCENT_MAX_SHARE`). At
+       26% of a 92-unit separation it is 24 units off the ground — visible
+       tone, nowhere near the accent's own bin. */
     background-image:
       linear-gradient(to bottom,
-        color-mix(in srgb, var(--accent) 95%, transparent) 0px,
-        color-mix(in srgb, var(--accent) 42%, transparent) 190px,
-        color-mix(in srgb, var(--wash) 8%, transparent) 290px,
-        color-mix(in srgb, var(--accent) 4%, transparent) 395px,
-        transparent 480px);
-    background-size: 100% 480px;
+        color-mix(in srgb, var(--accent) 95%, transparent) 0%,
+        color-mix(in srgb, var(--accent) 42%, transparent) 63%,
+        color-mix(in srgb, var(--accent) 30%, transparent) 87%,
+        color-mix(in srgb, var(--accent) 26%, transparent) 100%);
+    background-size: 100% 100%;
     background-repeat: no-repeat;
     background-position: 0 0;
   }
@@ -670,8 +718,56 @@
     position: relative; z-index: 4; flex: 0 0 auto;
     padding-inline: var(--mx); padding-block: calc(52px * var(--ts, 1)) 104px;
   }
+  /* ── PHASE 5.5: A TYPOGRAPHIC COVER IS A POSTER, NOT A MASTHEAD WITH A
+        CAPTION UNDER IT. ──
+     `.cov-field` was the elastic item and `.lockup` was rigid, so every pixel
+     of slack on a no-photograph cover collected in ONE band between the ramp's
+     faded tail and the title — the owner's *"השקף הראשון יחסית ריק ומשעמם"*,
+     and measured on this tree as `largestEmptyRect` 1080x408 at (0,384),
+     share 0.2833 against the cover's 0.22 ceiling.
+
+     The two roles swap. The field keeps the ramp — it is the masthead and it
+     is what carries the plate over `IMAGERY_OR_DEVICE_FLOOR`, whose share
+     comes from the ramp's own top half (see the five stops above), so a
+     300px floor keeps every cell that clause reads and drops only the tail
+     that measured as ground anyway. The lockup becomes elastic and centres
+     its own content, so the remaining slack is halved before the ladder below
+     shrinks it again.
+
+     PHOTOGRAPH PATH UNTOUCHED. With a hero the composition is the picture and
+     the title has to stay inside the bottom scrim, so both rules are scoped
+     off `body:has(.hero)` and a photographic cover renders byte-identically. */
+  /* The masthead is SIZED, and it yields before the title does. 560px is 39%
+     of the plate: enough that the block reads as the poster's own field rather
+     than as a strip, and enough that the slack left for the lockup halves to
+     bands the dead-space clause clears with margin at every copy length. It
+     shrinks — `flex: 0 1 auto` with a 300px floor — so a long title takes the
+     room back from the masthead instead of running off the plate; 220 is the
+     length at which the gradient still reads as a band, and it is reached only
+     by the longest title at the reviewer's largest type scale. */
+  body:not(:has(.hero)) .cov-field { flex: 0 1 auto; block-size: var(--cover-band, 600px); min-block-size: 220px; }
+  body:not(:has(.hero)) .lockup {
+    /* `1 0 auto`: the lockup GROWS into the slack and never shrinks below its
+       own content. `1 1 auto` with `min-block-size: 0` let the flex algorithm
+       shrink it under a long title, and a centred child of a box smaller than
+       itself escapes at BOTH ends — `probe.overflow` on `div#title.headline`,
+       which is the same shape the closer's middle was in before RFC-21. The
+       masthead above is the item that yields, which is the right order: a
+       band can be shorter, a title cannot be cut. */
+    flex: 1 0 auto;
+    display: flex; flex-direction: column; justify-content: center;
+  }
   .eyebrow {
-    font-family: var(--f-mono); font-weight: 600; font-size: calc(24px * var(--ts, 1));
+    /* ── THE LABEL'S BOX IS ITS LABEL. ──
+       A block-level eyebrow spans the whole measure whatever it says, so its
+       BOX reaches the opposite corner of the plate even when its ink stops
+       after two words. `renderCarousel`'s reserved-zone probe reads boxes, so
+       a full-width label was reported as entering the brand mark's corner from
+       the other side of the frame — a finding about nothing, on the instrument
+       §7 F2 exists to make trustworthy. `fit-content` makes the two agree.
+       `stat-callout.html` has always been `inline-block` for the same reason. */
+    inline-size: fit-content; max-inline-size: 100%;
+    font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro);
     letter-spacing: 0.24em; text-transform: uppercase;
     color: color-mix(in srgb, var(--fg) 92%, transparent);
     margin-block-start: calc(36px * var(--ts, 1));
@@ -681,6 +777,16 @@
      what gives the field a drawn bottom edge instead of a raw cut — the job
      the previous revision's 40px accent-ink shelf did, at a hundredth of the
      coverage and with no accent budget spent on it. */
+  /* ── AND THIS ONE IS **NOT** UNDER THE ACCENT SWITCH, WHICH IS THE COVER'S
+        ROLE SPEAKING. ──
+     The other six hairlines in the set are (§4.3): they are standing furniture
+     and the run's system decides which three slides may carry a mark. The cover
+     has no furniture at all (§4.5) — no badge, no index, no source credit — so
+     there is nothing here for a switch to turn ON. Its rail is the eyebrow's
+     underline and the guard below is the whole rule: no eyebrow, no rail, and
+     on a §4.5-compliant cover there is no eyebrow. Switching it as well would
+     give the one plate that owns no furniture a piece of switchable furniture,
+     which `template-furniture.test.ts`'s Chromium block refuses by name. */
   .cov-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 46%, transparent); margin-block-start: calc(22px * var(--ts, 1)); }
   /* ── THE FURNITURE ANSWERS TO THE GROUND RULE TOO (RFC-20 P2). ──
      `.cov-rail` is a full-measure 2px rule at 46% of the foreground — 99
@@ -707,34 +813,89 @@
      picks up that script's own leading instead of Latin leading on a
      script whose ascenders and nikud need more room. */
   .headline {
-    font-family: var(--f-display); font-weight: 600; font-size: calc(104px * var(--ts, 1));
+    font-family: var(--f-display); font-weight: 600; font-size: calc(var(--t-display) * 0.8387);
     line-height: 1.07; letter-spacing: -0.02em; text-wrap: balance;
     /* Not cosmetic: a display face's glyph box is taller than a sub-1.15 line
        box, so the block reports `scrollHeight > clientHeight` and the DOM
        probe calls it an overflowing element — which fails clause B of the
        interest floor on a slide that fits perfectly. In `em`, so it tracks
        every size step and every per-script type scale. */
-    padding-block-end: 0.22em;
+    padding-block-end: max(0.22em, var(--mk-face-bleed, 0em));
   }
   /* The ladder now steps UP as well as down. `huge` is the step a short title
      was missing: with the field capped at 520px the lockup has 920px to fill,
      and a 24-character title at 104px used two lines of it. */
-  .headline.huge { font-size: calc(132px * var(--ts, 1)); line-height: 1.04; }
+  /* ── PHASE 5.5: THE LADDER SETS THE TITLE TO FILL. ──
+     Every rung moves up on the NO-PHOTOGRAPH path, where the title is the
+     plate's only subject and §4.5 says it must be the largest thing on it. A
+     24-character title used to be set at 132px and take two lines of a
+     1064px column; at 205px it takes three and the plate reads as a poster.
+     The steps are scale steps, so the run's `typeScale` flavour moves them.
+     Over a photograph the title stays where it was — the scrim it has to sit
+     inside did not grow — which is what the `body:has(.hero)` rungs below
+     have always been for. */
+  .headline.huge { font-size: calc(var(--t-display) * 1.5); line-height: 1.02; }
+  body:not(:has(.hero)) .headline { font-size: calc(var(--t-display) * 1.2); line-height: 1.04; }
+  body:not(:has(.hero)) .headline.small { font-size: calc(var(--t-display) * 0.95); line-height: 1.08; }
+  body:not(:has(.hero)) .headline.tiny { font-size: calc(var(--t-statement) * 1.05); line-height: 1.12; }
+  /* A FOURTH RUNG, and the case that needs it is the worst one the set can
+     produce: the longest title over the longest sub-line at the reviewer's
+     largest scale. Measured, that lockup ran 71px past the frame with the
+     masthead already collapsed to its 220px floor — `probe.overflow` on `html,
+     body`, which clause B refuses as `clipped`. It could not happen before
+     this phase because the scale steps were declared on `:root` and `--ts`
+     never reached the display type at all. */
+  body:not(:has(.hero)) .headline.micro { font-size: calc(var(--t-statement) * 0.88); line-height: 1.16; }
   /* Over a photograph the title stays at the base size: it has to fit inside
      the bottom scrim, which does not grow with it. */
-  body:has(.hero) .headline.huge { font-size: calc(104px * var(--ts, 1)); line-height: 1.07; }
-  .headline.small { font-size: calc(84px * var(--ts, 1)); line-height: 1.1; }
-  .headline.tiny { font-size: calc(66px * var(--ts, 1)); line-height: 1.14; }
+  body:has(.hero) .headline.huge { font-size: calc(var(--t-display) * 0.8387); line-height: 1.07; }
+  .headline.small { font-size: calc(var(--t-statement) * 1); line-height: 1.1; }
+  .headline.tiny { font-size: calc(var(--t-statement) * 0.7857); line-height: 1.14; }
 
-  /* One accent mark under the title, sized to the plate rather than to the
-     legacy 132x12 detail. Guarded on the title for the reason the `.cov-rail`
-     block above states: it is punctuation after a statement, and with no
-     statement it is only ink on an empty plate. */
-  .stat-band { inline-size: calc(200px * var(--ts, 1)); block-size: calc(14px * var(--ts, 1)); background: var(--accent); margin-block-start: calc(28px * var(--ts, 1)); }
+  /* ── PHASE 5.5: THE COVER'S ACCENT BAR IS GONE FROM THE MARKUP. ──
+
+     The rule was "one accent mark under the title", guarded on the title. The
+     cover's role changed: §4.5 of the phase spec gives the cover NO furniture
+     at all — no badge, no eyebrow, no rule, no index — because its only job is
+     to make someone stop and swipe, and every mark on it is a thing competing
+     with the one subject. The owner on the 2026-09-16 covers: *"השקף הראשון
+     יחסית ריק ומשעמם"* — a gradient with a title in the lower third and a
+     decorative bar under it is not a cover, and the bar was the least of what
+     was missing.
+
+     Deleted from the MARKUP rather than switched off with `--fx-accent`, which
+     is the treatment every other plate's bar gets: the cover is the one plate
+     where the answer is "never", not "only when the system says so". The rules
+     are kept so a CLIENT template that still carries a `.stat-band` div keeps
+     its guard. */
+  /* ── PHASE 5.5, ITEM C: THE ACCENT MARK IS ONE GEOMETRY, NOT SIX. ──
+     The run's `accentForm` decides the mark's shape ONCE and publishes it as
+     `--fx-accent-w` / `--fx-accent-h`. Before this the length was a property of
+     whichever template the writer's layout landed on — 64px on a quote card,
+     200px on a stat plate, 240px on a closer, full measure on a panel — so the
+     three slides the accent switch allows a mark on carried three different
+     shapes, which is the owner's *"sometimes a long purple marker and
+     sometimes a short one"* read as geometry rather than as colour. Each file
+     keeps its own literal as the var() fallback, so a document composed
+     without the run sheet is byte-identical. */
+  .stat-band { display: var(--fx-accent, none); inline-size: var(--fx-accent-w, calc(200px * var(--ts, 1))); block-size: var(--fx-accent-h, calc(14px * var(--ts, 1))); background: var(--accent); margin-block-start: calc(28px * var(--ts, 1)); }
   body:not(:has(#title > span:not(:empty))) .stat-band { display: none; }
 
+  /* §4.4 gives the COVER SUB-LINE its own step (`t-lead`), and the no-hero
+     path is where that matters: the sub-line is the cover's second and last
+     type step, and at the body's reading size it read as a caption under a
+     poster rather than as part of it. Over a photograph it stays at the
+     reading size — there it sits on the scrim and has to stay quiet. */
+  body:not(:has(.hero)) .body-text { font-size: var(--t-lead); line-height: 1.34; max-inline-size: 820px; }
+  /* AND IT HAS A LADDER, for the same reason the title does: `t-lead` is the
+     step for a SUB-LINE, and the writer sometimes sends a paragraph. At 310
+     characters the lead step is nine lines and the plate overflowed
+     (`probe.overflow` on `html, body`). Two rungs down, ending at the reading
+     size the photograph path uses. */
+  body:not(:has(.hero)) .body-text.small { font-size: calc(var(--t-lead) * 0.78); line-height: 1.4; }
+  body:not(:has(.hero)) .body-text.tiny { font-size: var(--t-label); line-height: 1.5; }
   .body-text {
-    font-family: var(--f-body); font-weight: 400; font-size: calc(32px * var(--ts, 1)); line-height: 1.5;
+    font-family: var(--f-body); font-weight: 400; font-size: var(--t-label); line-height: 1.5;
     color: color-mix(in srgb, var(--fg) 92%, transparent);
     margin-block-start: calc(26px * var(--ts, 1)); max-inline-size: 880px; text-wrap: pretty;
   }
@@ -825,7 +986,7 @@
      without the sheet — `template-mark-slots.test.ts` renders exactly that
      case and caught the sheet-only version. NOT paired with a negative
      margin-block-start: that just moves the escape up to the host itself. */
-  :has(> span.mk-plain) { padding-block-start: var(--mk-twin-bleed, .22em); }
+  :has(> span.mk-plain) { padding-block-start: max(var(--mk-twin-bleed, .22em), var(--mk-face-bleed, 0em)); }
   .headline:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
   .body-text:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
 
@@ -835,8 +996,18 @@
      otherwise lays the handle out in normal flow, on top of the copy. */
   .brand-handle {
     position: absolute; bottom: 44px; inset-inline-start: 44px; z-index: 6;
-    font-family: var(--f-mono); font-size: calc(19px * var(--ts, 1)); letter-spacing: 0.08em;
+    font-family: var(--f-mono); font-size: var(--t-micro); letter-spacing: 0.08em;
     color: color-mix(in srgb, var(--fg) 55%, transparent);
+  }
+  /* The pagination index — declared in all eight templates so the slot is
+     uniform, and never switched on for a cover: `interiorSlides` excludes
+     slide 1, so `--fx-pagination` is never set here. See `slide.html` for the
+     full note on what this replaced. */
+  .pg-index {
+    display: var(--fx-pagination, none);
+    position: absolute; inset-block-end: 40px; inset-inline-end: 44px; z-index: 6;
+    font-family: var(--f-mono); font-size: var(--t-micro); letter-spacing: 0.14em;
+    color: color-mix(in srgb, var(--fg) 45%, transparent);
   }
   /* THE BADGE IS THE ONE PIECE OF FURNITURE WHOSE GROUND CHANGES UNDER IT,
      and it is why this file is the only one in the directory that does not
@@ -909,7 +1080,7 @@
   body { --badge-ink: var(--fg); --mk-ink-default: var(--fg); }
   .brand-badge {
     position: absolute; top: 56px; inset-inline-start: var(--mx); z-index: 6;
-    font-family: var(--f-mono); font-weight: 600; font-size: calc(19px * var(--ts, 1));
+    font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro);
     letter-spacing: 0.14em; text-transform: uppercase; color: var(--badge-ink);
   }
   /* An @handle, a URL and a #hashtag are LTR strings, and a Hebrew or Arabic
@@ -923,12 +1094,16 @@
   .brand-badge:empty, .brand-handle:empty, .brand-handle:has(> bdi:empty) { display: none; }
 </style>
 </head>
-<body class="ts-{{fontScale}} ta-{{textAlign}}">
+<body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-hero-scrim="{{heroScrimStrength}}">
   <div class="ground" aria-hidden="true"></div>
   <img class="hero" src="{{image:hero}}" onerror="this.remove()" alt="" />
   <div class="scrim-top" aria-hidden="true"></div>
-  <div class="brand-badge">{{seriesBadge}}</div>
+  <!-- The `seriesBadge` slot was here and is deleted — see `slide.html`'s
+       own note for the three defects it carried. On a COVER it was the worst
+       of the eight: §4.5 gives the cover no furniture at all, because its one
+       job is to make a reader stop. -->
   <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
+  <span class="pg-index" aria-hidden="true">{{slideIndex}}</span>
   <div class="scrim" aria-hidden="true"></div>
   <div class="cov-field">
     <div class="cov-device">{{html:device}}</div>
@@ -937,7 +1112,8 @@
   </div>
   <div class="lockup">
     <div class="headline" id="title"><span class="mk-runs">{{html:titleRuns}}</span><span class="mk-plain">{{title}}</span></div>
-    <div class="stat-band"></div>
+    <!-- The `.stat-band` div was here. See the rule's own note: the cover
+         carries no decorative rule at all now. -->
     <div class="body-text"><span class="mk-runs">{{html:subtitleRuns}}</span><span class="mk-plain">{{subtitle}}</span></div>
   </div>
   <script>
@@ -982,11 +1158,54 @@
         var text = ((src === null ? el : src).textContent || "").replace(/[\u2066-\u2069\u200E\u200F]/g, "");
         return text.trim().length;
       }
+      var s = document.querySelector(".body-text");
+      if (s !== null) {
+        var slen = mkLen(s);
+        if (slen > 150) s.className = "body-text tiny";
+        else if (slen > 80) s.className = "body-text small";
+      }
       var t = document.getElementById("title");
       var len = mkLen(t);
-      if (len > 64) t.className = "headline tiny";
-      else if (len > 34) t.className = "headline small";
-      else if (len <= 26) t.className = "headline huge";
+      // ── THE THRESHOLDS MOVE WITH THE REVIEWER'S TYPE SCALE. ──
+      // Every other template in the set already does this; the cover did not
+      // need to while its rungs were small. They are poster sizes now, and
+      // `--ts` really does reach them (it did not before this phase — the
+      // scale steps were declared on `:root`, where `body.ts-l` is not in
+      // scope), so at `l` the same title is 18% taller inside a plate that did
+      // not grow and the lockup ran off the frame. 0.85x of each threshold
+      // drops a title one rung at `l`, which is the same trade
+      // `closer.html`'s `at()` helper makes.
+      var atScale = function (m) { return document.body.classList.contains("ts-l") ? Math.round(m * 0.85) : m; };
+      if (len > atScale(84)) t.className = "headline micro";
+      else if (len > atScale(64)) t.className = "headline tiny";
+      else if (len > atScale(34)) t.className = "headline small";
+      else if (len <= atScale(26)) t.className = "headline huge";
+      // ── AND THEN THE MEASURE HAS THE LAST WORD. ──
+      //
+      // A character-count ladder cannot see a FACE's advance width, and this
+      // phase gave the display face its own per-client axis: the same
+      // 24-character takeaway that fits at the poster rung in Inter is 1,043px
+      // wide in IBM Plex Mono inside a 952px measure, and a single word wider
+      // than its column cannot wrap — so the host overflows horizontally,
+      // `probe.overflow` fires and clause B refuses the plate as `clipped`
+      // with a steer ("shorten the headline") that cannot fix a font metric.
+      //
+      // So the ladder's pick is a STARTING POINT and the DOM decides: step
+      // down while the content is wider than the box. It costs one layout read
+      // per step on a plate that is already laid out, it is correct for every
+      // face and every script rather than for the two the rungs were measured
+      // against, and it can only ever make type smaller than the ladder asked
+      // for — never larger, so no plate gains size from it.
+      var fitToMeasure = function (el, rungs) {
+        if (el === null) return;
+        var from = rungs.indexOf(el.className);
+        for (var i = (from < 0 ? 0 : from); i < rungs.length; i++) {
+          el.className = rungs[i];
+          if (el.scrollWidth <= el.clientWidth + 1) return;
+        }
+      };
+      fitToMeasure(t, ["headline huge", "headline", "headline small", "headline tiny", "headline micro"]);
+
       window.__CAROUSEL_READY__ = true;
     })();
   </script>

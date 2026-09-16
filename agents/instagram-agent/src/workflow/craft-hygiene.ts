@@ -1,5 +1,7 @@
 import type { AgentContext, AgentToolRegistry, GateVerdict } from "@agent-engine/core";
 import { WorkflowToolingFailure } from "@agent-engine/workflow";
+import { resolveExpectedScript } from "./language-gate.js";
+import { isEnglishTarget } from "./target-language.js";
 import type { InstagramCopyOutput, SlidesDataSelfCheck } from "./types.js";
 
 /**
@@ -307,6 +309,257 @@ export const HEBREW_BANNED_PHRASES = [
   "הזדמנות אחרונה",
 ] as const;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// WORK NOTES — the writer's working text, on a plate, in front of the reader
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * ONE work-note phrase, in one language.
+ *
+ * `key` is stable and is quoted in the finding, so the redraft steer names the
+ * rule rather than only the sentence — the same contract `RegisterRow.key`
+ * keeps in `language-register.ts`.
+ */
+export interface WorkNotePattern {
+  key: string;
+  /** What this shape IS, in the words a reviewer reads on the trace. */
+  label: string;
+  pattern: RegExp;
+}
+
+/**
+ * The phrases that are working text in ANY run, because they are the language
+ * a model narrates its own process in whatever language it was asked to write:
+ * a sentence about the cards, the materials, the brief, the layout, or about
+ * "this slide".
+ *
+ * ## The incident these are drawn from
+ *
+ * geektime, 2026-09-16, run `pubsub-21868533047825082`, slide 4 body, shipped
+ * and human-approved:
+ *
+ *   `היא חלק ממנו. ההבדל הזה לא שיווקי, הוא מבני. לא נמצא ציטוט משתתף ישיר
+ *    בחומרים; השקף נושא את הטענה בכותרת ובגוף.`
+ *
+ * ("…no direct participant quote was found in the materials; the slide carries
+ * the claim in the headline and the body.") The writer was not free-associating:
+ * `editorial-series.ts`'s directive told it, in as many words, to say so in the
+ * slide's content when a required object could not be written. That sentence is
+ * fixed at source; this is the guard that catches the next one — the instruction
+ * was one channel into reader copy and a model has others.
+ *
+ * ## Why these are narrow, and what they deliberately miss
+ *
+ * A failure here costs a redraft attempt, and this module has already paid for
+ * the fail-dangerous version of that argument twice (`ACRONYM_ALLOWLIST`'s own
+ * note: a run burned its whole retry budget and held over "DTC"). So every
+ * pattern needs the WORKING-TEXT VOCABULARY to be present — the materials, the
+ * cards, the brief, the layout, the slide itself — and none of them fires on a
+ * sentence that merely reports an absence.
+ *
+ * The control is in the same three runs: geektime's slide 6 body says
+ * `לא נמצא בשאלוני שוק, הוא בדפוסי הקריאה שגיקטיים מדדה ב-17 שנה` ("it is not
+ * found in market surveys, but in the reading patterns geektime has measured
+ * over 17 years") — a good line, the same opening two words as the work note,
+ * and it must pass. That is why `לא נמצא` is not a pattern and
+ * `לא נמצא …בחומרים` is; the test pins both strings.
+ *
+ * ## The false-positive rate, measured rather than asserted
+ *
+ * These patterns were swept over every reader-facing string in the six
+ * archived 2026-09 prep runs (`headline`, `body`, `caption`, list titles and
+ * notes, quote text, stat sub-labels, comparison bodies, custom slots, across
+ * karoslabs, thepitchbydeel and geektime, in English and in Hebrew):
+ * **468 distinct strings, 1 flagged** — the work note above, and nothing else.
+ * A pattern added here without re-running that sweep is a redraft attempt
+ * charged to a correct draft.
+ */
+export const UNIVERSAL_WORK_NOTE_PATTERNS: readonly WorkNotePattern[] = [
+  {
+    key: "materials-absent",
+    label: "an absence reported against the source materials",
+    pattern: /\b(?:not|no|nothing)\b[^.!?\n]{0,48}\bin\s+the\s+(?:source\s+|research\s+|supplied\s+|provided\s+|fact\s+)?(?:materials|cards)\b/i,
+  },
+  { key: "cards-do-not", label: "a sentence about what the fact cards do or do not contain", pattern: /\bthe\s+(?:fact\s+)?cards\s+(?:do|did|does)\s+not\b/i },
+  {
+    key: "object-not-found",
+    label: "a required object reported missing",
+    // Up to two qualifiers between the `no` and the noun, because that is how
+    // the shape actually arrives: "no DIRECT PARTICIPANT quote was found".
+    pattern: /\bno\s+(?:[a-z]+\s+){0,2}?(?:quote|figure|statistic|stat|source|citation)\s+(?:was\s+|could\s+be\s+)?(?:found|available|supplied|provided)\b/i,
+  },
+  {
+    key: "slide-self-reference",
+    label: "the slide talking about itself",
+    pattern: /\b(?:this|the)\s+slide\s+(?:carries|holds|states|presents|makes|therefore|instead|is\s+left|was\s+left)\b/i,
+  },
+  { key: "per-the-brief", label: "a reference to the brief or the directive", pattern: /\b(?:per|as\s+per|following)\s+the\s+(?:brief|directive|instructions?|skeleton)\b/i },
+  { key: "as-instructed", label: "the writer reporting that it followed an instruction", pattern: /\bas\s+(?:instructed|directed)\b/i },
+  { key: "cannot-be-written", label: "a sentence about what could not be written", pattern: /\b(?:cannot|could\s+not|couldn['’]t|can['’]t)\s+be\s+(?:written|filled|sourced)\b/i },
+  { key: "archetype-self-reference", label: "the layout or archetype talking about itself", pattern: /\b(?:archetype|layout|template)\s+(?:requires|required|asks\s+for|asked\s+for|renders)\b/i },
+];
+
+/**
+ * Hebrew work-note phrases.
+ *
+ * First-class because Hebrew is the language of the run that shipped one and
+ * the one non-English language in the fleet we can actually read the output of
+ * — the same reason `LANGUAGE_REGISTER_PACKS` populates Hebrew and nothing
+ * else. Adding a language here means adding the rows AND someone who reads
+ * that language well enough to argue with them; until then that language gets
+ * the universal rows, and `workNotePackFor` says so rather than implying a
+ * cover it does not have.
+ */
+export const HEBREW_WORK_NOTE_PATTERNS: readonly WorkNotePattern[] = [
+  {
+    key: "materials-absent-he",
+    label: "an absence reported against the source materials",
+    // The `בחומרים` half is load-bearing: `לא נמצא` on its own is ordinary
+    // Hebrew prose (see the note above).
+    pattern: /(?:לא\s+נמצא\S*|אין|לא\s+קיים\S*|לא\s+קיימ\S+)[^.;!?\n]{0,48}(?:בחומרים|בכרטיסים|בחומר\s+הגלם|בכרטיסי\s+העובדות|במקורות\s+שסופקו)/u,
+  },
+  {
+    key: "slide-self-reference-he",
+    label: "the slide talking about itself",
+    pattern: /(?:השקף|השקופית)\s+(?:הזה\s+|הזו\s+|הנוכחי\S*\s+)?(?:נושא|נושאת|מציג|מציגה|מכיל|מכילה|נותר\S*|נשאר\S*)/u,
+  },
+  { key: "per-the-brief-he", label: "a reference to the brief or the directive", pattern: /(?:על\s+פי|לפי)\s+(?:ההנחיה|ההנחיות|הבריף|התדריך|השלד)/u },
+  { key: "as-instructed-he", label: "the writer reporting that it followed an instruction", pattern: /(?:כפי\s+שהתבקש|כנדרש\s+בהנחי|כפי\s+שצוין\s+בהנחי|בהתאם\s+להנחיה)/u },
+  {
+    key: "cannot-be-written-he",
+    label: "a sentence about what could not be written",
+    pattern: /(?:לא\s+ניתן|אי[\s-]אפשר)\s+(?:היה\s+)?(?:לכתוב|למלא|לאתר|לצטט)[^.;!?\n]{0,48}(?:מהחומרים|מהכרטיסים|בחומרים|בכרטיסים)/u,
+  },
+];
+
+/**
+ * Per-language work-note vocabularies, KEYED BY `SCRIPT_TABLE` SCRIPT NAME
+ * through `resolveExpectedScript`, exactly as `LANGUAGE_REGISTER_PACKS` is.
+ *
+ * The keying is the point rather than a convenience: a key this table carries
+ * and the shared language table does not is impossible by construction, and a
+ * target language the fleet adds cannot silently arrive with NO work-note
+ * guard — it arrives with the universal rows and a `universalOnly` marker that
+ * the finding prints.
+ */
+export const WORK_NOTE_PACKS: Readonly<Record<string, readonly WorkNotePattern[]>> = {
+  Hebrew: HEBREW_WORK_NOTE_PATTERNS,
+};
+
+/** The `key` a universal-only pack reports, matching `language-register.ts`'s own. */
+export const UNIVERSAL_WORK_NOTE_KEY = "universal";
+
+/**
+ * The work-note vocabulary for a run's target language: the universal rows
+ * always, plus that language's own rows when we have them.
+ *
+ * `universalOnly` is not decoration — it is the honest statement that this
+ * guard reads only English shapes on, say, a Greek post, and it is printed on
+ * the finding so a thin guard is visible rather than assumed.
+ */
+export function workNotePackFor(targetLanguage: string | undefined): { key: string; patterns: readonly WorkNotePattern[]; universalOnly: boolean } {
+  const key = targetLanguage === undefined ? undefined : resolveExpectedScript(targetLanguage)?.name;
+  const pack = key === undefined ? undefined : WORK_NOTE_PACKS[key];
+  if (key === undefined || pack === undefined) {
+    return { key: UNIVERSAL_WORK_NOTE_KEY, patterns: UNIVERSAL_WORK_NOTE_PATTERNS, universalOnly: true };
+  }
+  return { key, patterns: [...UNIVERSAL_WORK_NOTE_PATTERNS, ...pack], universalOnly: false };
+}
+
+/**
+ * EVERY pattern this guard knows, whatever the run's declared language.
+ *
+ * Unconditional for the reason `HEBREW_BANNED_PHRASES` is passed
+ * unconditionally two hundred lines above: a Hebrew work note cannot occur in
+ * an English draft, so keying the scan to the resolved language gains nothing
+ * — and it would reopen the hole for exactly the run this guard is for, one
+ * whose language resolution said English and whose writer wrote Hebrew anyway.
+ * `workNotePackFor` still decides what the FINDING says about coverage.
+ */
+export function allWorkNotePatterns(): readonly WorkNotePattern[] {
+  return [...UNIVERSAL_WORK_NOTE_PATTERNS, ...Object.values(WORK_NOTE_PACKS).flat()];
+}
+
+/**
+ * Model output arrives with the odd bidi mark or zero-width joiner in it
+ * (`\p{Cf}`), and a stray one between two words would walk a `\s+` clause
+ * straight past a work note. Formatting characters are dropped and runs of
+ * whitespace collapsed before matching; nothing else is normalised, because
+ * the matched text is quoted back into the finding.
+ */
+function normaliseForScan(text: string): string {
+  return text.replace(/\p{Cf}/gu, "").replace(/\s+/gu, " ").trim();
+}
+
+/** How much of the offending sentence the finding quotes. Long enough for the writer to find it, short enough not to fill the redraft prompt. */
+const WORK_NOTE_QUOTE_CHARS = 90;
+
+/**
+ * Does this text narrate the pipeline instead of addressing the reader?
+ *
+ * Exported for the test, and separate from `checkWorkNotes` so the same
+ * function that decides a slide can be run over a single string.
+ */
+export function findWorkNote(text: string): WorkNotePattern | undefined {
+  const scanned = normaliseForScan(text);
+  return allWorkNotePatterns().find((entry) => entry.pattern.test(scanned));
+}
+
+/**
+ * THE WORK-NOTES CLAUSE (Phase 5.5, brief item G).
+ *
+ * Deterministic, $0, no tool, no model. A match returns `{ ok: false }` and is
+ * routed by `07b`'s existing ladder — attempts 1..n−1 redraft, the final
+ * attempt records the reason and ships. It NEVER holds a run: a work note on a
+ * plate is a bad slide, and a held run is no slides at all.
+ *
+ * **What is scanned is `slideProse` — `headline`, `body` and a custom
+ * archetype's own slot values — plus the caption: every string a reader can
+ * see, and nothing else.** A slide's `unfillable` field (copy schema, Phase
+ * 5.5 item B) is deliberately NOT scanned: it is the channel this guard exists
+ * to push these notes into, and a guard that also refused the honest channel
+ * would leave the writer with nowhere to report an unfillable object except
+ * silence.
+ */
+export function checkWorkNotes(copy: InstagramCopyOutput, targetLanguage?: string): SlidesDataSelfCheck {
+  const pack = workNotePackFor(targetLanguage);
+  // Printed only where it is a real gap: a first-class pack, or an English
+  // run, is fully covered and needs no caveat on the finding.
+  const coverage =
+    pack.universalOnly && targetLanguage !== undefined && targetLanguage.trim().length > 0 && !isEnglishTarget(targetLanguage)
+      ? ` (no work-note vocabulary is registered for ${targetLanguage}; only the universal patterns read this draft)`
+      : "";
+  const refuse = (where: string, hit: WorkNotePattern, text: string): SlidesDataSelfCheck => {
+    const quoted = normaliseForScan(text);
+    // Quoted around the MATCH, not from the top of the slide: the note is
+    // usually the last sentence of a body that opens perfectly well, and a
+    // steer that quotes the good opening sends the writer to the wrong
+    // sentence. None of these patterns is `/g`, so `exec` carries no
+    // `lastIndex` between calls (`visual-qa-pre-checks.ts` records why that
+    // matters).
+    const match = hit.pattern.exec(quoted);
+    const start = match === null ? 0 : Math.max(0, match.index - 16);
+    const end = start + WORK_NOTE_QUOTE_CHARS;
+    const excerpt = `${start > 0 ? "…" : ""}${quoted.slice(start, end)}${end < quoted.length ? "…" : ""}`;
+    return {
+      ok: false,
+      reason:
+        `${where} narrates the work instead of addressing the reader — ${hit.label} (${hit.key}): "${excerpt}". ` +
+        `Report an object you cannot write in \`unfillable\`, never in the slide's own text${coverage}.`,
+    };
+  };
+
+  const captionHit = findWorkNote(copy.caption);
+  if (captionHit) return refuse("the caption", captionHit, copy.caption);
+
+  for (const slide of copy.slides) {
+    const prose = slideProse(slide);
+    const hit = findWorkNote(prose);
+    if (hit) return refuse(`slide ${slide.n}`, hit, prose);
+  }
+  return { ok: true };
+}
+
 /**
  * ONE ledger warn for a gate that could not form a view (RFC-19 §3, Mechanism C).
  *
@@ -352,7 +605,19 @@ export const CRAFT_GATE_OUTAGE_SLUG = "craft-hygiene-gate-no-opinion";
  */
 export type CraftHygieneResult = SlidesDataSelfCheck & { outage?: string };
 
-export async function checkCraftHygiene(tools: AgentToolRegistry, ctx: AgentContext, copy: InstagramCopyOutput): Promise<CraftHygieneResult> {
+export async function checkCraftHygiene(
+  tools: AgentToolRegistry,
+  ctx: AgentContext,
+  copy: InstagramCopyOutput,
+  /**
+   * The run's resolved target language (`02d`), when the caller has it. It
+   * changes NOTHING about what is refused — `checkWorkNotes` scans every
+   * language's patterns unconditionally (`allWorkNotePatterns`) — and only
+   * what the finding says about coverage, so every existing caller keeps
+   * working unchanged.
+   */
+  targetLanguage?: string,
+): Promise<CraftHygieneResult> {
   const lintTool = tools["gate.lintPost"];
   if (!lintTool) {
     // KEPT AS A THROW (RFC-19 §6 item 8). An UNREGISTERED tool is a deploy
@@ -404,6 +669,13 @@ export async function checkCraftHygiene(tools: AgentToolRegistry, ctx: AgentCont
     }
     return { ok: false, reason: `caption failed the mechanical craft-hygiene gate: ${verdict.reason}` };
   }
+
+  // Ahead of the sentence-case checks, because a work note is a worse defect
+  // than a capital letter and the first refusal is the one the redraft prompt
+  // carries: a reader who sees `לא נמצא ציטוט משתתף ישיר בחומרים` on a plate
+  // is looking at the pipeline, and no amount of Title Case is that.
+  const workNotes = checkWorkNotes(copy, targetLanguage);
+  if (!workNotes.ok) return { ok: false, reason: workNotes.reason, ...outage };
 
   const captionCase = checkSentenceCase(copy.caption.replace(HASHTAG, " "));
   if (!captionCase.ok) {

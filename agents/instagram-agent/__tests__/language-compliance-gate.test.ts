@@ -34,7 +34,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
-import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
+import { DEFAULT_ENTITIES_TURN, DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 /**
@@ -336,7 +336,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
   it("PASSES: good Hebrew clears stage 1 deterministically and stage 2's judge, and the run completes", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
@@ -350,7 +350,8 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
 
     expect(result.status).toBe("completed");
     // scout + research + angle + copy + vet + relevance + fluency judge + QA (Phase 0: the scout runs on every run and the relevance judge on every attempt; Phase 1 adds the angle proposal, once per revision).
-    expect(router.complete).toHaveBeenCalledTimes(11);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(12);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("02d-load-target-language");
@@ -400,7 +401,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     // wrong language are three opinions nobody can act on. That saving is
     // asserted below as three absent step ids, not taken on trust.
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodCopyOutput()),
@@ -460,7 +461,8 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     //   attempt 3 falls through: visual QA                                    = 1
     //   after the loop: packager + the package's native round                 = 2
     //                                                                     total 12
-    expect(router.complete).toHaveBeenCalledTimes(12);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(13);
 
     // It rendered and it was delivered — the two things the hold used to prevent.
     expect(stepIds).toContain("08-render-carousel-attempt-3");
@@ -486,7 +488,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(STILL_NOT_NATIVE_VERDICT),
     ];
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       ...attemptTurns(), ...attemptTurns(), ...attemptTurns(),
       finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
@@ -528,7 +530,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
   it("PASSES on a redraft: a still-flagged attempt returns to 05 with nativeSteer carrying the quote AND the replacement", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(badHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
@@ -574,7 +576,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
   it("CORRECTED IN PLACE: a translationese finding is patched and round 2 clears it, so the post ships corrected without a redraft", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       // Fluent Hebrew SCRIPT and fluent Hebrew GRAMMAR: stage 1 passes and so does every mechanical check.
       // Only the translationese axis can fail this draft - the failure a proofreader also passes.
       finalTurn(goodHebrewCopy()),
@@ -616,7 +618,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
   it("a transient judge failure is retried once inside the same 07f step: two router turns, no redraft, and the run passes", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
@@ -632,7 +634,8 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     expect(result.status).toBe("completed");
     // scout + research + angle + copy + vet + relevance + TWO judge calls + QA: the retry is a real
     // second model call, not a replay of the first checkpoint.
-    expect(router.complete).toHaveBeenCalledTimes(12);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(13);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("07f-language-fluency-attempt-1");
@@ -668,7 +671,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
   it("a judge that completes on its FIRST call is billed for exactly one — the other side of the retry rule", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
@@ -712,7 +715,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
   it("OUTAGE WITH ATTEMPTS LEFT: a judge that errors twice on attempt 1 returns to 05 naming the OUTAGE, and attempt 2 ships", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
@@ -762,7 +765,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       finalTurn(JUDGE_ERROR_TURN),
     ];
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       ...attemptTurns(), ...attemptTurns(), ...attemptTurns(),
       finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
@@ -817,7 +820,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       return { ...base, slides: base.slides.map((slide, i) => (i === 0 ? { ...slide, headline: `“${HEBREW_HEADLINES[0]!}”` } : slide)) };
     };
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(curly()), finalTurn(goodImageVettingOutput()),
       finalTurn(curly()), finalTurn(goodImageVettingOutput()),
       finalTurn(curly()), finalTurn(goodImageVettingOutput()),
@@ -874,7 +877,8 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     //   attempt 3 falls through: relevance + value + native editor + visual QA = 4
     //   after the loop: packager + the package's native round                 = 2
     //                                                                     total 15
-    expect(router.complete).toHaveBeenCalledTimes(15);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(16);
 
     // And the order is the one the comment claims, measured on the checkpoints rather than asserted in prose.
     expect(stepIds.indexOf("07e-language-script-attempt-1")).toBeLessThan(stepIds.indexOf("07e2-native-conventions-attempt-1"));
@@ -888,7 +892,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
   it("ORDERING, the other half: on a draft that PASSES the free gates, 07e2 runs before 07g and 07g before 07f", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
@@ -929,7 +933,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
   it("04l-language-register runs once per REVISION, outside the attempt loop, and costs nothing", async () => {
     await env.store.writeJson("acme", ["client", "brand"], HEBREW_BRAND);
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(badHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
@@ -962,7 +966,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
 
   it("an ENGLISH run pays for none of it: no 04l, no 07e2, no judge, and no `languageBrief` in the writer's payload", async () => {
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
@@ -973,7 +977,8 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
     expect(result.status, JSON.stringify(result)).toBe("completed");
     // An eighth call would be the judge, and would exhaust the router.
-    expect(router.complete).toHaveBeenCalledTimes(9);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(10);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).not.toContain("04l-language-register");
@@ -1001,7 +1006,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     // gate off in every sampled prep run.
     await env.store.writeJson("acme", ["client", "profile"], GEEKTIME_PROFILE);
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
@@ -1015,7 +1020,8 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
 
     // scout + research + angle + copy + vet + relevance + fluency judge + QA.
     expect(result.status).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(11);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(12);
     const language = (await durableStore.getStep(params.runId, "02d-load-target-language")) as { output: { language: string; source: string } | null };
     expect(language.output?.language).toBe("Hebrew");
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
@@ -1086,7 +1092,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       doList: ["Пишите коротко и по делу, без рекламных штампов и лишних слов", "lead with the number"],
     });
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
@@ -1116,7 +1122,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
       description: "We are an AI marketing agency for English-speaking markets in B2B SaaS. Karos Labs publishes in English for founders.",
     });
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
@@ -1129,7 +1135,8 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     expect(result.status).toBe("completed");
     // scout + research + angle + copy + vet + relevance + QA. An eighth call would be
     // the fluency judge, and would exhaust the router.
-    expect(router.complete).toHaveBeenCalledTimes(9);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(10);
     const language = (await durableStore.getStep(params.runId, "02d-load-target-language")) as { output: unknown };
     expect(language.output).toBeNull();
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
@@ -1141,7 +1148,7 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     // No `client/brand` and no profile written at all — the default fixture
     // client, which resolves to `english-default`.
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
@@ -1153,7 +1160,8 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
 
     // scout + research + angle + copy + vet + relevance + QA — and no fluency judge.
     expect(result.status).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(9);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(10);
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("02d-load-target-language");
     expect(stepIds).not.toContain("07e-language-script-attempt-1");
@@ -1198,7 +1206,7 @@ describe("a brief-declared language is the RUN's language, not just the writer's
       seedBrief: goodClientBrief({ language: { target: "Hebrew", register: "ישיר, מקצועי, בגוף ראשון רבים" } }),
     });
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
@@ -1224,7 +1232,8 @@ describe("a brief-declared language is the RUN's language, not just the writer's
     expect(stepIds).toContain("07f-language-fluency-attempt-1");
     const script = (await durableStore.getStep(params.runId, "07e-language-script-attempt-1")) as { output: { ok: boolean } };
     expect(script.output.ok).toBe(true);
-    expect(router.complete).toHaveBeenCalledTimes(11);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(12);
     // Nothing sent it back to 05: the language is consistent, not contested.
     expect(stepIds).not.toContain("05-write-copy-attempt-2");
 
@@ -1273,7 +1282,7 @@ describe("a brief-declared language is the RUN's language, not just the writer's
     // and a judge-outage hold path the brief scoped to non-English targets.
     env = await setupTestEnvironment({ seedBrief: goodClientBrief({ language: { target: "en-US" } }) });
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
@@ -1283,7 +1292,8 @@ describe("a brief-declared language is the RUN's language, not just the writer's
     const durableStore = new MemoryDurableStepStore();
     const result = await new WorkflowEngine(durableStore).run(workflowFor(router), params);
     expect(result.status, JSON.stringify(result)).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(9);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(10);
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).not.toContain("07e-language-script-attempt-1");
     expect(stepIds).not.toContain("07f-language-fluency-attempt-1");
@@ -1374,7 +1384,7 @@ describe("08c2 — the post package's native round, and what it is allowed to ca
       }),
     });
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(goodHebrewCopy()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),

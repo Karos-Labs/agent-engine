@@ -160,7 +160,6 @@
     --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
     --f-body: 'Inter', system-ui, -apple-system, sans-serif;
     --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
-    --mx: 64px;
     --ts: 1;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -172,6 +171,41 @@
      font-size on an older checkpointed slides-data re-rendered post-deploy. */
   body.ts-s { --ts: 0.85; }
   body.ts-l { --ts: 1.18; }
+  /* ── PHASE 5.5: THE ONE TYPE SCALE (`visual-system.ts`, `TYPE_SCALE_PX`). ──
+     Six steps for the whole archetype set, against the 45 distinct `font-size`
+     values the eight bundled templates declared between them. A plate picks a
+     step by ROLE rather than by which file the writer's layout landed on.
+     `visualSystemCssBlock` overrides these per run with the resolved system's
+     type flavour; these are the self-contained defaults a brandless render
+     uses.
+
+     ── ON `body`, NOT ON `:root`, AND THAT IS NOT A STYLE CHOICE. ──
+     A custom property's `var()` references are substituted AT THE ELEMENT THAT
+     DECLARES IT. `--ts` is `1` on `:root` and is overridden on `body.ts-s` /
+     `body.ts-l`, so a `--t-*` declared on `:root` resolves `var(--ts, 1)`
+     against the ROOT's value — always 1 — and then inherits down already
+     substituted. Declared there, the reviewer's whole type-scale control
+     silently stopped reaching every size that reads a step: measured, this
+     plate rendered its 300px figure at 300px at `ts-s`, where the literal it
+     replaced rendered 255px, and the calibration's own s-vs-l control pair
+     reported the two plates painting identical ink (0.4175 both). Declared
+     HERE the substitution happens on `body`, where `body.ts-s` is in force. */
+  body {
+    /* ── PHASE 5.5: THE PAGE MARGIN IS THE VISUAL SYSTEM'S `gutter` AXIS. ──
+       `--gutter` is emitted per run by `visualSystemCssBlock` (`wide` 64px,
+       `tight` 48px) and was read by nothing: every template hard-coded its own
+       margin, so two catalog entries that differ ONLY in gutter rendered the
+       same plate and the twelve-entry catalog was a variety claim a reader
+       could not see. The literal stays as the fallback, so a document composed
+       without the run sheet is byte-identical. */
+    --mx: var(--gutter, 64px);
+    --t-micro: calc(22px * var(--ts, 1));
+    --t-label: calc(32px * var(--ts, 1));
+    --t-lead: calc(46px * var(--ts, 1));
+    --t-statement: calc(84px * var(--ts, 1));
+    --t-display: calc(124px * var(--ts, 1));
+    --t-figure: calc(220px * var(--ts, 1));
+  }
   body.ta-center { text-align: center; }
   body.ta-end { text-align: end; }
   html, body { width: 1080px; height: 1440px; }
@@ -202,7 +236,7 @@
     position: absolute; inset: 0; z-index: 0;
     background-image:
       radial-gradient(104% 62% at 2% 0%, color-mix(in srgb, var(--fg) 7%, transparent) 0%, transparent 80%),
-      linear-gradient(196deg, transparent 40%, color-mix(in srgb, var(--wash) 8%, transparent) 100%);
+      linear-gradient(196deg, transparent 40%, color-mix(in srgb, var(--wash) var(--ground-texture-alpha, 8%), transparent) 100%);
   }
 
   /* ── L2: the texture and the accent geometry, ON THE STATEMENT FIELD. ──
@@ -354,10 +388,15 @@
      the only wall among them.
 
      240px, which is `.cl-rule`'s width, so the set has one accent measure. */
+  /* ── PHASE 5.5: the caps' INK is conditional, their geometry is not. ──
+     `var(--fx-accent-ink, transparent)`, set by `visualSystemCssBlock` on at
+     most three slides of a carousel. Ink rather than `display`, so the field's
+     own box and every share the interest floor measures on it are unchanged;
+     only the orange disappears on the plates that did not earn it. */
   .hf-field {
     background-image:
-      linear-gradient(to bottom, var(--accent) 0 calc(14px * var(--ts, 1)), transparent 0),
-      linear-gradient(to top, var(--accent) 0 calc(14px * var(--ts, 1)), transparent 0);
+      linear-gradient(to bottom, var(--fx-accent-ink, transparent) 0 calc(14px * var(--ts, 1)), transparent 0),
+      linear-gradient(to top, var(--fx-accent-ink, transparent) 0 calc(14px * var(--ts, 1)), transparent 0);
     background-size: calc(240px * var(--ts, 1)) 100%, calc(240px * var(--ts, 1)) 100%;
     background-repeat: no-repeat, no-repeat;
     /* `inset-inline` rather than `0`, so the caps range with the copy in both
@@ -480,74 +519,37 @@
      their accent GEOMETRY, which the block above says is the point of having
      two — and they no longer differ by wearing two different wallpapers. */
   body.gr-glyph .hf-field {
-    background-image: linear-gradient(to bottom, var(--accent) 0 calc(10px * var(--ts, 1)), transparent 0);
+    background-image: linear-gradient(to bottom, var(--fx-accent-ink, transparent) 0 calc(10px * var(--ts, 1)), transparent 0);
     background-size: 100% 100%;
     background-repeat: no-repeat;
     background-position: 0 0;
   }
-  .ground-glyph { display: none; }
-  /* Furniture, but furniture that paints ink, so it answers to the same rule:
-     a plate with no statement on it paints no numeral either. */
-  body:not(:has(#headline > span:not(:empty))) .ground-glyph { display: none !important; }
-  /* THE NUMERAL STILL SCALES WITH `--ts`, and that is deliberate even though
-     the dash tile beside it no longer does. The two are different kinds of
-     thing: the tile is a screen whose duty cycle has to stay put against a
-     fixed 4px measurement cell, while this is a GLYPH — it is set in the
-     display face, it is the one mark on the plate a reader reads as a
-     character, and `default-template-render.test.ts` pins the rule that every
-     `font-size` in this directory scales off `var(--ts)` so the reviewer's
-     type control never leaves one size behind. It was briefly fixed in px
-     during this pass on the theory that `l` cropped it into unreadable
-     curves; re-rendered with the dash screen at its new density the `l` plate
-     reads the numeral perfectly well, so the crop was never the cause — the
-     screen's density was. Measured, the numeral costs 0.7 points of
-     imagery-or-device at `l`, well inside the floor's headroom. */
-  body.gr-glyph .ground-glyph {
-    display: block; position: absolute; z-index: 0;
-    inset-block-start: calc(-90px * var(--ts, 1)); inset-inline-start: calc(-8px * var(--ts, 1));
-    font-family: var(--f-display); font-weight: 600; font-size: calc(460px * var(--ts, 1));
-    /* `line-height: 1.3`, not 1. At 720px the display face's glyph box fit
-       inside a line box of its own size; at 460px in HEBREW it does not, and
-       the probe reported `span.ground-glyph` overflowing its own box on a
-       real render (CI 34935984088, closer.html rtl). The element is
-       absolutely positioned and aria-hidden, so growing its line box moves
-       nothing and hides nothing -- it just stops the numeral's descender
-       escaping a box sized for a different script's metrics. */
-    line-height: 1.3; letter-spacing: -0.04em; padding-block-end: 0.2em;
-    /* OUTLINE ONLY, and that is the whole trick. A filled numeral is a filled
-       SHAPE: at 9% of the foreground its interior sits 19 units off the
-       ground, past the ink line, so every cell inside the glyph counts as a
-       covered low-colour cell — a drawn device — and this plate measured
-       12.7% of device share from a decoration. Dropping the fill entirely and
-       spending the budget on stroke CONTRAST instead (4px at 52%, against the
-       previous 3px at 26%) gives a numeral a reader can actually see while
-       the pixels inside it stay ground. */
-    color: transparent;
-    /* ── QUIETED 2026-09-14, after a real render ──
+  /* ── PHASE 5.5: THE 460px GROUND NUMERAL IS RETIRED. ──
 
-       The stroke was taken to 4px at 52% when the FILL was dropped (the fill
+     It lived in TWO of the eight bundled templates — this one and
+     `closer.html` — so a carousel showed a giant outlined numeral on two
+     plates and nothing on the other six. The owner, judging the 2026-09-16
+     posts: *"על חלק מהשקופיות כתוב מספר ועל חלק לא"*. The brief blamed
+     `GROUND_VARIATION_MIX = 0.5`; that has been a constant since 2026-09-14
+     (`slides-data.ts` reads `isVariationSlot(1, ...)`, one ground per post)
+     and was never the cause. The template set was.
 
-       was inflating `graphicShare`; see the note below). That traded a metric
+     Within-carousel randomness is the wrong axis: a carousel is ONE system.
+     The axis moves up to `ClientVisualSystem.pagination` — all or none,
+     frozen per client, so the variety lands across clients and across runs —
+     and down to a uniform 22px index in all eight files, below. A designed
+     large figure is still available where the CONTENT has a number: this
+     archetype's own `.hf-device` slot, at 150/118/88, which is a bounded and
+     labelled object rather than a decoration wearing a numeral's clothes.
 
-       problem for a reading problem: at 720px, cropped by the frame, a 52%
-
-       outline is the second loudest thing on the plate and it fights the
-
-       statement it is supposed to sit behind. On run
-
-       `pubsub-21839432908803804` the owner's words were "too many effects,
-
-       hard to look at".
-
-       Back to a watermark: smaller, inside the frame, and faint. The floor is
-
-       unaffected by construction -- the pixels INSIDE the outline are ground
-
-       either way, which is the whole point of the fill being gone, so this
-
-       moves contrast and not occupancy. */
-
-    -webkit-text-stroke: 2px color-mix(in srgb, var(--fg) 16%, transparent);
+     `gr-glyph` survives as the ground's ACCENT GEOMETRY (the cap at the
+     field's head rather than the two caps of the grid variant), which is what
+     the class was always worth. */
+  .pg-index {
+    display: var(--fx-pagination, none);
+    position: absolute; inset-block-end: 40px; inset-inline-end: 44px; z-index: 6;
+    font-family: var(--f-mono); font-size: var(--t-micro); letter-spacing: 0.14em;
+    color: color-mix(in srgb, var(--fg) 45%, transparent);
   }
 
   /* ── The composition. Three parts down the plate, not one block at the
@@ -571,7 +573,13 @@
      `largestEmptyRectShare` is supposed to be measuring the complement of. */
   .hf-field {
     position: relative; z-index: 4; flex: 1 1 auto; min-block-size: 0;
-    display: flex; flex-direction: column; justify-content: center;
+    /* ── PHASE 5.5: THE BLOCK ANCHOR IS THE CLIENT'S `compositionGrammar`. ──
+       The axis is *"where the type lockup sits on the plate"* and it shipped as
+       a CSS string no template read, so two clients whose only declared
+       difference was their grammar rendered identical geometry. `center` is
+       the fallback, which is the value this file carried, so a document
+       composed without the client sheet is byte-identical. */
+    display: flex; flex-direction: column; justify-content: var(--lockup-anchor, center);
     margin-inline: calc(16px - var(--mx)); padding-inline: calc(var(--mx) - 16px);
     margin-block-start: calc(30px * var(--ts, 1));
     padding-block: calc(44px * var(--ts, 1));
@@ -627,13 +635,22 @@
      a figure here is the same object at a smaller size and not a different
      one. `slide.html` makes the same reduction for the same reason and its
      slot says so. */
-  .hf-device .dv-figure { font-size: calc(150px * var(--ts, 1)); }
-  .hf-device .dv-figure--mid { font-size: calc(118px * var(--ts, 1)); }
-  .hf-device .dv-figure--small { font-size: calc(88px * var(--ts, 1)); }
+  .hf-device .dv-figure { font-size: calc(var(--t-figure) * 0.6818); }
+  .hf-device .dv-figure--mid { font-size: calc(var(--t-figure) * 0.5364); }
+  .hf-device .dv-figure--small { font-size: calc(var(--t-figure) * 0.4); }
   .hf-device .dv { margin-block-start: 0; }
 
   .kicker {
-    font-family: var(--f-mono); font-weight: 600; font-size: calc(24px * var(--ts, 1));
+    /* ── THE LABEL'S BOX IS ITS LABEL. ──
+       A block-level eyebrow spans the whole measure whatever it says, so its
+       BOX reaches the opposite corner of the plate even when its ink stops
+       after two words. `renderCarousel`'s reserved-zone probe reads boxes, so
+       a full-width label was reported as entering the brand mark's corner from
+       the other side of the frame — a finding about nothing, on the instrument
+       §7 F2 exists to make trustworthy. `fit-content` makes the two agree.
+       `stat-callout.html` has always been `inline-block` for the same reason. */
+    inline-size: fit-content; max-inline-size: 100%;
+    font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro);
     letter-spacing: 0.24em; text-transform: uppercase;
     color: color-mix(in srgb, var(--fg) 88%, transparent);
   }
@@ -642,7 +659,15 @@
      reader the plate has a top edge, and it is the element that stops the
      upper third reading as a hole. A 3px rule covers no cell, so it is
      geometry the reader sees and the device floor does not. */
-  .hf-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(26px * var(--ts, 1)); }
+  /* ── PHASE 5.5 §4.3: UNDER THE ACCENT SWITCH, AND IT IS THE EYEBROW'S
+        UNDERLINE. ──
+     `stat-callout.html`'s `.sc-rail` carries the whole argument. The same 2px
+     full-measure hairline at 48% of the foreground appears in seven of the
+     eight files, so before this it painted on six of eight plates of every
+     carousel — the owner's *"יש קווים כאלה"* in a quieter colour — and on a
+     plate whose eyebrow slot came through empty it was a rule over nothing. */
+  .hf-rail { display: var(--fx-accent, none); block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(26px * var(--ts, 1)); }
+  body:not(:has(.kicker:not(:empty))) .hf-rail { display: none; }
 
   .hf-headline {
     /* Weight 500, not 600. A 118px Fraunces at 600 has stems thick enough to
@@ -653,7 +678,7 @@
        floor exactly like a cover carrying a figure. At 500 it measures well
        under, and Fraunces at 500/118px is not a quieter headline; it is a
        better-drawn one. */
-    font-family: var(--f-display); font-weight: 500; font-size: calc(124px * var(--ts, 1));
+    font-family: var(--f-display); font-weight: 500; font-size: calc(var(--t-display) * 1);
     line-height: 1.06; letter-spacing: -0.02em; text-wrap: balance;
     /* Not cosmetic. A display face's glyph box is taller than a sub-1.15
        line box, so the block reports `scrollHeight > clientHeight` and the
@@ -661,7 +686,7 @@
        clause B of the interest floor on a slide that fits perfectly. The
        padding is in `em` so it tracks every size step and every per-script
        type scale. */
-    padding-block-end: 0.22em;
+    padding-block-end: max(0.22em, var(--mk-face-bleed, 0em));
   }
   /* The ladder steps UP from the previous revision (112/92/76). A statement
      slide is the one plate in the set with nothing on it but the statement,
@@ -670,17 +695,33 @@
      It also gained a FOURTH step, `micro`: three steps bottomed out at 86px
      and there was nothing under it, so past ~100 characters the block simply
      grew until it left the plate. */
-  .hf-headline.small { font-size: calc(104px * var(--ts, 1)); line-height: 1.08; }
-  .hf-headline.tiny { font-size: calc(86px * var(--ts, 1)); line-height: 1.12; }
-  .hf-headline.micro { font-size: calc(68px * var(--ts, 1)); line-height: 1.16; }
+  .hf-headline.small { font-size: calc(var(--t-display) * 0.8387); line-height: 1.08; }
+  .hf-headline.tiny { font-size: calc(var(--t-statement) * 1.0238); line-height: 1.12; }
+  .hf-headline.micro { font-size: calc(var(--t-statement) * 0.8095); line-height: 1.16; }
 
   /* The accent band under the statement. 200x14 rather than the set's
      standing 132x12: on a 1080px plate the smaller bar reads as a detail
      rather than as punctuation, and 14px is still a rule — it covers three
      and a half of the measurement's 4px cell rows, which is under the
      coverage a drawn device needs. */
+  /* ── PHASE 5.5: hidden unless the system switches it on. ──
+     This is the bar the owner saw under every headline of every plate
+     (*"יש קווים כאלה כתומים שזה הכי סימן לפוסט שנעשה עם AI"*). It COLLAPSES
+     rather than going transparent, because a standalone bar with a 36px
+     margin would otherwise spend 50px of the composition on nothing. */
   .stat-band {
-    inline-size: calc(200px * var(--ts, 1)); block-size: calc(14px * var(--ts, 1));
+    display: var(--fx-accent, none);
+  /* ── PHASE 5.5, ITEM C: THE ACCENT MARK IS ONE GEOMETRY, NOT SIX. ──
+     The run's `accentForm` decides the mark's shape ONCE and publishes it as
+     `--fx-accent-w` / `--fx-accent-h`. Before this the length was a property of
+     whichever template the writer's layout landed on — 64px on a quote card,
+     200px on a stat plate, 240px on a closer, full measure on a panel — so the
+     three slides the accent switch allows a mark on carried three different
+     shapes, which is the owner's *"sometimes a long purple marker and
+     sometimes a short one"* read as geometry rather than as colour. Each file
+     keeps its own literal as the var() fallback, so a document composed
+     without the run sheet is byte-identical. */
+    inline-size: var(--fx-accent-w, calc(200px * var(--ts, 1))); block-size: var(--fx-accent-h, calc(14px * var(--ts, 1)));
     background: var(--accent); margin-block-start: calc(36px * var(--ts, 1));
   }
   /* ── ONE ACCENT MARK PER PLATE, AND THE DEVICE'S OWN IS THE BETTER ONE. ──
@@ -729,7 +770,7 @@
   body:not(:has(#headline > span:not(:empty))) .stat-band { display: none; }
 
   .body-text {
-    font-family: var(--f-body); font-weight: 400; font-size: calc(33px * var(--ts, 1)); line-height: 1.55;
+    font-family: var(--f-body); font-weight: 400; font-size: var(--t-label); line-height: 1.55;
     color: color-mix(in srgb, var(--fg) 92%, transparent); max-inline-size: 900px; text-wrap: pretty;
     border-inline-start: calc(4px * var(--ts, 1)) solid color-mix(in srgb, var(--accent) 80%, transparent);
     padding-inline-start: calc(30px * var(--ts, 1));
@@ -760,7 +801,7 @@
      would print, one under the other. */
   /* The twin host's block-start bleed — see `cover.html` for the measurement
      and why it is here rather than only in the shared mark sheet. */
-  :has(> span.mk-plain) { padding-block-start: var(--mk-twin-bleed, .22em); }
+  :has(> span.mk-plain) { padding-block-start: max(var(--mk-twin-bleed, .22em), var(--mk-face-bleed, 0em)); }
   .hf-headline:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
   .body-text:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
 
@@ -771,12 +812,12 @@
      of the copy. */
   .brand-handle {
     position: absolute; bottom: 44px; inset-inline-start: 44px; z-index: 6;
-    font-family: var(--f-mono); font-size: calc(19px * var(--ts, 1)); letter-spacing: 0.08em;
+    font-family: var(--f-mono); font-size: var(--t-micro); letter-spacing: 0.08em;
     color: color-mix(in srgb, var(--fg) 55%, transparent);
   }
   .brand-badge {
     position: absolute; top: 56px; inset-inline-start: var(--mx); z-index: 6;
-    font-family: var(--f-mono); font-weight: 600; font-size: calc(19px * var(--ts, 1));
+    font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro);
     letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);
   }
   /* An @handle, a URL and a #hashtag are LTR strings, and a Hebrew or Arabic
@@ -790,11 +831,12 @@
   .brand-badge:empty, .brand-handle:empty, .brand-handle:has(> bdi:empty) { display: none; }
 </style>
 </head>
-<body class="ts-{{fontScale}} ta-{{textAlign}} gr-{{groundStyle}}">
+<body class="ts-{{fontScale}} ta-{{textAlign}} gr-{{groundStyle}}" data-n="{{slideIndex}}">
   <div class="ground" aria-hidden="true"></div>
-  <span class="ground-glyph" aria-hidden="true">{{slideIndex}}</span>
-  <div class="brand-badge">{{seriesBadge}}</div>
+  <!-- The 460px `.ground-glyph` and the `seriesBadge` slot were both here
+       and are both deleted — see their own notes in the sheet above. -->
   <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
+  <span class="pg-index" aria-hidden="true">{{slideIndex}}</span>
   <div class="hf-top">
     <div class="kicker">{{kicker}}</div>
     <div class="hf-rail"></div>

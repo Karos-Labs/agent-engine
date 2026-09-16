@@ -21,6 +21,13 @@ import type { InstagramCopyOutput } from "./types.js";
  * `MIN_RELEVANCE_SCORE` the draft goes back to step 05 with the judge's
  * reason and the one-sentence bridge it says is missing.
  *
+ * Since 2026-09-16 (spec §6 G5.2) a score AT the floor that still carries a
+ * `missingBridge` goes back too: the number says "just passes" and the sentence
+ * says "a stranger cannot see the connection", and the sentence is the half
+ * with evidence in it. A bridge one point above the floor passes with the
+ * sentence carried to the gate as a `note`. A draft passing only on the RELAXED
+ * floor is exempt — see the carve-out in `runRelevanceJudge`.
+ *
  * ## Why a second stage at all
  *
  * Stage 1 (`buildGroundedQuery` in `client-brief.ts`) grounds the RESEARCH
@@ -275,11 +282,78 @@ export async function runRelevanceJudge(
   // passed, the verdict SAYS so — a relaxed floor that leaves no trace is a
   // gate the reviewer thinks is stricter than it is.
   const minScore = Number.isFinite(floor.minScore) ? floor.minScore : MIN_RELEVANCE_SCORE;
-  if (score >= minScore) {
-    const relaxed = score < MIN_RELEVANCE_SCORE && floor.relaxedReason !== undefined;
-    return { status: "relevant", score, reason, ...(relaxed ? { note: floor.relaxedReason! } : {}) };
-  }
+  // ── Phase 5.5 (spec §6 G5.2) — THE PARSE MOVED ABOVE THE BRANCH ──
+  //
+  // This line used to sit BELOW the `score >= minScore` return, which meant the
+  // judge's own "here is the sentence this post is missing" was read on exactly
+  // one path — the one where the gate had already decided to refuse — and
+  // discarded on every other. It is not that a bridge "passed as a note": it
+  // was never parsed at all.
+  //
+  // That is what shipped thepitchbydeel's 2026-09-16 post. `07g` returned a 3
+  // with a bridge saying the post's four middle slides argue general LLM
+  // workflow design and never say why a founder applying to The Pitch should
+  // care — the post was arguing Karos Labs' subject matter from a catalog row
+  // seeded on deel's catalog — and the gate returned `relevant`, silently, with
+  // the sentence that named the defect thrown away.
   const missingBridge = typeof output.missingBridge === "string" && output.missingBridge.trim().length > 0 ? output.missingBridge.trim() : undefined;
+
+  // ── THE RELAXED FLOOR IS EXEMPT FROM THE BRIDGE RULE, AND HAS TO BE ──
+  //
+  // A draft that passes only because the floor was lowered for a thinly-grounded
+  // brief is passing on the relaxation's own premise: 2 is the CEILING of what
+  // any writer can earn from "What we sell: AI marketing / Audience:
+  // practitioners in AI marketing", so no redraft can answer the verdict. A
+  // bridge on such a verdict reads like an instruction ("name the client's own
+  // offer in the caption") and is not one — the writer has no offer to name,
+  // because the brief does not contain it. Returning the draft here would
+  // re-open the unwinnable three-attempt hold that
+  // `THIN_GROUNDING_MIN_RELEVANCE_SCORE` exists to close, for exactly the
+  // client the 2026-09-08 audit was about.
+  //
+  // The bridge is not discarded; it rides the reviewer's note beside the
+  // relaxation, because filling in the two onboarding documents is what
+  // actually answers it.
+  if (score >= minScore && score < MIN_RELEVANCE_SCORE && floor.relaxedReason !== undefined) {
+    const note =
+      missingBridge !== undefined
+        ? `${floor.relaxedReason}. The judge also named a missing bridge, which no redraft against this brief could build: ${missingBridge}`
+        : floor.relaxedReason;
+    return { status: "relevant", score, reason, note };
+  }
+  if (score >= minScore && missingBridge === undefined) {
+    return { status: "relevant", score, reason };
+  }
+  // ── A BRIDGE COSTS A POINT ──
+  //
+  // The rubric asks for `missingBridge` only "when the score is below 3", so a
+  // judge that volunteers one at the floor has told us two things that
+  // disagree: the number says "just passes", the sentence says "a stranger
+  // cannot see the connection". The sentence is the judgement with evidence in
+  // it, and the number is the one the model rounded.
+  //
+  // At `minScore + 1` and above the sentence is a refinement rather than a
+  // disagreement — a 4 is "clearly theirs, one detail could be sharper", which
+  // is what a bridge on a 4 describes — so the draft passes and the bridge
+  // travels to the gate payload as a note the reviewer can read.
+  //
+  // AT THE FLOOR ITSELF the draft goes back to `05` with `relevanceSteerFor`,
+  // which was written for exactly this verdict and has never once been
+  // reachable. It costs one redraft, bounded by the same attempt loop every
+  // other return rides, and it never holds: the final attempt ships marked
+  // below the bar like every other gate here.
+  //
+  // THE RUBRIC IS NOT CHANGED TO ASK FOR MORE BRIDGES, and that is what bounds
+  // the cost of this. `RELEVANCE_OUTPUT_FIELDS`' own description still says
+  // "Required when score is below 3... Omit when the score is 3 or higher", so
+  // a bridge at the floor is a sentence the judge VOLUNTEERED against its
+  // instruction — which is precisely what makes it worth a redraft, and what
+  // keeps this from turning every 3 into a return. Soliciting bridges at 3
+  // would make the floor 4 by the back door, and the header's argument for a
+  // lenient floor still stands.
+  if (score >= minScore + 1 && missingBridge !== undefined) {
+    return { status: "relevant", score, reason, note: missingBridge };
+  }
   return { status: "off-brief", score, reason, ...(missingBridge !== undefined ? { missingBridge } : {}) };
 }
 

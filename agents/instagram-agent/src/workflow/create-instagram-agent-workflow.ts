@@ -34,6 +34,11 @@ import { InstagramBriefAgent } from "../agent/instagram-brief-agent.js";
 // Phase 4, RFC-16 — the one model step the concept mode adds (`04m`).
 import { InstagramConceptAgent, type ConceptOutput } from "../agent/instagram-concept-agent.js";
 import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
+// Phase 5.5 (spec §3 B3) — `05f`, the markup half of a custom archetype,
+// hoisted out of the copy schema so a markup mistake costs one $0.030 call
+// instead of a whole drafting attempt.
+import { InstagramCustomArchetypeAgent } from "../agent/instagram-custom-archetype-agent.js";
+import { InstagramEntityAgent } from "../agent/instagram-entity-agent.js";
 import { InstagramImageVettingAgent } from "../agent/instagram-image-vetting-agent.js";
 import { InstagramResearchAgent } from "../agent/instagram-research-agent.js";
 import { InstagramVisualQaAgent } from "../agent/instagram-visual-qa-agent.js";
@@ -59,7 +64,7 @@ import {
   type TemplateDefinition,
   type TemplateStore,
 } from "@agent-engine/tool-karos-templates";
-import { brandLogoDataUri, downloadBrandLogo, LIKENESS_FAIL_CLOSED, parseBrandLogoDataUri, renderVisualPatternReference, type BrandLogoPlacement, type GeneratedLikenessDecision, type MediaLibraryEntry, type VisualPatternProfile } from "@agent-engine/tool-karos-media";
+import { brandLogoDataUri, describeBrandLogoFailure, downloadBrandLogoOutcome, LIKENESS_FAIL_CLOSED, parseBrandLogoDataUri, renderVisualPatternReference, type BrandLogoFailureReason, type BrandLogoPlacement, type GeneratedLikenessDecision, type MediaLibraryEntry, type VisualPatternProfile } from "@agent-engine/tool-karos-media";
 import { buildBrandHeadHtml, buildBrandLogoBodyHtml, deriveBrandRenderTokens, filterLearnedStyleToRing, planBrandLogo, type BrandRenderTokens } from "./brand-render-tokens.js";
 import { buildScriptFontHeadForLanguage } from "./script-fonts.js";
 import {
@@ -107,7 +112,15 @@ import {
   runRelevanceJudge,
   type RelevanceVerdict,
 } from "./relevance-gate.js";
-import { rankTopicCandidates, recentModesFromDecisions, resolveTopicClaim, topicDecisionForGate, topicDecisionSummary } from "./topic-selection.js";
+import {
+  rankTopicCandidates,
+  recentFormatsFromDecisions,
+  recentModesFromDecisions,
+  resolveTopicClaim,
+  selectPostFormat,
+  topicDecisionForGate,
+  topicDecisionSummary,
+} from "./topic-selection.js";
 // ── Phase 4 (RFC-16) — the CONCEPT mode ──
 //
 // Everything in this module is PURE: the selector, the recognition lexicon,
@@ -134,6 +147,8 @@ import {
 import {
   CANDIDATES_PER_PHOTO_SLIDE,
   DEFAULT_RUN_SHAPE,
+  // Phase 5.5, spec §2 A1 — the generated-image floor no lever may cross.
+  MIN_GENERATED_IMAGES_PER_RUN,
   RUN_BUDGET_BELIEF_KEY,
   RunSpendMeter,
   STEP_COST_ESTIMATES_USD,
@@ -182,12 +197,11 @@ import {
   type SlideStyleOverride,
   type VariationPlanEntry,
 } from "./slides-data.js";
-import { deviceCssBlock } from "./slide-devices.js";
+import { checkCoverFigureDevice, deviceCssBlock } from "./slide-devices.js";
 // ── Phase 5 (RFC-17) — marked emphasis. ──
 import { buildMarkRing, markCssBlock, type EmphasisIssue, type MarkRing } from "./emphasis-marks.js";
 // ── Phase 7 (RFC-20 §5.1) — the material ground. ──
-import { GROUND_MATERIAL_MOUNTED, groundMaterialCssBlock } from "./ground-material.js";
-import { scriptTypographyFor } from "./script-fonts.js";
+import { scriptTypographyFor, targetScriptName } from "./script-fonts.js";
 // ── Phase 2 (RFC-14) — the four modules the integrator wires ──
 import {
   checkInterestFloor,
@@ -202,9 +216,12 @@ import {
   TEXT_SHARE_CEILING,
   type InterestFloorReport,
 } from "./interest-floor.js";
-import { composeBoundedObjects, type BoundedObjectDecision } from "./bounded-object.js";
+import { boundedObjectFor, composeBoundedObjects, type BoundedObjectDecision } from "./bounded-object.js";
 import { checkSlideWordBudget, formatWordBudgetFindings, MAX_WORDS_PER_SLIDE } from "./slide-word-budget.js";
-import { ceilingFor, enforceImageryBand, MIN_PICTURE_SLIDES, type ImageryDemotion, type ImageryPromotion } from "./imagery-floor.js";
+import { ceilingFor, enforceImageryBand, imageryShortfallsFor, MIN_PICTURE_SLIDES, type ImageryDemotion, type ImageryPromotion, type ImageryShortfall } from "./imagery-floor.js";
+// Phase 5.5, spec §2 A1b — the split every optional-spend gate in the generate
+// ladder consults, so the image floor is enforced where it actually binds.
+import { partitionGaps } from "./image-gap-partition.js";
 import { planInterestRelayout, type InterestRelayoutPlan } from "./interest-relayout.js";
 // RFC-19 §4 item 17 — the deterministic headline fact cards `04b` falls back to, and the one hold it keeps.
 import { headlineFallbackResearch, NO_READABLE_SOURCE } from "./research-fallback.js";
@@ -219,8 +236,10 @@ import {
 import {
   buildSkeletonEntry,
   checkSkeletonVariety,
+  previousSkeleton,
   readSkeletonHistory,
   recentSeriesIds,
+  recentSystemIds,
   recordSkeleton,
   rolesForSlideCount,
   skeletonAvoidList,
@@ -231,7 +250,30 @@ import {
   type SkeletonHistory,
   type SkeletonVarietyVerdict,
 } from "./skeleton-memory.js";
-import { countComparedEntities, selectSeries, seriesBadgeFor, seriesDirective, SERIES_DIRECTIVE_SLIDES } from "./editorial-series.js";
+import { countComparedEntities, selectSeries, seriesDirectedSlides, seriesDirective, SERIES_DIRECTIVE_SLIDES } from "./editorial-series.js";
+import {
+  buildGateVerdict,
+  draftDigestFor,
+  type GateAttemptRecord,
+  type GateDegradeMarker,
+  type GateStepFailure,
+} from "./gate-verdict.js";
+import {
+  BRAND_MARK_ZONE,
+  BRAND_MARK_ZONE_INTRUSION_PX,
+  crossClientSeriesIds,
+  crossClientSystemIds,
+  CROSS_CLIENT_FORMAT_BELIEF_KEY,
+  EMPTY_CROSS_CLIENT_HISTORY,
+  pickVisualSystem,
+  readCrossClientFormatHistory,
+  recordCrossClientFormat,
+  resolveDisplayRegisterForScript,
+  SYSTEM_CROSS_CLIENT_HOLD,
+  visualSystemCssBlock,
+  type CarouselVisualSystem,
+  type ClientVisualSystem,
+} from "./visual-system.js";
 import {
   buildAutoPromotionRequest,
   cleanShipsFor,
@@ -252,6 +294,11 @@ import {
   isStudioTemplateId,
   planStudioTemplates,
   rankReferenceFormats,
+  // Phase 5.5 (spec §5 D1) — the three-way setup outcome, so a TOOLING failure
+  // stops costing the client 30 days of the empty-setup cooldown.
+  SETUP_FAILURE_STATUSES,
+  type SetupAttemptOutcome,
+  type SetupFailureStatus,
   studioNote,
   studioSampleSeedFromBrief,
   summarizeStudio,
@@ -279,8 +326,12 @@ import {
   buildConceptArtDirection,
   buildVisualDirectionInput,
   checkVisualDirection,
+  clientVisualSystemFor,
   fallbackVisualDirection,
   finaliseVisualDirection,
+  // Phase 5.5 (spec §5 D1) — the same vocabulary the studio marker uses; the
+  // module asserts the two lists agree at compile time.
+  SETUP_FAILURE_STATUSES_FOR_MARKER,
   VISUAL_DIRECTION_ATTEMPT_BELIEF_KEY,
   VISUAL_DIRECTION_BELIEF_KEY,
   VISUAL_DIRECTION_RETRY_DAYS,
@@ -289,8 +340,32 @@ import {
   type VisualDirectionEvidenceBundle,
   type VisualPatternEvidence,
 } from "./visual-direction.js";
-import { generationPromptFor, needsImageSourcing, normaliseVisualNeed, retrievalQueryFor, vetSubjectFor } from "./scene-brief.js";
-import { imageTreatmentCssBlock, resolveGenerationStyle, type GenerationStyle } from "./style-lock.js";
+import {
+  checkSceneBriefs,
+  generationPromptFor,
+  needsImageSourcing,
+  normaliseVisualNeed,
+  resolveEntityRef,
+  retrievalQueryFor,
+  vetSubjectFor,
+  type SceneBriefFinding,
+} from "./scene-brief.js";
+import {
+  creditLineFor,
+  ENTITY_CANDIDATES_WANTED,
+  groundEntities,
+  licenceAdmissible,
+  licenceClassFor,
+  needsLikenessConsent,
+  planEntitySourcing,
+  sceneDeclaresIllustration,
+  screenLegibleText,
+  topEntities,
+  type EntityEvidenceCard,
+  type PostUsage,
+  type RecognisedEntity,
+} from "./entity-imagery.js";
+import { gradePictureSet, heroScrimCssBlock, imageTreatmentCssBlock, resolveGenerationStyle, type GenerationStyle } from "./style-lock.js";
 import {
   buildLibraryEntry,
   CLIENT_UPLOAD_RIGHTS,
@@ -333,6 +408,8 @@ import {
   buildFirstCommentSources,
   buildTimingNote,
   checkPostPackage,
+  // Phase 5.5 (spec §6 G2) — which slides' alt text the wire clamp cut.
+  clampedAltSlides,
   packageLanguageGateFields,
   resolveHashtagPlacement,
   type PostPackage,
@@ -365,17 +442,19 @@ import {
   templateBasename,
   type ContrastFact,
   countContentElements,
+  weighContentElements,
 } from "./visual-qa-pre-checks.js";
 import { parseStyleDirective, applyIntents, type StyleDirectiveResult, type StyleIntent, type StyleRefusal } from "./style-directive.js";
 import {
   BrandTokensSchema,
   type BrandTokens,
   mergeStyleOverrides,
-  MIN_CLAIM_MATCH,
   ResearchOutputSchema,
+  selectionPasses,
   StyleConfigSchema,
   type ImageCandidate,
   type ImageSelection,
+  type VisualQaFinding,
   type InstagramAgentWorkflowResult,
   type InstagramCopyOutput,
   type InstagramFrozenConfig,
@@ -385,6 +464,9 @@ import {
   type ResearchOutput,
   type SlideCustomArchetype,
   type StyleOverrides,
+  // Phase 5.5 (spec §3 B3) — the ONE join between the writer's brief and
+  // `05f`'s markup. Nothing else composes a `SlideCustomArchetype`.
+  composeCustomArchetype,
 } from "./types.js";
 
 /**
@@ -1484,9 +1566,35 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       } catch (error) {
         console.error("02k-read-structural-memory: could not read the beliefs document, planning from an empty history", error);
       }
-      return { skeletons: readSkeletonHistory(beliefs), customArchetypes: readCustomArchetypeHistory(beliefs) };
+      // Phase 5.5, item D — the third parse of the same read. Fail-open by
+      // construction: `readCrossClientFormatHistory` returns an empty history
+      // for anything it cannot read, and an empty history is no penalty, so a
+      // permission error or an absent key costs this run nothing.
+      return {
+        skeletons: readSkeletonHistory(beliefs),
+        customArchetypes: readCustomArchetypeHistory(beliefs),
+        crossClientFormats: readCrossClientFormatHistory(beliefs),
+      };
     });
     const skeletonHistory: SkeletonHistory = structuralMemory.skeletons;
+    /**
+     * Phase 5.5, item D — the cross-client variety pressure: which series and
+     * which visual systems have shipped RECENTLY, for ANY client, so the fleet
+     * stops producing one post in several palettes.
+     *
+     * **KNOWN LIMIT, stated rather than hidden.** `memory.read` is
+     * client-scoped by construction (`ctx.clientSlug`, `karos-memory/read.ts`)
+     * and this agent has no fleet-scoped read, so what this actually carries
+     * today is THIS client's own history under the fleet key. `crossClientSeriesIds`
+     * and `crossClientSystemIds` both EXCLUDE the calling client's rows, so the
+     * cross-client limb is inert until a fleet-scoped memory capability exists —
+     * it cannot mislead, it simply abstains, which is the right failure mode
+     * for a variety rule (`pickVisualSystem` drops the rung rather than
+     * emptying the pool). The within-client half does the work that is
+     * reachable: the system seed is `clientSlug:runId:seriesId`, so two clients
+     * already resolve different systems on the same day and the same story.
+     */
+    const crossClientFormatHistory = structuralMemory.crossClientFormats ?? EMPTY_CROSS_CLIENT_HISTORY;
     /** The last five shipped layout sequences, newest first — the copy prompt's avoid-list (item P, prompt @14 §21). Empty on a first run. */
     const recentSkeletons = skeletonAvoidList(skeletonHistory);
     /**
@@ -1497,6 +1605,43 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      * nothing, which is correct — rotation holds out formats that SHIPPED.
      */
     let shippedSeriesId: string | undefined;
+    /** Phase 5.5, item C — the visual system this run drafted in, hoisted for the same reason `shippedSeriesId` is: decided inside the loop, written at `09b`. */
+    let shippedSystemId: string | undefined;
+    /** Phase 5.5, item G4 — the figure this client's PREVIOUS post led its cover with, so this one cannot lead with the same number. */
+    const previousCoverFigure = previousSkeleton(skeletonHistory)?.coverFigure;
+    /**
+     * Phase 5.5, item A2 — what this post IS, for the rights gate.
+     *
+     * `"commentary"`: an Instagram carousel that argues an editorial point
+     * about a news story, citing its sources. That is what every post this
+     * agent has ever produced is, and it is what makes an `editorial-only`
+     * press photograph of a named public figure usable at all — which is the
+     * single most useful candidate class for a post about a real entity.
+     *
+     * A constant rather than a computed value BECAUSE nothing in a client
+     * brief marks a post promotional today. When something does, this is the
+     * one line that reads it, and `licenceAdmissible` already knows what to do
+     * with the other answer.
+     */
+    const POST_USAGE: PostUsage = "commentary";
+    /**
+     * Phase 5.5, item G1 — one row per DRAFTING ATTEMPT this run ever bought,
+     * across every revision, for `buildGateVerdict`.
+     *
+     * At the run scope rather than inside `draftOnce` because a reviewer's
+     * `revise` buys a second round of attempts, and "which attempt shipped, and
+     * what did the others cost" is a question about the RUN.
+     */
+    const draftAttemptLog: GateAttemptRecord[] = [];
+    /**
+     * Failures OUTSIDE the drafting loop: research extraction, the packager,
+     * an unjudged `08b`, the four setup agents. The builder derives the copy
+     * attempts' own failures from `draftAttemptLog`, so a copy failure pushed
+     * here too would be counted twice.
+     */
+    const nonDraftStepFailures: GateStepFailure[] = [];
+    /** Whether `08c-package-post-retry` ran this run, whatever it returned. On the gate because a post that needed a re-ask is a post whose packaging is worth reading. */
+    let packageRetryRan = false;
     /** Item O's ledger of run-authored designs, advanced by `09f` and written back at `09b`. */
     let customArchetypeHistory: CustomArchetypeHistory = structuralMemory.customArchetypes;
     /**
@@ -1904,6 +2049,19 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     });
     const targetLanguage = languageAdoption.language;
     /**
+     * The run's SCRIPT, resolved once from the language `02d` just settled.
+     *
+     * Two readers: the brand head fragment (which withholds a display register
+     * whose face cannot set this script — `DISPLAY_REGISTER_SCRIPTS`) and the
+     * gate payload's `visualDirection.system` block, so a substitution is
+     * reported rather than left to look like an axis that is working.
+     *
+     * `undefined` for a Latin run and for a language the gate's own
+     * `SCRIPT_TABLE` has never heard of, which is the two cases where the
+     * register is correct as frozen.
+     */
+    const runScriptName = targetScriptName(targetLanguage);
+    /**
      * Phase 4 (RFC-15 §2) — WHICH of the five sources decided this run's language, in the belief record's
      * own vocabulary, and the sentence a trace reader gets. Computed here, where both halves of the
      * resolution are in scope, and read once at `09b`.
@@ -1983,9 +2141,58 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      */
     const NEVER_MATERIALIZED = Symbol("templates-never-materialized");
     let templatesMaterializedForKit: BrandRenderTokens | undefined | typeof NEVER_MATERIALIZED = NEVER_MATERIALIZED;
+    /**
+     * Phase 5.5, item C — THIS RUN'S VISUAL SYSTEM, resolved at
+     * `04p-resolve-visual-system` and read by `headExtras`.
+     *
+     * A mutable declared UP HERE rather than a parameter threaded down,
+     * because `headExtras` and `ensureTemplatesOnDisk` are both defined above
+     * `draftOnce` (the head sheet is baked into the template FILES at
+     * materialisation, not passed per render) and `04p` cannot run until the
+     * art direction and the series exist. `undefined` until `04p` sets it is
+     * the exact pre-phase paint, which is what the setup-time studio renders
+     * want anyway.
+     */
+    let runVisualSystem: CarouselVisualSystem | undefined;
+    /**
+     * Phase 5.5, item D — THE CLIENT LAYER of the visual system: the display
+     * face and weight, the composition grammar and the ground texture that
+     * `buildBrandHeadHtml` renders into every document's brand sheet.
+     *
+     * Declared here and REASSIGNED once `00d` has resolved the art direction,
+     * rather than declared there, because `brandFragments()` is called by the
+     * TEMPLATE STUDIO (`00c4`) — before a visual direction exists at all — and
+     * a `const` declared later would be a temporal-dead-zone throw on that
+     * path rather than a missing axis. The opening value is exactly what
+     * `clientVisualSystemFor(undefined, …)` returns, so the studio renders on
+     * the same derived axes it would have got anyway; a client whose setup
+     * DID author the six axes picks them up at the reassignment, before any
+     * post document is materialised.
+     */
+    let clientVisualSystem: ClientVisualSystem = clientVisualSystemFor(undefined, frozen.brandTokens, wf.clientSlug);
+    /**
+     * The head sheet last actually WRITTEN to disk, for the same reason
+     * `templatesMaterializedForKit` exists one comment up: the visual system's
+     * accent and pagination switches live in that sheet, they are keyed per
+     * slide number, and a re-layout that changed the slide count changes them.
+     * Without this, `04p` would resolve a system, `06g` would grade a set, and
+     * not one rule would reach a rendered pixel — the exact silent loss
+     * IGSTYLE-3 opened on, arriving through a new door.
+     */
+    let templatesMaterializedForHead: string | typeof NEVER_MATERIALIZED = NEVER_MATERIALIZED;
 
     const brandFetch = options.fetchImpl ?? fetch;
     let cachedLogoDataUri: string | undefined;
+    /**
+     * Phase 5.5 (spec §7 F1) — why the last brand-logo download produced
+     * nothing, in the download's own measured words.
+     *
+     * Carried to the gate payload so a reviewer reads `HTTP 403` or
+     * `content-type: application/octet-stream` instead of a four-way
+     * disjunction. `undefined` means either "no logo is configured" (a
+     * client-config gap, reported separately) or "it downloaded".
+     */
+    let brandLogoFailure: { reason: BrandLogoFailureReason; detail: string; note: string } | undefined;
     /**
      * The brand logo, as a data URI. Embedded rather than referenced —
      * a `slide.images` path whose file vanished on a recycled instance is a
@@ -2008,9 +2215,19 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       } catch {
         // Not cached on this instance yet — fetch below.
       }
-      const download = await downloadBrandLogo(brandFetch, effectiveKit.logoUrl);
-      if (download === undefined) return undefined;
-      cachedLogoDataUri = brandLogoDataUri(download);
+      // Phase 5.5 (spec §7 F1) — the TYPED outcome, not a bare `undefined`.
+      // `downloadBrandLogo` returned nothing on six distinct paths and the gate
+      // printed a four-way guess that named none of them, which is why
+      // karoslabs' missing logo was still a mystery after three prep runs.
+      // Same ladder, same fail-open, same non-memoized failure; what is new is
+      // that the refusal now carries its measured value to `08a2`.
+      const outcome = await downloadBrandLogoOutcome(brandFetch, effectiveKit.logoUrl);
+      if (!outcome.ok) {
+        brandLogoFailure = { reason: outcome.reason, detail: outcome.detail, note: describeBrandLogoFailure(outcome, effectiveKit.logoUrl) };
+        return undefined;
+      }
+      brandLogoFailure = undefined;
+      cachedLogoDataUri = brandLogoDataUri(outcome.download);
       try {
         await fs.mkdir(cacheDir, { recursive: true });
         await fs.writeFile(cacheFile, cachedLogoDataUri, "utf8");
@@ -2045,9 +2262,71 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // ground that will actually be under it.
       const placement =
         download !== undefined
-          ? planBrandLogo(effectiveKit, download, { hasSeriesBadge: frozen.brandTokens.seriesBadge !== undefined })
+          ? // Phase 5.5, item C3/F. This read used to be an EVALUATION-ORDER
+            // BUG: the logo was planned from the FROZEN badge while the
+            // document rendered the badge `brandTokensForAssembly` derived
+            // from the series, so on geektime the placer was told there was no
+            // badge, put the disc in the badge's own corner, and clipped
+            // `{ FIELD NOTES }` to `{ FIELD` on all eight slides. It is now
+            // correct by construction rather than by care — `seriesBadgeFor`
+            // no longer reaches assembly at all (see `brandTokensForAssembly`
+            // below), so the frozen token IS the effective one. Kept reading
+            // the token rather than hardcoding `false`, because a CLIENT may
+            // still ship a template with its own standing badge.
+            //
+            // ── AND THE BADGE'S CORNER DID NOT GO AWAY WITH THE BADGE. ──
+            //
+            // Deleting `seriesBadge` removed the element and left the SLOT it
+            // occupied to the thing that replaced it: `eyebrowFor` puts a
+            // topical eyebrow on the first two interiors and the closer, in the
+            // same `inset-inline-start` top corner, and `planBrandLogoPlacement`
+            // returns `top-start` whenever it is told the corner is free. So
+            // the disc landed on the eyebrow on every eyebrow-bearing slide of
+            // every client — measured on the composed karoslabs stat plate as
+            // `.brand-logo` (44,44 65x65) over `.eyebrow` (64,96 180x29), a
+            // 13px overlap across 45px of the eyebrow's first two words, and
+            // reported by the run's own geometry probe on all three kits. That
+            // is the owner's *"יש למעלה לוגו שלהם… אבל הוא דורס כותרת"* with a
+            // new element in the badge's place.
+            //
+            // So the question the placer is asked is the EFFECTIVE one: does
+            // anything stand in the start-side top corner on this run —
+            // a client's standing badge, or this run's own eyebrow. Either
+            // sends the mark to `top-end`. `runVisualSystem` is assigned by
+            // `04p` and re-assigned per draft; this closure is only ever CALLED
+            // from `brandFragments` and `08a2`, both of which run after the
+            // draft, so it reads a resolved system.
+            planBrandLogo(effectiveKit, download, {
+              hasSeriesBadge: frozen.brandTokens.seriesBadge !== undefined || runVisualSystem?.eyebrow.kind === "topical",
+            })
           : undefined;
       return { ...(logoDataUri !== undefined ? { logoDataUri } : {}), ...(placement !== undefined ? { placement } : {}) };
+    };
+
+    /**
+     * The rectangle the brand mark owns on this run's plates, in the design
+     * canvas's own coordinates and already resolved for the carousel's writing
+     * direction — `publish.renderCarousel`'s `reservedZone` input.
+     *
+     * Resolved HERE rather than in the tool because the tool cannot know
+     * either half: `BrandLogoCorner` is logical (`top-start` / `top-end`) and
+     * which physical corner that is depends on the document's `dir`, which
+     * `assembleSlidesData` decides per carousel and writes onto every slide's
+     * `dir` field.
+     *
+     * `undefined` when no mark will render, which is the honest answer: with no
+     * mark there is no zone, and a zone nobody owns would report every plate's
+     * eyebrow as an intrusion.
+     */
+    const reservedZoneFor = async (assembled: RenderCarouselInput): Promise<{ x: number; y: number; w: number; h: number } | undefined> => {
+      const { logoDataUri, placement } = await brandLogoAssessment();
+      if (logoDataUri === undefined || placement === undefined || placement.decision === "omit") return undefined;
+      const rtl = assembled.slides[0]?.fields["dir"] === "rtl";
+      // `top-start` is the left corner in an LTR document and the right one in
+      // an RTL document; `top-end` is the mirror of that.
+      const atLeft = placement.corner === "top-start" ? !rtl : rtl;
+      const { size, inset } = BRAND_MARK_ZONE;
+      return { x: atLeft ? inset : Math.max(0, assembled.canvas.w - inset - size), y: inset, w: size, h: size };
     };
 
     /**
@@ -2072,7 +2351,21 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // `<img>`: an illegible mark ships as nothing, never as a smudge, and
       // never as a held run.
       const showLogo = logoDataUri !== undefined && placement !== undefined && placement.decision !== "omit";
-      const head = [scriptHead, buildBrandHeadHtml(effectiveKit, showLogo ? { logo: placement } : {})].filter((s): s is string => s !== undefined).join("\n");
+      // Phase 5.5, item D — `system` carries the per-CLIENT axes into the brand
+      // sheet: the display face, weight and tracking, the composition grammar's
+      // measure and gutter, and the ground texture's wash alpha. It is what
+      // makes two clients' posts stop looking like one system in two palettes,
+      // and it is free — six enums resolved from the brand kit when setup never
+      // authored them.
+      //
+      // `script` is the run's target script, and it is what stops the register
+      // being a Latin decision applied to a Hebrew plate: see
+      // `DISPLAY_REGISTER_SCRIPTS`. Resolved from the same `targetLanguage`
+      // `scriptHead` above reads, so the two fragments can never disagree about
+      // which script this post is in.
+      const head = [scriptHead, buildBrandHeadHtml(effectiveKit, { ...(showLogo ? { logo: placement } : {}), system: clientVisualSystem, ...(runScriptName !== undefined ? { script: runScriptName } : {}) })]
+        .filter((s): s is string => s !== undefined)
+        .join("\n");
       return {
         head,
         ...(showLogo ? { body: buildBrandLogoBodyHtml(logoDataUri) } : {}),
@@ -2205,6 +2498,14 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     /** Templates this setup actually stored / dropped — read by the one setup-budget report below, which now runs after `00d*`. */
     let setupTemplatesStored = 0;
     let setupTemplatesDropped = 0;
+    /**
+     * Phase 5.5 (spec §5 D1) — WHY this setup stored what it stored, so the
+     * 30-day empty-setup cooldown stops firing on a tooling error.
+     *
+     * `undefined` means the studio never ran on this run, which is most runs
+     * and is exactly what should NOT be persisted as a judgement.
+     */
+    let setupStudioOutcome: SetupAttemptOutcome | undefined;
 
     if (options.templateStore !== undefined) {
       const templateStore = options.templateStore;
@@ -2231,6 +2532,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               setupHistory = readSetupBudgetHistory((read.result as { beliefs?: unknown }).beliefs).setups.map((setup) => ({
                 at: setup.at,
                 templatesStored: setup.templatesStored,
+                // Phase 5.5 (spec §5 D1) — carried through, or the
+                // discrimination is lost on the read back and every attempt
+                // classifies as `unknown`. That is fail-open (never a lockout)
+                // but it also means the genuine empty-setup cooldown is
+                // permanently off.
+                ...(setup.outcome !== undefined ? { outcome: setup.outcome } : {}),
               }));
             }
           } catch (error) {
@@ -2538,6 +2845,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
 
         const dropped: Array<{ archetypeId: string; reason: string }> = [];
         const stored: Array<{ promotion: StudioPromotion; validation: StudioTemplateValidation }> = [];
+        /** Phase 5.5 (spec §5 D1) — `00c4` turns that never completed, kept apart from `dropped` so a tooling error is never read as a judgement. */
+        const designerFailures: SetupFailureStatus[] = [];
 
         // ── 00c3: the format thesis, once for the whole set ──
         const designBriefAgent = new InstagramDesignBriefAgent({ router: options.router, tools, promptStore: options.promptStore });
@@ -2554,6 +2863,14 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           );
           setupNotes.push(`the design brief resolved to "${designBriefExec.status}", so no templates were authored`);
           studioReport = summarizeStudio({ check: studioCheck, stored: [], dropped: [], evidence: evidence.evidence, notes: setupNotes });
+          // Phase 5.5 (spec §5 D1): FAILED, not empty. The studio never got to
+          // judge a candidate, so there is no judgement to stand for 30 days —
+          // and this is exactly the path all three clients took on 2026-09-16.
+          setupStudioOutcome = {
+            kind: "failed",
+            status: SETUP_FAILURE_STATUSES.includes(designBriefExec.status as SetupFailureStatus) ? (designBriefExec.status as SetupFailureStatus) : "tooling_error",
+            reason: `00c3-write-design-brief resolved to "${designBriefExec.status}"`,
+          };
         } else {
           const designBrief = designBriefExec.finalOutput;
           const plan = planStudioTemplates(designBrief, {
@@ -2634,7 +2951,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                     // RFC-20 Part 11: MOUNTED NOWHERE. See `GROUND_MATERIAL_MOUNTED`
                     // for the rule and the CI renders behind it. The call stays so
                     // the mount is proven wiring rather than unwritten code.
-                    GROUND_MATERIAL_MOUNTED ? groundMaterialCssBlock({ ground: studioKit?.cssVars["--bg"], fg: studioKit?.cssVars["--fg"] }, wf.clientSlug) : "",
+                    "",
                   ]
                     .filter((s) => s.length > 0)
                     .join("\n"),
@@ -2658,6 +2975,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             setupSpend(`00c4-design-template-${planned.archetypeId}`, designExec.totalCostUsd, SETUP_STEP_COST_ESTIMATES_USD.templateDesign);
             if (designExec.status !== "completed" || designExec.finalOutput === undefined || designExec.finalOutput === null) {
               const reason = `the designer turn resolved to "${designExec.status}"`;
+              // Phase 5.5 (spec §5 D1): counted apart from `dropped`, because a
+              // turn that never completed is a TOOLING failure and a candidate
+              // the battery measured and refused is a JUDGEMENT. Only the
+              // second earns a 30-day cooldown.
+              designerFailures.push(SETUP_FAILURE_STATUSES.includes(designExec.status as SetupFailureStatus) ? (designExec.status as SetupFailureStatus) : "tooling_error");
               dropped.push({ archetypeId: planned.archetypeId, reason });
               await studioWarn(`template-studio-design-${planned.archetypeId}`, `template studio: dropped ${planned.archetypeId} — ${reason}`);
               continue;
@@ -2811,6 +3133,20 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             });
           }
           studioReport = summarizeStudio({ check: studioCheck, stored, dropped, evidence: evidence.evidence, notes: setupNotes });
+          // Phase 5.5 (spec §5 D1) — the three-way discrimination, decided
+          // HERE where both halves are known:
+          //   stored  — something is on the registry; nothing is suppressed.
+          //   failed  — every planned template's own turn died, so no candidate
+          //             was ever authored, let alone judged. RETRIES.
+          //   empty   — the studio authored candidates and the battery refused
+          //             every one. That is a judgement, and it is the one case
+          //             `STUDIO_EMPTY_SETUP_COOLDOWN_DAYS` was written for.
+          setupStudioOutcome =
+            stored.length > 0
+              ? { kind: "stored", templatesStored: stored.length }
+              : designerFailures.length > 0 && designerFailures.length === plan.templates.length
+                ? { kind: "failed", status: designerFailures[0]!, reason: `all ${designerFailures.length} 00c4-design-template turn(s) resolved to "${designerFailures[0]}"` }
+                : { kind: "empty", reason: `the studio authored ${plan.templates.length - designerFailures.length} candidate(s) and the battery kept none (${dropped.length} dropped)` };
         }
 
         setupTemplatesStored = stored.length;
@@ -2860,7 +3196,30 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     /** The direction every `image.generate` call this run inherits. Never `undefined` for a client with either a brand kit or a brief. */
     let visualDirection: VisualDirection | undefined;
     /** For the `09a` payload and the deliverable — a reviewer's one question is "where did these lines come from". */
-    let visualDirectionReport: { action: string; reason: string; source?: string; generatedBy?: string; generatedAt?: string; styleLockId?: string; lines?: number; gaps?: string[] } | undefined;
+    let visualDirectionReport:
+      | {
+          action: string;
+          reason: string;
+          source?: string;
+          generatedBy?: string;
+          generatedAt?: string;
+          styleLockId?: string;
+          lines?: number;
+          gaps?: string[];
+          /**
+           * The six frozen axes as the RENDER actually used them, not as they
+           * were frozen — `displayRegister` plus, when the run's script forced
+           * the register's face to be set aside, which script did it and what
+           * stood in its place.
+           *
+           * The distinction is the whole reason this key exists: on a Hebrew
+           * run the payload used to report `displayRegister: "condensed"` for a
+           * carousel no plate of which was set in Oswald, which is an axis
+           * claiming to work while it is inert.
+           */
+          system?: { displayRegister: string; script: string; displayFaceApplied: boolean; substitutionNote?: string };
+        }
+      | undefined;
     {
       const now = new Date();
       const directionCheck = await wf.step.code("00d-check-visual-direction", async () => {
@@ -3108,15 +3467,40 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               directionExec.status === "completed" && directionExec.finalOutput !== undefined && directionExec.finalOutput !== null
                 ? "00d2-derive-visual-direction returned a direction that could not be stored (too few grounded lines, or a document the schema refuses)"
                 : `00d2-derive-visual-direction resolved to "${directionExec.status}"`;
+            // Phase 5.5 (spec §5 D1): the existing ternary above already
+            // separates the two cases, so the discrimination is one field.
+            // `empty` — the art director ANSWERED and the answer was unusable,
+            // which is the judgement the 7-day window was written for.
+            // `failed` — the step produced no answer at all, and suppresses
+            // NOTHING: `00d2` running out of its 3,000-token ceiling is not
+            // evidence that this client has no derivable visual direction.
+            const directionEmpty = directionExec.status === "completed";
             await setupWarn(
               "visual-direction-failed",
-              `${failedWith} — this run's generated images use the brand-kit fallback direction, and the next ${VISUAL_DIRECTION_RETRY_DAYS} day(s) of runs use it too rather than re-paying for the same failure`,
+              `${failedWith} — this run's generated images use the brand-kit fallback direction` +
+                (directionEmpty
+                  ? `, and the next ${VISUAL_DIRECTION_RETRY_DAYS} day(s) of runs use it too rather than re-paying for the same answer`
+                  : `; the failure is recorded as a diagnostic and the NEXT run tries again, because a step that never answered is not evidence about this client`),
             );
-            setupNotes.push(`${failedWith}, so no visual direction was persisted — the failure is recorded for ${VISUAL_DIRECTION_RETRY_DAYS} day(s) so the next run does not re-pay for it`);
+            setupNotes.push(
+              directionEmpty
+                ? `${failedWith}, so no visual direction was persisted — the empty result is recorded for ${VISUAL_DIRECTION_RETRY_DAYS} day(s) so the next run does not re-pay for it`
+                : `${failedWith}, so no visual direction was persisted — recorded as a failure, which suppresses nothing and retries next run`,
+            );
             visualDirectionReport = { action: "failed", reason: failedWith };
             await wf.step.code("00d3-persist-visual-direction", async () =>
               persistDirection(
-                { [VISUAL_DIRECTION_ATTEMPT_BELIEF_KEY]: { version: 1, attemptedAt: now.toISOString(), failedWith } satisfies VisualDirectionAttempt },
+                {
+                  [VISUAL_DIRECTION_ATTEMPT_BELIEF_KEY]: {
+                    version: 1,
+                    attemptedAt: now.toISOString(),
+                    failedWith,
+                    outcome: directionEmpty ? "empty" : "failed",
+                    ...(directionEmpty
+                      ? {}
+                      : { status: SETUP_FAILURE_STATUSES_FOR_MARKER.includes(directionExec.status as SetupFailureStatus) ? (directionExec.status as SetupFailureStatus) : "tooling_error" }),
+                  } satisfies VisualDirectionAttempt,
+                },
                 "the failed visual-direction attempt",
               ),
             );
@@ -3148,6 +3532,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                     version: 1,
                     attemptedAt: now.toISOString(),
                     failedWith: "00d3-persist-visual-direction could not write the derived direction",
+                    // Phase 5.5 (spec §5 D1): a WRITE that failed, over a
+                    // derivation that succeeded. Nothing about this client was
+                    // judged, so nothing is suppressed and the next run tries
+                    // again — which is what `retryHeld: marked.persisted`
+                    // below now honestly means.
+                    outcome: "failed",
+                    status: "tooling_error",
                   } satisfies VisualDirectionAttempt,
                 },
                 "the failed visual-direction write",
@@ -3174,6 +3565,49 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           gaps: visualDirection.gaps,
         };
       }
+    }
+
+    /**
+     * Phase 5.5, item D — THE CLIENT LAYER of the visual system: the six axes
+     * frozen per client, or derived from the brand kit for $0 when setup has
+     * never produced them (which on 2026-09-16 was all three prep clients).
+     *
+     * Resolved HERE rather than at `04p` because `brandFragments()` — which is
+     * defined above and renders the display face, the composition grammar and
+     * the ground texture into the brand head sheet — is called before the
+     * drafting loop exists. It depends on nothing the loop decides:
+     * `clientVisualSystemFor` never throws and never returns `undefined`.
+     */
+    clientVisualSystem = clientVisualSystemFor(visualDirection, frozen.brandTokens, wf.clientSlug);
+    {
+      // ── THE AXIS, AS THE RENDER WILL ACTUALLY USE IT (Phase 5.5, item D) ──
+      //
+      // `brandFragments()` withholds the display register's face, tracking and
+      // face bleed on a script that face cannot set. That decision is made in
+      // CSS, where nobody reading a gate payload can see it — so it is also
+      // made here, from the same two inputs, and reported.
+      //
+      // Rendered on this tree before the fix: geektime's kit resolves to
+      // `condensed` (Oswald), a Hebrew carousel took Oswald's `-0.004em`
+      // tracking over the `normal` `script-fonts.ts` measured for Hebrew, and
+      // the payload said the axis was `condensed` on eight plates none of which
+      // Oswald set a glyph of.
+      const applied = resolveDisplayRegisterForScript(clientVisualSystem.displayRegister, runScriptName);
+      visualDirectionReport = {
+        ...(visualDirectionReport ?? { action: "fallback", reason: "no stored or derived direction" }),
+        system: {
+          displayRegister: clientVisualSystem.displayRegister,
+          script: applied.script,
+          displayFaceApplied: applied.covers,
+          ...(applied.covers
+            ? {}
+            : {
+                substitutionNote:
+                  `the "${clientVisualSystem.displayRegister}" display face carries no ${applied.script} glyph, so this run is set in the ` +
+                  `${applied.script} script pack's own display family and keeps that pack's measured tracking and leading`,
+              }),
+        },
+      };
     }
 
     // ── 00e: the client's LIKENESS CONSENT — read once, frozen, fail-closed (Phase 4, RFC-16 §5) ──
@@ -3244,6 +3678,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         crossedTarget: setupSummary.crossedTarget,
         crossedMax: setupSummary.crossedMax,
         adaptations: setupSummary.adaptations.length,
+        // Phase 5.5 (spec §5 D1) — the whole of item D1 is this line plus the
+        // read at `00c`: a `failed` marker no longer costs the client 30 days.
+        ...(setupStudioOutcome !== undefined ? { outcome: setupStudioOutcome } : {}),
       };
       try {
         await tools["ledger.appendEvent"]?.execute(
@@ -3817,24 +4254,34 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // ── 04h: the post format — a request, then this account's own numbers ──
     //
     // D17: "Instagram format and visuals are chosen per post by performance
-    // and relevance, never by a fixed ratio or rotation." The rotation below
-    // is what that decision was written against — every third post a single
-    // image, on a counter, regardless of whether single images work for this
-    // client. It survives only as the answer for an account with no numbers
-    // yet, which Craft 04 §11 puts at "under 8 posts → carousel".
+    // and relevance, never by a fixed ratio or rotation." The engine does not
+    // compute the ranking. Performance ingestion (N6) writes outliers into
+    // `what-works.json` with a lift against the account's own median, and
+    // `preferredByPerformance` reads them — so the arithmetic lives where the
+    // metrics live, and a reviewer can disagree with a lift rather than with a
+    // verdict.
     //
-    // The engine does not compute the ranking. Performance ingestion (N6)
-    // writes outliers into `what-works.json` with a lift against the account's
-    // own median, and `preferredByPerformance` reads them — so the arithmetic
-    // lives where the metrics live, and a reviewer can disagree with a lift
-    // rather than with a verdict.
-    const format = await wf.step.code("04h-select-format", (): { format: InstagramFormat; source: string } => {
+    // Phase 5.5, item G7, is the OTHER half: what an account with no numbers
+    // yet does. That answer used to be `ownShippedCount % 3` — a modulus over a
+    // COUNT OF OUTPUTS, which is not a record of what was delivered, only of
+    // how many things were. A client whose three prep posts were all carousels
+    // read `2 % 3`, got `single` on the fourth and `carousel` on the fifth and
+    // sixth regardless of what any of them actually shipped as, and a restart
+    // that recomputed the count from a different window moved the whole phase.
+    // `selectPostFormat` reads the DELIVERED formats out of `03d`'s decision
+    // log (`09b` writes this run's format into that row, below), so the cold
+    // path rotates on evidence too and says in one sentence why.
+    const format = await wf.step.code("04h-select-format", (): { format: InstagramFormat; source: string; rule: string } => {
       const requested = runClaim.requestedFormat;
-      if (requested === "single" || requested === "carousel") return { format: requested, source: "requested" };
-      const measured = preferredByPerformance(learning.whatWorks, ["carousel", "single"] as const);
-      if (measured !== undefined) return { format: measured.option, source: `performance: ${measured.why}` };
-      if (requested === "auto") return { format: ownShippedCount % 3 === 2 ? "single" : "carousel", source: "rotation" };
-      return { format: "carousel", source: "default" };
+      if (requested !== "single" && requested !== "carousel") {
+        const measured = preferredByPerformance(learning.whatWorks, ["carousel", "single"] as const);
+        // `source` keeps carrying the lift inline, which is what a reviewer
+        // reads on the payload and what `learning-loop.test.ts` pins: they can
+        // then disagree with the number rather than with the verdict.
+        if (measured !== undefined) return { format: measured.option, source: `performance: ${measured.why}`, rule: measured.why };
+      }
+      const picked = selectPostFormat(requested, recentFormatsFromDecisions(modeSelection.decisions ?? []));
+      return { format: picked.format, source: picked.source, rule: picked.rule };
     });
 
     // ── 04a2: research the subject in three lanes (Phase 1, item J) ──
@@ -4596,9 +5043,25 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       [
         deviceCssBlock(),
         imageTreatmentCssBlock(frozenStyle),
+        // ── Phase 5.5, item C — THE ONE LINE THE WHOLE VISUAL SYSTEM RIDES ON. ──
+        //
+        // Every template declares its accent mark as `var(--fx-accent, none)`
+        // and its pagination index as `var(--fx-pagination, transparent)`.
+        // Without this sheet every one of those falls back to its OFF value
+        // and the set renders with no standing accent mark anywhere — it fails
+        // QUIET, nothing throws, the posts just come out plainer than designed.
+        // Absent before `04p` (a setup-time studio render), which is the exact
+        // pre-phase paint.
+        runVisualSystem !== undefined ? visualSystemCssBlock(runVisualSystem) : "",
+        // Item A4's second, SEPARATE sheet: the veil that keeps a headline
+        // legible over a photograph. Not folded into `imageTreatmentCssBlock`
+        // on purpose — a client that forbade colour grading has not thereby
+        // consented to an unreadable headline, so the two switches must be
+        // able to disagree.
+        heroScrimCssBlock(),
         markCssBlock(markScript, runMarkRing()),
         // RFC-20 Part 11: MOUNTED NOWHERE — see `GROUND_MATERIAL_MOUNTED`.
-        GROUND_MATERIAL_MOUNTED ? groundMaterialCssBlock({ ground: effectiveKit?.cssVars["--bg"], fg: effectiveKit?.cssVars["--fg"] }, wf.clientSlug) : "",
+        "",
       ]
         .filter((s) => s.length > 0)
         .join("\n");
@@ -4803,7 +5266,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // IGSTYLE-3: re-materialize on a KIT change too, not only when a file
         // is physically missing — see `templatesMaterializedForKit`'s own
         // doc comment above.
-        if (!allPresent.every(Boolean) || templatesMaterializedForKit !== effectiveKit) {
+        // Phase 5.5, item C — the head sheet is a THIRD staleness trigger,
+        // beside "a file went missing" and "the kit changed". `04p` resolves
+        // the visual system after `04c` has already materialised, and a
+        // re-layout that changed the slide count changes the per-slide accent
+        // and pagination switches inside the sheet. Without this the system
+        // would be resolved, recorded on the gate payload, and visible in no
+        // pixel.
+        const headNow = headExtras();
+        if (!allPresent.every(Boolean) || templatesMaterializedForKit !== effectiveKit || templatesMaterializedForHead !== headNow) {
           try {
             if (options.templateStore !== undefined) {
               const fragments = await brandFragments();
@@ -4824,6 +5295,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               await materializeBrandedClientDir();
             }
             templatesMaterializedForKit = effectiveKit;
+            templatesMaterializedForHead = headNow;
           } catch (error) {
             // Same fallback rule as 04c-resolve-templates itself: a registry
             // outage here degrades layout variety, it does not fail the run.
@@ -4909,7 +5381,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // sibling gets the `:root` swap alone — which is all it ever needed
         // without a material. See `GROUND_MATERIAL_MOUNTED`.
         const invertedHeadHtml = `<style>\n:root {\n  --bg: ${invertFg};\n  --fg: ${invertGround};\n}\n</style>\n${
-          GROUND_MATERIAL_MOUNTED ? groundMaterialCssBlock({ ground: invertFg, fg: invertGround }, wf.clientSlug) : ""
+          ""
         }`;
         const isAlreadyInverted = (file: string): boolean => {
           const dot = file.lastIndexOf(".");
@@ -4943,6 +5415,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // agent here; whether it is ever CALLED is `04l`'s decision alone.
     const conceptAgent = new InstagramConceptAgent({ router: options.router, tools, promptStore: options.promptStore });
     const copyAgent = new InstagramCopyAgent({ router: options.router, tools, promptStore: options.promptStore });
+    // Phase 5.5 (spec §3 B3) — `05f`. Constructed unconditionally like every
+    // other agent here; whether it is ever CALLED is the writer's decision,
+    // expressed as a `customArchetypeBrief` on some slide of the draft.
+    const customArchetypeAgent = new InstagramCustomArchetypeAgent({ router: options.router, tools, promptStore: options.promptStore });
+    // Phase 5.5 (spec §2 A2) — `04b3`. Constructed unconditionally like every
+    // other agent here; it is called once per revision, before the attempt loop.
+    const entityAgent = new InstagramEntityAgent({ router: options.router, tools, promptStore: options.promptStore });
     const imageAgent = new InstagramImageVettingAgent({ router: options.router, tools, promptStore: options.promptStore });
     const qaAgent = new InstagramVisualQaAgent({ router: options.router, tools, promptStore: options.promptStore });
 
@@ -5144,6 +5623,17 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         /** From the client's OWN measured `hashtagsPerPost`: an account whose feed never tags does not suddenly acquire a tag block under its caption. */
         hashtagPlacement: "caption" | "firstComment";
         altText: Array<{ n: number; alt: string }>;
+        /**
+         * Phase 5.5 (spec §6 G2) — the slides whose `alt` was CUT at a word
+         * boundary to reach Instagram's 125-character limit.
+         *
+         * Absent when nothing was cut, which is the normal case. Present, it is
+         * the honest half of the clamp: `@2` states the limit to the model and
+         * the wire truncates rather than refusing, so a reviewer should be able
+         * to see which captions were shortened instead of discovering it on
+         * Instagram.
+         */
+        altTextClamped?: number[];
         /** `text` is the model's; `sources` is built in code from the cards the shipped slides cite, so an invented URL is unrepresentable rather than merely forbidden. */
         firstComment: { text: string; sources: Array<{ label: string; url: string }> };
         /** What the engine alone knows that the portal's scheduler cannot compute: whether this post perishes, and when. */
@@ -5181,6 +5671,34 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * and the deliverable carry the numbers whether or not anything failed.
        */
       interest: InterestFloorReport;
+      /**
+       * Phase 5.5, clause H — what each slide's content weighed and out of
+       * what. Always present (it is $0, computed off the document the floor
+       * measured) so a reviewer can audit a refusal, or a pass, without
+       * re-deriving `CONTENT_FIELD_WEIGHTS` by hand.
+       */
+      contentWeighing: Array<{ n: number; weight: number; parts: Array<{ part: string; weight: number }> }>;
+      /**
+       * Phase 5.5, item G1 — `08b-visual-qa`'s verdict on the attempt that
+       * shipped, including `publishable` ("would a CMO publish this").
+       *
+       * ABSENT means NOT JUDGED — an outage, a malformed turn, or the
+       * cheapest-path skip — and the gate verdict says exactly that. Until this
+       * field existed `08b`'s output was consumed locally and never left the
+       * loop, so all three 2026-09-16 posts were approved by a human who could
+       * not tell a pass from a silence.
+       */
+      visualQa?: { pass: boolean; publishable?: boolean; findings: VisualQaFinding[] };
+      /**
+       * Phase 5.5, item A3 — what the scene-brief guards found on the SHIPPED
+       * attempt. Absent, never empty. They gate nothing; they explain why the
+       * pictures on this post are the pictures on this post.
+       */
+      sceneBriefFindings?: SceneBriefFinding[];
+      /** Phase 5.5, item A2 — the pre-vet text screen. `keptAsLastResort` is NOT a clean result. */
+      textScreen?: { refused: number; keptAsLastResort: boolean; texts: string[] };
+      /** Phase 5.5, item A2 — which entity, which tiers ran, and what each returned. Absent when this post named nothing picturable. */
+      entitySourcing?: Array<{ slide: number; entity: string; tiers: Array<{ tier: string; why: string; got: number }> }>;
       /**
        * The free deterministic re-layout this attempt ran, when the floor
        * failed and the remedy table had something to try. Absent on the
@@ -5254,6 +5772,21 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * composed inside the band.
        */
       imageryDemotions?: ImageryDemotion[];
+      /**
+       * Phase 5.5 (spec §2 A5) — every slide that WANTED a picture and ships
+       * without one, with the reason and the remedy that fits it.
+       *
+       * **It gates nothing**, and clause E's `downgradedForImages` waiver is
+       * unchanged: losing a photograph is still never a hold. What changes is
+       * that the loss stops being absorbed. It used to sit inside `waived`,
+       * where a reviewer approving eight posts a day never read it, and the
+       * owner's *"חלק מהשקפים ריקים"* on 2026-09-16 is what that looks like
+       * from the other end.
+       *
+       * Absent rather than empty on a post that found every picture it asked
+       * for, the same asymmetry as the two markers above.
+       */
+      imageryShortfalls?: ImageryShortfall[];
       /**
        * RFC-19 (Phase 6) — every QUALITY GATE that refused the attempt that actually shipped.
        *
@@ -5561,6 +6094,71 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       /** `{ chosen, rejected }` for the copy prompt (§17) — `undefined` on the fail-open path, which the prompt documents as an unchanged drafting path. */
       const angleForCopy = angleDecision !== undefined ? angleForCopyInput(angleDecision) : undefined;
 
+      // ── 04b3: THE ENTITIES THIS POST NAMES (Phase 5.5, item A2) ──
+      //
+      // The owner's loudest complaint, in his own words: *"not just generic
+      // pictures — if it is about ChatGPT you can add a picture of them, or of
+      // Sam Altman."* A post that names a real product, company, person, event
+      // or work should show THAT THING, and until this step nothing in the run
+      // ever asked which things it names. Every picture was sourced from a
+      // scene description ("a server infrastructure corridor, long exposure")
+      // and graded on whether it CONTRADICTED the slide, which is how three
+      // posts shipped stock desks and one shipped a road tunnel.
+      //
+      // `gemini-2.5-flash`, `maxTokens: 2_000`, ~$0.0023, ONCE PER REVISION and
+      // outside the attempt loop, so a redraft never re-pays for it. Under the
+      // owner's 2026-09-16 cost ruling this is quality-affecting work and the
+      // budget plan may reorder it but may never drop it.
+      //
+      // The model's answer is then GROUNDED in code: `groundEntities` drops any
+      // name that does not appear verbatim in a fact card or the angle, and the
+      // dropped list goes on the gate payload. A required `cardIds` field is
+      // the model's CLAIM about where it read a name; the verbatim check is
+      // what makes it a fact. (`numbers-gate-fed-urls-not-content` is what
+      // happens when only the claim is checked.)
+      //
+      // Fails OPEN in every direction: an unavailable judge, an unparseable
+      // answer or an empty set all yield no named entities, and the run sources
+      // pictures exactly as it did before this step existed.
+      const angleTitleForEntities = angleDecision !== undefined && "chosen" in angleDecision ? angleDecision.chosen.title : undefined;
+      // `card-N` positionally: `FactCardForPrompt` carries no id of its own,
+      // and the model's `cardIds` are only ever read back as a CLAIM about
+      // where it saw a name — `groundEntities` checks the name against the
+      // text, which is the check that decides anything.
+      const entityEvidence: EntityEvidenceCard[] = promptFacts.map((f, i) => ({
+        id: `card-${i + 1}`,
+        claim: f.claim,
+        ...(f.quote !== undefined ? { quote: f.quote } : {}),
+        sourceTitle: f.source,
+      }));
+      const entityExec = await wf.step.agent(rev("04b3-extract-entities"), entityAgent, {
+        topic: topicClaim.topic,
+        ...(angleTitleForEntities !== undefined ? { angle: angleTitleForEntities } : {}),
+        factCards: entityEvidence,
+      });
+      const entityReport: { entities: RecognisedEntity[]; dropped: Array<{ name: string; why: string }>; status: string } =
+        entityExec.status === "completed" && entityExec.finalOutput !== undefined
+          ? (() => {
+              const grounded = groundEntities(entityExec.finalOutput!.entities, {
+                cards: entityEvidence,
+                ...(angleTitleForEntities !== undefined ? { angle: angleTitleForEntities } : {}),
+              });
+              return { entities: topEntities(grounded.kept), dropped: grounded.dropped, status: "completed" };
+            })()
+          : { entities: [], dropped: [], status: entityExec.status };
+      /**
+       * The entities the copy prompt may brief a picture OF, and the sourcing
+       * queue may go looking for. At most `MAX_ENTITIES_INTO_COPY`.
+       *
+       * Deliberately NOT called `namedEntities`: that is
+       * `concept-eligibility.ts`'s own proper-noun heuristic, imported at the
+       * top of this file and called by the concept gate below.
+       */
+      const postEntities = entityReport.entities;
+      const postEntityNames = postEntities.map((e) => e.name);
+      /** The people among them — the only reason `00e-check-likeness-consent` has anything to say about this run. */
+      const personEntityNames = postEntities.filter((e) => e.kind === "person").map((e) => e.name);
+
       // ── 04i2: the editorial series (RFC-21 Part 3, prompt @19 §29) ──
       //
       // `wf.step.code`. NO MODEL CALL, no tool call, no network. $0.00, and it
@@ -5613,6 +6211,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // without two sides.
           comparedEntities: countComparedEntities(chosen.title),
           recentSeriesIds: recentSeriesIds(skeletonHistory),
+          // Phase 5.5, item D — the FLEET's recent formats, so two clients
+          // stop shipping the same editorial shape in the same week. Penalty,
+          // never a ban (`CROSS_CLIENT_SERIES_PENALTY`): a format that is
+          // genuinely right for this story still wins. Fail-open — an empty
+          // list is no penalty, which is what an unreadable belief yields.
+          crossClientSeriesIds: crossClientSeriesIds(crossClientFormatHistory, wf.clientSlug, 5),
         });
         // INSIDE the step, and the resume guard is why. A ledger write outside
         // a `wf.step.code` re-fires on every resume, which
@@ -5657,6 +6261,72 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       if (series !== undefined) shippedSeriesId = series.series.id;
       /** The skeleton and the register, as prose for prompt @19 §29. `undefined` on the fail-open path. */
       const seriesDirectiveText = series !== undefined ? seriesDirective(series, SERIES_DIRECTIVE_SLIDES) : undefined;
+
+      // ── 04p: THE RUN'S VISUAL SYSTEM (Phase 5.5, item C) ──
+      //
+      // `wf.step.code`, $0, no model call and no tool call. The whole of item C
+      // arrives through two layers decided here and paid for in CSS:
+      //
+      //   the CLIENT layer  — six axes frozen per client at setup
+      //                       (`instagram-art-director@2`), or DERIVED from the
+      //                       brand kit for $0 when setup has never produced
+      //                       them, which on 2026-09-16 was all three prep
+      //                       clients. `clientVisualSystemFor` is what
+      //                       guarantees a client always has one.
+      //   the CAROUSEL layer — one system per post: which ground, which accent
+      //                       form and ON WHICH SLIDES, whether the pagination
+      //                       numeral is on EVERY interior slide or none, and
+      //                       what the cover is.
+      //
+      // The owner's two verdicts are the two axes: *"there are these orange
+      // lines, that is the biggest sign a post was made with AI"* is the accent
+      // switch (five of eight slides now carry no standing mark at all), and
+      // *"on some slides there is a number and on some there is not"* is the
+      // pagination set, which is now ALL interior slides or NONE — never a
+      // per-slide coin flip. Within-carousel randomness was always the wrong
+      // axis: a carousel is one system, and the variety belongs ACROSS runs and
+      // clients, which is what the seed and the two hold lists do.
+      //
+      // Resolved here, OUTSIDE the attempt loop, on `SERIES_DIRECTIVE_SLIDES`
+      // rather than on the draft's real slide count — the draft does not exist
+      // yet. `pickVisualSystem` is pure and seeded on
+      // `clientSlug:runId:seriesId`, so `systemFor(n)` below re-resolves the
+      // same `systemId` per attempt with that attempt's real count, and the two
+      // can never disagree about WHICH system this post is in.
+      const visualSystem = await wf.step.code(rev("04p-resolve-visual-system"), () =>
+        pickVisualSystem({
+          clientSlug: wf.clientSlug,
+          paletteSeed: wf.runId,
+          slideCount: SERIES_DIRECTIVE_SLIDES,
+          client: clientVisualSystem,
+          ...(series !== undefined ? { seriesId: series.series.id } : {}),
+          recentOwnSystemIds: recentSystemIds(skeletonHistory),
+          recentCrossClientSystemIds: crossClientSystemIds(crossClientFormatHistory, wf.clientSlug, SYSTEM_CROSS_CLIENT_HOLD),
+        }),
+      );
+      // Read by `headExtras`, which is defined above `draftOnce` because the
+      // sheet is baked into the template FILES. `ensureTemplatesOnDisk` sees
+      // the changed sheet and re-materialises before the first render.
+      runVisualSystem = visualSystem;
+      shippedSystemId = visualSystem.systemId;
+      /**
+       * The same system, resolved for a REAL slide count. Pure and seeded, so
+       * `systemId`, `ground`, `accentForm` and `coverForm` are identical to
+       * `04p`'s; only the slide SETS (`accentSlides`, `numeralSlides`, the
+       * eyebrow's slides) move with the count, which is what they are for.
+       */
+      const systemFor = (slideCount: number): CarouselVisualSystem =>
+        slideCount === SERIES_DIRECTIVE_SLIDES
+          ? visualSystem
+          : pickVisualSystem({
+              clientSlug: wf.clientSlug,
+              paletteSeed: wf.runId,
+              slideCount,
+              client: clientVisualSystem,
+              ...(series !== undefined ? { seriesId: series.series.id } : {}),
+              recentOwnSystemIds: recentSystemIds(skeletonHistory),
+              recentCrossClientSystemIds: crossClientSystemIds(crossClientFormatHistory, wf.clientSlug, SYSTEM_CROSS_CLIENT_HOLD),
+            });
 
       // ── 04l: the register card, the persona and the few-shot (Phase 4, RFC-15 §3) ──
       //
@@ -5797,7 +6467,14 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // what makes the hard max unreachable by this feature: past the
           // $1.00 target the meter is `essential-only` and the Sonnet call is
           // never bought, so the mode cannot push a run from $1.40 to $1.50.
-          generatedImagesCap: budgetPlan.generatedImagesCap,
+          //
+          // Phase 5.5, spec §2 A1b: read against the FLOOR, not the plan's raw
+          // cap. `concept-direction.ts`'s `"generatedImagesCap 0"` decline is
+          // the reason all six 2026-09-16 runs skipped the concept — the plan
+          // had zeroed the cap on rung 1 before the mode was ever consulted.
+          // The floor is what the run is guaranteed to buy, so it is what
+          // eligibility must be judged against.
+          generatedImagesCap: Math.max(budgetPlan.generatedImagesCap, MIN_GENERATED_IMAGES_PER_RUN),
           meterPosture: meter.posture,
           // Precondition 8: a client-media-only run has no generation tier at
           // all, so a concept would be authored and then discarded unspent.
@@ -5833,7 +6510,19 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           marks: likenessPermit.thirdPartyMarks,
           figures: likenessPermit.publicFigures,
           ownMarks: likenessPermit.ownMarks,
-          ...(likenessReason !== undefined ? { scopeNote: likenessReason } : {}),
+          // Phase 5.5, item A2. The permit's own "a real person's likeness
+          // requires an explicit, recorded, named permission" sentence used to
+          // be printed on EVERY run — including all three 2026-09-16 posts,
+          // none of which named a person at all. A blocking-sounding note that
+          // appears every week is a note a reviewer stops reading, which is the
+          // opposite of what a consent check is for. It now appears only when
+          // `04b3` actually found a person whose likeness this run would need a
+          // permit for: `needsLikenessConsent` is false for a public figure in
+          // a retrieved editorial photograph and true for a private individual.
+          ...(likenessReason !== undefined && needsLikenessConsent(postEntities) ? { scopeNote: likenessReason } : {}),
+          // Recorded either way, so "nobody to ask about" is distinguishable
+          // from "we forgot to ask" without reading the whole entity set.
+          consentRelevant: needsLikenessConsent(postEntities),
         },
         ...(conceptVerdict.eligible ? {} : { declineReason: conceptVerdict.reason ?? conceptVerdict.skipped ?? conceptVerdict.rule }),
       };
@@ -5925,6 +6614,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       /** RFC-21 — and which it demoted, for a draft that reached for a photograph on nearly every plate. */
       let imageryDemotions: ImageryDemotion[] = [];
       /**
+       * Phase 5.5, spec §2 A5 — every slide that wanted a picture and ships
+       * without one, with the remedy the relayout should reach for.
+       *
+       * **It gates nothing.** Losing a photograph is never a hold and clause
+       * E's `downgradedForImages` waiver stands unchanged. What changes is that
+       * the loss stops being silent: it used to sit inside `waived` where
+       * nobody read it, and the owner's *"חלק מהשקפים ריקים"* is the result.
+       */
+      let imageryShortfalls: ImageryShortfall[] = [];
+      /**
        * RFC-20 §11.4 — what the bounded object did to this run's statement
        * plates, from the LAST assembly, which is the one that rendered.
        *
@@ -5939,6 +6638,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * remedy is the writer's rather than the renderer's.
        */
       let boundedObjectDecisions: BoundedObjectDecision[] = [];
+      /**
+       * Phase 5.5, clause H — the per-part breakdown behind each slide's
+       * content WEIGHT, from the document the floor last measured.
+       *
+       * On the gate payload beside the verdict, for one reason: clause H can
+       * refuse a plate at 2.25 against a floor of 3, and a reviewer who is
+       * shown only the number has to re-derive the arithmetic off the slide to
+       * find out that the plate is a headline, a body and a kicker and that
+       * the kicker is worth a quarter. `weighContentElements` already returns
+       * `parts`; this carries it.
+       */
+      let contentWeighingForGate: Array<{ n: number; weight: number; parts: Array<{ part: string; weight: number }> }> = [];
       /**
        * RFC-17 — the kinds each slide's ground actually admitted, from the
        * assembly that built the document `08a1` is about to measure.
@@ -6046,6 +6757,34 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * failure; relevance and dedupe keep their own typed steers.
        */
       let selfCheckSteer: string | undefined;
+      /**
+       * Phase 5.5, item A3 — what the last attempt's SCENE BRIEFS got wrong,
+       * handed to the next draft as prose.
+       *
+       * Structurally different from every other steer above it, and the
+       * difference is the point: those are written when a gate REFUSED an
+       * attempt. This one is written whenever `checkSceneBriefs` has anything
+       * to say, and it never refuses anything. A brief that names an abstract
+       * subject still ships — it just ships with a worse picture, and the next
+       * draft (if the run buys one for some other reason) is told why.
+       *
+       * On the FINAL attempt the findings go to the gate payload instead,
+       * because there is no next draft to tell.
+       */
+      let sceneSteer: string | undefined;
+      /** The shipped attempt's scene-brief findings, for the gate payload. */
+      let sceneBriefFindings: SceneBriefFinding[] = [];
+      /**
+       * Phase 5.5, item A2 — what the pre-vet text screen threw out, and
+       * whether it had to keep a pool it would rather have emptied.
+       *
+       * `keptAsLastResort: true` is NOT a clean result and must not read like
+       * one: it means every candidate in the pool carried foreign legible text
+       * and the screen demoted rather than leave the slide with nothing.
+       */
+      let textScreenVerdict: { refused: number; keptAsLastResort: boolean; texts: string[] } | undefined;
+      /** Phase 5.5, item A2 — what the entity route did on the attempt that shipped: which entity, which tiers ran, and what each returned. */
+      let entitySourcingForGate: Array<{ slide: number; entity: string; tiers: Array<{ tier: string; why: string; got: number }> }> = [];
       /** Records why this attempt failed AND hands that finding to the next draft. */
       const returnToCopyWith = (reason: string): void => {
         lastSelfCheckReason = reason;
@@ -6053,6 +6792,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       };
       /** The winning attempt's relevance verdict, for `DraftResult.relevance`; undefined when the judge could not run on it. */
       let finalRelevance: DraftResult["relevance"];
+      /**
+       * Phase 5.5, item G1 — `08b`'s verdict on the attempt that SHIPPED.
+       *
+       * Absent means NOT JUDGED: an outage, or the cheapest-path skip. The gate
+       * verdict says so in those words rather than reporting a pass nobody gave.
+       */
+      let finalVisualQa: DraftResult["visualQa"];
       /**
        * ── RFC-19 (Phase 6): MECHANISM A — fall through, don't fall over ──
        *
@@ -6109,6 +6855,33 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       };
       /** Why the most recent `05` did not produce a usable draft — the narrowed terminus quotes it. */
       let lastCopyFailure = "no drafting attempt ran";
+      /**
+       * ── `budgetPlan.duplicateVisionPasses`, ACTUALLY IMPLEMENTED. ──
+       *
+       * The rung exists because a re-vet of an unchanged pool is a verdict that
+       * cannot change, and the owner's cost ruling names duplicate vision
+       * passes as the one kind of work a plan may genuinely skip. It was
+       * lowering the ESTIMATE and nothing else: `estimateRunCost` multiplied the
+       * pool-inspection term by the attempt count only when the flag was set,
+       * `planRunBudget` pulled the rung ahead of the image cap, and
+       * `05c`/`08a4` re-inspected on every attempt regardless — so a plan was
+       * made to "fit" by a saving of 2 x $0.018 the run never made, and the
+       * image cap then stayed high on an estimate that was wrong, in a phase
+       * whose whole thesis is that the meter was lying.
+       *
+       * This map is what makes the rung real for `05c`. Keyed by candidate
+       * PATH, holding the vision-enriched candidate (or `null` for one the
+       * inspection dropped), so a later attempt re-uses the description instead
+       * of paying for it again. It is populated inside the step body, so a
+       * RESUMED run — whose step returns its checkpoint without running — finds
+       * it empty and simply inspects again, which is the safe direction.
+       *
+       * Only consulted when the plan pulled the rung. With `duplicateVisionPasses`
+       * true (the default, and every plan that fits) nothing here changes.
+       */
+      const visionEnrichedByPath = new Map<string, ImageCandidate | null>();
+      /** The `08a4` half: the slidesData signature the last rendered-slide inspection ran against, and its result. */
+      let renderedInspectionCache: { signature: string; inspections: Array<Record<string, unknown>> } | undefined;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       /**
@@ -6144,6 +6917,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // draft it was written about has been replaced, the instruction is about text that no longer exists.
       const priorValueSteer = valueSteer;
       valueSteer = undefined;
+      // Phase 5.5, item A3 — the same one-attempt lifetime, for the same
+      // reason: a scene-brief finding names slide 4's subject in THIS draft,
+      // and after a redraft slide 4 is a different slide. It never CAUSES an
+      // attempt (the findings are non-blocking by construction); it rides one
+      // the run was already buying.
+      const priorSceneSteer = sceneSteer;
+      sceneSteer = undefined;
       // Item L's degrade marker is ATTEMPT-scoped: an attempt whose free
       // re-layout fixed the floor must not ship carrying the previous
       // attempt's finding.
@@ -6280,6 +7060,27 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // This is the CHEAP half of "repetition reads as AI" — `07k` is the
         // half that enforces it.
         ...(recentSkeletons.length > 0 ? { recentSkeletons, skeletonRule: SKELETON_RULE_SENTENCE } : {}),
+        // Phase 5.5, item A2 (prompt @21) — the real-world things this post
+        // NAMES, grounded verbatim in its own fact cards by `04b3`. A slide
+        // whose subject IS one of these puts its name in `visualNeed.subject.
+        // entityRef`, and `05b1-source-entity-images` then goes looking for a
+        // picture of THAT — the client's media library, the entity's own press
+        // assets, an article this run already cites — before it falls back to
+        // stock. An unresolvable ref is dropped rather than searched for, so a
+        // name the writer invented costs nothing.
+        //
+        // Absent when this run recognised nothing, which is honest and is the
+        // common case; the prompt documents that path as unchanged.
+        ...(postEntityNames.length > 0
+          ? { namedEntities: postEntities.map((e) => ({ name: e.name, kind: e.kind, ...(e.officialDomain !== undefined ? { officialDomain: e.officialDomain } : {}) })) }
+          : {}),
+        // Phase 5.5, item A3 — what the PREVIOUS attempt's scene briefs got
+        // wrong, in the writer's own vocabulary: an abstract subject a photo
+        // library cannot index ("precision"), a technique term that shredded
+        // the query, an `entityRef` nothing corroborated. NON-BLOCKING by
+        // construction: it steers a redraft that was already being paid for
+        // and never causes one.
+        ...(priorSceneSteer !== undefined ? { sceneSteer: priorSceneSteer } : {}),
       });
       // The estimate FLOOR mirrors the estimator's own conditional
       // (`rawEstimate`: `shape.targetLanguage ? c.copyLanguageBrief + …`).
@@ -6296,6 +7097,28 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         copyExec.totalCostUsd,
         STEP_COST_ESTIMATES_USD.copyAttempt + (languageBriefForCopy !== undefined ? STEP_COST_ESTIMATES_USD.copyLanguageBrief : 0),
       );
+      // Phase 5.5, item G1 — one row per drafting attempt, for `GateVerdict`.
+      //
+      // This is the record that makes the 2026-09-16 failure legible. Five of
+      // six redrafts died at the output ceiling for $0 and the run re-judged
+      // the FIRST draft, failed the same gate with the same words and shipped
+      // it `degraded` — and the human at `09a` approved every one of them,
+      // because nothing on the payload said a model had failed or that the
+      // attempt they were looking at was not the last one bought.
+      //
+      // `draftDigest` is what turns "three attempts" into "one draft, judged
+      // three times": two consecutive attempts with the same digest are no
+      // redraft at all. deel's attempts 1 and 3 failed the identical gate on
+      // the identical words.
+      draftAttemptLog.push({
+        attempt,
+        producedDraft: copyExec.status === "completed",
+        ...(copyExec.status !== "completed" ? { status: copyExec.status as GateStepFailure["status"] } : {}),
+        usdBurned: copyExec.totalCostUsd ?? 0,
+        ...(copyExec.status === "completed" && copyExec.finalOutput != null
+          ? { draftDigest: draftDigestFor(copyExec.finalOutput.caption, copyExec.finalOutput.slides) }
+          : {}),
+      });
       // `let`, not `const`: reassigned once below if a slide survives every
       // image-sourcing tier with nothing usable, to record its downgrade to
       // the "text_only" archetype (never mutated for any other reason). RFC-19
@@ -6332,6 +7155,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               ? "ran out of turns"
               : "failed its own output validation";
         lastCopyFailure = `copy draft ${why} on attempt ${attempt}/${maxAttempts}`;
+        // The row is already in `draftAttemptLog`; this fills in its `reason`,
+        // which the builder quotes verbatim on the gate.
+        const attemptRow = draftAttemptLog[draftAttemptLog.length - 1];
+        if (attemptRow !== undefined && attemptRow.attempt === attempt) attemptRow.reason = lastCopyFailure;
         // MECHANISM B, and this is its only reader. On attempts 1..n-1 a redraft is the right remedy and it
         // is still what happens. On the FINAL attempt there is no redraft left to buy, and the choice is
         // between the best draft an earlier attempt already paid for and delivering nothing at all. Only
@@ -6356,6 +7183,131 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         copy = copyExec.finalOutput!;
         shippedAttempt = attempt;
         // Depth 1 — copy that cleared its own schema. Every deeper checkpoint below replaces it.
+        recordSalvage(attempt, 1, copy);
+      }
+
+      // ── THE SCENE-BRIEF GUARDS (Phase 5.5, item A3) ──
+      //
+      // karoslabs' one photo slide asked for *"a server infrastructure
+      // corridor, long exposure, signalling precision and permanence"* and all
+      // six candidates were refused — the last of them for being a road tunnel
+      // that DID have the long exposure. A brief whose subject is a MOOD names
+      // nothing a photo library indexes, and a brief whose search terms carry a
+      // technique word shreds the query. These guards say so, in the writer's
+      // own vocabulary, naming the offending phrase.
+      //
+      // **NON-BLOCKING BY CONSTRUCTION, and that is the design and not a
+      // concession.** They never refuse an attempt, never `continue`, never
+      // hold. On attempts 1..n-1 they ride the next redraft the run was already
+      // buying for some other reason; on the final attempt they go to the gate
+      // payload, where a human sees WHY the pictures were what they were. A
+      // picture-quality rule that can cost a post is the defect this phase is
+      // here to remove, not one to add.
+      sceneBriefFindings = checkSceneBriefs(copy.slides, {
+        entityNames: postEntityNames,
+        personEntityNames,
+        // Injected rather than imported: `scene-brief.ts` deliberately imports
+        // nothing from the workflow, and clause L9's illustration rule lives in
+        // `concept-direction.ts`, which imports half of it.
+        illustrationDeclared: sceneDeclaresIllustration,
+      });
+      if (sceneBriefFindings.length > 0 && !isFinalAttempt) {
+        sceneSteer = sceneBriefFindings.map((f) => `slide ${f.slide} · ${f.ruleId}: ${f.reason}`).join("\n");
+      }
+
+      // ── 05f: THE MARKUP HALF OF A CUSTOM ARCHETYPE (Phase 5.5, spec §3 B3) ──
+      //
+      // Until this phase the copy step authored `bodyHtml`, `css` and an
+      // UNBOUNDED `fields` record inside the draft — up to ~6k tokens of markup
+      // on a step that was hitting a 16,384-token ceiling on five of six
+      // attempts across the 2026-09-16 prep runs. Three things were wrong with
+      // that and only one of them was the size: it is markup and not copy, it
+      // made the draft schema's maximum infinite so no test could hold it
+      // against the ceiling, and a single `<style>` tag failed a ~$0.34
+      // attempt rather than one slide.
+      //
+      // The writer now emits a `customArchetypeBrief` (~60 output tokens) and
+      // this step authors the markup against it, at most ONCE PER CAROUSEL and
+      // only when a draft asks for one. None of the six 2026-09-16 runs did, so
+      // the expected add is $0.000 and the worst case is +$0.030.
+      //
+      // EVERY FAILURE MODE IS A DEGRADE. A `tooling_error`, a refused
+      // `assertSafeMarkup`, a slot `fields` does not fill: the slide loses its
+      // `customArchetype`, its `layout` goes back to the archetype its own
+      // CONTENT fits (`fallbackArchetypeFor`, not bare `text_only`), and the
+      // carousel ships one designed layout short — which is what it would have
+      // shipped anyway had the writer not reached for the escape hatch. It
+      // never holds and it never returns to `05`.
+      const briefedSlideIndex = copy.slides.findIndex((s) => s.customArchetypeBrief !== undefined);
+      if (briefedSlideIndex >= 0) {
+        const briefedSlide = copy.slides[briefedSlideIndex]!;
+        const archetypeBrief = briefedSlide.customArchetypeBrief!;
+        // AT MOST ONE PER CAROUSEL, and prompt @21 §20 says the same thing to
+        // the writer. If two briefs somehow arrive, the first in slide order is
+        // built and the rest are dropped — one $0.030 call, never two.
+        const extraBriefs = copy.slides.slice(briefedSlideIndex + 1).filter((s) => s.customArchetypeBrief !== undefined).map((s) => s.n);
+        const scriptSpec = scriptTypographyFor(targetLanguage)?.spec;
+        const markupExec = await wf.step.agent(rev(`05f-author-custom-archetype-attempt-${attempt}`), customArchetypeAgent, {
+          archetypeId: archetypeBrief.archetypeId,
+          name: archetypeBrief.name,
+          rationale: archetypeBrief.rationale,
+          slots: archetypeBrief.slots,
+          // The slide's OWN copy: `fields` is published text, not a sample, so
+          // the markup step needs the real words and whichever structured block
+          // this slide carries.
+          slide: {
+            n: briefedSlide.n,
+            headline: briefedSlide.headline,
+            body: briefedSlide.body,
+            ...(briefedSlide.kicker !== undefined ? { kicker: briefedSlide.kicker } : {}),
+            ...(briefedSlide.stat !== undefined ? { stat: briefedSlide.stat } : {}),
+            ...(briefedSlide.quote !== undefined ? { quote: briefedSlide.quote } : {}),
+            ...(briefedSlide.comparison !== undefined ? { comparison: briefedSlide.comparison } : {}),
+            ...(briefedSlide.items !== undefined ? { items: briefedSlide.items } : {}),
+          },
+          brandTokens: frozen.brandTokens,
+          canvas: frozen.styleConfig.canvas,
+          ...(targetLanguage !== undefined ? { targetLanguage } : {}),
+          ...(scriptSpec !== undefined ? { scriptFamilies: { display: scriptSpec.display, body: scriptSpec.body, mono: scriptSpec.mono, typeScale: scriptSpec.typeScale } } : {}),
+          dir: languageBrief?.direction ?? "ltr",
+        });
+        spend(rev(`05f-author-custom-archetype-attempt-${attempt}`), markupExec.totalCostUsd, STEP_COST_ESTIMATES_USD.customArchetype);
+        const composed = markupExec.status === "completed" ? composeCustomArchetype(archetypeBrief, markupExec.finalOutput!) : undefined;
+        // The SAME strict contract the copy step was held to: no privileged
+        // substitution options, the slot check that stops a `{{price}}` nothing
+        // supplies reaching the slide as literal text.
+        const safety = composed === undefined ? undefined : assertSafeMarkup(composed.bodyHtml, composed.css, composed.slots);
+        const slots = composed !== undefined && safety?.ok === true ? validateCustomArchetypeSlots(composed) : undefined;
+        const refusal =
+          composed === undefined
+            ? `the markup step did not complete (${markupExec.status})`
+            : safety?.ok === false
+              ? `the markup failed its safety check: ${safety.reason}`
+              : slots?.ok === false
+                ? `the markup failed its slot contract: ${slots.reason}`
+                : undefined;
+        await wf.step.code(rev(`05f1-apply-custom-archetype-attempt-${attempt}`), () => ({
+          slide: briefedSlide.n,
+          archetypeId: archetypeBrief.archetypeId,
+          applied: refusal === undefined,
+          ...(refusal !== undefined ? { refusal } : {}),
+          ...(extraBriefs.length > 0 ? { droppedExtraBriefs: extraBriefs } : {}),
+        }));
+        copy = {
+          ...copy,
+          slides: copy.slides.map((s) => {
+            if (s.n === briefedSlide.n) {
+              if (refusal === undefined) return { ...s, layout: "custom" as const, customArchetype: composed! };
+              const { customArchetype: _dropped, ...rest } = s;
+              return { ...rest, layout: fallbackArchetypeFor(s) };
+            }
+            if (!extraBriefs.includes(s.n)) return s;
+            const { customArchetype: _dropped, ...rest } = s;
+            return { ...rest, layout: s.layout === "custom" ? fallbackArchetypeFor(s) : s.layout };
+          }),
+        };
+        // The salvage checkpoint follows the copy it describes: a later attempt
+        // that dies malformed must ship THIS object, not the pre-05f one.
         recordSalvage(attempt, 1, copy);
       }
 
@@ -6615,6 +7567,135 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // says "the client asked for no sourcing", not "nothing qualified".
         sourcingReason = `client-provided media only: ${slidesNeedingSource.length} photo slide(s) the client did not cover were not sourced or generated`;
       }
+      // ── 05b1: THE ENTITY ROUTE, BEFORE THE STOCK TIER (Phase 5.5, item A2) ──
+      //
+      // `wf.step.code`. Four of its five tiers are free and the fifth is one
+      // ScrappyCoco search (~$0.007), and it only fires when a fact card
+      // actually cited the entity's own domain. Typical add: $0.004.
+      //
+      // The owner's complaint in one sentence: a post that names ChatGPT
+      // should show ChatGPT. This is where that happens, and it happens BEFORE
+      // `05b`'s keyword stock search rather than after, because a stock library
+      // will always return SOMETHING and a route that runs second never runs.
+      //
+      // The ladder's principle is `planEntitySourcing`'s, stated there in full:
+      // **identification beats licence.** A correctly identified picture of the
+      // thing the slide names, needing a credit line, beats a beautifully
+      // licensed picture of something else — the second one is the defect.
+      //
+      //   0 media-library   the client's own files, filtered by name        $0
+      //   1 official-assets the entity's press/newsroom pages               ~$0.007, only with a cited domain
+      //   2 cited-article   the lead image of an article this post CITES    $0 (the run already has the URLs)
+      //   3 commons         Wikimedia/Openverse, entity name REQUIRED       $0
+      //   4 stock           ordinary stock, entity name leading             $0
+      //
+      // Every tier is a TOOL call, never an agent turn, and the loop stops the
+      // moment `ENTITY_CANDIDATES_WANTED` candidates exist for that slide.
+      // Every failure is survived: a missing tool, a 503, an empty answer all
+      // leave the slide to `05b` exactly as it was before this step existed.
+      /** What the entity route did, per slide, for the gate payload. */
+      const entitySourcingReport: Array<{ slide: number; entity: string; tiers: Array<{ tier: string; why: string; got: number }> }> = [];
+      if (postEntities.length > 0 && imageCandidatePool.length === 0 && !clientMediaOnly && slidesNeedingSource.length > 0) {
+        const harvestTool = tools["media.harvestArticleImages"];
+        const searchTool = tools["web.search_web"];
+        const entitySourced = await wf.step.code(rev(`05b1-source-entity-images-attempt-${attempt}`), async () => {
+          const found: ImageCandidate[] = [];
+          const report: typeof entitySourcingReport = [];
+          for (const slide of slidesNeedingSource) {
+            const need = normaliseVisualNeed(slide);
+            const refName = resolveEntityRef(need.subject.entityRef, postEntityNames);
+            if (refName === undefined) continue;
+            const entity = postEntities.find((e) => e.name === refName);
+            if (entity === undefined) continue;
+            // The URLs this slide's own citation already points at. $0 — the
+            // run fetched them in `04a3` and the draft cites them by claim.
+            const citedUrls = promptFacts
+              .filter((f) => f.claim === slide.sourceRef)
+              .map((f) => f.url)
+              .filter((url): url is string => typeof url === "string" && url.length > 0);
+            const steps = planEntitySourcing({
+              entity,
+              citedUrls,
+              hasMediaLibrary: libraryRead.candidates.length > 0,
+              sceneTerms: need.searchTerms,
+            });
+            const tiersRun: Array<{ tier: string; why: string; got: number }> = [];
+            let got = 0;
+            for (const step of steps) {
+              if (got >= ENTITY_CANDIDATES_WANTED) break;
+              let gained: ImageCandidate[] = [];
+              try {
+                if (step.tier === "media-library") {
+                  // No tool call at all: `05y` already read the archive, so
+                  // this tier is a filter over candidates the run holds.
+                  const wanted = entity.name.toLowerCase();
+                  gained = libraryRead.candidates.filter((c) => c.description.toLowerCase().includes(wanted));
+                } else if (step.tier === "official-assets" && harvestTool !== undefined && step.urls !== undefined) {
+                  // ONE ScrappyCoco search to find the real press page, then
+                  // the harvester. The search is skipped entirely when the
+                  // plan carried no query, and its failure is not fatal — the
+                  // guessed `/press` paths are still worth a harvest.
+                  let urls = step.urls;
+                  if (searchTool !== undefined && step.query !== undefined) {
+                    const hit = await searchTool.execute({ query: step.query, maxResults: 3 }, { ctx });
+                    if (hit.status === "success") {
+                      const results = (hit.result as { results?: Array<{ url?: string }> }).results ?? [];
+                      const searched = results.map((r) => r.url).filter((u): u is string => typeof u === "string" && u.length > 0);
+                      if (searched.length > 0) urls = [...searched, ...step.urls].slice(0, 6);
+                    }
+                  }
+                  const outcome = await harvestTool.execute({ repoRoot: options.repoRoot, runId: wf.runId, sources: urls.slice(0, 6).map((url) => ({ url })) }, { ctx });
+                  if (outcome.status === "success") gained = (outcome.result as { candidates: ImageCandidate[] }).candidates;
+                } else if (step.tier === "cited-article" && harvestTool !== undefined && step.urls !== undefined && step.urls.length > 0) {
+                  const outcome = await harvestTool.execute({ repoRoot: options.repoRoot, runId: wf.runId, sources: step.urls.slice(0, 6).map((url) => ({ url })) }, { ctx });
+                  if (outcome.status === "success") gained = (outcome.result as { candidates: ImageCandidate[] }).candidates;
+                } else if ((step.tier === "commons" || step.tier === "stock") && findImages !== undefined && step.query !== undefined) {
+                  const outcome = await findImages.execute(
+                    {
+                      repoRoot: options.repoRoot,
+                      runId: wf.runId,
+                      maxPerNeed: ENTITY_CANDIDATES_WANTED,
+                      needs: [
+                        {
+                          n: slide.n,
+                          query: step.query,
+                          ...(step.route !== undefined ? { route: step.route } : {}),
+                          ...(step.requireTerm !== undefined ? { requireTerm: step.requireTerm } : {}),
+                          allowUnknownLicence: step.allowUnknownLicence,
+                        },
+                      ],
+                    },
+                    { ctx },
+                  );
+                  if (outcome.status === "success") gained = (outcome.result as { candidates: ImageCandidate[] }).candidates;
+                }
+              } catch (error) {
+                // A sourcing tier is never allowed to end a run. The next tier
+                // runs, and a slide that exhausts them all falls through to
+                // `05b` exactly as it did before the entity route existed.
+                console.error(`05b1-source-entity-images: tier "${step.tier}" for "${entity.name}" failed`, error);
+                gained = [];
+              }
+              tiersRun.push({ tier: step.tier, why: step.why, got: gained.length });
+              found.push(...gained);
+              got += gained.length;
+            }
+            report.push({ slide: slide.n, entity: entity.name, tiers: tiersRun });
+          }
+          return { candidates: found, report };
+        });
+        // PREPENDED, not appended: the entity route's candidates are the ones
+        // that are OF the thing the slide names, and the vet reads the pool in
+        // order. A stock frame that got there first would be the first thing
+        // graded against the subject it is not.
+        attemptPool = [...entitySourced.candidates, ...attemptPool];
+        entitySourcingReport.push(...entitySourced.report);
+      }
+      // Attempt-scoped by assignment, not accumulation: the report that reaches
+      // the gate describes the attempt that SHIPPED, not every attempt's tiers
+      // stacked on top of each other.
+      entitySourcingForGate = entitySourcingReport;
+
       if (imageCandidatePool.length === 0 && slidesNeedingSource.length > 0 && findImages !== undefined && !clientMediaOnly) {
         const sourced = await wf.step.code(rev(`05b-source-images-attempt-${attempt}`), async () =>
           findImages.execute(
@@ -6702,10 +7783,35 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         if (s.imagePath === null) return true;
         if (!s.rightsUsable || !s.watermarkFree) return true;
         if (usedImagesSet.has(s.imagePath)) return true;
-        // Phase 0, item F: a picture that does not show the slide's CLAIM is
-        // not a picture for that slide, however good it is — re-checked here
-        // against the model's own score rather than trusted to its threshold.
-        if (s.claimMatch < MIN_CLAIM_MATCH) return true;
+        // Phase 0, item F, raised by Phase 5.5 item A3: a picture that does
+        // not show the slide's SUBJECT is not a picture for that slide,
+        // however compatible it is. `selectionPasses` is the one place the
+        // floor lives — it is the `@6` subject floor when the vet scored one,
+        // and the pre-5.5 claim floor (reported as such) when it did not.
+        if (!selectionPasses(s).passes) return true;
+        // Phase 5.5, item A2 — and the rights class, as a CODE, not as a
+        // sentence. `POST_USAGE` is `"commentary"`: an Instagram carousel that
+        // argues an editorial point about a news story is commentary, and
+        // nothing in a client brief currently marks a post promotional. When
+        // one does, this is the one line that has to read it.
+        //
+        // `unknown` IS EXCLUDED FROM THIS LIMB, and that is the whole
+        // correctness of it. `licenceClass` is derived from the licence TEXT
+        // (the vet's `ImageSelection` carries no `licenseConfidence` — that
+        // lives on the candidate), so `unknown` here means "this sentence did
+        // not say", not "this asset has no provenance". Gating on it would
+        // refuse every picture in the fleet, which is a rights gate that has
+        // become an outage. Unverifiable provenance is `rightsUsable: false`
+        // and is refused three lines up, exactly as it always was.
+        //
+        // What this limb DOES is the new capability, and it LOOSENS rather
+        // than tightens: `editorial-only` — a press photograph of a named
+        // public figure, licensed for editorial use and not for advertising —
+        // used to have nowhere to land but `unknown`, i.e. the single most
+        // useful candidate class for a post about a real entity was
+        // unreachable. It now ships on a commentary post and is refused on a
+        // promotional one, which is the actual rule rather than a proxy for it.
+        if (s.licenceClass !== undefined && s.licenceClass !== "unknown" && !licenceAdmissible(s.licenceClass, POST_USAGE)) return true;
         return false;
       };
 
@@ -6754,7 +7860,27 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // Phase 3, item T: a tier-0.5 frame is ALREADY described — that is the
         // whole saving — so it is passed through rather than re-inspected,
         // and a pool made only of archived frames costs no vision call at all.
-        const needsInspection = attemptPool.filter((c) => !libraryPaths.has(c.path));
+        //
+        // ── AND THE `duplicateVisionPasses` RUNG, WHICH IS WHERE IT BITES. ──
+        //
+        // With the rung pulled, a candidate this run already looked at is not
+        // looked at again: its enriched description is re-used from
+        // `visionEnrichedByPath` and a candidate the inspection dropped stays
+        // dropped. Nothing is judged on less evidence than before — the pool the
+        // vet sees is identical — which is exactly why this is the one saving
+        // the owner's ruling calls optional. A pool with no new candidates costs
+        // no vision call at all, which is the whole $0.018 an attempt the
+        // estimator has been booking since the rung shipped.
+        if (budgetPlan.duplicateVisionPasses === false && visionEnrichedByPath.size > 0) {
+          attemptPool = attemptPool.flatMap((c) => {
+            if (!visionEnrichedByPath.has(c.path)) return [c];
+            const cached = visionEnrichedByPath.get(c.path);
+            return cached === null || cached === undefined ? [] : [cached];
+          });
+        }
+        const needsInspection = attemptPool.filter(
+          (c) => !libraryPaths.has(c.path) && !(budgetPlan.duplicateVisionPasses === false && visionEnrichedByPath.has(c.path)),
+        );
         if (inspectTool !== undefined && meter.posture !== "cheapest-path" && needsInspection.length > 0) {
           attemptPool = await wf.step.code(rev(`05c-inspect-candidates-attempt-${attempt}`), async (): Promise<ImageCandidate[]> => {
             // Keyed by path and re-assembled in the ORIGINAL pool order at
@@ -6784,6 +7910,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 // screenshot / AI-generated flags.
                 inspectedByPath.set(c.path, { ...c, description: describeWithVision(c.description, found, { includeFlags: true }) });
               });
+              // Remembered for the NEXT attempt, outside the returned value so
+              // the checkpoint's shape is unchanged. See `visionEnrichedByPath`.
+              batch.forEach((c) => {
+                if (inspectedByPath.has(c.path)) visionEnrichedByPath.set(c.path, inspectedByPath.get(c.path) ?? null);
+              });
             }
             if (dropped > 0) sourcingReason = `${sourcingReason ? `${sourcingReason}; ` : ""}${dropped} candidate(s) dropped by vision inspection (watermarked or unusable)`;
             return attemptPool.flatMap((c) => {
@@ -6794,6 +7925,34 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           });
           spend(rev(`05c-inspect-candidates-attempt-${attempt}`), undefined, needsInspection.length * STEP_COST_ESTIMATES_USD.visionInspectPerImage);
         }
+        // ── THE TEXT SCREEN, BEFORE THE VET AND FOR $0 (Phase 5.5, item A2) ──
+        //
+        // `media.inspectImages` has written what it can read in a frame into
+        // the candidate description, as `text in image: A / B / C`, since the
+        // parity audit. Nothing has ever read it back. thepitchbydeel's slide 4
+        // of 2026-09-16 shipped a stock photograph of a neon keyboard whose
+        // screen reads `DATABASE`, `CONFIG`, `LOGOUT`, `UPTIME: 124:32:00` and,
+        // directly under the headline, `>> ENTER COMMAND:` — invented words in
+        // somebody else's picture, at display size, on a slide about scoring
+        // criteria. It dies here, before a model looks at it, at no cost.
+        //
+        // `allowedMarks` is the run's own vocabulary: the entities this post
+        // names and the client's brand name. A product's own name ON its own
+        // product surface is exactly the picture the entity route went looking
+        // for, so screening it out would refuse item A2's best outcome.
+        //
+        // **It DEMOTES rather than refuses.** `keptAsLastResort` means the
+        // screen would have emptied the pool and kept it instead: an emptied
+        // pool turns a bad picture into a TEXT PLATE, and a text plate is the
+        // defect the owner named. The signal is typed and reaches the gate.
+        const textScreen = screenLegibleText(attemptPool, [...postEntityNames, ...(effectiveKit?.handle !== undefined ? [effectiveKit.handle] : []), wf.clientSlug]);
+        textScreenVerdict = {
+          refused: textScreen.refused.length,
+          keptAsLastResort: textScreen.keptAsLastResort,
+          texts: textScreen.refused.map((r) => r.text).slice(0, 6),
+        };
+        attemptPool = [...textScreen.kept];
+
         const imageExec = await wf.step.agent(rev(`06-vet-images-attempt-${attempt}`), imageAgent, {
           // Only the photo slides are put in front of the gate. A typographic
           // archetype has nothing for it to judge, and including it would ask
@@ -6841,7 +8000,26 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // those. Every typographic slide gets its own entry appended, in the
         // copy's slide order, so `checkSlidesData`'s one-selection-per-slide
         // requirement still holds.
-        const vetted = new Map(vetting.selections.map((sel) => [sel.n, sel]));
+        // ── RIGHTS, DERIVED IN CODE (Phase 5.5, item A2) ──
+        //
+        // `licenceClass` is the machine-readable half of `license`, which the
+        // vet has recorded since the parity audit and which NOTHING has ever
+        // read back. It is derived here whenever the model omitted it, so the
+        // gate is on a value code computed from the candidate's own licence
+        // record rather than on a model's self-report.
+        //
+        // The class exists because `editorial-only` had nowhere to land: a
+        // press photograph of a named public figure is routinely licensed for
+        // editorial use and not for advertising, and until now such a
+        // candidate was `unknown`, which the rights gate refuses outright —
+        // i.e. the single most useful candidate class for item A2 was
+        // unreachable. `licenceAdmissible` splits it by USAGE instead.
+        const vetted = new Map(
+          vetting.selections.map((sel) => [
+            sel.n,
+            { ...sel, licenceClass: sel.licenceClass ?? licenceClassFor(undefined, sel.license) },
+          ]),
+        );
         selections = copy.slides.map(
           (s) => vetted.get(s.n) ?? typographicSelection({ n: s.n, layout: resolveLayout(s, availableTemplates).layout }),
         );
@@ -6967,6 +8145,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         },
       ];
 
+      /** The generate tier, by name — `06h`'s floor check re-enters it after the ladder, so the tool and its art direction are declared in exactly one place. */
+      const generateTier = rescueTiers.find((t) => t.id === "generate");
+
       /** Slides a rescue tier could not even ask for this attempt, with the budget reason: the run's image cap was spent, or the meter/plan stopped optional work (Phase 0 cost controls). */
       const rescueSkipped = new Map<number, string>();
 
@@ -7017,21 +8198,57 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // skipped — the gaps take the text-only downgrade, exactly like "no
         // viable image" today — when the plan turned optional re-vets off
         // (lever 4) or the live meter has crossed the target. Never a hold.
-        if (!budgetPlan.optionalRevets) {
-          for (const g of gaps) rescueSkipped.set(g.n, "optional rescue re-vets skipped by the run budget plan");
-          if (conceptOnThisTier) {
+        //
+        // ── PHASE 5.5, spec §2 A1b: THE FLOOR IS ENFORCED HERE, NOT IN THE PLAN ──
+        //
+        // `planRunBudget`'s `MIN_GENERATED_IMAGES_PER_RUN` is advisory; these
+        // gates are what actually bind, and until now each of them was a
+        // `continue` over the WHOLE tier. That is why all six prep runs of
+        // 2026-09-16 shipped zero generated images, concept frame included.
+        //
+        // Each gate now records `rescueSkipped` for the OPTIONAL part and falls
+        // through with the GUARANTEED part. `partitionGaps` is idempotent, so
+        // chaining all three is safe: the second and third find nothing
+        // optional in what the first left.
+        /** Skip the optional part of this tier with `reason`, and keep the guaranteed part. Returns false when nothing is left to do. */
+        const skipOptional = (reason: string, conceptDecline: string): boolean => {
+          const { guaranteed, optional } = partitionGaps(gaps, generatedSoFar, conceptOnThisTier && conceptSlideN !== undefined ? { conceptSlide: conceptSlideN } : {});
+          for (const g of optional) rescueSkipped.set(g.n, reason);
+          // ONLY when the concept gap really ended up in `optional`. A concept
+          // that survived as a guarantee is still pending and must not be
+          // reported as declined.
+          if (conceptOnThisTier && optional.some((g) => g.n === conceptSlideN)) {
             conceptPending = false;
-            conceptReport = { ...conceptReport, declineReason: "the run budget plan turned optional rescue work off, so the concept image was never generated — the slide keeps its own scene brief and its retrieved picture" };
+            conceptReport = { ...conceptReport, declineReason: conceptDecline };
           }
-          continue;
+          gaps = guaranteed;
+          return gaps.length > 0;
+        };
+        if (!budgetPlan.optionalRevets) {
+          if (
+            !skipOptional(
+              "optional rescue re-vets skipped by the run budget plan",
+              "the run budget plan turned optional rescue work off, so the concept image was never generated — the slide keeps its own scene brief and its retrieved picture",
+            )
+          ) {
+            continue;
+          }
         }
         if (meter.posture !== "normal") {
-          for (const g of gaps) rescueSkipped.set(g.n, `run budget ${meter.crossedMax ? "hard max" : "target"} crossed (${formatUsd(meter.totalUsd)}) — no more ${tier.id === "generate" ? "generated images" : "rescue re-vets"}`);
-          if (conceptOnThisTier) {
-            conceptPending = false;
-            conceptReport = { ...conceptReport, declineReason: `the run budget ${meter.crossedMax ? "hard max" : "target"} was crossed (${formatUsd(meter.totalUsd)}) before the concept image could be generated — the slide keeps its own scene brief and its retrieved picture` };
+          const reason = `run budget ${meter.crossedMax ? "hard max" : "target"} crossed (${formatUsd(meter.totalUsd)}) — no more ${tier.id === "generate" ? "generated images" : "rescue re-vets"}`;
+          const decline = `the run budget ${meter.crossedMax ? "hard max" : "target"} was crossed (${formatUsd(meter.totalUsd)}) before the concept image could be generated — the slide keeps its own scene brief and its retrieved picture`;
+          // `crossedMax` is THE ONE EXCEPTION and it keeps its unconditional
+          // `continue`: the hard max is a loop-breaker, not a budget decision,
+          // and a run past it is in a state no image policy should argue with.
+          if (meter.crossedMax) {
+            for (const g of gaps) rescueSkipped.set(g.n, reason);
+            if (conceptOnThisTier) {
+              conceptPending = false;
+              conceptReport = { ...conceptReport, declineReason: decline };
+            }
+            continue;
           }
-          continue;
+          if (!skipOptional(reason, decline)) continue;
         }
 
         // Phase 0 cost controls: generation is billed per image, and it used to
@@ -7040,17 +8257,23 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // per attempt; 8 at the widest, fewer when the estimate was adapted);
         // gaps over the cap stay unfillable and take the text-only downgrade
         // with the budget named as the reason — an adaptation, not a hold.
+        //
+        // Phase 5.5: the cap slices the OPTIONAL remainder only. Whatever
+        // `MIN_GENERATED_IMAGES_PER_RUN` still guarantees this run is bought
+        // even when the cap has nothing left — that is what makes it a floor
+        // rather than another number the plan can zero.
         if (tier.id === "generate") {
           const budget = remainingGenerationBudget(generatedSoFar, budgetPlan.generatedImagesCap);
-          for (const over of gaps.slice(budget)) rescueSkipped.set(over.n, `generation budget for this run spent (${budgetPlan.generatedImagesCap} images)`);
-          gaps = gaps.slice(0, budget);
-          if (gaps.length === 0) {
-            if (conceptOnThisTier) {
-              conceptPending = false;
-              conceptReport = { ...conceptReport, declineReason: `this run's generation budget (${budgetPlan.generatedImagesCap} images) was already spent, so the concept image was never generated — the slide keeps its own scene brief and its retrieved picture` };
-            }
-            continue;
+          const { guaranteed, optional } = partitionGaps(gaps, generatedSoFar, conceptOnThisTier && conceptSlideN !== undefined ? { conceptSlide: conceptSlideN } : {});
+          const keep = [...guaranteed, ...optional.slice(0, Math.max(0, budget - guaranteed.length))];
+          const kept = new Set(keep.map((g) => g.n));
+          for (const over of gaps.filter((g) => !kept.has(g.n))) rescueSkipped.set(over.n, `generation budget for this run spent (${budgetPlan.generatedImagesCap} images)`);
+          gaps = keep;
+          if (!kept.has(conceptSlideN ?? -1) && conceptOnThisTier) {
+            conceptPending = false;
+            conceptReport = { ...conceptReport, declineReason: `this run's generation budget (${budgetPlan.generatedImagesCap} images) was already spent, so the concept image was never generated — the slide keeps its own scene brief and its retrieved picture` };
           }
+          if (gaps.length === 0) continue;
         }
 
         // Did the concept gap actually survive the cap? The concept-first
@@ -7369,6 +8592,124 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         unfillable = selections.filter(isUnfillable);
       }
 
+      // ── 06h: THE IMAGE FLOOR, CHECKED ON WHAT ACTUALLY LANDED (Phase 5.5, spec §2 A1b) ──
+      //
+      // `wf.step.code`, **$0.00**, and it is the second of the two enforcements
+      // the floor gets. The first is `partitionGaps` at the three optional-spend
+      // gates above, which stops a budget lever from skipping the tier. This one
+      // reads the OUTCOME: tiers can return nothing, a vet can refuse every
+      // candidate, and a file can vanish off the media volume between vetting
+      // and render (that is what `06f` directly above is for). A floor that is
+      // only checked on intent is not a floor.
+      //
+      // It NEVER holds. When generation is unavailable, refused, or already at
+      // the cap it records `{ action: "unfilled", reason }` and the run carries
+      // on into the downgrade ladder exactly as before.
+      const floorCheck = await wf.step.code(rev(`06h-imagery-floor-check-attempt-${attempt}`), () => {
+        const withPicture = selections.filter((sel) => sel.imagePath !== null && !isUnfillable(sel)).length;
+        // ── `ok` MEANS PICTURES LANDED. IT USED TO ALSO MEAN "WE TRIED". ──
+        //
+        // The pass condition was `withPicture >= MIN_PICTURE_SLIDES ||
+        // generatedSoFar >= MIN_GENERATED_IMAGES_PER_RUN`, and the right-hand
+        // disjunct is an INTENT counter: `generatedSoFar` is incremented from
+        // `tierPool.length` — the candidates `image.generate` handed back —
+        // before `06`/`06e` vet any of them. So the one outcome this step's own
+        // doc comment names, *"a vet can refuse every candidate"*, made it
+        // return `{ action: "ok", pictureSlides: 0, generated: 2 }`: the
+        // guarantee generated two frames, the vet refused both (rights,
+        // watermark, or `subjectMatch` under the floor — the 2026-09-16
+        // karoslabs run rejected all six candidates on one slide), retrieval
+        // filled nothing, and the floor recorded success on a post with no
+        // pictures in it. The corollary was worse: any attempt in which the
+        // guarantee actually generated set the disjunct for the REST of the run,
+        // so `generate-more` could only ever fire when generation had produced
+        // fewer than two candidates at all.
+        //
+        // The pass condition is now the outcome alone. `generatedSoFar` keeps
+        // its only honest job — bounding how many MORE images the re-entry may
+        // buy — and a run that has spent the guarantee and still has no pictures
+        // says so, in `unfilled`, instead of reporting `ok`.
+        if (withPicture >= MIN_PICTURE_SLIDES) {
+          return { action: "ok" as const, pictureSlides: withPicture, generated: generatedSoFar, slides: [] as number[] };
+        }
+        /** What is left of the run's generation guarantee. Zero once it has been spent, whatever the vet then did with the frames. */
+        const guaranteeLeft = Math.max(0, MIN_GENERATED_IMAGES_PER_RUN - generatedSoFar);
+        const want = Math.min(MIN_PICTURE_SLIDES - withPicture, guaranteeLeft);
+        const slides = selections
+          .filter(isUnfillable)
+          .map((sel) => sel.n)
+          .sort((a, b) => a - b)
+          .slice(0, want);
+        const blocked = clientMediaOnly
+          ? "this run is client-media only, so there is no generation tier to re-enter"
+          : meter.crossedMax
+            ? `the run budget hard max was crossed (${formatUsd(meter.totalUsd)}), which is a loop-breaker and the one thing the floor does not argue with`
+            : generateTier?.tool === undefined
+              ? "image.generate is not registered on this deployment"
+              : guaranteeLeft === 0
+                ? `this run already generated ${generatedSoFar} image(s) — its whole guarantee of ${MIN_GENERATED_IMAGES_PER_RUN} — and ${withPicture === 0 ? "none of them" : "not enough of them"} survived vetting, ` +
+                  `so there is no generation left to buy and ${withPicture} slide(s) carry a picture against a floor of ${MIN_PICTURE_SLIDES}`
+                : slides.length === 0
+                  ? "no slide is still without a picture, so there is nothing to fill"
+                  : undefined;
+        return blocked === undefined
+          ? { action: "generate-more" as const, pictureSlides: withPicture, generated: generatedSoFar, slides }
+          : { action: "unfilled" as const, pictureSlides: withPicture, generated: generatedSoFar, slides: [] as number[], reason: blocked };
+      });
+      if (floorCheck.action === "generate-more") {
+        const floorGaps: ImageGap[] = floorCheck.slides
+          .map((n) => {
+            const slide = copy.slides.find((sl) => sl.n === n);
+            return { n, prompt: slide === undefined ? undefined : generationPromptFor(normaliseVisualNeed(slide)) };
+          })
+          .filter((g): g is ImageGap => g.prompt !== undefined);
+        if (floorGaps.length > 0) {
+          // REGARDLESS OF THE PLAN, per the owner's 2026-09-16 ruling that
+          // quality-affecting work is never optional spend. The dollars are
+          // still METERED — `spend` books them and the overrun rides
+          // `ewmaRatio` into the next run's plan — they are simply not
+          // refusable here.
+          const floorSourced = await wf.step.code(rev(`06d2-generate-floor-images-attempt-${attempt}`), async () =>
+            generateTier!.tool!.execute(generateTier!.buildArgs(floorGaps), { ctx }),
+          );
+          if (floorSourced.status === "success") {
+            const floorPool = (floorSourced.result as { candidates: ImageCandidate[] }).candidates;
+            generatedSoFar += floorPool.length;
+            spend(rev(`06d2-generate-floor-images-attempt-${attempt}`), undefined, floorPool.length * STEP_COST_ESTIMATES_USD.generatedImage);
+            if (floorPool.length > 0) {
+              const floorVet = await wf.step.agent(rev(`06h2-vet-floor-images-attempt-${attempt}`), imageAgent, {
+                slides: floorGaps.map((g) => {
+                  const slide = copy.slides.find((sl) => sl.n === g.n);
+                  const need = slide === undefined ? undefined : normaliseVisualNeed(slide);
+                  return {
+                    n: g.n,
+                    headline: slide?.headline ?? "",
+                    body: slide?.body ?? "",
+                    ...(need !== undefined ? vetSubjectFor(need) : {}),
+                    scene: g.prompt,
+                    isClientPhotoSlot: tier0Slots.has(g.n),
+                  };
+                }),
+                candidatePool: floorPool,
+                usedImages,
+              });
+              spend(rev(`06h2-vet-floor-images-attempt-${attempt}`), floorVet.totalCostUsd, STEP_COST_ESTIMATES_USD.vetCall);
+              if (floorVet.status === "completed") {
+                const filled = new Map(floorVet.finalOutput!.selections.map((sel) => [sel.n, sel]));
+                selections = selections.map((sel) => {
+                  const replacement = filled.get(sel.n);
+                  // Same rule as every other rescue tier: only an actually
+                  // fillable replacement wins, so a refusal never overwrites
+                  // the original verdict with a second unusable one.
+                  return replacement === undefined || isUnfillable(replacement) ? sel : replacement;
+                });
+                unfillable = selections.filter(isUnfillable);
+              }
+            }
+          }
+        }
+      }
+
       // Guaranteed delivery (2026-08): a slide that survives every tier —
       // retrieval, social scrape, generation — with nothing usable no longer
       // holds the whole post. The never-a-placeholder guarantee is
@@ -7385,6 +8726,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // picture exists" verdict.
       /** Which slides THIS attempt downgraded for want of a picture — read by 07h so a lost photograph is never mistaken for a copy defect. */
       let downgradedForImagesThisAttempt = new Set<number>();
+      // Per ATTEMPT, so a redraft that found its pictures does not inherit the
+      // previous attempt's shortfall rows.
+      imageryShortfalls = [];
       if (unfillable.length > 0) {
         // `s.reason` carries the real diagnostic (an unset key, a provider's
         // own "no results" chain, the vetting model's own explanation) —
@@ -7396,9 +8740,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           if (s.imagePath === null) return `${s.n}: ${rescueSkipped.has(s.n) ? `${rescueSkipped.get(s.n)}; ` : ""}${s.reason}`;
           if (!s.rightsUsable) return `${s.n}: not rights-usable (${s.reason})`;
           if (!s.watermarkFree) return `${s.n}: not watermark-free (${s.reason})`;
-          // Phase 0, item F: the picture exists and is clean, but it does not
-          // show what the slide claims — the vet's own words say what it shows.
-          if (s.claimMatch < MIN_CLAIM_MATCH) return `${s.n}: picture does not show the slide's claim (claimMatch ${s.claimMatch}/5: ${s.claimMatchReason})`;
+          // Phase 0, item F + 5.5 item A3: the picture exists and is clean,
+          // but it is not a picture OF what the slide is about. The floor says
+          // which limb refused and on what basis, so a `claim-fallback` row is
+          // legible as "the vet emitted no subjectMatch" rather than looking
+          // like the subject floor ran and passed.
+          const floorVerdict = selectionPasses(s);
+          if (!floorVerdict.passes) {
+            return `${s.n}: ${floorVerdict.reason}${s.subjectMatchReason !== undefined ? ` — ${s.subjectMatchReason}` : s.claimMatchReason !== undefined ? ` — ${s.claimMatchReason}` : ""}`;
+          }
           return `${s.n}: already used in a prior post`;
         });
         const downgradedNs = new Set(unfillable.map((s) => s.n));
@@ -7445,6 +8795,74 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             `slide(s) ${[...downgradeTargets].map(([n, layout]) => `${n} → ${layout}`).join(", ")} re-laid-out without a photograph — ` +
             `no viable image survived retrieval, social-scrape, and generation (${detail.join("; ")})`,
         }));
+        // ── Phase 5.5, spec §2 A5: the loss, recorded rather than absorbed. ──
+        //
+        // $0, deterministic, and it GATES NOTHING: clause E's
+        // `downgradedForImages` waiver is unchanged and a lost photograph is
+        // still never a hold. The record travels to the gate payload and into
+        // `08a1b-relayout-for-interest` (see `planInterestRelayout`'s
+        // `imageryShortfalls` input), so the relayout reaches for a remedy that
+        // fits the reason instead of manufacturing furniture.
+        //
+        // ── AND THE TWO FIELDS THAT DECIDE THE REMEDY ARE SUPPLIED HERE. ──
+        //
+        // `imageryShortfallsFor` can choose five remedies and two of them key on
+        // facts only this call site holds. Without them `attach-device` and
+        // `none` were unreachable outside a test: every real shortfall fell
+        // through to `merge` or `font-scale`, and a slide that already carried a
+        // designed object was reported as needing a rearrangement it did not
+        // need. `hasOwnFigure` is `boundedObjectFor`'s own precondition, asked of
+        // the same fact cards `composeBoundedObjects` will use; `hasDesignedObject`
+        // is the writer's own declared device, which `contentFor` renders on any
+        // archetype with a device slot.
+        //
+        // `spareVettedImages` is a real quantity, not a guess: the imagery band
+        // can demote a `photo` slide whose picture had already been vetted, and
+        // that picture is exactly what a `promote` remedy would move.
+        imageryShortfalls = imageryShortfallsFor(
+          unfillable.map((sel) => {
+            const slide = copy.slides.find((s) => s.n === sel.n);
+            const need = slide === undefined ? undefined : normaliseVisualNeed(slide);
+            return {
+              slide: sel.n,
+              wanted: need?.source ?? "stock",
+              // Every slide in this block was re-laid-out onto a typographic
+              // plate by `07a` directly below; none of them still wants a hero.
+              got: "text_only" as const,
+              why: `${rescueSkipped.has(sel.n) ? `${rescueSkipped.get(sel.n)}; ` : ""}${sel.reason}`,
+              hasOwnFigure: slide !== undefined && boundedObjectFor(slide, promptFacts) !== undefined,
+              hasDesignedObject: slide?.device !== undefined,
+            };
+          }),
+          {
+            promotedSlides: imageryPromotions.map((p) => p.slide),
+            spareVettedImages: selections.filter((sel) => {
+              if (sel.imagePath === null || isUnfillable(sel)) return false;
+              const slide = copy.slides.find((s) => s.n === sel.n);
+              return slide !== undefined && !HERO_IMAGE_LAYOUTS.has(resolveLayout(slide, availableTemplates).layout);
+            }).length,
+            // ── WHICH PLATES A NEIGHBOUR COULD ACTUALLY ABSORB. ──
+            //
+            // The same four preconditions `interest-relayout.ts`'s `mergeRemedy`
+            // applies, asked here because the ladder must not offer a remedy the
+            // planner will refuse: a refused remedy reads like a fix in the
+            // trace and moves nothing. An INTERIOR slide (never the cover, never
+            // the closer — both are structural positions rather than spare
+            // plates), never the first slide (there is no slide before it to
+            // fold into), and only while the carousel can afford to lose one
+            // against this client's own `slides_min`.
+            //
+            // Before this list existed, `merge` was reachable ONLY for a slide
+            // the imagery band had promoted, so an ordinary photo slide whose
+            // sourcing came back empty always landed on `font-scale` — setting
+            // the same two strings larger on a plate measured at 2.3% occupied
+            // with 46% of it one empty rectangle.
+            mergeable:
+              copy.slides.length - 1 >= frozen.styleConfig.canvas.slides_min
+                ? copy.slides.slice(1, -1).map((s) => s.n)
+                : [],
+          },
+        );
         // Never a rights-encumbered/watermarked/reused image, regardless of
         // which of those disqualified the candidate — the slide gets NO
         // photo, not a demoted one.
@@ -7577,7 +8995,14 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // Fix 3: the unconditional, mechanical craft-hygiene gate (em dash/
       // exclamation/sentence-case) — never client-config-driven, runs on
       // every attempt regardless of what the client's own style rules say.
-      const craftHygiene = await wf.step.code(rev(`07b-craft-hygiene-attempt-${attempt}`), () => checkCraftHygiene(tools, ctx, copy));
+      // Phase 5.5, spec §6 G3 — `targetLanguage` is passed so the work-notes
+      // clause can say honestly whether this run's language has a first-class
+      // pattern pack. It changes NOTHING about what is refused: the scan runs
+      // over every language's patterns unconditionally, on the
+      // `HEBREW_BANNED_PHRASES` precedent.
+      const craftHygiene = await wf.step.code(rev(`07b-craft-hygiene-attempt-${attempt}`), () =>
+        checkCraftHygiene(tools, ctx, copy, targetLanguage),
+      );
       // The twin of the `07` outage finding above, for `gate.lintPost`. The anti-slop half of this gate is
       // the half that needs a provider; the sentence-case half is local code and still ran, so this says
       // exactly that rather than "the craft gate did not run". Recorded whether or not the local half then
@@ -8429,7 +9854,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // free check in the state it ships in, or a judge's proposal could smuggle an em dash past
           // `gate.lintPost`.
           const patch = await applyNativeCorrections(copy, round1.corrections, {
-            checkHygiene: (candidate) => checkCraftHygiene(tools, ctx, candidate),
+            checkHygiene: (candidate) => checkCraftHygiene(tools, ctx, candidate, targetLanguage),
             language: targetLanguage,
           });
 
@@ -8608,19 +10033,31 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // what THAT document did rather than accumulating three runs' drops.
         const markReport = { hexesBySlide: new Map<number, string[]>(), issues: [] as EmphasisIssue[], kindsBySlide: new Map<number, string[]>() };
         const markRingForAttempt = runMarkRing();
-        // RFC-21 Part 3 — the series is ANNOUNCED through the `seriesBadge`
-        // slot every bundled template already renders. Until now that slot
-        // carried a per-CLIENT string frozen at setup, so the hook the
-        // reference feed uses sat in the tree with nothing choosing it.
+        // ── Phase 5.5, item C3: THE SERIES BADGE NO LONGER REACHES A PIXEL. ──
         //
-        // A client that set its own badge KEEPS it -- an explicit brand
-        // decision beats a derived one, the precedence every other token in
-        // this system uses -- and still gets the series' COMPOSITION. The
-        // badge is how the format is announced; it is not what the format is.
-        const brandTokensForAssembly =
-          series === undefined
-            ? frozen.brandTokens
-            : { ...frozen.brandTokens, seriesBadge: seriesBadgeFor(series, frozen.brandTokens.seriesBadge) };
+        // RFC-21 Part 3 announced the series through the `seriesBadge` slot
+        // every bundled template rendered, so `seriesBadgeFor` overwrote the
+        // client's own token here on every assembly. The owner's 2026-09-16
+        // verdict is what retired it: "BY THE NUMBERS" / "{ FIELD NOTES }" is
+        // an INTERNAL label a reader cannot use, it printed on all eight
+        // slides of all three posts, and on geektime the brand logo disc
+        // landed on it and clipped it to `{ FIELD` eight times over.
+        //
+        // The badge SLOT is deleted from all eight bundled templates (W2-B),
+        // so this overwrite now has nowhere to land — but a CLIENT's own
+        // template may still carry `{{seriesBadge}}`, and printing a derived
+        // internal label into it would be the same defect on a different
+        // document. So the derivation stops here. The SERIES itself is
+        // untouched and still does everything that is worth doing: it directs
+        // the skeleton (`seriesDirective` in the writer's prompt block,
+        // `seriesDirectedSlides` at assembly) and it is recorded in
+        // `skeleton-memory` so next week rotates away from it. It is a real
+        // editorial decision; it was never a thing to print at the reader.
+        // `contentFor` still emits a client's OWN standing `seriesBadge`,
+        // which keeps the explicit-brand-decision precedence exactly as it was.
+        // `seriesBadgeFor` is kept in `editorial-series.ts` with its tests, for
+        // the reviewer-facing note and for a client template that wants one.
+        const brandTokensForAssembly = frozen.brandTokens;
         /**
          * ── THE BOUNDED OBJECT (RFC-20 §11.4), COMPOSED BEFORE ASSEMBLY. ──
          *
@@ -8650,6 +10087,43 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
          */
         const bounded = composeBoundedObjects(copyForAssembly, promptFacts);
         boundedObjectDecisions = bounded.decisions;
+        /**
+         * ── THE SHEET IS RESOLVED FOR THE DRAFT THAT SHIPS, NOT FOR EIGHT. ──
+         *
+         * `04p` resolves the system before a draft exists, so it has to guess a
+         * slide count and guesses `SERIES_DIRECTIVE_SLIDES` (8). That value used
+         * to be the ONLY one `headExtras()` ever saw, while the slides-data half
+         * below re-resolved with `systemFor(bounded.copy.slides.length)` — so on
+         * any 6- or 7-slide carousel the two halves disagreed about which slides
+         * are which. Executed against the real module: on a 6-slide post the
+         * sheet shipped `body[data-n="01"],[data-n="04"],[data-n="08"]` for the
+         * accent and `[data-n="02"]..[data-n="07"]` for the index, against the
+         * correct `[1,3,6]` and `[2,3,4,5]` — no accent on the closer, a page
+         * index ON the closer, and with `accentForm: "field"` (`[6]` vs the
+         * shipped `[8]`) no accent anywhere on the post at all.
+         *
+         * The copy prompt asks for "six to eight slides" and this phase's own
+         * `merge-into-neighbour` remedy deliberately shortens a carousel by one,
+         * so the mismatch is manufactured rather than hypothetical.
+         *
+         * `pickVisualSystem` is pure and seeded, so `systemId`, `ground`,
+         * `accentForm` and `coverForm` are identical to `04p`'s and only the
+         * slide SETS move, which is what they are for.
+         *
+         * ── AND `runVisualSystem` IS NOT ASSIGNED HERE. ──
+         *
+         * This function runs inside a CHECKPOINTED step. On a resume the step
+         * returns its cached slides-data without running the body, so an
+         * assignment here would simply not happen — and `ensureTemplatesOnDisk`,
+         * which runs outside the step, would re-materialise every template with
+         * `04p`'s eight-slide sheet. Measured: `resume-idempotency.test.ts`
+         * caught exactly that, with the same carousel writing `[1,3,6]` before
+         * the resume and `[1,4,8]` after it — a resumed run that does not
+         * reproduce its own bytes, which is the one thing that file refuses.
+         * The assignment lives beside each `ensureTemplatesOnDisk` call instead,
+         * where it runs on the replay path too.
+         */
+        const systemForDraft = systemFor(bounded.copy.slides.length);
         const assembled = assembleSlidesData({
           clientSlug: wf.clientSlug,
           postId: runClaim.postId,
@@ -8661,6 +10135,22 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           availableTemplates,
           templateDirOverride: effectiveTemplateDir,
           validatedCustomArchetypeIds: customIds,
+          // Phase 5.5, spec §6 item E — the slides the SERIES directed, exempt
+          // from `resolveLayout`'s once-per-carousel rule and from nothing
+          // else. Four of the six bundled series direct a repeat on purpose
+          // (`by_the_numbers` is three `stat_callout`s), and until now the
+          // singleton rule degraded every repeat to a plain text plate: that
+          // is what slides 4, 5 and 6 of the 2026-09-16 karoslabs post were.
+          //
+          // Computed from `bounded.copy.slides` — the copy actually being
+          // assembled — and NOT from the raw `05` draft, deliberately.
+          // `07a-downgrade-unfillable-slides` rewrites the layout of a slide
+          // that lost its photograph, and a rewritten slide must NOT be
+          // exempt: it no longer matches the skeleton, which
+          // `seriesDirectedSlides` handles by construction because it compares
+          // each slide's CURRENT layout against `skeletonFor`'s entry for that
+          // position.
+          ...(series !== undefined ? { seriesDirected: seriesDirectedSlides(series.series, bounded.copy.slides) } : {}),
           slideStyleOverrides: overridesForAssembly,
           ...(effectiveKit?.brandAccent !== undefined ? { brandAccentFallback: effectiveKit.brandAccent } : {}),
           ...(effectiveKit?.handle !== undefined ? { brandHandle: effectiveKit.handle } : {}),
@@ -8670,6 +10160,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // falls back to `brandAccentFallback` above for every slide.
           accentRing: effectiveKit?.palette ?? [],
           paletteSeed: wf.runId,
+          // Phase 5.5, item C — the run's visual system, re-resolved for THIS
+          // draft's real slide count. It drives exactly two things here: the
+          // GROUND (one material per post, replacing the seeded per-slide coin
+          // flip that put a giant numeral on some slides and not others) and
+          // which slides may carry a topical eyebrow. Everything else it
+          // decides reaches the pixels through `visualSystemCssBlock` in
+          // `headExtras`, which is why omitting it would keep the exact
+          // pre-phase behaviour rather than half-applying the system.
+          // The SAME object the sheet above was rendered from — one resolution
+          // per assembly, so the stylesheet and the composition can never be
+          // told about two different carousels.
+          visualSystem: systemForDraft,
           ...(groundFgInversion !== undefined ? { groundFgInversion } : {}),
           // Phase 2, item M: the one string in the device library that is
           // neither a numeral nor model-authored copy — an unsourced
@@ -8684,7 +10186,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           ...(languageBrief?.bcp47 !== undefined ? { bcp47: languageBrief.bcp47 } : {}),
           // Phase 3, item S: the run's ONE frozen treatment, per slide, for
           // reporting and trace. The grade itself is applied by the
-          // stylesheet `headExtras()` splices into every document, so this is
+          // stylesheet `headExtras` splices into every document, so this is
           // additive and `"none"` emits nothing.
           imageTreatment: frozenStyle.treatment,
           // ── RFC-17 (Phase 5): marked emphasis. ──
@@ -8728,10 +10230,35 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // a slide onto a different ground, and a stale kind set would make
         // the warning speak about a document that is no longer on screen.
         markKindsBySlide = markReport.kindsBySlide;
+        // ── 06g: ONE SET, NOT THREE PICTURES (Phase 5.5, item A4) ──
+        //
+        // $0, no model call, no tool call, and applied to EVERY hero
+        // REGARDLESS OF PROVENANCE. Until now `styleLock` reached only
+        // GENERATED images, so a carousel with one generated frame, one stock
+        // photograph and one client upload rendered three unrelated pictures
+        // in three unrelated grades — which is what "two different clients'
+        // posts look like the same AI made them, and one client's own post
+        // looks like three posts" measures out as.
+        //
+        // `gradePictureSet` writes `imageTreatment`, `heroTreatment` and
+        // `heroScrimStrength` onto every hero-bearing slide. All three are
+        // declared in `LAYOUT_FIELD_KEYS`, so grading a picture can never hand
+        // a slide free content elements and make the interest floor's content
+        // limb satisfiable by furniture. The CSS that reads them is spliced by
+        // `headExtras` — `imageTreatmentCssBlock` for the grade,
+        // `heroScrimCssBlock` for the legibility veil, deliberately two sheets.
+        //
+        // HERE rather than in a step of its own for the reason
+        // `composeBoundedObjects` is here: all three assemblies in one attempt
+        // (07c, the typographic fallback at 08a, the re-layout's re-render at
+        // 08a1c) must grade the same set the same way, and a step outside this
+        // function would grade the first one only.
+        const grades = new Map(gradePictureSet(frozenStyle, assembled.slides).map((g) => [g.n, g.fields] as const));
         return {
           ...assembled,
           slides: assembled.slides.map((slide) => ({
             ...slide,
+            fields: { ...slide.fields, ...(grades.get(slide.n) ?? {}) },
             measure: {
               ...(typeof slide.fields["accentColor"] === "string" ? { accentHex: slide.fields["accentColor"] } : {}),
               ...(effectiveKit?.cssVars["--fg"] !== undefined ? { foregroundHex: effectiveKit.cssVars["--fg"] } : {}),
@@ -8750,6 +10277,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         };
       };
 
+      // The grade itself is applied inside `assembleForAttempt` (see `06g`
+      // there — all three assemblies in an attempt must grade identically).
+      // THIS step is the trace and the gate payload's half of it: which slides
+      // got a picture, from where, and under which one frozen treatment. $0.
+      const pictureSetGrade = await wf.step.code(rev(`06g-grade-picture-set-attempt-${attempt}`), () => ({
+        treatment: frozenStyle.treatment,
+        treatmentReason: frozenStyle.treatmentReason,
+        graded: selections.filter((s) => s.imagePath !== null).map((s) => s.n),
+      }));
       const slidesDataAttempt = await wf.step.code(rev(`07c-emit-slides-data-attempt-${attempt}`), () =>
         assembleForAttempt(copy, selections, validatedCustomArchetypeIds),
       );
@@ -8816,6 +10352,44 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           continue;
         }
         residueRules = drr.residue;
+        // ── THE COVER'S FIGURE DEVICE (Phase 5.5, item G4) ──
+        //
+        // karoslabs' covers carried `7.2%` over the truncated label
+        // *"Only of organizations respond…"* — a figure unrelated to the post's
+        // topic, a label that is not a clause, and THE SAME FIGURE on two posts
+        // with different topics. A cover figure is the first thing a reader
+        // sees and the only number many of them will read; it has to be a
+        // sourced fact for THIS post, with a whole label.
+        //
+        // Beside `checkDefaultRenderRules` and on the same footing: a failure
+        // returns the draft to `05` on attempts 1..n-1 and is RECORDED on the
+        // final attempt. Never a hold — a device is furniture, and this
+        // workflow's standing rule is that furniture cannot cost a post.
+        if (copy.slides[0]?.device?.kind === "figure") {
+          const coverFigure = await wf.step.code(rev(`07h1-cover-figure-device-attempt-${attempt}`), () =>
+            checkCoverFigureDevice(copy.slides[0]!.device!, {
+              citedClaims: angleDecision !== undefined && "chosen" in angleDecision ? angleDecision.chosen.restsOn : [],
+              factCards: promptFacts.map((f) => ({ claim: f.claim, source: f.source })),
+              ...(previousCoverFigure !== undefined ? { previousCoverFigure } : {}),
+            }),
+          );
+          if (!coverFigure.ok) {
+            const why = `the cover's figure device is not usable on attempt ${attempt}: ${coverFigure.reasons.join("; ")}`;
+            if (!isFinalAttempt) {
+              returnToCopyWith(why);
+              continue;
+            }
+            recordSelfCheckFinding({
+              gate: "render-rules",
+              step: rev(`07h1-cover-figure-device-attempt-${attempt}`),
+              kind: "cover-figure",
+              detail: why,
+              remedy: "waived",
+              remedyNote: "a device is furniture and never holds a post; recorded for the reviewer",
+              slide: copy.slides[0]!.n,
+            });
+          }
+        }
         if (drr.failures.length > 0) {
           // RFC-19 §4 item 7 — MECHANISM A, expressed entirely in this step's OWN existing vocabulary.
           //
@@ -8966,9 +10540,31 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // holds (with a mediaStore configured that is the only place those
       // bytes ever exist), and the probe is one `page.evaluate` in the page
       // that is already open. Their per-slide anchors were attached at 07c.
+      //
+      // ── AND `reservedZone`, THE OTHER HALF OF THE COLLISION PROBE. ──
+      //
+      // `renderCarousel` 1.6.0 reports two kinds of collision: element pairs,
+      // and anything that enters the rectangle the brand mark owns. The second
+      // limb is the one that names the mark's own corner — §7 F2's *"the mark
+      // owns a declared zone… No element may enter the zone"* — and it only
+      // runs when the CALLER supplies the rectangle, because the corner depends
+      // on the writing direction and on the placement plan, both of which live
+      // here. Nothing passed it, so on the live path that limb has never run:
+      // `grep -rn reservedZone agents/` returned nothing. Passed with the real
+      // values it fires immediately (29px on karoslabs, 38 on thepitchbydeel,
+      // 43 on geektime), which is the logo/eyebrow collision named at its
+      // source instead of as a waived element pair.
+      // The sheet the templates are materialised WITH, resolved for the draft
+      // that is actually being rendered. Outside every checkpointed step, so a
+      // resumed run reproduces its own bytes — see `assembleForAttempt`.
+      runVisualSystem = systemFor(copy.slides.length);
+      const reservedZone = await reservedZoneFor(slidesDataAttempt);
       await ensureTemplatesOnDisk(validatedCustomArchetypes);
       const renderOutcome = await wf.step.code(rev(`08-render-carousel-attempt-${attempt}`), async () =>
-        tools["publish.renderCarousel"]!.execute({ ...slidesDataAttempt, measure: true, probe: true }, { ctx }),
+        tools["publish.renderCarousel"]!.execute(
+          { ...slidesDataAttempt, measure: true, probe: true, ...(reservedZone !== undefined ? { reservedZone } : {}) },
+          { ctx },
+        ),
       );
 
       // ── The last image-caused hold, now a degrade ──
@@ -8996,9 +10592,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         );
         copy = strippedCopy;
         selections = strippedSelections;
+        runVisualSystem = systemFor(copy.slides.length);
         await ensureTemplatesOnDisk(validatedCustomArchetypes);
         renderResolved = await wf.step.code(rev(`08-render-carousel-typographic-attempt-${attempt}`), async () =>
-          tools["publish.renderCarousel"]!.execute({ ...slidesDataResolved, measure: true, probe: true }, { ctx }),
+          tools["publish.renderCarousel"]!.execute(
+            { ...slidesDataResolved, measure: true, probe: true, ...(reservedZone !== undefined ? { reservedZone } : {}) },
+            { ctx },
+          ),
         );
       }
 
@@ -9044,6 +10644,35 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // therefore spends a render and **zero model calls**, and then gets a
       // second free chance from the deterministic re-layout below before the
       // $0.126 redraft is spent at all.
+      /**
+       * Clause H's per-slide weight — with ONE abstention.
+       *
+       * A validated RUN-AUTHORED `custom` archetype is left OUT, and that is
+       * not a loophole. `CONTENT_FIELD_WEIGHTS` prices field names this system
+       * defined (`quoteText` 2.0, `kicker` 0.25, everything else 1.0 by
+       * omission); a custom plate's slot names are INVENTED BY THE WRITER for
+       * that one slide. Weighing `{{note}}` and `{{pull}}` at a line of prose
+       * each says nothing about whether the plate carries an idea — it says how
+       * many slots the design happened to declare, so a well-composed two-slot
+       * design would be refused for being two-slot, and the design `05f` was
+       * paid to author would be thrown away by a vocabulary that was never
+       * about it.
+       *
+       * Clause H then falls back to its COUNT limb for that slide (floor 2, the
+       * pre-5.5 behaviour), and the plate is still judged on its PIXELS by every
+       * other clause — `custom-archetype.test.ts`'s "a custom archetype whose
+       * render measures empty produces an interest finding naming custom-<id>"
+       * is that guard, and it is untouched.
+       */
+      const contentWeightsFor = (assembled: RenderCarouselInput, customIds: ReadonlySet<string>): Map<number, number> => {
+        const customFiles = new Set([...customIds].map((id) => templateBasename(templateFileName(id))));
+        return new Map(
+          assembled.slides.flatMap((sl, index) =>
+            customFiles.has(templateBasename(sl.template)) ? [] : [[sl.n, weighContentElements(sl, index === 0).weight] as const],
+          ),
+        );
+      };
+
       const measuredArchetypes = (assembled: RenderCarouselInput, copyNow: InstagramCopyOutput, customIds: ReadonlySet<string>): Map<number, string> =>
         new Map(
           assembled.slides.map((slide) => {
@@ -9059,13 +10688,37 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           }),
         );
 
+      /**
+       * ── CLAUSE I'S NUMBERS, PLUMBED. ──
+       *
+       * `checkInterestFloor` reads the cover-subject boxes off `probe`, and the
+       * renderer computes them — under a different key. `renderCarousel` 1.6.0
+       * returns them on `rendered[].geometry.subjectBoxes` (they are a second
+       * in-page read and `probe` is byte-identical to 1.5.1 by design), so the
+       * clause abstained on every production render and the DOM test written
+       * for *"the first slide is empty and boring"* never ran. The numbers were
+       * there and correct the whole time: the two no-hero covers in my sweep
+       * reported `{hero:0, device:0, graphic:0}` and rendered as exactly the
+       * plate the owner named.
+       *
+       * Merged rather than passed as a second map, because `subjectBoxes` IS a
+       * probe fact about that slide and `MeasuredSlide.probe` is where the
+       * clause already looks. `collisions` is read off `geometry` the same way
+       * at `08a2`.
+       */
+      const withSubjectBoxes = (rows: RenderCarouselResult["rendered"]): RenderCarouselResult["rendered"] =>
+        rows.map((row) => {
+          const boxes = (row as { geometry?: { subjectBoxes?: { hero: number; device: number; graphic: number } } }).geometry?.subjectBoxes;
+          return row.probe === undefined || boxes === undefined ? row : { ...row, probe: { ...row.probe, subjectBoxes: boxes } };
+        });
+
       let floor: InterestFloorReport = await wf.step.code(rev(`08a1-interest-floor-attempt-${attempt}`), () =>
         // Passed straight in, with no cast: `rendered[]`'s rows ARE the
         // module's `MeasuredSlide` shape, so this call site is the
         // compile-time join between `slide-metrics.ts`'s real `SlideMetrics`
         // and `interest-floor.ts`'s structural mirror of it. A field rename
         // in the tool package fails to compile HERE, which is the point.
-        checkSlidesInterestFloor(renderedAttempt.rendered, {
+        checkSlidesInterestFloor(withSubjectBoxes(renderedAttempt.rendered), {
           downgradedForImages: downgradedForImagesThisAttempt,
           archetypeBySlide: measuredArchetypes(slidesDataForQa, copy, validatedCustomArchetypeIds),
           // RFC-17 — see `markKindsBySlide`'s declaration: without it the
@@ -9081,8 +10734,26 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           contentElementsBySlide: new Map(
             slidesDataForQa.slides.map((sl, index) => [sl.n, countContentElements(sl, index === 0)] as const),
           ),
+          // Phase 5.5, clause H — the WEIGHTED floor. The count above still
+          // feeds the finding's `measured` sentence; the weight is what the
+          // clause refuses on. The unweighted floor could be cleared by adding
+          // a KICKER, which is the exact furniture the owner named as the tell
+          // that a post was made by a machine, so `weighContentElements` prices
+          // a kicker at a quarter of a sentence and a pull quote at two.
+          //
+          // UNTIL THIS MAP IS PASSED clause H keeps its old unweighted
+          // floor-of-2 and the phase's main floor change is INERT.
+          contentWeightBySlide: contentWeightsFor(slidesDataForQa, validatedCustomArchetypeIds),
+          // Clause B's full-bleed exemption. Absent, it ABSTAINS, which before
+          // this line re-introduced the defect the threshold move fixes: real
+          // photo slides refused as `clipped` while `probe.overflow` was false.
+          heroBySlide: new Map(slidesDataForQa.slides.map((sl) => [sl.n, sl.images?.["hero"] !== undefined] as const)),
         }),
       );
+      // The per-part breakdown behind every weight, so a reviewer can audit a
+      // clause-H refusal without re-deriving it from the slide. Carried to the
+      // gate payload beside the verdict.
+      contentWeighingForGate = slidesDataForQa.slides.map((sl, index) => ({ n: sl.n, ...weighContentElements(sl, index === 0) }));
       let interestRelayout: InterestRelayoutPlan | undefined;
 
       // An unmeasurable PNG is a TOOLING oddity, never an editorial verdict:
@@ -9142,6 +10813,25 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // what the planner is allowed to SEE.
         const plan = planInterestRelayout(composeBoundedObjects(copy, promptFacts).copy, selections, promptFacts, floor.findings, {
           styleOverrides: slideStyleOverrides,
+          // Phase 5.5 (spec §4.7) — the ladder's FIRST rung, and it is opt-in
+          // because a remedy that cannot take effect is worse than no remedy:
+          // it looks like one in the trace. The apply case is the
+          // `merge-into-neighbour` branch below, which renumbers the slides and
+          // remaps all four n-keyed structures; until it existed, passing this
+          // flag would have produced a byte-identical re-render dressed as a fix.
+          //
+          // It is the honest answer to a plate with nothing on it. Clause H's
+          // own steer already tells the writer "merge slide N into slide N-1 and
+          // let the carousel be one slide shorter"; this is the free version of
+          // that, taken before a $0.24 redraft is spent being told the same thing.
+          mergeSupported: true,
+          slideCountFloor: frozen.styleConfig.canvas.slides_min,
+          // Spec §2 A5 — the record `07a` built, handed to the planner it was
+          // always documented as reaching. Without it the planner answered a
+          // slide that LOST A PICTURE from the pixel symptom alone, and the two
+          // remedies that key on this attempt's own imagery facts could not be
+          // chosen at all.
+          ...(imageryShortfalls.length > 0 ? { imageryShortfalls } : {}),
         });
         if (plan !== undefined) {
           interestRelayout = await wf.step.code(rev(`08a1b-relayout-for-interest-attempt-${attempt}`), () => plan);
@@ -9167,6 +10857,46 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           };
           for (const change of plan.changes) {
             switch (change.kind) {
+              case "merge-into-neighbour": {
+                // ── THE ONE REMEDY THAT CHANGES HOW MANY SLIDES THERE ARE. ──
+                //
+                // The plate had nothing on it that this attempt could add to,
+                // so its words go to the slide before it (reading order is
+                // preserved by construction — `into` is always `slide - 1`) and
+                // the carousel gets one slide shorter. `planInterestRelayout`
+                // refuses to emit this below `slideCountFloor`, so the carousel
+                // can never be merged down past what the client's canvas allows.
+                //
+                // FOUR n-keyed structures are remapped by the SAME mapping, and
+                // that is the whole difficulty of this case: `nextCopy`'s own
+                // `n`, the selections, the per-slide type-scale overrides, and
+                // the set of slides this attempt downgraded for want of a
+                // picture. A renumber that missed one of them would put slide
+                // 5's picture on slide 4 — the compliance record and the pixels
+                // coming apart, which is the defect the `promote-image-to-cover`
+                // branch's own comment exists about.
+                const into = nextCopy.slides.find((sl) => sl.n === change.into);
+                if (into === undefined) break;
+                const carried = `${into.body} ${change.carry.headline} ${change.carry.body}`.replace(/\s{2,}/gu, " ").trim();
+                const kept = nextCopy.slides.filter((sl) => sl.n !== change.slide).map((sl) => (sl.n === change.into ? { ...sl, body: carried } : sl));
+                // Old `n` -> new `n`, built from the surviving order so every
+                // consumer is remapped by one table rather than by four
+                // arithmetic expressions that could disagree.
+                const renumber = new Map(kept.map((sl, index) => [sl.n, index + 1] as const));
+                nextCopy = { ...nextCopy, slides: kept.map((sl, index) => ({ ...sl, n: index + 1 })) };
+                nextSelections = nextSelections
+                  .filter((sel) => sel.n !== change.slide)
+                  .map((sel) => ({ ...sel, n: renumber.get(sel.n) ?? sel.n }));
+                const remappedOverrides = [...nextStyleOverrides.entries()]
+                  .filter(([n]) => n !== change.slide)
+                  .map(([n, override]) => [renumber.get(n) ?? n, override] as const);
+                nextStyleOverrides.clear();
+                for (const [n, override] of remappedOverrides) nextStyleOverrides.set(n, override);
+                downgradedForImagesThisAttempt = new Set(
+                  [...downgradedForImagesThisAttempt].filter((n) => n !== change.slide).map((n) => renumber.get(n) ?? n),
+                );
+                break;
+              }
               case "re-render":
                 // Nothing to change — the remedy IS rendering again.
                 break;
@@ -9255,10 +10985,21 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // is additive — the first render's own files are never removed — so
           // abandoning the candidate leaves the earlier render's templates
           // exactly where they were.
+          // A `merge-into-neighbour` shortens the carousel, so the sheet is
+          // re-resolved for the CANDIDATE's own count before its templates are
+          // written — the case that made the mismatch real rather than possible.
+          runVisualSystem = systemFor(nextCopy.slides.length);
           await ensureTemplatesOnDisk(nextValidatedCustomArchetypes);
           const relayoutRender = await wf.step.code(rev(`08a1c-render-relayout-attempt-${attempt}`), async () => {
             const assembled = assembleForAttempt(nextCopy, nextSelections, nextValidatedCustomArchetypeIds, nextStyleOverrides);
-            const outcome = await tools["publish.renderCarousel"]!.execute({ ...assembled, measure: true, probe: true }, { ctx });
+            // The re-layout may have shortened the carousel, so the zone is
+            // re-resolved against the document that is actually being rendered
+            // rather than reused from the first render of this attempt.
+            const relayoutZone = await reservedZoneFor(assembled);
+            const outcome = await tools["publish.renderCarousel"]!.execute(
+              { ...assembled, measure: true, probe: true, ...(relayoutZone !== undefined ? { reservedZone: relayoutZone } : {}) },
+              { ctx },
+            );
             return { slidesData: assembled, outcome };
           });
           if (relayoutRender.outcome.status === "success") {
@@ -9271,14 +11012,21 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             slidesDataForQa = relayoutRender.slidesData;
             renderedAttempt = relayoutRender.outcome.result as RenderCarouselResult;
             floor = await wf.step.code(rev(`08a1d-interest-floor-recheck-attempt-${attempt}`), () =>
-              checkSlidesInterestFloor(renderedAttempt.rendered, {
+              checkSlidesInterestFloor(withSubjectBoxes(renderedAttempt.rendered), {
                 downgradedForImages: downgradedForImagesThisAttempt,
                 archetypeBySlide: measuredArchetypes(slidesDataForQa, copy, validatedCustomArchetypeIds),
                 // The re-layout re-assembled, so this map is the RE-LAID
                 // document's own kind set, not the one 08a1 measured.
                 markKindsBySlide,
+                // Clause H and clause B again, off the RE-LAID document. A
+                // re-check that ran without them would grade the remedy on the
+                // pre-5.5 floor and could pass a plate `08a1` had just refused.
+                contentElementsBySlide: new Map(slidesDataForQa.slides.map((sl, index) => [sl.n, countContentElements(sl, index === 0)] as const)),
+                contentWeightBySlide: contentWeightsFor(slidesDataForQa, validatedCustomArchetypeIds),
+                heroBySlide: new Map(slidesDataForQa.slides.map((sl) => [sl.n, sl.images?.["hero"] !== undefined] as const)),
               }),
             );
+            contentWeighingForGate = slidesDataForQa.slides.map((sl, index) => ({ n: sl.n, ...weighContentElements(sl, index === 0) }));
             // A SECOND `render-integrity` failure after a re-render is not a
             // content verdict at all: no copy change can make a font load.
             if (
@@ -9448,13 +11196,94 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             hasDownload: placement !== undefined,
             placement,
           }),
+          // Phase 5.5 (spec §7 F1) — the MEASURED reason the download produced
+          // nothing, carried alongside rather than folded into
+          // `assessBrandAssetPresence`'s four-way disjunction, which is W2-C's
+          // file this phase. `HTTP 403` and
+          // `content-type: application/octet-stream` are the two live
+          // candidates for karoslabs; the instrument answers it in one run.
+          ...(brandLogoFailure !== undefined ? { brandAssetDownloadFailure: brandLogoFailure } : {}),
           // SCRUM-393 (IGSTYLE-8): a FACT, never a gate — see
           // `assessContrastFacts`'s own doc comment. Computed from the same
           // `usedHexes` the palette gate above already derived, so "which
           // accents are being judged" can't drift between the two.
           contrastFacts: assessContrastFacts(brandKit, usedHexes),
+          // ── ITEM F: TWO BOXES IN THE SAME PIXELS (Phase 5.5, W2-E). ──
+          //
+          // `probePage` has walked every element with `getBoundingClientRect()`
+          // since 1.1.0 and has never once been able to tell that two boxes
+          // OVERLAP. On geektime that blindness shipped eight slides whose
+          // brand logo disc landed on `{ FIELD NOTES }` and clipped it to
+          // `{ FIELD` — the owner's *"there is their logo at the top, which is
+          // excellent … but it runs over a headline"*, rendered eight times and
+          // reported nowhere.
+          //
+          // `renderCarousel` 1.6.0 reports it as `rendered[].geometry`. This is
+          // the read: every collision is surfaced as a FACT for the reviewer
+          // and the judge, and only a pair naming the brand mark is called out
+          // by name — the rest is warn-only until we have a false-positive rate,
+          // which is the same posture `assessBrandAssetPresence` above takes and
+          // for the same reason: brand furniture must never be able to hold a run.
+          collisions: renderedAttempt.rendered.flatMap((r) => {
+            const geometry = (r as { geometry?: { collisions?: Array<{ a: string; b: string; overlapPx: number }> } }).geometry;
+            return (geometry?.collisions ?? []).map((c) => ({
+              slide: r.n,
+              ...c,
+              brandMark: /brand-(logo|mark)/u.test(`${c.a} ${c.b}`),
+              // ── §7 F4: A ZONE INTRUSION IS ITS OWN FINDING. ──
+              //
+              // `[reserved-zone]` is the renderer's name for the rectangle the
+              // brand mark owns, and an element inside it is a different claim
+              // from two elements overlapping each other: the pair list is
+              // warn-only until we have a false-positive rate, while the zone is
+              // a rule this phase DECLARED (*"No element may enter the zone"*).
+              // Separated here so the gate payload can say which of the two it
+              // is, instead of folding a declared-rule breach into a list whose
+              // whole posture is "not yet trusted".
+              zoneIntrusion: c.b === "[reserved-zone]" && c.overlapPx > BRAND_MARK_ZONE_INTRUSION_PX,
+            }));
+          }),
         };
       });
+      if (preChecks.collisions.some((c) => c.zoneIntrusion)) {
+        // Recorded as its OWN finding, with the zone named — and still never a
+        // hold, for the reason the pair case below states and the whole of
+        // `brand-logo.ts` repeats: brand furniture must not be able to refuse a
+        // post. What changes is that a reviewer and `08b`'s judge now read
+        // "something entered the mark's declared corner", with the element and
+        // the depth, instead of a waived pair of class names.
+        recordSelfCheckFinding({
+          gate: "render-rules",
+          step: rev(`08a2-visual-qa-pre-checks-attempt-${attempt}`),
+          kind: "brand-zone-intrusion",
+          detail:
+            `an element entered the brand mark's reserved zone on ` +
+            preChecks.collisions
+              .filter((c) => c.zoneIntrusion)
+              .map((c) => `slide ${c.slide} (${c.a}, ${c.overlapPx}px into the zone)`)
+              .join("; "),
+          remedy: "waived",
+          remedyNote: "the mark's corner is a placement decision, and brand furniture never holds a post; the zone breach is on the gate payload for the reviewer",
+        });
+      }
+      if (preChecks.collisions.some((c) => c.brandMark)) {
+        // Recorded, never a hold and never a return to `05`: a redraft cannot
+        // move a logo. It reaches the human at `09a` and `08b`'s judge, which
+        // is where a placement decision belongs.
+        recordSelfCheckFinding({
+          gate: "render-rules",
+          step: rev(`08a2-visual-qa-pre-checks-attempt-${attempt}`),
+          kind: "brand-mark-collision",
+          detail:
+            `the brand mark shares pixels with another element on ` +
+            preChecks.collisions
+              .filter((c) => c.brandMark)
+              .map((c) => `slide ${c.slide} (${c.a} / ${c.b}, ${c.overlapPx}px deep)`)
+              .join("; "),
+          remedy: "waived",
+          remedyNote: "brand furniture never holds a post; the placement is the reviewer's call",
+        });
+      }
 
       if (!preChecks.paletteGate.ok) {
         // The whole cost claim this ticket has to prove: this attempt never
@@ -9530,7 +11359,21 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       let renderedInspections: Array<Record<string, unknown>> = [];
       // Cheapest path (budget): over the hard max the rendered inspection is
       // optional spend and is skipped; the deterministic 08a2 pre-checks stand.
-      if (inspectRendered !== undefined && renderedAttempt.rendered.length > 0 && meter.posture !== "cheapest-path") {
+      //
+      // ── THE `duplicateVisionPasses` RUNG'S OTHER HALF. ──
+      //
+      // A rendered plate whose slidesData did not change between two attempts
+      // renders the same pixels, so describing it a second time cannot produce
+      // a different description. With the rung pulled, the signature of the
+      // document that was rendered is compared against the one the last
+      // inspection ran on and the descriptions are re-used when they match.
+      // The QA agent receives exactly the same `renderedInspections` either
+      // way; what changes is that the run stops paying twice for it, which is
+      // the saving `estimateRunCost` has been booking without it happening.
+      const renderedSignature = JSON.stringify(slidesDataForQa.slides.map((s) => [s.n, s.template, s.fields, s.images, s.htmlFragments]));
+      if (budgetPlan.duplicateVisionPasses === false && renderedInspectionCache?.signature === renderedSignature) {
+        renderedInspections = renderedInspectionCache.inspections;
+      } else if (inspectRendered !== undefined && renderedAttempt.rendered.length > 0 && meter.posture !== "cheapest-path") {
         renderedInspections = await wf.step.code(rev(`08a4-inspect-rendered-attempt-${attempt}`), async (): Promise<Array<Record<string, unknown>>> => {
           const images = renderedAttempt.rendered.slice(0, 12).flatMap((r): Array<{ ref: string; url?: string; path?: string }> => {
             if (/^https?:\/\//i.test(r.path)) return [{ ref: `slide-${r.n}`, url: r.path }];
@@ -9561,6 +11404,91 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           }));
         });
         spend(rev(`08a4-inspect-rendered-attempt-${attempt}`), undefined, Math.min(renderedAttempt.rendered.length, 12) * STEP_COST_ESTIMATES_USD.visionInspectPerImage);
+        // Outside the step for the reason `visionEnrichedByPath` is: a resumed
+        // run's step returns its checkpoint without running, so the cache is
+        // rebuilt from what this process actually observed and an empty cache
+        // only ever means "inspect again".
+        renderedInspectionCache = { signature: renderedSignature, inspections: renderedInspections };
+      }
+
+      // ── 08b1: THE CONTACT SHEET (Phase 5.5, item C/§4.8) ──
+      //
+      // `instagram-visual-qa@5` asks five questions a person asks about a
+      // CAROUSEL — does it stop a scroll, does each slide pull to the next,
+      // does it read as one system, does every slide earn its place, would you
+      // publish this — and none of them is answerable one slide at a time.
+      // Rhythm and repetition are properties of the SEQUENCE. So the run
+      // composes what a person actually looks at: all eight plates in order, in
+      // one frame.
+      //
+      // Built from tools that are already registered and already used: a local
+      // HTML grid of the rendered PNGs, `media.screenshotPage` over it (a local
+      // browser, $0), and ONE `media.inspectImages` read of the composite
+      // (~$0.001). The judge is a router-level TEXT step — images never reach
+      // `CompletionRequest` in this engine — so what reaches `08b` is the
+      // vision model's description of the whole set, which is the strongest
+      // form of that evidence this architecture can carry.
+      //
+      // Every failure is survived and leaves `contactSheet` absent; prompt @5
+      // §7 says "when present" and degrades to per-slide inspection, which is
+      // exactly what `08b` read before this step existed.
+      let contactSheet: string | undefined;
+      if (
+        inspectRendered !== undefined &&
+        tools["media.screenshotPage"] !== undefined &&
+        renderedAttempt.rendered.length > 1 &&
+        meter.posture !== "cheapest-path"
+      ) {
+        contactSheet = await wf.step.code(rev(`08b1-compose-contact-sheet-attempt-${attempt}`), async (): Promise<string | undefined> => {
+          try {
+            const srcFor = (p: string): string => (/^https?:\/\//i.test(p) ? p : `file://${path.resolve(options.repoRoot, p).replace(/\\/g, "/")}`);
+            const cells = renderedAttempt.rendered
+              .slice(0, 10)
+              .map((r) => `<figure><img src="${srcFor(r.path)}" alt=""><figcaption>${r.n}</figcaption></figure>`)
+              .join("");
+            const html =
+              `<!doctype html><meta charset="utf-8"><style>` +
+              `html,body{margin:0;background:#fff;font:600 28px/1 system-ui,sans-serif;color:#111}` +
+              `main{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;padding:16px}` +
+              `figure{margin:0;position:relative}img{width:100%;display:block}` +
+              `figcaption{position:absolute;left:6px;top:6px;background:#fff;padding:2px 8px}` +
+              `</style><main>${cells}</main>`;
+            const dir = path.resolve(options.repoRoot, ".media-cache", wf.runId, "contact-sheet");
+            await fs.mkdir(dir, { recursive: true });
+            const page = path.join(dir, `attempt-${attempt}.html`);
+            await fs.writeFile(page, html, "utf8");
+            const shot = await tools["media.screenshotPage"]!.execute(
+              {
+                repoRoot: options.repoRoot,
+                runId: wf.runId,
+                url: `file://${page.replace(/\\/g, "/")}`,
+                // Four across, so an eight-slide carousel is two rows: the
+                // shape a person scrolls, not a strip.
+                viewport: { width: 2000, height: 1400 },
+              },
+              { ctx },
+            );
+            if (shot.status !== "success") return undefined;
+            const sheetPath = (shot.result as { candidate: { path: string } }).candidate.path;
+            const read = await inspectRendered.execute(
+              {
+                repoRoot: options.repoRoot,
+                images: [{ ref: "contact-sheet", path: sheetPath.replace(/\\/g, "/") }],
+                purpose: "candidate-vetting",
+                brief:
+                  "a contact sheet of every slide of one Instagram carousel, in order, numbered: describe the SET — whether the first plate would stop a scroll, whether the slides pull one to the next, whether they read as one designed system or as separate posts, whether any slide is carrying nothing, and what repeats across them",
+              },
+              { ctx },
+            );
+            if (read.status !== "success") return undefined;
+            const first = (read.result as { inspections: Array<{ description?: unknown }> }).inspections[0];
+            return typeof first?.description === "string" && first.description.trim().length > 0 ? first.description : undefined;
+          } catch (error) {
+            console.error(`08b1-compose-contact-sheet: could not compose the contact sheet on attempt ${attempt}`, error);
+            return undefined;
+          }
+        });
+        if (contactSheet !== undefined) spend(rev(`08b1-compose-contact-sheet-attempt-${attempt}`), undefined, STEP_COST_ESTIMATES_USD.visionInspectPerImage);
       }
 
       const elevatedCriteria = buildElevatedVisualQaCriteria({ logo: preChecks.brandAsset, kitPalette: effectiveKit?.palette ?? [] });
@@ -9607,6 +11535,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         format: copy.format,
         // What a vision model saw in the actual PNGs, when one was available.
         ...(renderedInspections.length > 0 ? { renderedInspections } : {}),
+        // Phase 5.5 (§4.8) — all eight plates at once, which is what makes
+        // §6's five questions answerable at all. Prompt @5 §7 reads it FIRST.
+        ...(contactSheet !== undefined ? { contactSheet } : {}),
         slides: slidesDataForQa.slides.map((s) => ({ n: s.n, fields: s.fields, images: s.images })),
         renderRules: [...judgedRenderRules.map((r) => ({ id: r.id, description: r.description })), ...elevatedCriteria],
         // Facts the judge must not re-derive (per-criterion doc comments in
@@ -9662,6 +11593,36 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         });
       }
       const qa = qaExec.status === "completed" ? qaExec.finalOutput! : undefined;
+      // Phase 5.5, item G1 — the judge's verdict reaches the GATE. Until now
+      // `08b`'s output was consumed here and never put on `DraftResult`, so a
+      // reviewer could not tell "judged and passed" from "never judged". ABSENT
+      // means NOT JUDGED and the verdict line says so; a pass is never faked.
+      finalVisualQa = qa === undefined ? undefined : { pass: qa.pass, publishable: qa.publishable, findings: qa.findings };
+      // ── "WOULD A CMO PUBLISH THIS?" — WARN-ONLY FOR THE FIRST THREE PREP RUNS ──
+      //
+      // `publishable` is `@5`'s answer to the owner's own instruction: *"be a
+      // CMO for a moment — these are posts you really would not have liked."*
+      // It is a different question from `pass`, which asks whether the render
+      // rules hold, and it is the question the three approved 2026-09-16 posts
+      // failed.
+      //
+      // It SHIPS WARN-ONLY: recorded as a self-check finding, surfaced on the
+      // gate, and it returns no draft and holds nothing. `VISUAL_QA_PUBLISHABLE_ARMED`
+      // is the one flag to flip once three prep runs have shown what it refuses
+      // and why — `instagram-floor-candidates-falsified` is the record of what
+      // arming a judgement before reading its distribution costs.
+      if (qa !== undefined && qa.publishable === false) {
+        recordSelfCheckFinding({
+          gate: "visual-qa",
+          step: rev(`08b-visual-qa-attempt-${attempt}`),
+          kind: "cmo:would-you-publish",
+          detail:
+            `the visual judge would not publish this post as it stands` +
+            `${qa.findings.filter((f) => !f.passed && f.ruleId.startsWith("cmo:")).map((f) => ` — ${f.ruleId}: ${f.note}`).join("")}` +
+            ` (WARN-ONLY for the first three prep runs; it returns no draft and holds nothing)`,
+          remedy: "none",
+        });
+      }
       if (qa !== undefined && !qa.pass) {
         const failing = qa.findings.filter((f) => !f.passed);
         const qaReason = `visual QA failed on attempt ${attempt}: ${failing.length > 0 ? failing.map((f) => `${f.ruleId}${f.slide !== undefined ? ` (slide ${f.slide})` : ""}: ${f.note}`).join("; ") : "no specific findings given"}`;
@@ -9794,7 +11755,40 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // All free, all `content_fail` -> one re-ask under a DISTINCT step id. Distinct because
         // `step.agent` REPLAYS a checkpointed `content_fail`, so a re-call under the same id returns the
         // first failure without ever touching the model (`language-gate.ts:565-572`).
-        if (pkg !== undefined) {
+        if (pkg === undefined) {
+          // ── Phase 5.5 (spec §6 G2): THE RE-ASK `thepitchbydeel` NEVER GOT ──
+          //
+          // `pkg` is `undefined` whenever `firstExec.status !== "completed"`,
+          // and the whole re-ask block below used to sit INSIDE
+          // `if (pkg !== undefined)`. So a schema refusal — which is exactly
+          // what an over-long `altText` was on two of three live runs on
+          // 2026-09-16 — skipped the one retry entirely and the post shipped
+          // with no hashtags and no alt text at all.
+          //
+          // W1-E's `clampAltText` removes the commonest cause; this closes the
+          // class. One re-ask, same $0.004, same distinct step id (a
+          // checkpointed failure REPLAYS under the same id, so the retry must
+          // have its own), and the post ships either way.
+          const retryId = rev("08c-package-post-retry");
+          packageRetryRan = true;
+          const retryExec = await wf.step.agent(retryId, packagerAgent, {
+            ...packagerInput,
+            previousAttemptProblem: `the first attempt did not complete (${firstExec.status})`,
+          });
+          spend(retryId, retryExec.totalCostUsd, STEP_COST_ESTIMATES_USD.postPackage);
+          const retried: PostPackage | undefined = retryExec.status === "completed" ? (retryExec.finalOutput ?? undefined) : undefined;
+          if (retried === undefined) {
+            packageProblem = `the post packager did not complete (${firstExec.status}) and neither did its one re-ask (${retryExec.status})`;
+          } else {
+            const retryCheck = await wf.step.code(rev("08c1-package-checks-retry"), () => checkPostPackage(tools, ctx, { ...packageCheckInput, pkg: retried }));
+            if (retryCheck.ok) {
+              pkg = retried;
+              packageProblem = undefined;
+            } else {
+              packageProblem = `the post packager did not complete (${firstExec.status}) and its one re-ask failed the free checks (${retryCheck.reason})`;
+            }
+          }
+        } else {
           const drafted = pkg;
           const firstCheck = await wf.step.code(rev("08c1-package-checks"), () => checkPostPackage(tools, ctx, { ...packageCheckInput, pkg: drafted }));
           if (!firstCheck.ok) {
@@ -9804,6 +11798,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             // retry suffix before the revision everywhere. The revision suffix is always LAST, which is
             // also the only spelling `generate_engine_stages.py` will see a family in after merge.
             const retryId = rev("08c-package-post-retry");
+            packageRetryRan = true;
             const retryExec = await wf.step.agent(retryId, packagerAgent, { ...packagerInput, previousAttemptProblem: firstCheck.reason });
             spend(retryId, retryExec.totalCostUsd, STEP_COST_ESTIMATES_USD.postPackage);
             const retried: PostPackage | undefined = retryExec.status === "completed" ? (retryExec.finalOutput ?? undefined) : undefined;
@@ -9927,6 +11922,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             hashtags: [...pkg.hashtags],
             hashtagPlacement: resolveHashtagPlacement(languageBrief?.register),
             altText: pkg.altText.map((a) => ({ n: a.n, alt: a.alt })),
+            // Phase 5.5 (spec §6 G2) — which alts the wire clamp actually cut.
+            ...(clampedAltSlides(pkg).length > 0 ? { altTextClamped: clampedAltSlides(pkg) } : {}),
             // The model wrote the PROSE. The sources are built in code from the fact cards the shipped
             // slides actually cite — the model's output is not a parameter to `buildFirstCommentSources`,
             // which is what makes an invented URL unrepresentable rather than merely forbidden.
@@ -9953,6 +11950,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               accentRing: effectiveKit.palette,
               paletteSeed: wf.runId,
               brandAccentFallback: frozen.brandTokens.accentColor ?? effectiveKit.brandAccent ?? "#C4552F",
+              // Phase 5.5, item C — the same condition `assembleSlidesData`
+              // itself uses, so the plan reports the accent the plates actually
+              // carried rather than the one an un-frozen walk would have picked.
+              carouselWideAccent: runVisualSystem !== undefined,
               ...(groundFgInversion !== undefined ? { groundFgInversion } : {}),
             })
           : undefined;
@@ -9992,6 +11993,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // computed on every attempt at $0, so "absent" would only ever mean a
         // bug; the two markers below are absent on the common case.
         interest: finalInterest ?? { ok: true, perSlide: [], findings: [], waived: [], warnings: [], notMeasured: [] },
+        contentWeighing: contentWeighingForGate,
+        ...(finalVisualQa !== undefined ? { visualQa: finalVisualQa } : {}),
+        ...(sceneBriefFindings.length > 0 ? { sceneBriefFindings } : {}),
+        ...(textScreenVerdict !== undefined ? { textScreen: textScreenVerdict } : {}),
+        ...(entitySourcingForGate.length > 0 ? { entitySourcing: entitySourcingForGate } : {}),
         ...(finalInterestRelayout !== undefined ? { interestRelayout: finalInterestRelayout } : {}),
         ...(interestDegraded !== undefined ? { interestDegraded } : {}),
         skeleton: finalSkeleton ?? { ok: true, action: "pass", signature: "", repeatedPrevious: false, warnings: [], recent: [] },
@@ -10013,6 +12019,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // object uses.
         ...(imageryPromotions.length > 0 ? { imageryPromotions } : {}),
         ...(imageryDemotions.length > 0 ? { imageryDemotions } : {}),
+        // Phase 5.5 (spec §2 A5) — and which slides asked for a picture and
+        // did not get one. The band's two markers say what the SYSTEM moved;
+        // this one says what the run could not deliver, which is the half the
+        // reviewer was never shown.
+        ...(imageryShortfalls.length > 0 ? { imageryShortfalls } : {}),
         // RFC-19 — ABSENT, never empty, when nothing refused. The asymmetry is the contract: a marker
         // attached to every clean post is the "silently shipping a bad post" failure in reverse.
         ...(finalSelfCheckFindings.length > 0
@@ -10155,9 +12166,90 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         latestDraftForReview = draft;
         return draft;
       },
-      buildGate: (draft, revision) => ({
+      buildGate: (draft, revision) => {
+        // ── THE VERDICT (Phase 5.5, item G1) ──
+        //
+        // The owner's own ask. The human gate approved every one of the three
+        // 2026-09-16 runs — including one whose cover device read `"2 / B B"`
+        // and one that shipped with no hashtags at all — because nothing on
+        // the payload said a model step had failed, which attempt had actually
+        // shipped, what the budget had skipped, or what the run cost.
+        // `verdictLine` is one sentence; `verdict` is the block behind it.
+        // Both are built from facts the run already computed: no new step, no
+        // model call, $0.
+        const verdict = buildGateVerdict({
+          budget: summarizeRunBudget(budgetDecision, meter, budgetNotes),
+          // W1-C's floor, reported as a floor rather than as a cap. The image
+          // rung is the LAST lever and it stops at `MIN_GENERATED_IMAGES_PER_RUN`
+          // — it can never reach zero again. On 2026-09-16 it could: the cold
+          // estimate crossed the old $1.00 target, rung 1 took
+          // `generatedImagesCap` to 0, `04m-concept-eligibility` skipped with
+          // reason `"generatedImagesCap 0"`, and all six prep runs planned no
+          // generated images at all. That is the single decision behind the
+          // owner's loudest complaint.
+          floorsHeld:
+            budgetPlan.generatedImagesCap <= MIN_GENERATED_IMAGES_PER_RUN
+              ? [`generated images held at the floor of ${MIN_GENERATED_IMAGES_PER_RUN} — no lever may cut below it`]
+              : [],
+          shippedAttempt: draft.selfCheck?.attempt ?? draftAttemptLog.at(-1)?.attempt ?? 1,
+          attempts: draftAttemptLog,
+          stepFailures: nonDraftStepFailures,
+          ...(draft.visualQa !== undefined ? { visualQa: draft.visualQa } : {}),
+          ...(draft.post !== undefined ? { post: draft.post } : {}),
+          packagingRetried: packageRetryRan,
+          imagery: {
+            wanted: draft.copy.slides.filter((s) => needsImageSourcing(normaliseVisualNeed(s))).length,
+            generated: generatedSoFar,
+            ...(draft.imageryShortfalls !== undefined ? { shortfall: draft.imageryShortfalls } : {}),
+            selections: draft.selections,
+          },
+          // ── THE WAIVED PLATE, PROMOTED OUT OF `waived` (Phase 5.5, item A5) ──
+          //
+          // `resolveLayout`'s `downgradedFrom` is still dropped by
+          // `slides-data.ts` (it destructures `const { layout } = ...`), so a
+          // pure LAYOUT downgrade is still not recorded here — that is honest
+          // and unchanged.
+          //
+          // What IS recorded is the plate this phase's own clause H is disarmed
+          // on. A slide that lost its photograph is waived from the weighted
+          // content floor — correctly: a hero is worth 2.0 and no redraft can
+          // find a picture — and the finding then sat in `interest.waived`,
+          // forty blocks down a payload nobody scrolls, while the plate shipped
+          // as a headline and a body on bare ground. Measured on this tree with
+          // sourcing returning nothing: karoslabs slides 3 and 6 at 2.3%
+          // occupied with 46% of the plate one empty rectangle, and a human
+          // approving the post with nothing in front of him that said so.
+          //
+          // The waiver stands (it is never a hold). What changes is that it
+          // reaches `verdictLine` — "2 slides DEGRADED" — and the reviewer sees
+          // *why* before he approves rather than after.
+          degradeMarkers: draft.interest.waived
+            .filter((finding) => finding.kind === "one-element")
+            .map((finding) => ({
+              slide: finding.slide,
+              from: `${finding.role} plate that asked for a photograph`,
+              to: "bare type plate",
+              reason:
+                `content weighs ${((finding.measured as { contentWeight?: number }).contentWeight ?? 0).toFixed(2)} against a floor of ` +
+                `${finding.threshold.toFixed(2)} — ${finding.waivedReason ?? "waived because no redraft can find a picture"}`,
+            })),
+          brandAsset: {
+            present: draft.rendered.rendered.length > 0 && brandLogoFailure === undefined && effectiveKit?.logoUrl !== undefined,
+            ...(effectiveKit?.logoUrl === undefined
+              ? { reason: "this client's brand kit carries no logoUrl", remedy: "add a logoUrl to the client's brand record" }
+              : brandLogoFailure !== undefined
+                ? { reason: `${brandLogoFailure.reason}: ${brandLogoFailure.detail}`, remedy: brandLogoFailure.note }
+                : {}),
+          },
+        });
+        return {
         kind: "batch_review",
         payload: {
+          // FIRST in the literal, deliberately: key order is what a JSON
+          // viewer renders, and this is the block a reviewer must read before
+          // the pixels.
+          verdictLine: verdict.summary,
+          verdict,
           runId: wf.runId,
           postId: runClaim.postId,
           topic: topicClaim.topic,
@@ -10243,6 +12335,17 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 },
               }
             : {}),
+          // ── Phase 5.5 (spec §2 A5) — THE PICTURES THAT NEVER ARRIVED. ──
+          //
+          // Present only when a slide asked for a photograph and shipped
+          // without one, and it GATES NOTHING: clause E's `downgradedForImages`
+          // waiver is unchanged and a lost picture is still never a hold. It is
+          // here because the loss used to be absorbed into `waived`, where a
+          // reviewer approving eight posts a day never saw it — and the owner's
+          // first complaint about the 2026-09-16 posts was that they had no
+          // pictures in them. Each row carries the slide, what it wanted, what
+          // it got, why, and the remedy that fits the reason.
+          ...(draft.imageryShortfalls !== undefined ? { imageryShortfalls: draft.imageryShortfalls } : {}),
           // Present only when the floor never cleared: the post shipped
           // flagged rather than held.
           ...(draft.interestDegraded !== undefined
@@ -10401,7 +12504,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         timeout: hasBlockingFinding(draft.selfCheck?.checks ?? [])
           ? { duration: "24h", onTimeout: "hold" }
           : { duration: "1h", onTimeout: "auto_approve" },
-      }),
+        };
+      },
       onDecision: async ({ revision, response, templateFeedback }) => {
         // IGSTYLE-3, §2.2 Layer 2 — captured here (not via `notes`, which the
         // shared `RevisionNote` shape deliberately never carries `edits` on)
@@ -11083,6 +13187,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                   mode: topicClaim.mode ?? modeSelection.mode,
                   source: topicClaim.source,
                   archetypes: slidesData.slides.map((s) => s.template.replace(/(-inv)?\.html$/, "")),
+                  // Phase 5.5, item G7. WITHOUT this the new `04h` rotation
+                  // never sees a delivered format and every post stays a
+                  // carousel: `recentFormatsFromDecisions` reads this marker
+                  // and nothing else writes it. Appended, so every row already
+                  // in every client's log is byte-identical without it.
+                  format: format.format,
                 }),
                 review.output.angleDecision?.status === "selected" ? review.output.angleDecision.chosen : undefined,
               ),
@@ -11193,6 +13303,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // `selectSeries` sees an empty history every week and picks the
           // same best-scoring format on the same story forever.
           ...(shippedSeriesId !== undefined ? { seriesId: shippedSeriesId } : {}),
+          // Phase 5.5, item C — the same storage half for the visual system:
+          // without it `pickVisualSystem` sees an empty own-history every week
+          // and resolves whatever the seed happens to give, which makes the
+          // rotation look alive in the trace and be dead in the feed.
+          ...(shippedSystemId !== undefined ? { systemId: shippedSystemId } : {}),
+          // Phase 5.5, item G4 — the number this cover led with, so the next
+          // post cannot lead with it again. karoslabs shipped `7.2%` on two
+          // covers about different topics because nothing remembered.
+          ...(review.output.copy.slides[0]?.device?.kind === "figure" ? { coverFigure: review.output.copy.slides[0].device.value } : {}),
         });
         /**
          * Phase 4 — the belief this run earned. Built here rather than at `04l` so it records what actually
@@ -11225,6 +13344,29 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               ...(languageBelief !== undefined ? { [LANGUAGE_BELIEF_KEY]: languageBelief } : {}),
               [SKELETON_BELIEF_KEY]: recordSkeleton(skeletonHistory, skeletonEntry),
               [CUSTOM_ARCHETYPE_BELIEF_KEY]: customArchetypeHistory,
+              // Phase 5.5, item D — the fleet-variety row, written only on a
+              // post that actually SHIPPED, the same rule the skeleton entry
+              // follows. `recordCrossClientFormat` is idempotent on the pair
+              // (clientSlug, at) so a replayed `09b` cannot double-count.
+              //
+              // See `crossClientFormatHistory`'s declaration for the honest
+              // limit: `memory.read` is client-scoped, so until a fleet-scoped
+              // capability exists this key holds THIS client's own rows and
+              // the cross-client readers (which exclude the calling client)
+              // abstain rather than mislead. Written now so the history is
+              // already there on the day the scope arrives.
+              ...(shippedSeriesId !== undefined || shippedSystemId !== undefined
+                ? {
+                    [CROSS_CLIENT_FORMAT_BELIEF_KEY]: recordCrossClientFormat(crossClientFormatHistory, {
+                      at: new Date().toISOString(),
+                      clientSlug: wf.clientSlug,
+                      // `""` rather than absent when `04i2` failed open: the row
+                      // still holds a SYSTEM out, and the readers drop empties.
+                      seriesId: shippedSeriesId ?? "",
+                      systemId: shippedSystemId ?? "",
+                    }),
+                  }
+                : {}),
               // The setup history is a fourth SIBLING key, written only on a
                // run that actually generated a set, so the next setup for this
                // client starts calibrated (item N.5).

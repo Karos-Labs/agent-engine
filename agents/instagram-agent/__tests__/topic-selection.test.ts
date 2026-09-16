@@ -9,6 +9,7 @@ import {
 } from "@agent-engine/workflow";
 import type { ClientBrief } from "@agent-engine/tools";
 import {
+  CATALOG_MIN_FIT_RATIO,
   EVERGREEN_OFF_MODE_MULTIPLIER,
   MAX_ALTERNATIVES,
   MODE_BONUS,
@@ -397,14 +398,30 @@ describe("resolveTopicClaim with a pre-ranked field", () => {
     expect(result.claim.weighting?.bestCandidateScore).toBe(pre.ranked[0]!.score);
   });
 
-  it("still lets a planned row keep its slot, and still lets trend-jacking displace it — on the ranked score", () => {
+  /**
+   * CHANGED BY PHASE 5.5 (spec §6 G5.1). `assetStory` is the client's own case
+   * study, in this run's mode, for a client with an offer, so the ranking gives
+   * it `5 × 5 × 1 × 1.15 × 1.5 = 43.125` — above anything the scout's own two
+   * judgments can award (25, or 28.75 with the mode bonus) and therefore above
+   * `PLANNED_ROW_SCORE / CATALOG_MIN_FIT_RATIO = 30`.
+   *
+   * The row used to keep its slot against it unconditionally, which is the rule
+   * that shipped thepitchbydeel's 2026-09-16 post from a catalog row seeded with
+   * another client's subject matter. It now loses on FIT, and the reason string
+   * says which of the two rules took it. A row the field beats by less than that
+   * factor is still untouchable without `trendJacking` — the case two tests up
+   * pins, and `topic-catalog-and-format.test.ts` measures the boundary.
+   */
+  it("lets an own-asset story outclass a planned row on FIT, and trend-jacking still displaces it by its own rule", () => {
     const pre = ranked();
-    expect(pre.ranked[0]!.score).toBeGreaterThan(PLANNED_ROW_SCORE);
+    expect(pre.ranked[0]!.score).toBeGreaterThan(PLANNED_ROW_SCORE / CATALOG_MIN_FIT_RATIO);
 
-    const kept = resolveTopicClaim(reservedSeed, scoutWith(assetStory, questionStory), "deep-value", { ...NO_HISTORY, ranked: pre });
-    expect(kept.claim.source).toBe("reserved");
-    expect(kept.claim.alternatives!.every((a) => a.reason === "outranked-by-catalog")).toBe(true);
-    expect(kept.claim.alternatives![0]!.engine).toBe("own-assets");
+    const onFit = resolveTopicClaim(reservedSeed, scoutWith(assetStory, questionStory), "deep-value", { ...NO_HISTORY, ranked: pre });
+    expect(onFit.claim.source).toBe("trend");
+    expect(onFit.claim.topic).toBe(assetStory.topic);
+    expect(onFit.releaseReservation).toBe(true);
+    expect(onFit.claim.weighting?.rule).toMatch(/lost its slot on fit/);
+    expect(onFit.claim.weighting?.rule).not.toMatch(/trendJacking is "always"/);
 
     const jacked = resolveTopicClaim(reservedSeed, scoutWith(assetStory, questionStory), "deep-value", { ...NO_HISTORY, ranked: pre, trendJacking: "always" });
     expect(jacked.claim.source).toBe("trend");

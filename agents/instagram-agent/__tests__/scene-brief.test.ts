@@ -100,10 +100,16 @@ describe("normaliseVisualNeed — the one reader", () => {
     expect(need.searchTerms).toEqual(["צוות", "קטן", "יושב", "סביב", "שולחן", "בוחן", "גרפים", "מודפסים"]);
   });
 
-  it("uses authored searchTerms verbatim when the writer supplied them", () => {
+  it("uses authored searchTerms verbatim when the writer supplied them, and keeps the TECHNIQUE terms out of the query", () => {
     const need = normaliseVisualNeed({ visualNeed: { scene: LONG_SCENE, why: "the slide claims solo mornings", source: "stock", searchTerms: ["laptop", "wooden desk", "morning light"] } });
+    // The FIELD is still the writer's, verbatim — generation and the record
+    // both read it and neither should see this module's opinion.
     expect(need.searchTerms).toEqual(["laptop", "wooden desk", "morning light"]);
-    expect(retrievalQueryFor(need)).toBe("laptop wooden desk morning light");
+    // The QUERY drops "morning light" (Phase 5.5, item A3). A keyword index
+    // cannot tell a treatment term from a subject term, and on 2026-09-16
+    // "long exposure" in exactly this position returned a road tunnel for a
+    // brief about server racks.
+    expect(retrievalQueryFor(need)).toBe("laptop wooden desk");
   });
 
   it("derives them when the writer did not, so the retrieval query is never the whole 240-character brief", () => {
@@ -117,8 +123,21 @@ describe("normaliseVisualNeed — the one reader", () => {
     const need = normaliseVisualNeed(slide);
     expect(generationPromptFor(need)).toBe("an empty meeting room mid-afternoon");
     expect(generationPromptFor(need)).not.toContain("standup");
-    expect(vetSubjectFor(need)).toEqual({ scene: "an empty meeting room mid-afternoon", why: "the claim is that the standup stopped happening" });
-    expect(vetSubjectFor(normaliseVisualNeed({ visualNeed: "an empty meeting room" }))).toEqual({ scene: "an empty meeting room" });
+    // From `instagram-image-vet@6` the vet payload LEADS with the subject and
+    // its `mustShow` clauses, and `scene` follows as declared decoration.
+    expect(vetSubjectFor(need)).toEqual({
+      // The article is stripped by `deriveSubject`; "mid-afternoon" survives
+      // because it is in the first clause and nothing joined it as treatment.
+      subject: "empty meeting room mid-afternoon",
+      mustShow: [],
+      scene: "an empty meeting room mid-afternoon",
+      why: "the claim is that the standup stopped happening",
+    });
+    expect(vetSubjectFor(normaliseVisualNeed({ visualNeed: "an empty meeting room" }))).toEqual({
+      subject: "empty meeting room",
+      mustShow: [],
+      scene: "an empty meeting room",
+    });
   });
 
   it("only `none` opts a slide out of sourcing — a preferred tier that came back empty must not leave the slide with nothing", () => {
@@ -151,7 +170,9 @@ describe("normaliseVisualNeed — the one reader", () => {
         searchTerms: ["team meeting", "printed charts", "window light"],
       },
     });
-    expect(retrievalQueryFor(need)).toBe("team meeting printed charts window light");
+    // "window light" is a lighting term and leaves the query (item A3); the
+    // Latin-script rule this test exists for is unaffected either way.
+    expect(retrievalQueryFor(need)).toBe("team meeting printed charts");
     expect(/^[\p{Script=Latin}\p{N}\p{P}\s]+$/u.test(retrievalQueryFor(need))).toBe(true);
     expect(/^[\p{Script=Latin}\p{N}\p{P}\s]+$/u.test(generationPromptFor(need))).toBe(true);
 
@@ -183,7 +204,10 @@ describe("normaliseVisualNeed — the one reader", () => {
     expect(() => normaliseVisualNeed(malformed)).not.toThrow();
     expect(normaliseVisualNeed(malformed).scene).toBe("a desk with nothing else on it");
     const empty = { visualNeed: null as unknown as string };
-    expect(normaliseVisualNeed(empty)).toEqual({ scene: "", source: "stock", searchTerms: [] });
+    // `subject` is always present from Phase 5.5 — derived, and empty here
+    // because there was nothing to derive from. The invariant every consumer
+    // relies on is that the field EXISTS, not that it says anything.
+    expect(normaliseVisualNeed(empty)).toEqual({ scene: "", source: "stock", searchTerms: [], searchTermsOrigin: "derived", subject: { noun: "", mustShow: [], origin: "derived" } });
     expect(retrievalQueryFor(normaliseVisualNeed({ visualNeed: "…" }))).toBe("…");
   });
 });

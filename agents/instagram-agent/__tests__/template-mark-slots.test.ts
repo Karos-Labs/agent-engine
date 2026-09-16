@@ -781,10 +781,23 @@ describe("RFC-20 §5.0: the Ground Rule, as a source scan", () => {
       expect(body, "cover.html: .cov-field's paint has no `background-repeat: no-repeat` — an unbounded tile is a screen").toMatch(
         /background-repeat\s*:\s*no-repeat/,
       );
+      // ── THE BOUND MOVED FROM THE PAINT TO THE BOX, AND IT IS STILL A BOUND. ──
+      //
+      // The rule used to be "`background-size` must declare a block-axis
+      // LENGTH", because `.cov-field` was the elastic item and a `100%` there
+      // meant "the leftover space" — an unbounded screen wearing a ramp's name.
+      // Phase 5.5 swapped which item is elastic: on the no-photograph path the
+      // field is `block-size: var(--cover-band, 600px)` and the LOCKUP grows, so
+      // the band is sized by the composition and the paint fills exactly it.
+      // That is a stronger bound, not a weaker one — the extent is now a
+      // declared number on the element rather than a number on a paint that
+      // could outlive the element's own height — so the scan asks for either.
+      const paintBound = /background-size\s*:[^;]*\d+(px|%)\s+\d+px/.test(body);
+      const boxBound = /body:not\(:has\(\.hero\)\) \.cov-field \{[^}]*block-size:\s*var\(--cover-band,\s*\d+px\)/.test(styles);
       expect(
-        body,
-        "cover.html: .cov-field's paint declares no explicit block-axis length in `background-size` — its extent is the leftover space rather than a fixed band",
-      ).toMatch(/background-size\s*:[^;]*\d+(px|%)\s+\d+px/);
+        paintBound || boxBound,
+        "cover.html: .cov-field's ramp is bounded by neither its own `background-size` nor a declared `block-size` on the no-photograph field — its extent is the leftover space rather than a fixed band",
+      ).toBe(true);
     }
     expect(
       styles.replace(/\s+/g, " "),

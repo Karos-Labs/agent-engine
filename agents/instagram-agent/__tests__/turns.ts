@@ -25,9 +25,12 @@ import { goodAngleProposal } from "./angle-fixtures.js";
  *   scout          03c-trend-scout            (every run; skipped by the workflow only when 03b fetched no documents)
  *   research   04b-research-extract-facts
  *   angle      04i-propose-angles         (Phase 1; once per REVISION, not per attempt)
+ *   entities   04b3-extract-entities      (Phase 5.5; once per REVISION, EVERY run — defaulted, see `DEFAULT_ENTITIES_TURN`)
  *   concept    04n-design-concept         (Phase 4; once per REVISION, and ONLY when `04l` found the story eligible — most fixtures omit it)
  *   copy       05-write-copy-attempt-N
+ *   customArchetype 05f-author-custom-archetype-attempt-N (Phase 5.5; ONLY when the draft emitted a `customArchetypeBrief` — at most one per carousel)
  *   vet        06-vet-images-attempt-N    (skipped by the workflow when the candidate pool is empty)
+ *   imageryFloorVet 06h2-vet-floor-images-attempt-N (Phase 5.5; ONLY when `06h` had to re-enter generation to reach the image floor — rare, never defaulted)
  *   relevance  07g-relevance-attempt-N
  *   valueJudge 07j-value-judge-attempt-N  (Phase 5; EVERY attempt that gets past 07g, in every language — defaulted, see `DEFAULT_VALUE_TURN`)
  *   nativeEditor 07f-language-fluency-attempt-N (+ `-round-2`) (non-English targets only; ARRAY — one entry per judge round)
@@ -77,6 +80,24 @@ export interface StandardTurnFixtures {
   research?: unknown;
   angle?: unknown;
   /**
+   * Phase 5.5 (spec §2 A2), `04b3-extract-entities` — the real-world things
+   * this post NAMES that a picture could be OF.
+   *
+   * **DEFAULTED**, for the reason `valueJudge` and `postPackager` are: the
+   * workflow buys this turn on EVERY revision, unconditionally, so an absent
+   * key cannot honestly mean "no turn" here the way it does everywhere else —
+   * it would desynchronise every one of the ~30 files that queue turns
+   * positionally. Absent means `{ entities: [] }`, which is exactly what a
+   * story naming no product, company or person produces, and a run with no
+   * named entities sources pictures precisely as it did before this step.
+   *
+   * Queued only when the block also carries an `angle`, because that is what
+   * makes a block a REVISION block: `04b3` runs once per revision, immediately
+   * after `04j-select-angle`, and a block appended for a second ATTEMPT buys
+   * no entity turn.
+   */
+  entities?: unknown;
+  /**
    * RFC-16 Phase 4, `04m` — the concept direction, once per REVISION.
    *
    * Deliberately NOT in `happyTurns`: `04m-concept-eligibility` declines on
@@ -87,7 +108,36 @@ export interface StandardTurnFixtures {
    */
   concept?: unknown;
   copy?: unknown;
+  /**
+   * Phase 5.5 (spec §3 B3), `05f-author-custom-archetype-attempt-N` — the
+   * MARKUP half of a writer-designed layout.
+   *
+   * **NOT defaulted**, unlike `valueJudge` and `postPackager`, and the
+   * distinction is the whole reason this key is cheap: the workflow buys this
+   * turn only when the draft it just read carries a `customArchetypeBrief` on
+   * some slide, and none of the six 2026-09-16 prep runs emitted one. An absent
+   * key therefore honestly means "no turn", exactly as it does for `concept`.
+   * A fixture that wants the custom-archetype path must both put a brief on a
+   * slide of its `copy` fixture AND pass this key.
+   */
+  customArchetype?: unknown;
   vet?: unknown;
+  /**
+   * Phase 5.5 (spec §2 A1b), `06h2-vet-floor-images-attempt-N` — the SECOND
+   * vetting turn, bought only when the image floor had to re-enter generation.
+   *
+   * `06h-imagery-floor-check` itself is `wf.step.code` and costs nothing and
+   * buys no turn: it reads what actually landed and, when the post is short of
+   * both `MIN_PICTURE_SLIDES` and `MIN_GENERATED_IMAGES_PER_RUN`, re-enters
+   * generation REGARDLESS OF THE PLAN (the owner's 2026-09-16 ruling that
+   * quality-affecting work is never optional spend). The pictures it generates
+   * are then vetted, and that vet is a model turn.
+   *
+   * NOT defaulted, and rare by construction: a fixture whose vetting turn fills
+   * three slides never reaches it. A fixture that wants the floor path must
+   * leave the pool short AND pass this key.
+   */
+  imageryFloorVet?: unknown;
   relevance?: unknown;
   /**
    * RFC-18 §5, `07j-value-judge-attempt-N` — the value judge's raw output.
@@ -172,12 +222,27 @@ export const TURN_ORDER = [
   "scout",
   "research",
   "angle",
+  // Phase 5.5 (spec §2 A2): `04b3-extract-entities` runs immediately after
+  // `04j-select-angle` — it reads the chosen angle's own words as half its
+  // grounding evidence — and before `04i2-select-series`, so its turn sits
+  // here, between the angle and the concept.
+  "entities",
   // Phase 4's `04n-design-concept` sits between the angle and the copy
   // because that is where the workflow places it: `04l` scores the story off
   // the CHOSEN angle, and `04n` applies the result after copy is accepted.
   "concept",
   "copy",
+  // Phase 5.5 (spec §3 B3): `05f` runs immediately after the copy step and
+  // before anything asks for a picture, because it is the second half of the
+  // draft — the markup for a layout the writer chose and no longer authors
+  // itself. It is conditional on that choice, so it is NOT defaulted.
+  "customArchetype",
   "vet",
+  // Phase 5.5 (spec §2 A1b): the floor's re-entry vet, immediately after the
+  // ordinary one because that is where `06h` sits — it reads the OUTCOME of
+  // every sourcing tier, and the pictures it then buys have to be vetted like
+  // any others before a slide may carry them.
+  "imageryFloorVet",
   "relevance",
   // Phase 5 (RFC-18 §2): `07j` sits between the relevance judge and the native
   // editor because that is where it runs, and the ordering is load-bearing on
@@ -214,7 +279,33 @@ const VARIADIC_TURN_KEYS: ReadonlySet<keyof StandardTurnFixtures> = new Set(["te
  * by two the moment Phase 5 merged, and the failure would surface as a
  * completely unrelated agent reading another agent's fixture.
  */
-const DEFAULTED_TURN_KEYS: ReadonlySet<keyof StandardTurnFixtures> = new Set(["valueJudge", "postPackager"]);
+const DEFAULTED_TURN_KEYS: ReadonlySet<keyof StandardTurnFixtures> = new Set(["valueJudge", "postPackager", "entities"]);
+
+/**
+ * The `04b3-extract-entities` turn for a block that does not care: an empty
+ * set.
+ *
+ * Empty is not a cop-out, it is the honest majority answer for these fixtures.
+ * `groundEntities` drops every name the fact cards do not carry verbatim, and
+ * the canonical fixture story names no product, company or public figure at
+ * all — so a fixture that says nothing about entities gets the answer that
+ * story actually has, and the sourcing queue takes the same tiers it took
+ * before the step existed. A fixture ABOUT the entity path passes `entities`
+ * by key.
+ */
+export const DEFAULT_ENTITIES_TURN: Record<string, unknown> = { entities: [] };
+
+/**
+ * Whether this block is a REVISION block, and so buys an entity turn.
+ *
+ * `04b3` runs once per revision, immediately after `04j`, which is exactly
+ * where the `angle` turn is bought — so the presence of an angle fixture is
+ * the same question asked once. A block appended for a second ATTEMPT carries
+ * `copy`/`vet` and no angle, and buys neither.
+ */
+function reachesEntityExtraction(fixtures: StandardTurnFixtures): boolean {
+  return "angle" in fixtures && fixtures.angle !== undefined;
+}
 
 /**
  * The `07j-value-judge` turn for a HAND-QUEUED router sequence: a verdict that
@@ -398,6 +489,8 @@ export function standardTurns(fixtures: StandardTurnFixtures): Array<() => Compl
         turns.push(finalTurn(copyLike !== undefined ? defaultValueTurnFor(copyLike) : DEFAULT_VALUE_TURN));
       } else if (key === "postPackager" && reachesPackager(fixtures)) {
         turns.push(finalTurn(copyLike !== undefined ? defaultPackageTurnFor(copyLike) : DEFAULT_PACKAGE_TURN));
+      } else if (key === "entities" && reachesEntityExtraction(fixtures)) {
+        turns.push(finalTurn(DEFAULT_ENTITIES_TURN));
       }
       continue;
     }

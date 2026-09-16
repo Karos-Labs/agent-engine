@@ -65,12 +65,16 @@ describe("PER_REVISION_ESTIMATE_USD / revisionEstimateUsd", () => {
   });
 
   it("is the figure the meter is asked about before a revision, and the answer is never a hold", () => {
+    // PHASE 5.5 (spec §2 A1): the ceiling moved $1.60 -> $2.60, so the
+    // "already spent" figure that puts a revision over it moved with it. The
+    // property under test is unchanged and is not about either number: the
+    // meter answers "no" and the round runs anyway.
     const meter = new RunSpendMeter();
-    meter.add("run so far", undefined, 1.45);
+    meter.add("run so far", undefined, 2.4);
     const verdict = meter.canAfford(PER_REVISION_ESTIMATE_USD);
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("over the $1.60 per-run ceiling");
+    expect(verdict.reason).toContain("over the $2.60 per-run ceiling");
     // `canAfford` is a question about optional spend, not a refusal: crossing
     // the ceiling switches the posture to the cheapest complete path and the
     // round still delivers (owner's amendment, 2026-09-09).
@@ -97,8 +101,13 @@ describe("PER_REVISION_ESTIMATE_USD / revisionEstimateUsd", () => {
     const c = STEP_COST_ESTIMATES_USD;
 
     // The literals. English and Hebrew, before and after the language lines.
-    expect(PER_REVISION_ESTIMATE_USD).toBe(0.2366);
-    expect(revisionEstimateUsd({ attempts: 1, targetLanguage: true })).toBe(0.2816);
+    // PHASE 5.5 RE-BASELINE (spec §2 A1). Nothing was added to this function;
+    // the KEYS it reads were re-priced off the 2026-09-16 measurements — the
+    // copy attempt from $0.185 to a measured $0.31 cold, the image vet and the
+    // visual judge onto `gemini-2.5-pro`. The literals move, the enumeration
+    // below does not, and that is exactly the split these two halves are for.
+    expect(PER_REVISION_ESTIMATE_USD).toBe(0.425);
+    expect(revisionEstimateUsd({ attempts: 1, targetLanguage: true })).toBe(0.47);
 
     // The enumeration, beside them rather than instead of them: the literal
     // catches a term that was ADDED to both the module and this list, and the
@@ -126,8 +135,15 @@ describe("PER_REVISION_ESTIMATE_USD / revisionEstimateUsd", () => {
     // round did not get cheaper, so the comparison is restated against the
     // number that actually governs a reviewer's round — the TARGET — with the
     // ceiling kept as the looser second bound rather than dropped.
-    expect(revisionEstimateUsd({ attempts: 3, targetLanguage: true })).toBe(0.7728);
-    expect(revisionEstimateUsd({ attempts: 3, targetLanguage: true })).toBeGreaterThan(0.75 * TARGET_RUN_SPEND_USD);
+    //
+    // PHASE 5.5: $1.338 on the re-priced keys. The shape of the claim is
+    // unchanged and is if anything starker — a reviewer's `revise` on a Hebrew
+    // post is now 74% of the whole $1.80 target and more than half the $2.60
+    // ceiling on its own. The `0.75 * TARGET` bound is restated as `0.70`
+    // because $1.338 sits just under $1.35; widening it would be fitting the
+    // bound to the number, so the fraction is stated as what it measures.
+    expect(revisionEstimateUsd({ attempts: 3, targetLanguage: true })).toBe(1.338);
+    expect(revisionEstimateUsd({ attempts: 3, targetLanguage: true })).toBeGreaterThan(0.7 * TARGET_RUN_SPEND_USD);
     expect(revisionEstimateUsd({ attempts: 3, targetLanguage: true })).toBeGreaterThan(0.45 * MAX_RUN_SPEND_USD);
   });
 });

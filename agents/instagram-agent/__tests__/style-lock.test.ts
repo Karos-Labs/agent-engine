@@ -18,7 +18,15 @@ import {
   imageTreatmentCssBlock,
   imageTreatmentFields,
   imageTreatmentVars,
+  gradePictureSet,
+  HERO_GRADE_FIELD_KEYS,
+  HERO_SCRIM_ALPHA,
+  HERO_SCRIM_FIELD,
+  HERO_TEXT_CONTRAST_FLOOR,
+  HERO_TREATMENT_FIELD,
+  heroScrimCssBlock,
   pickImageTreatment,
+  requiredHeroScrim,
   resolveGenerationStyle,
   type GenerationStyle,
   type TreatmentKit,
@@ -120,10 +128,22 @@ describe("resolveGenerationStyle — one line, frozen once, inherited by every a
     expect(replayed.treatment).toBe(first.treatment);
   });
 
-  it("with no direction the style is absent and the run behaves exactly as it did before item S", () => {
+  it("with no direction the LINE is still absent — but the set is still graded", () => {
     const style = resolveGenerationStyle(undefined, RICH_KIT);
     expect(style.line).toBeUndefined();
     expect(style.source).toBe("none");
+    // Phase 5.5, item A4. The generation line and the renderer treatment are
+    // two different promises, and only the first one needs a direction: a run
+    // with no style lock still assembles a mixed set of retrieved and
+    // generated pictures, and leaving them ungraded is what produced
+    // thepitchbydeel's lobby, neon keyboard and yellow gantry in one carousel.
+    expect(style.treatment).toBe("warm-desaturate");
+    expect(imageTreatmentFields(style)).toStrictEqual({ imageTreatment: "warm-desaturate" });
+    expect(imageTreatmentCssBlock(style)).toContain("filter: var(--img-treatment, none);");
+  });
+
+  it("only a forbid entry reaches `none`, and it still empties the sheet completely", () => {
+    const style = resolveGenerationStyle(direction({ forbid: ["Heavy editing or colour grading"] }), RICH_KIT);
     expect(style.treatment).toBe("none");
     expect(imageTreatmentFields(style)).toStrictEqual({});
     expect(imageTreatmentCssBlock(style)).toBe("");
@@ -173,22 +193,53 @@ describe("pickImageTreatment — one treatment per client, never per slide", () 
     expect(decision.reason).toContain(`${ACCENT_GROUND_CONTRAST_FLOOR}:1`);
   });
 
-  it("a one-colour kit yields none — that kit has no treatment latitude to spend", () => {
+  /**
+   * ITEM A4, THE MEASUREMENT THAT MOVED THIS RUNG.
+   *
+   * `04k-freeze-generation-style` on all three 2026-09-16 prep runs returned,
+   * verbatim and identically for karoslabs, thepitchbydeel and geektime:
+   *
+   *   { treatment: "none", treatmentReason: "a one-colour accent ring has no treatment latitude" }
+   *
+   * Three clients, three brand kits, one refusal — i.e. `none` was the
+   * fleet-wide default and not a decision. All three frozen lines opened on
+   * the word "documentary", which is a `WARM_CUES` entry, so all three had
+   * asked for a grade.
+   */
+  it("a one-colour kit now takes the duotone it asked for — the ring COUNT was never the question, the contrast was", () => {
     const decision = explainImageTreatment(ONE_COLOUR_KIT, "a muted duotone, fine grain");
-    expect(decision.treatment).toBe("none");
-    expect(decision.reason).toContain("one-colour");
+    expect(ONE_COLOUR_KIT.palette).toHaveLength(1);
+    // The anchor plus the derived ground IS a legible duotone pair, which is
+    // the only thing the tint actually needs.
+    expect(contrastRatio(ONE_COLOUR_KIT.palette[0]!, ONE_COLOUR_KIT.cssVars["--bg"]!)).toBeGreaterThanOrEqual(ACCENT_GROUND_CONTRAST_FLOOR);
+    expect(decision.treatment).toBe("duotone-scrim");
+    expect(decision.tintHex).toBe("#E2703A");
   });
 
-  it("no kit at all yields none, and says so distinctly from the one-colour case", () => {
+  it("the three 2026-09-16 clients would all now be graded, on the lines they actually froze", () => {
+    // Their real frozen lines, truncated to the clause that carries the cue.
+    const lines = [
+      "Every generated image in this set shares one treatment: plain documentary photography of The AI CMO that moves 1st",
+      "Every generated image in this set shares one treatment: plain documentary photography of Pitch by Deel, Startup competitions and founder programs",
+      "Every generated image in this set shares one treatment: plain documentary photography of Israel's largest Hebrew-language technology news site",
+    ];
+    for (const line of lines) {
+      expect(pickImageTreatment(ONE_COLOUR_KIT, line)).toBe("warm-desaturate");
+    }
+  });
+
+  it("no kit at all yields the colour-neutral grade, and says why", () => {
     const decision = explainImageTreatment(undefined, DOCUMENTARY);
-    expect(decision.treatment).toBe("none");
+    expect(decision.treatment).toBe("warm-desaturate");
     expect(decision.reason).toContain("no derived brand kit");
   });
 
-  it("a style that asks for no treatment yields none — silence is not consent to grade", () => {
-    expect(pickImageTreatment(RICH_KIT, "three people at a workbench, mid-morning, shot from above")).toBe("none");
-    expect(pickImageTreatment(RICH_KIT, "")).toBe("none");
-    expect(pickImageTreatment(RICH_KIT)).toBe("none");
+  it("a style that asks for no treatment still unifies the set — `warm-desaturate` makes no colour claim to consent to", () => {
+    expect(pickImageTreatment(RICH_KIT, "three people at a workbench, mid-morning, shot from above")).toBe("warm-desaturate");
+    expect(pickImageTreatment(RICH_KIT, "")).toBe("warm-desaturate");
+    expect(pickImageTreatment(RICH_KIT)).toBe("warm-desaturate");
+    // And the one channel a client has for refusing outright still works.
+    expect(pickImageTreatment(RICH_KIT, DOCUMENTARY, { forbid: ["no colour grading, ever"] })).toBe("none");
   });
 
   it("falls back to the gentle grade when a duotone is asked for but the kit ships no usable anchor hex", () => {
@@ -808,4 +859,160 @@ describe.skipIf(!isChromiumInstalled())("a treated photograph is still a photogr
     },
     600_000,
   );
+});
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// Phase 5.5, item A4 — one graded set, and type that can be read on it
+// ────────────────────────────────────────────────────────────────────────────
+
+describe("gradePictureSet — every hero, whatever its provenance", () => {
+  const style = { treatment: "warm-desaturate" } as const;
+
+  it("writes the run's one treatment onto a retrieved hero and a generated one alike", () => {
+    // The defect: today the treatment reaches only `image.generate`'s
+    // `art.styleLock`, so thepitchbydeel's stock lobby, its stock neon
+    // keyboard and its stock gantry were three different photographs by three
+    // different photographers in one carousel.
+    const grades = gradePictureSet(style, [
+      { n: 1, images: { hero: ".media-cache/run/n1-stock.jpg" } },
+      { n: 2, fields: { headline: "no picture here" } },
+      { n: 3, images: { hero: ".media-cache/run/n3-generated.png" } },
+      { n: 4, images: { hero: "   " } },
+    ]);
+    expect(grades.map((g) => g.fields[HERO_TREATMENT_FIELD])).toEqual(["warm-desaturate", undefined, "warm-desaturate", undefined]);
+    // A slide with no photograph gets no field at all: a hero field on a plate
+    // with no hero is a field a template can only misread.
+    expect(grades[1]!.fields).toStrictEqual({});
+    expect(grades[3]!.fields).toStrictEqual({});
+  });
+
+  it("defaults every hero to the standard veil, and lets a measured caller override per slide", () => {
+    const grades = gradePictureSet(style, [{ n: 1, images: { hero: "a.jpg" } }, { n: 2, images: { hero: "b.jpg" } }], {
+      scrimFor: (slide) => (slide.n === 2 ? "strong" : "none"),
+    });
+    expect(grades.map((g) => g.fields[HERO_SCRIM_FIELD])).toEqual(["none", "strong"]);
+    expect(gradePictureSet(style, [{ n: 1, images: { hero: "a.jpg" } }])[0]!.fields[HERO_SCRIM_FIELD]).toBe("standard");
+  });
+
+  it("the veil sheet is painted in the client's own ground, so one rule serves a dark and a light client", () => {
+    const sheet = heroScrimCssBlock();
+    expect(sheet).toContain("background-color: var(--bg);");
+    expect(sheet).toContain(`opacity: ${HERO_SCRIM_ALPHA.standard};`);
+    expect(sheet).toContain(`opacity: ${HERO_SCRIM_ALPHA.strong};`);
+    expect(sheet).toContain('body[data-hero-scrim="standard"] .scrim::after');
+    // It is SEPARATE from the treatment sheet on purpose: a client that
+    // forbade colour grading has not consented to an unreadable headline.
+    expect(imageTreatmentCssBlock({ treatment: "none" })).toBe("");
+    expect(heroScrimCssBlock().length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * THE CALIBRATION, against real pixels.
+ *
+ * Plate: thepitchbydeel slide 4 of 2026-09-16 — the headline "One LLM call for
+ * all tasks cuts corners on the facts that decide eligibility" over a stock
+ * photograph of a backlit neon keyboard, rendered at 2160x2880. Measured over
+ * the headline's own band (y 1790-2330, x 130-1930):
+ *
+ *   near-black type          L = 0.011
+ *   photograph, 1st pctile   L = 0.1721   -> 3.64:1, UNDER the floor
+ *   photograph, median       L = 0.532    -> 9.55:1
+ *   client ground #FAF4EE    L = 0.912
+ *
+ * Compositing the ground over that band PER CHANNEL on the real pixels gives
+ * 4.77 at alpha 0.15, 5.65 at 0.25 and 6.63 at 0.35. The grey-equivalent model
+ * `requiredHeroScrim` uses has to reproduce those, or the ladder is calibrated
+ * on arithmetic rather than on the plate.
+ */
+describe("requiredHeroScrim — the legibility floor, calibrated on thepitchbydeel slide 4", () => {
+  const DEEL = { inkLuminance: 0.011, regionLuminance: 0.1721, groundLuminance: 0.912 };
+
+  it("agrees with the per-channel measurement of the real plate at every alpha in the table", () => {
+    // Re-derives the model's own composite, so the agreement is asserted
+    // rather than asserted-about.
+    const encode = (l: number) => (l <= 0.0031308 ? l * 12.92 : 1.055 * Math.pow(l, 1 / 2.4) - 0.055);
+    const decode = (e: number) => (e <= 0.04045 ? e / 12.92 : Math.pow((e + 0.055) / 1.055, 2.4));
+    const contrastAt = (alpha: number) => {
+      const mixed = decode((1 - alpha) * encode(DEEL.regionLuminance) + alpha * encode(DEEL.groundLuminance));
+      return (Math.max(mixed, DEEL.inkLuminance) + 0.05) / (Math.min(mixed, DEEL.inkLuminance) + 0.05);
+    };
+    expect(contrastAt(0)).toBeCloseTo(3.64, 1);
+    expect(contrastAt(0.15)).toBeCloseTo(4.77, 1);
+    expect(contrastAt(0.25)).toBeCloseTo(5.65, 1);
+    expect(contrastAt(0.35)).toBeCloseTo(6.63, 1);
+  });
+
+  it("calls the real plate a FAILURE and answers it with the standard veil", () => {
+    const need = requiredHeroScrim(DEEL);
+    expect(need.strength).toBe("standard");
+    // 0.117 is the minimum that clears 4.5 on this plate; `standard` is 0.22,
+    // a little under twice it, so a picture of comparable difficulty is
+    // covered without re-measuring.
+    expect(need.requiredAlpha).toBeGreaterThan(0.11);
+    expect(need.requiredAlpha).toBeLessThan(0.13);
+    expect(need.achieved).toBeGreaterThanOrEqual(HERO_TEXT_CONTRAST_FLOOR);
+    expect(need.reaches).toBe(true);
+  });
+
+  it("asks for nothing where the plate is already comfortable — the same photograph, at its median", () => {
+    const need = requiredHeroScrim({ ...DEEL, regionLuminance: 0.532 });
+    expect(need.strength).toBe("none");
+    expect(need.requiredAlpha).toBe(0);
+    expect(need.achieved).toBeCloseTo(9.55, 0);
+  });
+
+  /**
+   * The limb that matters most, because it is the one that keeps the veil
+   * honest. A dark-ground client setting pale type over that same bright
+   * keyboard cannot be rescued by any amount of ground: the heaviest veil in
+   * the ladder gets 2.8:1 and the picture has stopped being a picture. The
+   * answer is another picture or another place for the copy, and `reaches`
+   * is how this function says so instead of inventing a rung.
+   */
+  it("refuses to pretend, when no veil in the ladder reaches the floor", () => {
+    const darkClient = { inkLuminance: 0.8879, regionLuminance: 0.85, groundLuminance: 0.0075 };
+    const need = requiredHeroScrim(darkClient);
+    expect(need.reaches).toBe(false);
+    expect(need.strength).toBe("strong");
+    expect(need.achieved).toBeLessThan(HERO_TEXT_CONTRAST_FLOOR);
+    expect(need.reason).toContain("cannot carry this type");
+  });
+
+  it("the ladder has exactly two rungs and a refusal — there is no third alpha to reach for", () => {
+    expect(Object.keys(HERO_SCRIM_ALPHA)).toEqual(["none", "standard", "strong"]);
+    expect(HERO_SCRIM_ALPHA.none).toBe(0);
+    expect(HERO_SCRIM_ALPHA.standard).toBeLessThan(HERO_SCRIM_ALPHA.strong);
+    expect(HERO_SCRIM_ALPHA.strong).toBeLessThanOrEqual(0.45);
+  });
+});
+
+/**
+ * THE INTEGRATION GUARD FOR ITEM A4.
+ *
+ * `countContentElements` counts every `fields` entry that is not in
+ * `LAYOUT_FIELD_KEYS`. The three keys this module writes are layout metadata
+ * about how a photograph is graded, and a reader cannot read any of them — so
+ * they must be declared there, or every photo slide in the fleet gains free
+ * content elements and the interest floor can be satisfied by grading a
+ * picture. That is the furniture-gaming defect arriving through a new door.
+ *
+ * This block asserts the list against what `gradePictureSet` really writes, so
+ * the list cannot drift; the membership assertion itself is the integrator's
+ * to land alongside the `LAYOUT_FIELD_KEYS` line (see this package's
+ * integration notes).
+ */
+describe("the field keys item A4 adds are layout metadata, and the list is derived from the output", () => {
+  it("names exactly the keys gradePictureSet and imageTreatmentFields actually write", () => {
+    const written = new Set<string>([
+      ...Object.keys(imageTreatmentFields({ treatment: "warm-desaturate" })),
+      ...Object.keys(gradePictureSet({ treatment: "warm-desaturate" }, [{ n: 1, images: { hero: "a.jpg" } }])[0]!.fields),
+    ]);
+    expect([...written].sort()).toEqual([...HERO_GRADE_FIELD_KEYS].sort());
+    // And none of them is prose: each is a closed vocabulary, not a sentence.
+    expect(HERO_GRADE_FIELD_KEYS).toContain(IMAGE_TREATMENT_FIELD);
+    expect(HERO_GRADE_FIELD_KEYS).toContain(HERO_SCRIM_FIELD);
+    expect(HERO_GRADE_FIELD_KEYS).toContain(HERO_TREATMENT_FIELD);
+  });
 });

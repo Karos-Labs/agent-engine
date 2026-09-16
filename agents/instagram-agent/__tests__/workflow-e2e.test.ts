@@ -22,12 +22,13 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
-import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
+import { DEFAULT_ENTITIES_TURN, DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 import { syntheticPhotograph } from "./synthetic-photograph.js";
 import { SKELETON_BELIEF_KEY, readSkeletonHistory, skeletonSignature } from "../src/workflow/skeleton-memory.js";
 import { CUSTOM_ARCHETYPE_BELIEF_KEY } from "../src/workflow/custom-archetype-memory.js";
 import { RUN_BUDGET_BELIEF_KEY, readBudgetHistory } from "../src/workflow/run-budget.js";
+import { CROSS_CLIENT_FORMAT_BELIEF_KEY } from "../src/workflow/visual-system.js";
 import { NATIVE_EDITOR_RUBRIC_VERSION, okAxes } from "../src/workflow/language-gate.js";
 
 const params = { runId: "instagram_run_1", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -116,6 +117,12 @@ const HAPPY_PATH_STEP_IDS = [
   "04a3-fetch-primary-sources",
   "04b-research-extract-facts",
   "04b2-dedupe-fact-cards",
+  // Phase 5.5 (spec §2 A2). The real-world things this post NAMES that a
+  // picture could be OF, read off the deduped cards, the topic and the chosen
+  // angle and then GROUNDED in code: `groundEntities` drops any name the
+  // evidence does not carry verbatim. Once per REVISION, outside the attempt
+  // loop, so a redraft never re-pays for it.
+  "04b3-extract-entities",
   // Resolves the run's template directory and which archetype files are in
   // it: materialized from the registry when one is configured, otherwise the
   // client's own templateDir probed for the bundled files. Either way a slide
@@ -175,11 +182,33 @@ const HAPPY_PATH_STEP_IDS = [
   // which `resume-idempotency.test.ts` measures on the whole tool-call census.
   "04m2-imagery-band-attempt-1",
   "04m-concept-eligibility",
+  // Phase 5.5 (spec §4). THE RUN'S VISUAL SYSTEM: which ground, which accent
+  // form and on WHICH SLIDES, whether the pagination numeral is on every
+  // interior slide or none, and what the cover is. `wf.step.code`, $0, pure and
+  // seeded on `clientSlug:runId:seriesId`, so two clients resolve different
+  // systems on the same day and the same story. It is the direct answer to the
+  // owner's "the orange lines are the biggest sign a post was made with AI" and
+  // to "on some slides there is a number and on some there is not".
+  "04p-resolve-visual-system",
   "05-write-copy-attempt-1",
   "06-vet-images-attempt-1",
   // Zero-held guarantee: confirms every selected image is still on disk, so a
   // file lost since vetting degrades that slide instead of failing the render.
   "06f-verify-images-on-disk-attempt-1",
+  // Phase 5.5 (spec §2 A4). ONE SET, NOT THREE PICTURES: the frozen
+  // treatment, the hero's own token and the scrim strength are written onto
+  // EVERY hero regardless of provenance, so a carousel with a generated frame,
+  // a stock photograph and a client upload stops rendering three unrelated
+  // pictures. `wf.step.code`, $0, no model call. The grade itself is applied
+  // inside `assembleForAttempt`, because all three assemblies in one attempt
+  // must grade the same set the same way; this step is the trace half.
+  "06g-grade-picture-set-attempt-1",
+  // Phase 5.5 (spec §2 A1b): the generated-image floor checked on what
+  // actually LANDED, not on what the plan intended. `wf.step.code`, $0, and it
+  // runs on every attempt — on the happy path it answers `ok` and buys
+  // nothing. The second of the floor's two enforcements; the first is
+  // `partitionGaps` at the three optional-spend gates in the rescue ladder.
+  "06h-imagery-floor-check-attempt-1",
   "07-self-check-attempt-1",
   "07b-craft-hygiene-attempt-1",
   // Phase 0 (RFC-13 §C): the relevance judge — one Flash call per attempt,
@@ -277,7 +306,7 @@ const HAPPY_PATH_STEP_IDS = [
 
 function happyRouter() {
   return fakeRouterSequence([
-    finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+    finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
     finalTurn(goodCopyOutput()),
     finalTurn(goodImageVettingOutput()),
     finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
@@ -332,7 +361,8 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     // scout runs on every run and the relevance judge on every attempt; Phase
     // 1 adds the angle proposal, once per revision). No brief turn: the
     // fixture seeds a fresh persisted brief, so `00b` resolves to `reuse`.
-    expect(router.complete).toHaveBeenCalledTimes(9);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(10);
 
     const stepRecords = await durableStore.listSteps(params.runId);
     expect(stepRecords.map((s) => s.stepId).sort()).toEqual([...HAPPY_PATH_STEP_IDS].sort());
@@ -381,7 +411,7 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     // second round is reached only when round 1 comes back not-native WITH
     // corrections to apply, and this draft is clean on every axis.
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
@@ -528,7 +558,8 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     expect(second.status).toBe("completed");
     // scout + research + angle + copy + vet + relevance + QA: the resume replays
     // every checkpoint and spends no further model call.
-    expect(router.complete).toHaveBeenCalledTimes(9);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(10);
 
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", "instagram_run_gate", "_"]);
     expect(deliverables.map((d) => d.id)).toEqual(["instagram-carousel"]);
@@ -625,7 +656,14 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
 
     const beliefUpdates = updates.filter((diff) => RUN_BUDGET_BELIEF_KEY in diff || SKELETON_BELIEF_KEY in diff || CUSTOM_ARCHETYPE_BELIEF_KEY in diff);
     expect(beliefUpdates).toHaveLength(1);
-    expect(Object.keys(beliefUpdates[0]!).sort()).toEqual([CUSTOM_ARCHETYPE_BELIEF_KEY, RUN_BUDGET_BELIEF_KEY, SKELETON_BELIEF_KEY].sort());
+    // Phase 5.5 (spec §5 D) adds a FOURTH sibling key in the same one diff:
+    // the fleet-variety row (`CROSS_CLIENT_FORMAT_BELIEF_KEY`), written only on
+    // a post that actually shipped, exactly as the skeleton entry is. One call
+    // is still the whole point — `updateBeliefs` shallow-merges, so a second
+    // call would read-modify-write the same document and lose a key.
+    expect(Object.keys(beliefUpdates[0]!).sort()).toEqual(
+      [CROSS_CLIENT_FORMAT_BELIEF_KEY, CUSTOM_ARCHETYPE_BELIEF_KEY, RUN_BUDGET_BELIEF_KEY, SKELETON_BELIEF_KEY].sort(),
+    );
 
     const beliefs = await env.store.readJson<Record<string, unknown>>("acme", ["memory", "beliefs"]);
     const history = readSkeletonHistory(beliefs);

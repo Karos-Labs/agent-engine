@@ -172,16 +172,30 @@ describe("00d-check-visual-direction: freshness against VISUAL_DIRECTION_TTL_DAY
    * the run's $1.00/$1.50 accounting because the setup meter is a different
    * meter: a run whose true spend is ~$1.06 keeps reporting ~$0.98.
    */
-  describe("a derivation that failed is remembered, so it is not re-paid for every run", () => {
+  describe("a derivation that ran and produced nothing usable is remembered, so it is not re-paid for every run", () => {
+    /**
+     * An `outcome: "empty"` marker: the art director ANSWERED and the answer
+     * was not usable. Phase 5.5 narrowed the window to exactly this case,
+     * because `templatesStored: 0`'s sibling defect lived here too — a marker
+     * written for a step that never answered at all (a tooling error, a
+     * budget lever) used to suppress the retry for a week, and on 2026-09-16
+     * it did, for three clients, over an output ceiling that was raised the
+     * same afternoon. That half is `setup-cooldown.test.ts`'s.
+     */
     const failed = (attemptedAt: string) => ({
-      [VISUAL_DIRECTION_ATTEMPT_BELIEF_KEY]: { version: 1 as const, attemptedAt, failedWith: '00d2-derive-visual-direction resolved to "budget_exceeded"' },
+      [VISUAL_DIRECTION_ATTEMPT_BELIEF_KEY]: {
+        version: 1 as const,
+        attemptedAt,
+        failedWith: "00d2-derive-visual-direction returned three lines, under the four-line floor",
+        outcome: "empty" as const,
+      },
     });
 
     it("reports unavailable, not derive, while the retry window stands", () => {
       const check = checkVisualDirection(failed("2026-09-09T09:00:00.000Z"), { now: NOW, allowDerive: true });
 
       expect(check.action).toBe("unavailable");
-      expect(check.reason).toContain("budget_exceeded");
+      expect(check.reason).toContain("under the four-line floor");
       expect(check.reason).toContain("brand-kit fallback");
     });
 

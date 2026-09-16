@@ -305,13 +305,13 @@ describe("instagram-concept@1 — the prompt that authors the metaphor", () => {
   });
 });
 
-describe("instagram-image-vet@5 §1c — a declared metaphor is judged on what was drawn", () => {
+describe("instagram-image-vet@6 §1c — a declared metaphor is judged on what was drawn", () => {
   it("a good metaphor is not rejected", async () => {
     const { selection, system, slides } = await vet(RIVALRY_SLIDE, GOOD_METAPHOR);
 
-    // The premise of the whole case: the agent really did send @5, and the
+    // The premise of the whole case: the agent really did send @6, and the
     // declaration really did reach it.
-    expect(system.startsWith(readFileSync(path.join(PROMPTS_ROOT, "instagram-image-vet", "5.md"), "utf8"))).toBe(true);
+    expect(system.startsWith(readFileSync(path.join(PROMPTS_ROOT, "instagram-image-vet", "6.md"), "utf8"))).toBe(true);
     expect((slides as Array<{ conceptual?: ConceptualBlock }>)[0]!.conceptual?.pattern).toBe("rivalry");
 
     expect(selection.claimMatch).toBeGreaterThanOrEqual(MIN_CLAIM_MATCH);

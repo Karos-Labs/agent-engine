@@ -151,20 +151,43 @@ describe("instagram-image-vet@4 — judged as evidence for the claim", () => {
   });
 });
 
-describe("instagram-art-director@1 — every line names its basis", () => {
-  const v1 = read("instagram-art-director", "1.md");
+describe("instagram-art-director@2 — every line names its basis, and the six frozen axes", () => {
+  // Phase 5.5 bumped this prompt to @2: the director now also derives the six
+  // per-client axes of `ClientVisualSystem`. The version this suite reads moves
+  // with the agent's own `skillRef` (`art-direction.test.ts` pins that the two
+  // agree), because a suite pinned to a superseded version is a suite that has
+  // stopped watching the prompt the run actually uses.
+  const v1 = read("instagram-art-director", "2.md");
 
   it("is byte-identical to its own latest.md", () => {
-    expect(readFileSync(path.join(PROMPTS, "instagram-art-director", "1.md"))).toEqual(readFileSync(path.join(PROMPTS, "instagram-art-director", "latest.md")));
+    expect(readFileSync(path.join(PROMPTS, "instagram-art-director", "2.md"))).toEqual(readFileSync(path.join(PROMPTS, "instagram-art-director", "latest.md")));
   });
 
   it("carries its own version in the H1", () => {
-    expect(v1.split("\n")[0]).toBe("# Instagram Art Direction Guide — v1");
+    expect(v1.split("\n")[0]).toBe("# Instagram Art Direction Guide — v2");
   });
 
   it("names every field of ArtDirectorOutputSchema and nothing code owns", () => {
-    for (const field of ["`subject`", "`light`", "`palette`", "`treatment`", "`forbid`", "`lines`", "`styleLock`", "`gaps`"]) expect(v1).toContain(field);
+    for (const field of ["`subject`", "`light`", "`palette`", "`treatment`", "`forbid`", "`lines`", "`styleLock`", "`system`", "`gaps`"]) expect(v1).toContain(field);
     expect(v1).toContain("you do not write those");
+  });
+
+  it("asks for all six frozen axes by name, with a basis each", () => {
+    // An axis the prompt does not name is an axis the model omits, and the
+    // fallback derivation then decides it from a slug hash for ninety days.
+    for (const axis of ["`accentRole`", "`displayRegister`", "`compositionGrammar`", "`imageryRegister`", "`pagination`", "`groundTexture`"]) {
+      expect(v1).toContain(axis);
+    }
+    expect(v1).toContain("a one-sentence `basis` for each");
+  });
+
+  it("states the two axis rules that are not negotiable", () => {
+    // Pagination is all or none — a number on half the slides is the loudest
+    // sign a post was assembled by a machine — and the display register must be
+    // CHOSEN, because the whole fleet defaulting to one face is what made three
+    // unrelated clients' posts look related.
+    expect(v1).toContain("It is all or none and never some");
+    expect(v1).toContain("**This is the single most visible axis. Do not default it");
   });
 
   it("makes the basis a hard rule and a missing basis a gap rather than an assertion", () => {

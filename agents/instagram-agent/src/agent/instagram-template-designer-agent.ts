@@ -73,7 +73,18 @@ export class InstagramTemplateDesignerAgent extends BaseAgent<StudioTemplateDraf
     maxSteps: 1,
     // HTML plus CSS plus a sample is ~2k output tokens for a real layout, and
     // a truncated stylesheet is an unparseable turn rather than a short one.
-    maxTokens: 6_000,
+    //
+    // 12,000, raised from 6,000 on 2026-09-16 — and 12,000 rather than the
+    // 10,000 the phase plan proposed, because the measurement says 10,000
+    // does not fit. `setup-ceilings.test.ts` builds the maximal
+    // `StudioTemplateDraftSchema` instance (bodyHtml at 6,000 chars, css at
+    // 8,000, a sample value per declared slot) and serialises it at 22,618
+    // characters. Markup tokenises denser than prose and the sample values
+    // are written in the client's own script, so the honest worst case is
+    // ~11,300 tokens, which 10,000 cannot hold and 12,000 can. A designer
+    // that authors a real layout and then cannot close its stylesheet
+    // returns an unparseable turn and costs the client a template.
+    maxTokens: 12_000,
     modelPolicy: resolveModelPolicy("instagram-template-designer", { policy: "pinned", model: "claude-sonnet-4-6", contentLanguageSensitive: true }),
     skillRef: "instagram-template-designer@1",
   };
