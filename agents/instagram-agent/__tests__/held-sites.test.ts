@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * THE SOURCE GUARD: exactly three `throw new WorkflowHeld(` sites, and each one argued.
+ * THE SOURCE GUARD: exactly four `throw new WorkflowHeld(` sites, and each one argued.
  *
  * RFC-19's whole content is that a run may not die of a QUALITY VERDICT. That is a statement about the
  * WORKFLOW'S SOURCE, not about any one run, and no behavioural test can make it: a fixture proves that one
@@ -28,6 +28,13 @@ import { fileURLToPath } from "node:url";
  *    terminus). The carve-out's "no output exists at all". Its old wording — *"step 07's self-check never
  *    passed after N attempt(s)"* — is asserted ABSENT below, because that sentence is what let nine
  *    unrelated causes hide behind one string.
+ * 4. **A typed request for a subject the client ruled out** (`03`, added with the learning loop — C7 /
+ *    SCRUM-459, argued in RFC-19 §6 item 13). Not a fault in our machinery and not a quality verdict
+ *    either: nothing was scored and no redraft would help. Drafting a different subject instead would be
+ *    worse than holding, because the person would read what came back as the post they asked for. Its two
+ *    neighbours deliberately do NOT hold — a catalogue candidate that touches a never-topic is skipped, and
+ *    the standing `requestedSubject` config field falls through to the seed — because nobody asked for
+ *    those on this run.
  *
  * CRLF: this repository's files are CRLF, so every multi-line pattern here uses `\r?\n` (memory:
  * `python-text-writes-flip-to-crlf`, `agent-engine-worktree-and-crlf`).
@@ -68,19 +75,19 @@ function heldSites(text: string): string[] {
   return sites;
 }
 
-describe("RFC-19: the workflow has exactly three WorkflowHeld sites, and each one is a real fault", () => {
+describe("RFC-19: the workflow has exactly four WorkflowHeld sites, and each one is a real fault", () => {
   const sites = heldSites(source);
 
-  it("throws WorkflowHeld in exactly three places", () => {
+  it("throws WorkflowHeld in exactly four places", () => {
     expect(
       sites.length,
       "A new `throw new WorkflowHeld(` appeared in create-instagram-agent-workflow.ts. RFC-19 §6 lists the " +
-        "three holds this agent is allowed to have, and every one of them is a REAL FAULT (no client config, " +
-        "no readable research, no draft at all). A judge scoring below a bar, a self-check that never passed, " +
-        "a floor that refused every attempt and a schema that came back malformed are QUALITY EVENTS: the run " +
-        "must record a SelfCheckFinding and deliver degraded. Argue the new hold against RFC-19 §6 before " +
-        "changing this number.",
-    ).toBe(3);
+        "four holds this agent is allowed to have: no client config, no readable research, no draft at all, " +
+        "and a typed request for a subject the client ruled out. A judge scoring below a bar, a self-check " +
+        "that never passed, a floor that refused every attempt and a schema that came back malformed are " +
+        "QUALITY EVENTS: the run must record a SelfCheckFinding and deliver degraded. Argue the new hold " +
+        "against RFC-19 §6 before changing this number.",
+    ).toBe(4);
   });
 
   it("keeps the no-subject hold (the owner's carve-out: nobody to write for)", () => {
@@ -89,6 +96,26 @@ describe("RFC-19: the workflow has exactly three WorkflowHeld sites, and each on
 
   it("keeps the no-readable-research hold (shipping unsourced copy is worse than shipping nothing)", () => {
     expect(sites.some((s) => /research/i.test(s) && /schema|readable source/i.test(s))).toBe(true);
+  });
+
+  it("keeps the never-topic hold, and keeps it free (RFC-19 §6 item 13)", () => {
+    // The client's own standing instruction, refusing a subject a person typed for this run. Asserted on
+    // BOTH halves: that it holds, and that it names the rule it is enforcing — a hold whose message does
+    // not say which never-topic it matched is a hold nobody can act on.
+    const site = sites.find((s) => /touches a never-topic the client set/.test(s));
+    expect(site).toBeDefined();
+    expect(site!).toMatch(/nothing else was drafted in its place/);
+  });
+
+  it("does NOT hold for the two cases that are not a person asking (RFC-19 §6 item 13)", () => {
+    // A catalogue candidate goes through `avoidTopics` and the run picks again; the standing
+    // `requestedSubject` config field warns and falls through to the seed. Neither may become a hold
+    // without its own RFC entry, and the count above is what stops one being added quietly.
+    // Asserted on the source rather than on `heldSites`: each site is captured as the 900 characters that
+    // FOLLOW the throw, and the no-subject hold's own message says "no requestedSubject was set" — so a
+    // naive search across sites matches the wrong hold.
+    expect(source).toMatch(/touches never-topic "\$\{refused\}" — falling through/);
+    expect(source).toMatch(/const refused = touchesNeverTopic\(runClaim\.requestedSubject/);
   });
 
   it("keeps the narrowed terminus: no draft exists at all", () => {

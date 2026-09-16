@@ -250,7 +250,13 @@ export interface InstagramRunClaim {
 // ─────────────────────────────────────────────────────────────────────────
 
 /** Where step 03's subject came from — decides whether there is a dedup reservation to commit at step 09. `trend` (2026-09): the scout's on-brand candidate took the slot. */
-export type InstagramTopicSource = "reserved" | "requested" | "trend" | "research";
+/**
+ * Where this run's subject came from. `planned` is a row off the strategy map
+ * (C1 / C7 §2.6) — added when the loop landed, and deliberately distinct from
+ * `reserved` (the topics catalog) and from `research` (the industry seed):
+ * only `planned` carries a `strategyRowId` onto the subject row.
+ */
+export type InstagramTopicSource = "reserved" | "requested" | "trend" | "research" | "planned";
 
 /**
  * Why a scouted story was NOT the one posted about (RFC-13 §E, 2026-09).

@@ -263,6 +263,16 @@ const HAPPY_PATH_STEP_IDS = [
   // archetype, and this fixture ships none (`auto-promote-template.test.ts`
   // is where it is asserted present).
   "09b-deliver-and-log",
+  // C7 (SCRUM-459/460). The read ALWAYS registers, even with none of the loop's
+  // tools in the registry: "everything absent" is an answer, and checkpointing it
+  // is what stops a resumed run drafting against a different context than the one
+  // its own readiness line claims.
+  "01b-read-learning-context",
+  // `01c-build-strategy-map` is deliberately NOT here. `ensureStrategyMap` returns
+  // before registering anything when the loop is not live for the client (C7 §4.1)
+  // — which is this fixture and every client nobody has projected a file for — so
+  // a cold client never pays for a plan nobody will collect.
+  "10-write-run-state",
 ];
 
 function happyRouter() {
