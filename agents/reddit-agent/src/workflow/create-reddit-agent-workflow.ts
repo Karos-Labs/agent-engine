@@ -31,6 +31,16 @@ import {
   checkOutputDedupe,
   dedupeRetryDirective,
   readClientIntelContext,
+  readLearningContext,
+  subjectWindowConflict,
+  touchesNeverTopic,
+  stageForRun,
+  craftRulesForPrompt,
+  feedbackForPrompt,
+  writeRunState,
+  resolveGoalLine,
+  platformStateForDrafting,
+  preferencesForDrafting,
   toAgentContext,
   runGate,
   finalizeDeliverable,
@@ -222,6 +232,18 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
       };
     });
 
+    // ── 01b: what the PLATFORM has learned about this client on Reddit (C7, A1) ──
+    //
+    // Reddit replies to threads rather than choosing topics, so the loop
+    // attaches at three places: never-topics join the forbidden list the
+    // discovery filter and the topic guardrail already read; the subject
+    // window keeps the run from answering a question it answered this month;
+    // and the craft, feedback and preferences reach the reply prompt. The
+    // strategy map is not consulted — a reply's subject is the thread's.
+    const learning = await readLearningContext(wf, tools, ctx, "reddit", "01b-read-learning-context");
+    const stage = stageForRun(runDirection.slotStage, learning.subjectWindow);
+    const neverTopics = learning.preferences?.neverTopics ?? [];
+
     await wf.step.code("02-load-memory-shelf", async () => {
       const outcome = await tools["memory.read"]!.execute({ scope: "beliefs" }, { ctx });
       return outcome.status === "success" ? outcome.result : { scope: "beliefs", beliefs: {} };
@@ -402,6 +424,10 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
         }
         // Kept exactly as the caller typed it: it is their bookmark, and both
         // dedup checks compare the normalised form anyway.
+        const requestedHit = intake.requestedThreadTitle ? touchesNeverTopic(intake.requestedThreadTitle, learning.preferences) : undefined;
+        if (requestedHit) {
+          throw new WorkflowHeld(`the requested thread touches a never-topic the client set ("${requestedHit}") — a person has to decide this one`);
+        }
         const candidate: RedditThreadCandidate = {
           url: intake.requestedThreadUrl.trim(),
           title: intake.requestedThreadTitle ?? intake.requestedThreadUrl,
@@ -435,7 +461,12 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
           );
         }
       }
-      return { ...result, mode: "scanned", keywords };
+      // C7: a thread whose title touches a never-topic, or asks a question
+      // this client answered inside the subject window, is not a candidate.
+      const candidates = result.candidates.filter(
+        (c) => touchesNeverTopic(c.title, learning.preferences) === undefined && subjectWindowConflict(c.title, learning.subjectWindow) === undefined,
+      );
+      return { ...result, candidates, filteredOut: result.filteredOut + (result.candidates.length - candidates.length), mode: "scanned", keywords };
     });
 
     // ── 05a: self-heal an auto-derived charter whose planner guessed a community that does not exist ──
@@ -491,7 +522,7 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
           charter: {
             targetSubreddits: intake.charter.targetSubreddits,
             searchKeywords: intake.charter.searchKeywords,
-            offLimitsTopics: intake.charter.offLimitsTopics,
+            offLimitsTopics: uniqueStrings([...intake.charter.offLimitsTopics, ...neverTopics]),
             ...(intake.charter.voiceNotes ? { voiceNotes: intake.charter.voiceNotes } : {}),
           },
           recentlyAnswered,
@@ -628,6 +659,13 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
     const angle = await wf.step.code("11a-determine-angle", (): string => selectedThread.scoutBrief?.angle ?? "thorough-value");
     const topic = targetThreadTitle;
 
+    // The learning context in the shapes the reply prompt reads
+    // (reddit-craft §7, §8). Pure functions of step 01b's output.
+    const craftRules = craftRulesForPrompt(learning.craft);
+    const clientFeedback = feedbackForPrompt(learning.feedback);
+    const clientPreferences = preferencesForDrafting(learning.preferences);
+    const forbiddenTopics = uniqueStrings([...intake.forbiddenTopics, ...neverTopics]);
+
     // ── 12-17: draft execution via RedditDraftAgent, with the full gate stack ──
     const draftAgent = new RedditDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
     /**
@@ -680,8 +718,16 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
             charter: {
               ...(intake.charter.voiceNotes ? { voiceNotes: intake.charter.voiceNotes } : {}),
               ...(intake.charter.disclosureLine ? { disclosureLine: intake.charter.disclosureLine } : {}),
-              offLimitsTopics: intake.charter.offLimitsTopics,
+              offLimitsTopics: uniqueStrings([...intake.charter.offLimitsTopics, ...neverTopics]),
             },
+            // ── C7 (A1): what the platform has learned, as the prompt's §7/§8 read it ──
+            // Every key is omitted when the file was absent.
+            slotStage: stage,
+            ...(learning.platformState !== undefined ? { platformState: platformStateForDrafting(learning.platformState) } : {}),
+            ...(learning.whatWorks !== undefined ? { whatWorks: learning.whatWorks } : {}),
+            ...(craftRules !== undefined ? { craftRules } : {}),
+            ...(clientFeedback.length > 0 ? { clientFeedback } : {}),
+            ...(clientPreferences !== undefined ? { clientPreferences } : {}),
             ...(researchDigest !== undefined
               ? { research: researchDigest }
               : { researchNote: "no external research was available for this run: make no factual claims beyond the thread and the client's own knowledge" }),
@@ -792,7 +838,7 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
       });
 
       // ── terminal topic guardrail: a reviewer is never shown a draft on a subject this client does not touch ──
-      await runTopicGuardrail(wf, { tools, promptStore: options.promptStore, router: options.router }, draft.text, intake.forbiddenTopics, revision === 0 ? undefined : `-r${revision}`);
+      await runTopicGuardrail(wf, { tools, promptStore: options.promptStore, router: options.router }, draft.text, forbiddenTopics, revision === 0 ? undefined : `-r${revision}`);
 
       return draft;
     };
@@ -833,6 +879,7 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
       targetThreadTitle,
       targetSubreddit: selectedThread.targetSubreddit,
       draft,
+      ...(selectedThread.scoutBrief ? { whyThread: selectedThread.scoutBrief.why } : {}),
     });
     const deliverableId = await finalizeDeliverable(wf, tools, ctx, {
       persistDeliverableStepId: "19-persist-deliverable",
@@ -871,6 +918,47 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
         },
         { ctx },
       );
+    });
+
+    // ── 22: the learning loop's write side (C7 §3, A2) ──
+    //
+    // One row per thread reply: the subject is the thread's question, the
+    // type is `reddit-reply`, the stage is the slot's or the D32 walk. A
+    // reply has no strategy row. Never fails the run.
+    const goalLine = resolveGoalLine(draft, {
+      stage,
+      audience: `r/${selectedThread.targetSubreddit}: the poster and readers of "${targetThreadTitle}"`,
+      whyNow: selectedThread.scoutBrief?.why ?? `a live question in r/${selectedThread.targetSubreddit} this week, chosen by ${selectedThread.selectedBy}`,
+    });
+    await writeRunState(wf, tools, ctx, "22-write-run-state", {
+      platform: "reddit",
+      deliverable: {
+        kind: "reddit-reply",
+        goal: goalLine.goal,
+        ...(goalLine.audience !== undefined ? { audience: goalLine.audience } : {}),
+        whyNow: goalLine.whyNow,
+        type: "reddit-reply",
+        sources: draft.sourcesUsed,
+      },
+      subjectRow: {
+        subject: targetThreadTitle,
+        angle,
+        type: "reddit-reply",
+        stage: goalLine.goal,
+        goal: goalLine.goalText,
+        status: "drafted",
+        assetKind: "reddit-reply",
+        strategyRowId: null,
+      },
+      platformStateDelta: {
+        postsByUs: 1,
+        topics: [targetThreadTitle],
+        voiceNotes: [],
+        account: { handle: `r/${selectedThread.targetSubreddit}` },
+      },
+      voiceNotes: review.notes.map((n) => ({ lesson: n.feedback, fromRevision: n.revision })),
+      rulesApplied: draft.rulesApplied,
+      readiness: learning.readiness,
     });
 
     return {

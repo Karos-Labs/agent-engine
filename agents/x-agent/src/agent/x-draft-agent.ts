@@ -77,6 +77,19 @@ export const XPostOutputSchema = z.object({
   thread: z.array(z.string().min(1)).max(MAX_THREAD_PARTS - 1).default([]),
   /** What visual this post wants, if any. Omitted when the run attached media (the copy was written to it). */
   mediaBrief: MediaBriefSchema.optional(),
+  /**
+   * D11 / C7 (x-craft §15): the point of the post, in the three words the
+   * funnel uses. Optional at the schema so v5-shaped output still validates
+   * on a resumed run; the workflow falls back to the stage the run was
+   * written for when the model omitted it.
+   */
+  goal: z.enum(["attention", "expertise", "decide"]).optional(),
+  /** Who it is for — the problem it speaks to, one line. */
+  audience: z.string().optional(),
+  /** Why now — the news, trend, request or performing pattern that makes this the post for this week, one line. */
+  whyNow: z.string().optional(),
+  /** The ids of the craft rules (`craftRules` in the input) the draft followed. Empty when no rules were handed in. */
+  rulesApplied: z.array(z.string()).default([]),
 });
 export type XPostOutput = z.infer<typeof XPostOutputSchema>;
 
@@ -143,7 +156,18 @@ export class XDraftAgent extends BaseAgent<XPostOutput> {
     // earns one, must state a `mediaBrief` (screenshots and data over
     // illustration, "none" is a valid answer), and carries the machine-
     // writing tells to avoid. v4 stays frozen.
-    skillRef: "x-craft@5",
+    // Pinned to "6" (2026-09-16, C7 / SCRUM-459): v6 reads the learning loop.
+    // §0 gains the projected context — the stage this post is for and its
+    // strategy row, the account's what-works and voice notes, the client's
+    // recent review actions, their derived preferences — and a new §15 hands
+    // the craft rules in as INSTRUCTIONS with their ids (D41: the rules are
+    // how the draft is written, not a checklist applied afterwards; L3 beats
+    // L2 beats L1 defaults, hard rules always win). The output states the
+    // post's goal, audience and why-now (D11) and the rule ids it applied,
+    // which is what lets the loop measure a rule (Craft 11 §4). Every new
+    // input is optional, so a client with nothing projected yet drafts as
+    // under v5. v5 stays frozen.
+    skillRef: "x-craft@6",
     selfCritique: {
       gateTool: "gate.lintPost",
       // Two revisions, not one: the second is what turns "thread part 3 is

@@ -6,6 +6,8 @@ import { createUpsertBrief } from "./upsert-brief.js";
 import { createDashboardSnapshot } from "./dashboard-snapshot.js";
 import { createListUsedImages, createRecordUsedImages } from "./used-images.js";
 import { createListOutputExcerpts, createRecordOutputExcerpt } from "./output-history.js";
+import { createWriteRunState } from "./run-state.js";
+import { createWriteStrategyMap } from "./strategy-map.js";
 
 export * from "./write-deliverable.js";
 export * from "./append-event.js";
@@ -13,6 +15,8 @@ export * from "./upsert-brief.js";
 export * from "./dashboard-snapshot.js";
 export * from "./used-images.js";
 export * from "./output-history.js";
+export * from "./run-state.js";
+export * from "./strategy-map.js";
 
 /**
  * The `karos-ledger` MCP server's tool registry (RFC-01 §9.2) — the one place all deliverables, events, and briefs are written.
@@ -42,5 +46,9 @@ export function createKarosLedgerTools(store: WorkspaceStoreLike = createWorkspa
     "ledger.listUsedImages": createListUsedImages(store),
     "ledger.recordOutputExcerpt": createRecordOutputExcerpt(store),
     "ledger.listOutputExcerpts": createListOutputExcerpts(store),
+    // C7 (SCRUM-458/460): the learning loop's write side. One record per run,
+    // one platform-state upsert; the middleware collects both after the run.
+    "ledger.writeRunState": createWriteRunState(store),
+    "ledger.writeStrategyMap": createWriteStrategyMap(store),
   };
 }

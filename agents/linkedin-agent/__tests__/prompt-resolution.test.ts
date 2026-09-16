@@ -48,10 +48,10 @@ describe("PromptStore resolution (RFC-01 §16.1)", () => {
 
     await agent.run(ctx, {});
 
-    // Pinned to "linkedin-craft@5" (research digest, trend candidate, content
-    // mode, attached media, the shape spec and the takeaway) -- every earlier
-    // version stays on disk as a frozen baseline, never resolved again.
-    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "linkedin-craft", "5.md"), "utf8");
+    // Pinned to "linkedin-craft@6" (v5 plus the C7 learning inputs, the goal
+    // line and the craft rules) -- every earlier version stays on disk as a
+    // frozen baseline, never resolved again.
+    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "linkedin-craft", "6.md"), "utf8");
     // SCRUM-298: `system` now also carries the response contract, appended
     // after the resolved skill body — assert the prefix, not exact equality.
     const call = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
@@ -99,7 +99,7 @@ describe("zero hardcoded prompts (RFC-01 §16.1)", () => {
   ];
 
   it("sanity check: the markers really do appear in the prompt file (so the negative check below is meaningful)", () => {
-    const promptContent = readFileSync(path.join(PROMPTS_ROOT, "linkedin-craft", "5.md"), "utf8");
+    const promptContent = readFileSync(path.join(PROMPTS_ROOT, "linkedin-craft", "6.md"), "utf8");
     for (const marker of CRAFT_CONTENT_MARKERS) {
       expect(promptContent.includes(marker), `expected "${marker}" to actually be in linkedin-craft/1.md`).toBe(true);
     }
@@ -119,6 +119,6 @@ describe("zero hardcoded prompts (RFC-01 §16.1)", () => {
 
   it("LinkedInDraftAgent's config carries a skillRef, not an inline system prompt field", () => {
     const configSource = readFileSync(path.join(SRC_ROOT, "agent", "linkedin-draft-agent.ts"), "utf8");
-    expect(configSource).toMatch(/skillRef:\s*"linkedin-craft@5"/);
+    expect(configSource).toMatch(/skillRef:\s*"linkedin-craft@6"/);
   });
 });

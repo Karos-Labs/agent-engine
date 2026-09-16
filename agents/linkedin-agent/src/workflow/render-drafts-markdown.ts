@@ -1,4 +1,4 @@
-import type { SocialMediaPlan } from "@agent-engine/workflow";
+import { goalLineBullets, type ResolvedGoalLine, type SocialMediaPlan } from "@agent-engine/workflow";
 import type { LinkedInPostOutput } from "../agent/linkedin-draft-agent.js";
 import type { LinkedInIdentity } from "./types.js";
 
@@ -14,6 +14,12 @@ import type { LinkedInIdentity } from "./types.js";
  * (it reads the names into `mediaNames` so the reviewer can attach the file)
  * and a `Takeaway:` line for the calendar view.
  *
+ * 2026-09 (C3 / SCRUM-457): the goal line leads the meta bullets — what the
+ * post is for, who for, and why now, in D11's three words. `li-drafts.ts`
+ * pushes every `- **Label:** value` line onto the card's meta list, so this
+ * needs no portal change; without it the space the card reserves for the goal
+ * was empty.
+ *
  * Persisted alongside the existing structured `draft` object (additive, see
  * step 16's own call site), not in place of it.
  */
@@ -23,9 +29,11 @@ export function renderLinkedInDraftsMarkdown(input: {
   archetype: string;
   topic: string;
   draft: LinkedInPostOutput;
+  /** The run's resolved goal line (D11). Rendered as the first meta bullets. */
+  goalLine: ResolvedGoalLine;
   media?: SocialMediaPlan | undefined;
 }): string {
-  const { identity, companyName, archetype, topic, draft, media } = input;
+  const { identity, companyName, archetype, topic, draft, goalLine, media } = input;
   const accountTitle =
     identity.scope === "executive"
       ? `${identity.executiveName}${identity.executiveTitle ? ` (${identity.executiveTitle})` : ""}`
@@ -38,7 +46,11 @@ export function renderLinkedInDraftsMarkdown(input: {
     .map((line) => (line.length > 0 ? `> ${line}` : ">"))
     .join("\n");
 
-  const meta: string[] = [`- **Topic:** ${topic}`, `- **Takeaway:** ${draft.takeaway}`];
+  const meta: string[] = [
+    `- **Topic:** ${topic}`,
+    ...goalLineBullets(goalLine).map((bullet) => `- ${bullet}`),
+    `- **Takeaway:** ${draft.takeaway}`,
+  ];
   if (media?.asset !== undefined) {
     const credit = media.asset.requiresCredit && media.asset.creditUrl ? ` · credit ${media.asset.creditUrl}` : "";
     meta.push(`- **Media:** ${media.asset.url ?? media.asset.path}`, `- **Media source:** ${media.status}, ${media.asset.provider}${credit}`);

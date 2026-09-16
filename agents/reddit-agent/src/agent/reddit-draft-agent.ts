@@ -51,6 +51,15 @@ export const RedditReplyOutputSchema = z.object({
   disclosureIncluded: z.boolean().default(false),
   text: z.string().min(1),
   sourcesUsed: z.array(z.string().min(1)).default([]),
+  // ── C7 / D11 (reddit-craft@6): the goal line and the craft rules applied ──
+  /** The funnel stage this reply serves — the `slotStage` it was given unless the thread honestly serves another. */
+  goal: z.enum(["attention", "expertise", "decide"]).optional(),
+  /** Who this reply is for: the poster's problem, in one line. */
+  audience: z.string().optional(),
+  /** Why this thread, this week, in one line. */
+  whyNow: z.string().optional(),
+  /** The `craftRules` ids the reply follows. Empty when none were handed over. */
+  rulesApplied: z.array(z.string()).default([]),
 });
 export type RedditReplyOutput = z.infer<typeof RedditReplyOutputSchema>;
 
@@ -126,7 +135,7 @@ export class RedditDraftAgent extends BaseAgent<RedditReplyOutput> {
     // `research` entries by URL. Everything before v5 drafted from the thread
     // TITLE alone, which is why replies were generic. v1–v4 stay frozen on
     // disk; the registry lists them all.
-    skillRef: "reddit-craft@5",
+    skillRef: "reddit-craft@6", // C7: §7 learning inputs, §8 goal line + rulesApplied, §9 craft rules
     selfCritique: {
       gateTool: "gate.lintPost",
       maxRevisions: 1,

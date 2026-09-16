@@ -270,7 +270,13 @@ describe("x-agent 2026-09 upgrade", () => {
 
   it("a single post keeps the marker-free DRAFTS.md shape byte for byte", () => {
     const draft = { ...goodPost(), mediaRefs: [], thread: [] } as never;
-    const md = renderXDraftsMarkdown({ targetHandle: "@acmehq", lane: "knowledge", angle: "trend-observation", draft });
+    const md = renderXDraftsMarkdown({
+      targetHandle: "@acmehq",
+      lane: "knowledge",
+      angle: "trend-observation",
+      draft,
+      goalLine: { goal: "attention", goalText: "earn attention", whyNow: "a live story this week" },
+    });
     expect(md).not.toContain("**1/");
     expect(md).toContain("# Account 1 · @acmehq");
     expect(md).toContain("## Avenue 1 · Knowledge");

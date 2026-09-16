@@ -38,6 +38,15 @@ export const LinkedInPostOutputSchema = z.object({
   archetype: z.enum(LINKEDIN_ARCHETYPES),
   /** What visual this post wants, if any. Omitted when the run attached media (the copy was written to it). */
   mediaBrief: MediaBriefSchema.optional(),
+  // ── C7 / D11 (linkedin-craft@6): the goal line and the craft rules applied ──
+  /** The funnel stage this post serves — the `slotStage` it was given unless the material honestly serves another. */
+  goal: z.enum(["attention", "expertise", "decide"]).optional(),
+  /** Who this post is for, as the buyer problem it speaks to. `targetAudience` above is the older, broader line. */
+  audience: z.string().optional(),
+  /** Why this is the post for this week, in one line. */
+  whyNow: z.string().optional(),
+  /** The `craftRules` ids the draft follows. Empty when none were handed over. */
+  rulesApplied: z.array(z.string()).default([]),
 });
 export type LinkedInPostOutput = z.infer<typeof LinkedInPostOutputSchema>;
 
@@ -92,7 +101,7 @@ export class LinkedInDraftAgent extends BaseAgent<LinkedInPostOutput> {
     // between every line, a stated `takeaway`), the machine-writing tells are
     // named, and a `mediaBrief` is required (a real photo or a document
     // screenshot over illustration; "none" is a valid answer). v4 stays frozen.
-    skillRef: "linkedin-craft@5",
+    skillRef: "linkedin-craft@6", // C7: §0 learning inputs, §14 goal line + rulesApplied, §15 craft rules
     selfCritique: { gateTool: "gate.lintPost", maxRevisions: 1, gateArgs: { platform: "linkedin" } },
   };
 }

@@ -102,14 +102,16 @@ export interface XRecentDecision {
   [key: string]: unknown;
 }
 
-/** `trend`: the scout's on-brand candidate took the slot (2026-09). */
-export type XCandidateSource = "requested" | "reserved" | "trend" | "research";
+/** `trend`: the scout's on-brand candidate took the slot (2026-09). `strategy`: a row of the client's strategy map did (C7 / SCRUM-464, 2026-09-16). */
+export type XCandidateSource = "requested" | "reserved" | "trend" | "strategy" | "research";
 
 export interface XSelectedCandidate {
   topic: string;
   source: XCandidateSource;
   /** Present when `source === "trend"`: the scouted candidate, with its angle, hook, why-now and brand-fit bridge. */
   trend?: TrendCandidate;
+  /** Present when `source === "strategy"`: the strategy-map row this run took, so the subject row can name it (C7 §3.1 `strategyRowId`). */
+  strategyRowId?: string;
 }
 
 /** Step 07b's output: the content mode this run writes in, and the prior run's, for the trace. */

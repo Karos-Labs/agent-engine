@@ -219,6 +219,7 @@ async function runXAgentDemo(workspaceStore: WorkspaceStore, tools: ReturnType<t
     targetHandle: "@acmecorp",
     mediaRefs: [],
     thread: [],
+    rulesApplied: [],
   };
   const router = fakeRouterSequence([finalTurn(draft, { inputTokens: 140, outputTokens: 45 })]);
   const workflowFn = createXAgentWorkflow({ tools, promptStore, router });
@@ -307,6 +308,7 @@ async function runLinkedInAgentDemo(workspaceStore: WorkspaceStore, tools: Retur
       "Teams with a fixed two-day in-office schedule reported meaningfully fewer scheduling conflicts [1] than teams with fully flexible policies.\n\n" +
       "If your team is still negotiating its hybrid policy week to week, a fixed anchor-day structure might be worth testing.\n\n" +
       "#HybridWork #FutureOfWork",
+    rulesApplied: [],
   };
   const router = fakeRouterSequence([finalTurn(draft, { inputTokens: 150, outputTokens: 60 })]);
   const workflowFn = createLinkedInAgentWorkflow({ tools, promptStore, router });

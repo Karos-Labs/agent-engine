@@ -10,6 +10,7 @@ import { createGetSubredditRules } from "./get-subreddit-rules.js";
 import { createGetStrategy } from "./get-strategy.js";
 import { createGetKnowledge } from "./get-knowledge.js";
 import { createGetContextDoc } from "./get-context-doc.js";
+import { createGetLearningContext } from "./get-learning-context.js";
 import { createGetBrief, createWriteBrief } from "./brief.js";
 
 export * from "./get-profile.js";
@@ -22,6 +23,7 @@ export * from "./get-subreddit-rules.js";
 export * from "./get-strategy.js";
 export * from "./get-knowledge.js";
 export * from "./get-context-doc.js";
+export * from "./get-learning-context.js";
 export * from "./brief.js";
 
 /**
@@ -54,6 +56,9 @@ export function createKarosClientTools(store: WorkspaceStoreLike = createWorkspa
     "client.getStrategy": createGetStrategy(store),
     "client.getKnowledge": createGetKnowledge(store),
     "client.getContextDoc": createGetContextDoc(store),
+    // C7 (SCRUM-458): the learning loop's read side — seven optional files,
+    // never a failure. See the tool's own doc comment.
+    "client.getLearningContext": createGetLearningContext(store),
     "client.getBrief": createGetBrief(store),
     // The one writer here. Its own doc comment carries the three properties
     // that make that safe (schema-validated, channel/tenant-scoped, never

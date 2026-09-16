@@ -13,6 +13,10 @@ const params = { runId: "x_run_1", clientSlug: "acme", productId: "x-agent", run
 const ALL_21_STEP_IDS = [
   "00-intake-check",
   "01-load-client-context",
+  // C7 (SCRUM-459): the learning loop's read side — seven optional projected
+  // files. Always a step; on this bare workspace every one is absent and the
+  // run drafts exactly as it did before the step existed.
+  "01b-read-learning-context",
   "02-load-memory-shelf",
   "03-load-recent-decisions",
   "04-research-pull",
@@ -55,6 +59,9 @@ const ALL_21_STEP_IDS = [
   "18-persist-deliverable",
   "19-persist-manifest",
   "20-commit-and-record",
+  // C7 (SCRUM-460): the learning loop's write side — the one record the
+  // middleware collects into the subject table and the platform state.
+  "21-write-run-state",
 ];
 
 function goodDraftRouter() {

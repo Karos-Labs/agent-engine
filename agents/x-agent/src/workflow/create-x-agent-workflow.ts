@@ -26,6 +26,19 @@ import {
   describeAgentExhaustion,
   commitDirectiveAfterExhaustion,
   readClientIntelContext,
+  readLearningContext,
+  ensureStrategyMap,
+  subjectWindowConflict,
+  touchesNeverTopic,
+  stageForRun,
+  pickStrategyRow,
+  craftRulesForPrompt,
+  feedbackForPrompt,
+  writeRunState,
+  resolveGoalLine,
+  platformStateForDrafting,
+  preferencesForDrafting,
+  strategyRowForDrafting,
   toAgentContext,
   runGate,
   finalizeDeliverable,
@@ -50,6 +63,7 @@ import {
 import { MAX_THREAD_PARTS, XDraftAgent, type Lane, type XPostOutput } from "../agent/x-draft-agent.js";
 import { renderPreview, X_CHARACTER_LIMIT, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderXDraftsMarkdown } from "./render-drafts-markdown.js";
+import { whyNowFor } from "./learning.js";
 import { countRecentEngagementPosts, ENGAGEMENT_DAILY_CAP, LANES_FOR_MODE, selectLane } from "./lane.js";
 import type {
   XAgentWorkflowResult,
@@ -280,6 +294,21 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       };
     });
 
+    // ── 01b: what the PLATFORM has learned about this client on X (C7, A1) ──
+    //
+    // Seven optional files the middleware projects before dispatch: platform
+    // state, the subject window, the client's review actions, derived
+    // preferences, what works, the strategy map, the craft rules. Until
+    // 2026-09-16 none of it reached a run: the portal built context files on
+    // every submit and attached them to a service that had been deleted
+    // (02 Learning Loop §5, step 5). Best-effort and checkpointed — a run on
+    // a client with nothing projected yet drafts exactly as before, and the
+    // step record says which files it found.
+    const learning = await readLearningContext(wf, tools, ctx, "x", "01b-read-learning-context");
+    // The stage this run writes for: the calendar slot's, else D32's default
+    // mix walked against what the subject window already holds.
+    const stage = stageForRun(runDirection.slotStage, learning.subjectWindow);
+
     const beliefs = await wf.step.code("02-load-memory-shelf", async () => {
       const outcome = await tools["memory.read"]!.execute({ scope: "beliefs" }, { ctx });
       return outcome.status === "success" ? outcome.result : { scope: "beliefs", beliefs: {} };
@@ -371,6 +400,27 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
     // copy (voice rows, positioning, whitespace, meeting notes) — the client
     // knowledge this platform holds, read by the scout and the draft alike.
     const clientIntelContext = await readClientIntelContext(wf, tools, ctx, "read-intel-context");
+
+    // ── 01c: the strategy map — handed to the run, or built by it (C1, SCRUM-464) ──
+    //
+    // A client nobody has planned for reaches here with no map. This is the
+    // first moment a run holds the profile, the charter and the knowledge
+    // together, so it builds the map now (one model call, checkpointed),
+    // writes it to `state/x/strategy-map.json` for the middleware to collect,
+    // and selects from it below. The next run finds it and pays nothing.
+    const strategy = await ensureStrategyMap(wf, { tools, promptStore: options.promptStore, router: options.router }, ctx, {
+      platform: "x",
+      learning,
+      stepId: "01c-build-strategy-map",
+      input: {
+        today: new Date().toISOString().slice(0, 10),
+        clientProfile: clientContext.profile,
+        ...(clientContext.strategy ? { accountCharter: clientContext.strategy } : {}),
+        ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
+        forbiddenTopics: [...intake.forbiddenTopics, ...(learning.preferences?.neverTopics ?? [])],
+      },
+    });
+    const strategyRow = pickStrategyRow(strategy.map, stage, learning.subjectWindow);
     const clientVoiceContext = buildClientVoiceContext(clientContext.profile, clientContext.voiceRules, clientContext.brand);
 
     // ── 07a: the trend scout — only when no one planned this run's subject ──
@@ -434,28 +484,51 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       // Highest precedence, above an explicit requestedTopic's own branch
       // below only when that is absent: a typed instruction is this run's
       // most specific statement of intent.
+      // A topic the client said never to touch (C7 §2.4, derived from their
+      // own review actions) is refused whoever proposed it. An explicit
+      // request for one HOLDS with the reason — the person asked for the one
+      // thing the client ruled out, and a human should see that, not a silent
+      // swap; every other source simply falls through to the next.
+      const never = (topic: string) => touchesNeverTopic(topic, learning.preferences);
+      // A subject already in this platform's window (02 §3.2's anti-repetition
+      // rule, read off the subject table rather than off this agent's memory
+      // alone) is not proposed again either.
+      const repeated = (topic: string) => subjectWindowConflict(topic, learning.subjectWindow);
       if (runDirection.topicOverride) {
+        const hit = never(runDirection.topicOverride);
+        if (hit) throw new WorkflowHeld(`the requested topic touches a never-topic the client set ("${hit}") — a person has to decide this one`);
         return { topic: runDirection.topicOverride, source: "requested" };
       }
       if (intake.requestedTopic) {
+        const hit = never(intake.requestedTopic);
+        if (hit) throw new WorkflowHeld(`the configured topic touches a never-topic the client set ("${hit}") — a person has to decide this one`);
         return { topic: intake.requestedTopic, source: "requested" };
       }
       // Subjects already covered: this agent's own decisions AND what every
       // other channel (and the client's own accounts) published lately.
       const avoidTopics = [...recentDecisions.map((d) => d.summary), ...crossChannelAvoidTopics(crossChannel)];
       const trend = scout !== undefined ? selectTrendCandidate(scout.candidates, modeSelection.mode, { avoidTopics }) : undefined;
+      const trendOk = trend !== undefined && never(trend.topic) === undefined && repeated(trend.topic) === undefined ? trend : undefined;
+      const reservedOk = reservation.topics.filter((t) => never(t) === undefined && repeated(t) === undefined);
       // With `trendJacking: "always"` a fresh, high-fit story outranks the
       // planned row; otherwise the catalog keeps its slot.
-      if (trend !== undefined && intake.trendJacking === "always" && trend.brandFit >= 4 && reservation.topics.length > 0) {
-        return { topic: trend.topic, source: "trend", trend };
+      if (trendOk !== undefined && intake.trendJacking === "always" && trendOk.brandFit >= 4 && reservedOk.length > 0) {
+        return { topic: trendOk.topic, source: "trend", trend: trendOk };
       }
-      if (reservation.topics.length > 0) {
-        return { topic: reservation.topics[0]!, source: "reserved" };
+      if (reservedOk.length > 0) {
+        return { topic: reservedOk[0]!, source: "reserved" };
       }
-      if (trend !== undefined) {
-        return { topic: trend.topic, source: "trend", trend };
+      if (trendOk !== undefined) {
+        return { topic: trendOk.topic, source: "trend", trend: trendOk };
       }
-      if (candidateSummary.candidateTopic) {
+      // The strategy map (C1 / SCRUM-464): the client's own problem × stage
+      // rows, picked for this run's stage. Above the research fallback and
+      // below the catalog and the scout, because a planned row and a live
+      // story are both more specific than "the next open idea".
+      if (strategyRow !== undefined && never(strategyRow.idea) === undefined) {
+        return { topic: strategyRow.idea, source: "strategy", strategyRowId: strategyRow.id };
+      }
+      if (candidateSummary.candidateTopic && never(candidateSummary.candidateTopic) === undefined && repeated(candidateSummary.candidateTopic) === undefined) {
         return { topic: candidateSummary.candidateTopic, source: "research" };
       }
       throw new WorkflowHeld("no candidate topic available for this run — nothing honestly cleared selection");
@@ -518,6 +591,12 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
     // same defect). A pure function of step 04's checkpointed output.
     const researchDigest = researchDigestForDrafting(research.merged);
     const researchSources = (researchDigest ?? []).filter((d) => d.url !== undefined).map((d) => ({ url: d.url!, title: d.title }));
+
+    // The learning context in the shapes the drafting prompt reads (x-craft §0,
+    // §15). Pure functions of step 01b's checkpointed output.
+    const craftRules = craftRulesForPrompt(learning.craft);
+    const clientFeedback = feedbackForPrompt(learning.feedback);
+    const clientPreferences = preferencesForDrafting(learning.preferences);
 
     // ── 10-14: draft execution via XDraftAgent, with machine/claim/compliance/link gates ──
     const draftAgent = new XDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
@@ -597,6 +676,19 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
             // "accountCharter: null" in the payload invites the model to remark on
             // its absence instead of simply working without one.
             ...(clientContext.strategy ? { accountCharter: clientContext.strategy } : {}),
+            // ── C7 (A1): what the platform has learned, as the prompt's §0/§15 read it ──
+            // The stage this post is for and, when the map had one, the row it
+            // takes; the introduction doc's what-works and voice notes; the
+            // derived rules; the client's recent review actions; the craft
+            // layers as instructions with their ids, so the model can report
+            // `rulesApplied`. Every key is omitted when the file was absent.
+            slotStage: stage,
+            ...(strategyRow !== undefined ? { strategyRow: strategyRowForDrafting(strategyRow) } : {}),
+            ...(learning.platformState !== undefined ? { platformState: platformStateForDrafting(learning.platformState) } : {}),
+            ...(learning.whatWorks !== undefined ? { whatWorks: learning.whatWorks } : {}),
+            ...(craftRules !== undefined ? { craftRules } : {}),
+            ...(clientFeedback.length > 0 ? { clientFeedback } : {}),
+            ...(clientPreferences !== undefined ? { clientPreferences } : {}),
             // Two distinct steers, kept apart: `pastFeedback` is what this client
             // has said across previous RUNS, `revisionRequest` is what a reviewer
             // asked about THIS draft minutes ago.
@@ -878,11 +970,16 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
     // The media block (`media`, `mediaStatus`, `mediaRationale`) rides beside
     // it; `mediaRefs` carries the staged URL so the portal's existing
     // `metaFields` read picks it up unchanged.
+    // D11 / C3 (SCRUM-457): what this post is for, who for, and why now —
+    // resolved ONCE here and used for both the client's card and the state
+    // record below, so the two can never disagree about why the post exists.
+    const goalLine = resolveGoalLine(draft, { stage, whyNow: whyNowFor(selected) });
     const draftsMarkdown = renderXDraftsMarkdown({
       targetHandle: intake.xHandle,
       lane: laneSelection.lane,
       angle: laneSelection.angle,
       draft,
+      goalLine,
       media: mediaPlan,
     });
     const deliverableId = await finalizeDeliverable(wf, tools, ctx, {
@@ -934,6 +1031,47 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
         },
         { ctx },
       );
+    });
+
+    // ── 21: the learning loop's write side (C7 §3, A2) ──
+    //
+    // One normalised record the middleware collects into the subject table
+    // and the platform state, plus the D11 goal line. The draft's own
+    // `goal`/`audience`/`whyNow` win when the model stated them; the stage
+    // this run was written for is the fallback, so the record always carries
+    // a goal. A reviewer's revision notes are the voice lessons — an edit is
+    // the one signal Craft 11 §3 admits for voice. Never fails the run: the
+    // deliverable above stands whatever happens here, and the step record
+    // says whether the write landed.
+    await writeRunState(wf, tools, ctx, "21-write-run-state", {
+      platform: "x",
+      deliverable: {
+        kind: "x-post",
+        goal: goalLine.goal,
+        ...(goalLine.audience !== undefined ? { audience: goalLine.audience } : {}),
+        whyNow: goalLine.whyNow,
+        type: laneSelection.lane,
+        sources: researchSources.map((r) => r.url),
+      },
+      subjectRow: {
+        subject: selected.topic,
+        angle: draft.angle,
+        type: laneSelection.lane,
+        stage: goalLine.goal,
+        goal: goalLine.goalText,
+        status: "drafted",
+        assetKind: "x-post",
+        strategyRowId: selected.strategyRowId ?? null,
+      },
+      platformStateDelta: {
+        postsByUs: 1,
+        topics: [selected.topic],
+        voiceNotes: [],
+        account: { handle: intake.xHandle },
+      },
+      voiceNotes: review.notes.map((n) => ({ lesson: n.feedback, fromRevision: n.revision })),
+      rulesApplied: draft.rulesApplied,
+      readiness: learning.readiness,
     });
 
     return {

@@ -14,6 +14,8 @@ const ALL_19_STEP_IDS = [
   "00-channel-setup",
   "00-intake-check",
   "01-load-client-context",
+  // C7 (2026-09-16): the learning loop's read side.
+  "01b-read-learning-context",
   "02-load-memory-shelf",
   "03-load-recent-decisions",
   "04-research-pull",
@@ -53,6 +55,8 @@ const ALL_19_STEP_IDS = [
   "16-persist-deliverable",
   "17-persist-manifest",
   "18-commit-and-record",
+  // C7 (2026-09-16): the learning loop's write side.
+  "19-write-run-state",
 ];
 
 function goodDraft() {

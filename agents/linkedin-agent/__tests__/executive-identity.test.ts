@@ -188,7 +188,7 @@ describe("identityScope: executive vs. company (legacy 'two-paths' posting ident
     expect(draftInput.identity).toEqual({ scope: "company" });
 
     const stepRecords = await durableStore.listSteps("linkedin_run_company_default");
-    expect(stepRecords).toHaveLength(27); // AU20 added the verified-dedupe step
+    expect(stepRecords).toHaveLength(29); // AU20 added the verified-dedupe step; C7 added 01b + 19
   });
 
   it("threads an executive's full dossier (careerHistory, corePillars, offLimitsTopics, voiceTone) into the draft agent's input, not just name+title", async () => {

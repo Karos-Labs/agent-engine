@@ -226,16 +226,19 @@ export function makeSharedPromptStore(): InMemoryPromptStore {
   store.setPrompt("x-craft", "3", "X craft guidance.");
   store.setPrompt("x-craft", "4", "X craft guidance.");
   store.setPrompt("x-craft", "5", "X craft guidance.");
+  store.setPrompt("x-craft", "6", "X craft guidance."); // C7 learning loop (SCRUM-459/460)
   store.setPrompt("linkedin-craft", "1", "LinkedIn craft guidance.");
   store.setPrompt("linkedin-craft", "2", "LinkedIn craft guidance.");
   store.setPrompt("linkedin-craft", "3", "LinkedIn craft guidance.");
   store.setPrompt("linkedin-craft", "4", "LinkedIn craft guidance.");
   store.setPrompt("linkedin-craft", "5", "LinkedIn craft guidance.");
+  store.setPrompt("linkedin-craft", "6", "LinkedIn craft guidance."); // C7 learning loop (SCRUM-466)
   store.setPrompt("reddit-craft", "1", "Reddit craft guidance.");
   store.setPrompt("reddit-craft", "2", "Reddit craft guidance.");
   store.setPrompt("reddit-craft", "3", "Reddit craft guidance.");
   store.setPrompt("reddit-craft", "4", "Reddit craft guidance.");
   store.setPrompt("reddit-craft", "5", "Reddit craft guidance.");
+  store.setPrompt("reddit-craft", "6", "Reddit craft guidance."); // C7 learning loop (SCRUM-466)
   // reddit-agent's two judgment steps (auto-setup planner, thread scout).
   store.setPrompt("reddit-channel-plan", "1", "Reddit channel planning guidance.");
   store.setPrompt("reddit-scout", "1", "Reddit thread scouting guidance.");

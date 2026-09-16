@@ -68,10 +68,29 @@ export const DEFAULT_MEDIA_SOURCE: MediaSource = "system";
  * "the client has no direction", which is why it is normalized away rather
  * than passed through as an empty string an agent might dutifully honour.
  */
+/**
+ * The three funnel stages every strategy-map row and every subject row
+ * carries (02 Learning Loop §3.4/§3.5, D32): earn attention, show expertise,
+ * help them decide. A calendar slot names the stage it wants filled
+ * (`slotStage` below); a manual run carries none and the agent falls back to
+ * the default mix (three attention, two expertise, one decide per six posts —
+ * D32) until the client has performance data.
+ */
+export const FUNNEL_STAGES = ["attention", "expertise", "decide"] as const;
+export const FunnelStageSchema = z.enum(FUNNEL_STAGES);
+export type FunnelStage = z.infer<typeof FunnelStageSchema>;
+
 export const RichRunInputSchema = z.object({
   customPrompt: z.string().min(1).optional(),
   mediaAssets: z.array(MediaAssetSchema).default([]),
   mediaSource: MediaSourceSchema.default(DEFAULT_MEDIA_SOURCE),
+  /**
+   * The funnel stage of the calendar slot this run fills (C7 run-context
+   * contract, SCRUM-458). Set by the portal's sequencing for a scheduled
+   * run; absent on a manual run. Read like everything else here: an unknown
+   * word is dropped, never a failed run and never a fourth stage.
+   */
+  slotStage: FunnelStageSchema.optional(),
 });
 export type RichRunInput = z.infer<typeof RichRunInputSchema>;
 
@@ -97,7 +116,13 @@ export function readRichRunInput(input: Readonly<Record<string, unknown>> | unde
   // Anything but the one non-default word is the default: an unknown value
   // must never read as a third mode nobody defined, and must never fail a run.
   const mediaSource: MediaSource = raw.mediaSource === "client" ? "client" : DEFAULT_MEDIA_SOURCE;
-  return { ...(prompt ? { customPrompt: prompt } : {}), mediaAssets: assets, mediaSource };
+  const stage = FunnelStageSchema.safeParse(raw.slotStage);
+  return {
+    ...(prompt ? { customPrompt: prompt } : {}),
+    mediaAssets: assets,
+    mediaSource,
+    ...(stage.success ? { slotStage: stage.data } : {}),
+  };
 }
 
 /** True when this run may use ONLY the media the client attached — no sourcing, harvesting or generation tier may run. */

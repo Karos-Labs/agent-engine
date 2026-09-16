@@ -1,4 +1,4 @@
-import type { SocialMediaPlan } from "@agent-engine/workflow";
+import { goalLineBullets, type ResolvedGoalLine, type SocialMediaPlan } from "@agent-engine/workflow";
 import type { XPostOutput } from "../agent/x-draft-agent.js";
 
 /**
@@ -9,6 +9,12 @@ import type { XPostOutput } from "../agent/x-draft-agent.js";
  * `src/lib/__tests__/x-drafts.test.ts` there). One post, one run (RFC-01
  * §16.2), so this is always exactly one account section with one avenue
  * block.
+ *
+ * 2026-09 (C3 / SCRUM-457): the goal line leads the meta bullets — what the
+ * post is for, who for, and why now, in D11's three words. The parser pushes
+ * every `- **Label:** value` line onto the card's meta list, so these need no
+ * portal change to appear; without them the space the card reserves for the
+ * goal was simply empty.
  *
  * A THREAD (x-craft@5) renders as the parser's own thread shape: a
  * `**1/N**` marker line before each blockquote, one blockquote per part,
@@ -26,9 +32,11 @@ export function renderXDraftsMarkdown(input: {
   lane: string;
   angle: string;
   draft: XPostOutput;
+  /** The run's resolved goal line (D11). Rendered as the first meta bullets. */
+  goalLine: ResolvedGoalLine;
   media?: SocialMediaPlan | undefined;
 }): string {
-  const { targetHandle, lane, angle, draft, media } = input;
+  const { targetHandle, lane, angle, draft, goalLine, media } = input;
   const laneTitle = lane.charAt(0).toUpperCase() + lane.slice(1);
   const quote = (text: string) =>
     text
@@ -46,7 +54,7 @@ export function renderXDraftsMarkdown(input: {
     });
   }
 
-  const metaBullets: string[] = [`**Hook:** ${draft.hook}`];
+  const metaBullets: string[] = [...goalLineBullets(goalLine), `**Hook:** ${draft.hook}`];
   // Only an "engagement" lane reply/quote names a target — see x-drafts.ts's
   // own metaTarget() rule: an unlabelled URL is never treated as a target.
   if (draft.lane === "engagement" && draft.targetPostUrl) {

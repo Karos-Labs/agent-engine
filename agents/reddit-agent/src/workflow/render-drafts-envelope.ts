@@ -19,6 +19,14 @@ export const REDDIT_V2_ENVELOPE_KIND = "reddit-drafts-v2";
  * one `approaches` element — `RedditReplyOutputSchema` never produces a
  * second approach the way the lab repo's v2 pipeline does.
  *
+ * 2026-09 (C3 / SCRUM-457): `whyThread` travels too. karosCMO's
+ * `envelopeToBatch` already maps it onto the card ("Why this thread is worth
+ * answering — the whitespace this reply fills") and the engine simply never
+ * filled it, so the slot sat empty while the same sentence sat unused on the
+ * deliverable. A reply's why-now IS why this thread: it answers a live
+ * question rather than choosing a subject, which is why the funnel words go
+ * on the run record and this line goes on the card.
+ *
  * Persisted alongside the existing structured `draft` object (additive, see
  * step 19's own call site), not in place of it.
  */
@@ -28,8 +36,10 @@ export function renderRedditDraftsEnvelope(input: {
   targetThreadTitle: string;
   targetSubreddit: string;
   draft: RedditReplyOutput;
+  /** The scout's reason this thread was worth answering, when a scout chose it. */
+  whyThread?: string | undefined;
 }): string {
-  const { account, targetThreadUrl, targetThreadTitle, targetSubreddit, draft } = input;
+  const { account, targetThreadUrl, targetThreadTitle, targetSubreddit, draft, whyThread } = input;
   const envelope = {
     kind: REDDIT_V2_ENVELOPE_KIND,
     outcome: "delivered" as const,
@@ -40,6 +50,7 @@ export function renderRedditDraftsEnvelope(input: {
         threadTitle: targetThreadTitle,
         threadUrl: targetThreadUrl,
         subreddit: `r/${targetSubreddit}`,
+        ...(whyThread && whyThread.trim().length > 0 ? { whyThread: whyThread.trim() } : {}),
         ...(draft.disclosureIncluded ? { disclosure: "This reply discloses the account's affiliation, per subreddit rules." } : {}),
         approaches: [{ id: "approach-1" as const, text: draft.replyBody }],
       },

@@ -66,7 +66,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     expect(callCounts()).toEqual(countsAfterFirst);
 
     const stepRecords = await durableStore.listSteps(params.runId);
-    expect(stepRecords).toHaveLength(27); // AU20 added 10a-verify-not-duplicate
+    expect(stepRecords).toHaveLength(29); // AU20 added 10a-verify-not-duplicate; C7 added 01b-read-learning-context and 21-write-run-state
     expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
   });
 
@@ -137,7 +137,7 @@ describe("checkpoint resume idempotency (RFC-01 §8.1)", () => {
     expect(callCounts()["ledger.writeDeliverable"]).toBe(draftCallCountAfterCrash);
 
     const finalSteps = await durableStore.listSteps(runId);
-    expect(finalSteps).toHaveLength(27); // AU20 added 10a-verify-not-duplicate
+    expect(finalSteps).toHaveLength(29); // AU20 added 10a-verify-not-duplicate; C7 added 01b-read-learning-context and 21-write-run-state
     expect(finalSteps.every((s) => s.status === "completed")).toBe(true);
   });
 });
