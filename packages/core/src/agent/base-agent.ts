@@ -20,7 +20,7 @@ import type { ModelPolicy } from "../types/model-policy.js";
 // adapters call, or the envelope described to the model could drift from the
 // one on the wire.
 import { toRootObjectJsonSchema } from "../router/adapters/root-object-schema.js";
-import { StructuredOutputValidationError } from "../router/adapters/structured-output.js";
+import { OutputLimitExceededError, StructuredOutputValidationError, raisedOutputLimit } from "../router/adapters/structured-output.js";
 import type { AgentTool, AgentToolOutcome, AgentToolRegistry } from "./tool.js";
 import { enforceWriteFence } from "./write-fence.js";
 import { parseSkillRef } from "./prompt-store.js";
@@ -35,6 +35,50 @@ type TurnOutcome<TOutput> =
   | { kind: "malformed_turn"; telemetry: AgentStepTelemetry; reason: string; rawPayload: string }
   /** The commit turn (`runCommitTurn`) answered with a tool call instead of `final`. The tool was never executed — the working budget was already spent. */
   | { kind: "commit_refused"; telemetry: AgentStepTelemetry };
+
+/**
+ * Folds an abandoned attempt's spend onto the turn that replaced it. Used by
+ * the raised-ceiling retry, where the first call really did bill a full
+ * ceiling of output tokens before its truncated JSON was thrown away: the
+ * step that recovers has to show both, or the cheapest-looking steps in the
+ * fleet become the ones that failed and quietly paid twice.
+ */
+function addPriorAttemptCost<TOutput>(outcome: TurnOutcome<TOutput>, prior: { costUsd: number; outputTokens: number }): TurnOutcome<TOutput> {
+  return {
+    ...outcome,
+    telemetry: {
+      ...outcome.telemetry,
+      costUsd: outcome.telemetry.costUsd + prior.costUsd,
+      outputTokens: outcome.telemetry.outputTokens + prior.outputTokens,
+    },
+  };
+}
+
+/**
+ * THE `thought` FIELD IS A NOTE, AND IT WAS EATING THE STEPS.
+ *
+ * `thought` is optional, unread by the engine (it is recorded in telemetry and
+ * shown in the run report, and nothing branches on it), and was unbounded.
+ * Prep run pubsub-21868183257380937, `05-write-copy-attempt-1`, SUCCEEDED and
+ * is the clearest measurement in the fleet: 16,305 output tokens, of which
+ * the delivered post was 8,348 characters and the `thought` was **50,520** —
+ * four fifths of the turn, $0.32 of its $0.40, and about four of its five
+ * minutes, spent on prose no step reads.
+ *
+ * That is also why the copy step kept dying. The default ceiling is 16,384
+ * and a normal answer landed at 16,305: whether a client got a post came down
+ * to how discursive the model felt, and three runs on 2026-09-16 lost five
+ * copy attempts between them to the wrong side of that coin flip. The
+ * deliverable was never the thing that did not fit.
+ *
+ * 4,000 characters (~1,000 tokens) is a real budget, not a gag: it is more
+ * than any planning note in a healthy step in the fleet, and it reaches the
+ * model as `maxLength` on its own output schema, which is the one place a
+ * length instruction is reliably read. `clampOversizeValues` trims an
+ * overshoot rather than rejecting the turn, so this bound can never itself
+ * become a reason a step fails.
+ */
+export const THOUGHT_MAX_CHARS = 4_000;
 
 /** Step-scoped loop counters, shared by the draft phase and every revision so neither can reset the other's bound. */
 interface LoopState {
@@ -397,6 +441,11 @@ export abstract class BaseAgent<TOutput> {
           " — never omitted, never any other value.",
         'Never return the "output" object on its own. A finished answer is always wrapped as ' + finalShape + ".",
         "Return real JSON objects, never a JSON-encoded string in place of an object.",
+        // Said in words as well as in `maxLength`, because the failure this
+        // closes was not the model disobeying a limit — it was the model
+        // never being told the field had a purpose. See `THOUGHT_MAX_CHARS`.
+        `"thought" is an optional one-paragraph note about this turn, at most ${THOUGHT_MAX_CHARS} characters. ` +
+          "It is not where the work goes and nothing downstream reads it: put every word the step is being asked for in \"output\", and do not draft, restate or critique it in \"thought\".",
         ...(hasTools ? ['"tool" must be exactly one of the advertised allowedTools names.'] : []),
       ],
     };
@@ -487,18 +536,19 @@ export abstract class BaseAgent<TOutput> {
    * is ambiguous, and the repair turn is the right answer.
    */
   private buildTurnSchema(): ZodSchema<ReActTurn<TOutput>> {
+    const thought = z.string().max(THOUGHT_MAX_CHARS).optional();
     if (this.config.allowedTools.length === 0) {
       const bareFinal = z.object({
         type: z.literal("final").default("final"),
-        thought: z.string().optional(),
+        thought,
         output: this.config.outputSchema,
       });
       return bareFinal as unknown as ZodSchema<ReActTurn<TOutput>>;
     }
-    const finalVariant = z.object({ type: z.literal("final"), thought: z.string().optional(), output: this.config.outputSchema });
+    const finalVariant = z.object({ type: z.literal("final"), thought, output: this.config.outputSchema });
     const toolVariant = z.object({
       type: z.literal("tool_call"),
-      thought: z.string().optional(),
+      thought,
       tool: z.enum(this.config.allowedTools as [string, ...string[]]),
       args: z.unknown(),
     });
@@ -554,15 +604,24 @@ export abstract class BaseAgent<TOutput> {
     systemPrompt: string | undefined,
     stepIndex: number,
     turnBudget: TurnBudget,
+    /**
+     * Set only by this method's own truncation retry: the ceiling to ask with
+     * instead of `config.maxTokens`. It rides here rather than on the config
+     * so the raise is scoped to the one turn that needed it — the next turn in
+     * the same step starts from the declared ceiling again. Its presence is
+     * also what bounds the retry to one.
+     */
+    raisedCeiling?: number,
   ): Promise<TurnOutcome<TOutput>> {
     const turnSchema = this.buildTurnSchema();
     const prompt = this.buildTurnPrompt(ctx, input, transcript, turnBudget);
+    const declaredMaxTokens = raisedCeiling ?? this.config.maxTokens;
     // SCRUM-298: `system` is now unconditional — it always carries the
     // response contract + tool schemas (see `buildSystemPromptWithContract`),
     // not only when a `skillRef` resolved a craft-policy prompt.
     const opts: RouterCompleteOptions = {
       system: this.buildSystemPromptWithContract(systemPrompt),
-      ...(this.config.maxTokens !== undefined ? { maxTokens: this.config.maxTokens } : {}),
+      ...(declaredMaxTokens !== undefined ? { maxTokens: declaredMaxTokens } : {}),
     };
 
     const startedAt = this.clock();
@@ -574,6 +633,36 @@ export abstract class BaseAgent<TOutput> {
       // resolution point instead of fourteen that could each be missed.
       completion = await this.runtime.router.complete(prompt, turnSchema, this.effectivePolicy(ctx), opts);
     } catch (err) {
+      // THE CEILING IS THE ENGINE'S TO RAISE, NOT THE OPERATOR'S.
+      //
+      // A truncated turn used to end the step with a message telling whoever
+      // read the run report to raise `maxTokens` in the source. Nobody reads
+      // a run report in time: prep runs pubsub-21864573169935321 and
+      // pubsub-21868533047825082 (2026-09-16) each lost their client brief,
+      // their design brief and their visual direction to ceilings of 8k, 4k
+      // and 3k — three setup documents a month of runs is grounded on, gone
+      // to a number that was only ever a guess at how long the answer would
+      // be. The retry is not "ask the same question again": it is the same
+      // question with the room the answer actually needed, which is the one
+      // thing that provably changes the outcome.
+      //
+      // Once. A step that truncates again at the ceiling is over-specified
+      // and must fail where someone can see it.
+      if (err instanceof OutputLimitExceededError && raisedCeiling === undefined) {
+        const raised = raisedOutputLimit(err.attemptedMaxTokens);
+        if (raised !== undefined) {
+          const outcome = await this.runOneTurn(ctx, input, transcript, systemPrompt, stepIndex, turnBudget, raised);
+          // The truncated attempt burned a full ceiling of output tokens. Bill
+          // it onto whatever the retry resolved to, so the step's cost is what
+          // the step cost and a raise can never hide inside a rounding error.
+          return err.usage
+            ? addPriorAttemptCost(outcome, {
+                costUsd: computeStepCostUsd(err.usage.modelUsed, err.usage.inputTokens, err.usage.outputTokens),
+                outputTokens: err.usage.outputTokens,
+              })
+            : outcome;
+        }
+      }
       const durationMs = this.clock() - startedAt;
       // A malformed turn is the one model-call failure worth another turn, so
       // it is classified apart from a dead provider / bad auth / exhausted
@@ -601,15 +690,21 @@ export abstract class BaseAgent<TOutput> {
           },
         };
       }
+      // A truncation that could NOT be raised any further still burned a full
+      // ceiling of output tokens, and reporting it as the generic zeros below
+      // is how `05-write-copy-attempt-3` came to be recorded at $0 on a run
+      // whose two surviving attempts cost $0.40 each. A step that failed
+      // expensively must not read as the cheapest step in the run.
+      const ceilingUsage = err instanceof OutputLimitExceededError ? err.usage : undefined;
       return {
         kind: "tooling_error",
         telemetry: {
           stepIndex,
-          modelUsed: this.effectivePolicy(ctx).model,
-          inputTokens: { cached: 0, uncached: 0 },
-          outputTokens: 0,
+          modelUsed: ceilingUsage?.modelUsed ?? this.effectivePolicy(ctx).model,
+          inputTokens: ceilingUsage?.inputTokens ?? { cached: 0, uncached: 0 },
+          outputTokens: ceilingUsage?.outputTokens ?? 0,
           durationMs,
-          costUsd: 0,
+          costUsd: ceilingUsage ? computeStepCostUsd(ceilingUsage.modelUsed, ceilingUsage.inputTokens, ceilingUsage.outputTokens) : 0,
           status: "tooling_error",
           error: `model call failed: ${describeError(err)}`,
         },

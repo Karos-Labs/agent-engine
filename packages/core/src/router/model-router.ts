@@ -5,6 +5,7 @@ import { resolveModelVendor, type ModelVendor } from "../types/model-policy.js";
 import type { ModelAlias } from "./aliases.js";
 import { resolveModelAlias } from "./aliases.js";
 import type { CompletionRequest, CompletionResult, ModelAdapter } from "./adapters/types.js";
+import { OutputLimitExceededError } from "./adapters/structured-output.js";
 
 export interface RouterCompleteOptions {
   system?: string;
@@ -133,7 +134,11 @@ export class DefaultModelRouter implements ModelRouter {
     try {
       return await callAdapter(policy.model);
     } catch (err) {
-      if (!policy.fallbackModel) {
+      // A fallback is a SMALLER variant of the same call, so a primary that
+      // ran out of output room will run out of it again — and the caller is
+      // about to re-ask with a raised ceiling anyway. Failing over here only
+      // buys a second full-ceiling bill for the same truncated answer.
+      if (!policy.fallbackModel || err instanceof OutputLimitExceededError) {
         throw err;
       }
       // Same vendor, fallback model id — a fallback is a cheaper/smaller

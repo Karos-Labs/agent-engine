@@ -72,7 +72,14 @@ export class InstagramDesignBriefAgent extends BaseAgent<StudioDesignBriefOutput
     // the set rules and the signal accounting. A turn that runs out of room
     // does not come back short, it comes back unparseable — and this step
     // runs once per client per 120 days, so the headroom is free.
-    maxTokens: 4_000,
+    //
+    // It was not free at 4k: eight proposals with a `why` each do not fit,
+    // and on 2026-09-16 this step truncated for `geektime` and, on the run
+    // where it did fit, was rejected for two `gaps` lines a few characters
+    // over their cap. Both failure modes are now handled below the agent
+    // (`raisedOutputLimit`, `clampOversizeValues`); this number stops being
+    // the thing that decides whether a client gets templates.
+    maxTokens: 16_384,
     modelPolicy: resolveModelPolicy("instagram-design-brief", { policy: "pinned", model: "claude-sonnet-4-6", contentLanguageSensitive: true }),
     skillRef: "instagram-design-brief@1",
   };

@@ -213,3 +213,63 @@ describe("parseStructuredOutput — the stringified `output`, repaired for free"
     expect(out).toEqual({ type: "tool_call", tool: "render.preview", args: { text: "x" } });
   });
 });
+
+/**
+ * A house-style length cap is not a correctness rule, and throwing the whole
+ * turn away over one is how prep run pubsub-21864573169935321 lost its
+ * Template Studio: `00c3-write-design-brief` came back with two `gaps` lines
+ * a few characters past `.max(200)`, was rejected, was re-prompted, came back
+ * over the cap again, and took the step's whole budget with it.
+ */
+describe("parseStructuredOutput — a cap the answer overshoots is applied, not asserted", () => {
+  const capped = z.object({
+    type: z.literal("final"),
+    output: z.object({
+      gaps: z.array(z.string().max(200)).max(3),
+      title: z.string().min(1),
+    }),
+  });
+
+  it("trims an over-long string to the declared maximum and accepts the turn", () => {
+    const gap = "x".repeat(214);
+    const out = parseStructuredOutput(capped, { turn: { type: "final", output: { gaps: [gap], title: "t" } } }, true, ctx);
+    expect(out.output.gaps[0]).toHaveLength(200);
+    expect(out.output.title).toBe("t");
+  });
+
+  it("trims every offending entry, not just the first", () => {
+    const out = parseStructuredOutput(
+      capped,
+      { turn: { type: "final", output: { gaps: ["a".repeat(260), "short", "b".repeat(9_000)], title: "t" } } },
+      true,
+      ctx,
+    );
+    expect(out.output.gaps.map((g) => g.length)).toEqual([200, 5, 200]);
+  });
+
+  it("slices an over-long array to the declared maximum", () => {
+    const out = parseStructuredOutput(capped, { turn: { type: "final", output: { gaps: ["a", "b", "c", "d", "e"], title: "t" } } }, true, ctx);
+    expect(out.output.gaps).toEqual(["a", "b", "c", "d"].slice(0, 3));
+  });
+
+  it("does not invent data — a genuinely wrong shape still fails, and reports its own issues", () => {
+    // `title` is missing: not a length overshoot, and nothing here can supply it.
+    expect(() => parseStructuredOutput(capped, { turn: { type: "final", output: { gaps: ["x".repeat(500)] } } }, true, ctx)).toThrow(
+      /invalid_type|"title"/,
+    );
+  });
+
+  it("leaves a too-SHORT value alone — that is the model's answer, not an overshoot", () => {
+    const floored = z.object({ type: z.literal("final"), output: z.object({ body: z.string().min(50) }) });
+    expect(() => parseStructuredOutput(floored, { turn: { type: "final", output: { body: "too short" } } }, true, ctx)).toThrow(
+      StructuredOutputValidationError,
+    );
+  });
+
+  it("leaves a numeric cap alone — clamping a score would fabricate a verdict rather than trim a sentence", () => {
+    const scored = z.object({ type: z.literal("final"), output: z.object({ score: z.number().max(10) }) });
+    expect(() => parseStructuredOutput(scored, { turn: { type: "final", output: { score: 97 } } }, true, ctx)).toThrow(
+      StructuredOutputValidationError,
+    );
+  });
+});

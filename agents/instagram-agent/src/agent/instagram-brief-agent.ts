@@ -74,7 +74,15 @@ export class InstagramBriefAgent extends BaseAgent<InstagramBriefAgentOutput> {
     // that runs out of room does not come back short — it comes back
     // unparseable — and this step runs once a month, so the headroom is
     // effectively free.
-    maxTokens: 8_000,
+    //
+    // 8k was not headroom. It was a guess, and it was wrong on both prep runs
+    // of 2026-09-16 (pubsub-21864573169935321, pubsub-21868533047825082): the
+    // brief truncated mid-JSON for `thepitchbydeel` and for `geektime`, and
+    // both runs fell through to the deterministic brief for the month. This
+    // is now the engine's own default rather than a bespoke number, and a
+    // turn that still runs out is raised once more by `raisedOutputLimit`
+    // instead of ending the step.
+    maxTokens: 16_384,
     modelPolicy: resolveModelPolicy("instagram-brief", { policy: "pinned", model: "claude-sonnet-4-6", contentLanguageSensitive: true }),
     skillRef: "instagram-brief@1",
   };

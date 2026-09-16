@@ -1,7 +1,7 @@
 import type { Message, MessageCreateParamsNonStreaming, Tool } from "@anthropic-ai/sdk/resources/messages";
 import type { CompletionRequest, CompletionResult, MessagesApiClient, ModelAdapter } from "./types.js";
 import { toRootObjectJsonSchema } from "./root-object-schema.js";
-import { parseStructuredOutput } from "./structured-output.js";
+import { OutputLimitExceededError, parseStructuredOutput } from "./structured-output.js";
 import { withRetry, type RetryOptions } from "./retry.js";
 
 const STRUCTURED_OUTPUT_TOOL_NAME = "emit_output";
@@ -129,24 +129,6 @@ export class MessagesApiAdapter implements ModelAdapter {
 
     const response = await withRetry(send, this.retryOptions);
 
-    // A truncated response is not a partial answer — the structured output is
-    // cut mid-JSON and unparseable. Say so precisely instead of surfacing the
-    // downstream schema error, which points nowhere near the real problem.
-    if (response.stop_reason === "max_tokens") {
-      throw new Error(
-        `${this.providerId}: model "${req.model}" hit the ${maxTokens}-token output limit before completing its structured output — ` +
-          "raise the step's `maxTokens` (AgentStepConfig) or narrow its outputSchema",
-      );
-    }
-
-    const toolUse = response.content.find(
-      (block): block is Extract<Message["content"][number], { type: "tool_use" }> =>
-        block.type === "tool_use" && block.name === STRUCTURED_OUTPUT_TOOL_NAME,
-    );
-    if (!toolUse) {
-      throw new Error(`${this.providerId}: model "${req.model}" did not return a "${STRUCTURED_OUTPUT_TOOL_NAME}" tool_use block`);
-    }
-
     const usage = response.usage;
 
     // `input_tokens` counts neither cache reads nor cache *writes*. Cache
@@ -157,10 +139,12 @@ export class MessagesApiAdapter implements ModelAdapter {
     // the premium on its whole system prompt and tool list.
     const cacheWriteTokens = usage.cache_creation_input_tokens ?? 0;
 
-    // Resolved before the payload is validated, not after, so a malformed turn
-    // still reports what it actually burned. Reading usage only on the success
-    // path is what made every schema failure record 0 tokens and $0 — the one
-    // number that would have shown these turns are neither free nor cheap.
+    // Resolved before the payload is inspected, not after, so a malformed OR
+    // truncated turn still reports what it actually burned. Reading usage only
+    // on the success path is what made every schema failure record 0 tokens
+    // and $0 — the one number that would have shown these turns are neither
+    // free nor cheap. A turn that hit its ceiling burned every output token of
+    // that ceiling, so it is the most expensive failure of the lot.
     const reportedUsage = {
       // Normalized back to canonical form — `computeStepCostUsd` looks this
       // up in `MODEL_PRICING`, and a provider-spelled miss now throws rather
@@ -173,6 +157,28 @@ export class MessagesApiAdapter implements ModelAdapter {
       },
       outputTokens: usage.output_tokens,
     };
+
+    // A truncated response is not a partial answer — the structured output is
+    // cut mid-JSON and unparseable. Say so precisely instead of surfacing the
+    // downstream schema error, which points nowhere near the real problem, and
+    // say it in a type `BaseAgent` can act on: this is the one failure whose
+    // fix is knowable from the failure itself, so it is re-asked with a raised
+    // ceiling rather than reported to a human who will read it next week.
+    if (response.stop_reason === "max_tokens") {
+      throw new OutputLimitExceededError(
+        `${this.providerId}: model "${req.model}" hit the ${maxTokens}-token output limit before completing its structured output` +
+          describeTruncatedFields(response.content),
+        { attemptedMaxTokens: maxTokens, usage: reportedUsage },
+      );
+    }
+
+    const toolUse = response.content.find(
+      (block): block is Extract<Message["content"][number], { type: "tool_use" }> =>
+        block.type === "tool_use" && block.name === STRUCTURED_OUTPUT_TOOL_NAME,
+    );
+    if (!toolUse) {
+      throw new Error(`${this.providerId}: model "${req.model}" did not return a "${STRUCTURED_OUTPUT_TOOL_NAME}" tool_use block`);
+    }
 
     const output = parseStructuredOutput(req.schema, toolUse.input, wrapped, {
       providerId: this.providerId,
@@ -227,5 +233,47 @@ export class MessagesApiAdapter implements ModelAdapter {
       tools: [tool],
       tool_choice: { type: "tool", name: STRUCTURED_OUTPUT_TOOL_NAME },
     };
+  }
+}
+
+/**
+ * Which fields the model had actually written when the budget ran out, and
+ * how big each one had got.
+ *
+ * A truncation used to report only the ceiling it hit, which says nothing
+ * about whether the answer was genuinely too large or the model was rambling
+ * into a field nobody reads. Those need opposite fixes — more room versus
+ * less prose — and telling them apart the first time took a Firestore query
+ * against a *succeeding* run (`05-write-copy-attempt-1`, prep
+ * pubsub-21868183257380937: 50,520 characters of `thought` against 8,348
+ * characters of delivered post). This puts that measurement in the error
+ * itself, so the next one is a read rather than an investigation.
+ *
+ * Partial input is best-effort by nature: the SDK's streaming accumulator
+ * leaves whatever parsed, and a field cut mid-string may be missing entirely.
+ * An empty or unreadable accumulator therefore adds nothing to the message
+ * rather than guessing — a diagnostic must never be the thing that throws.
+ */
+function describeTruncatedFields(content: Message["content"]): string {
+  try {
+    const toolUse = content.find(
+      (block): block is Extract<Message["content"][number], { type: "tool_use" }> =>
+        block.type === "tool_use" && block.name === STRUCTURED_OUTPUT_TOOL_NAME,
+    );
+    const root = toolUse?.input;
+    if (typeof root !== "object" || root === null) return "";
+    // `toRootObjectJsonSchema` nests the turn under `turn` for a wrapped
+    // schema; unwrap it here so the fields named are the turn's own.
+    const record = root as Record<string, unknown>;
+    const turn = typeof record["turn"] === "object" && record["turn"] !== null ? (record["turn"] as Record<string, unknown>) : record;
+    const sizes = Object.entries(turn)
+      .map(([key, value]) => [key, typeof value === "string" ? value.length : JSON.stringify(value)?.length] as const)
+      .filter((entry): entry is readonly [string, number] => typeof entry[1] === "number" && entry[1] > 0)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([key, chars]) => `${key} ${chars} chars`);
+    return sizes.length > 0 ? ` — written when it ran out: ${sizes.join(", ")}` : "";
+  } catch {
+    return "";
   }
 }

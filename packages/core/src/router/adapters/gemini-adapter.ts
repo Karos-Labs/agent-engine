@@ -1,7 +1,7 @@
 import { FinishReason, type GoogleGenAI } from "@google/genai";
 import type { CompletionRequest, CompletionResult, ModelAdapter } from "./types.js";
 import { toRootObjectJsonSchema } from "./root-object-schema.js";
-import { parseStructuredOutput, parseStructuredOutputText } from "./structured-output.js";
+import { OutputLimitExceededError, parseStructuredOutput, parseStructuredOutputText } from "./structured-output.js";
 import { withRetry, type RetryOptions } from "./retry.js";
 
 /**
@@ -92,12 +92,24 @@ export class GeminiAdapter implements ModelAdapter {
     // Mirrors every other adapter's truncation handling: a cut-off response
     // is not a partial answer, the JSON is unparseable mid-object, and the
     // schema-violation error this would otherwise surface points nowhere
-    // near the real cause.
+    // near the real cause. Typed so `BaseAgent` can re-ask with more room
+    // instead of ending the step on a ceiling it is allowed to raise — and
+    // carrying the usage of the truncated attempt, which is a full ceiling's
+    // worth of output tokens and was previously recorded as zero.
     const finishReason = response.candidates?.[0]?.finishReason;
     if (finishReason === FinishReason.MAX_TOKENS) {
-      throw new Error(
-        `google-gemini: model "${req.model}" hit the ${maxOutputTokens}-token output limit before completing its structured output — ` +
-          "raise the step's `maxTokens` (AgentStepConfig) or narrow its outputSchema",
+      const truncatedUsage = response.usageMetadata;
+      const truncatedCached = truncatedUsage?.cachedContentTokenCount ?? 0;
+      throw new OutputLimitExceededError(
+        `google-gemini: model "${req.model}" hit the ${maxOutputTokens}-token output limit before completing its structured output`,
+        {
+          attemptedMaxTokens: maxOutputTokens,
+          usage: {
+            modelUsed: req.model,
+            inputTokens: { cached: truncatedCached, uncached: Math.max((truncatedUsage?.promptTokenCount ?? 0) - truncatedCached, 0) },
+            outputTokens: truncatedUsage?.candidatesTokenCount ?? 0,
+          },
+        },
       );
     }
 
