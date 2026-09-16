@@ -11,6 +11,11 @@ Karos Labs' autonomous agent runtime. Replaces the prompt-chaining pattern in
 3. **Tools (MCP)** — every external read/write is a typed, tested, versioned
    tool server.
 
+**Before you create or change an agent, read
+[`docs/AGENT-ARCHITECTURE.md`](docs/AGENT-ARCHITECTURE.md).** It is the standard every
+agent here is built to: the six obligations of a run, where the goal line goes, and what
+adding a product id actually costs. There is no second architecture.
+
 **Start here:** [`docs/RFC-01-agent-engine-core.md`](docs/RFC-01-agent-engine-core.md)
 defines the engine itself (this is the spec to build against first).
 [`docs/RFC-02-agent-migration.md`](docs/RFC-02-agent-migration.md) is the
