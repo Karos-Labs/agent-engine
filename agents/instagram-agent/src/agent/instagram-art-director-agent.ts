@@ -77,7 +77,13 @@ export class InstagramArtDirectorAgent extends BaseAgent<ArtDirectorOutput> {
     // forbid list, the style lock and the gaps. A turn that runs out of room
     // does not come back short, it comes back unparseable — and this runs
     // once per client per 90 days, so the headroom is free.
-    maxTokens: 3_000,
+    //
+    // 3k bought none of that headroom. Both prep runs of 2026-09-16 truncated
+    // here and fell through to `fallbackVisualDirection`, which is the flat
+    // four-line template this whole step exists to replace — for a quarter.
+    // The ceiling is the engine default now; the raise on top of it is
+    // `raisedOutputLimit`'s job, not a reviewer's.
+    maxTokens: 16_384,
     modelPolicy: resolveModelPolicy("instagram-art-director", { policy: "pinned", model: "claude-sonnet-4-6", contentLanguageSensitive: false }),
     skillRef: "instagram-art-director@1",
   };

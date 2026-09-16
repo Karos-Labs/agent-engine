@@ -148,7 +148,10 @@ describe("InstagramArtDirectorAgent", () => {
     // what makes this a fixed one-call bill rather than a research loop.
     expect(config.allowedTools).toEqual([]);
     expect(config.maxSteps).toBe(1);
-    expect(config.maxTokens).toBe(3_000);
+    // 16_384, not the 3_000 this asserted until 2026-09-16: that ceiling
+    // truncated the direction on both prep runs of that morning and sent both
+    // clients to `fallbackVisualDirection` for a quarter.
+    expect(config.maxTokens).toBe(16_384);
     expect(config.skillRef).toBe("instagram-art-director@1");
     // No Opus in a run or a setup, per the owner's standing rule.
     expect(JSON.stringify(config.modelPolicy)).toContain("claude-sonnet-4-6");

@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   DefaultModelRouter,
   MODEL_ALIASES,
+  OutputLimitExceededError,
   resolveModelAlias,
   type CompletionRequest,
   type CompletionResult,
@@ -173,5 +174,30 @@ describe("DefaultModelRouter — tier semantics (fallback / no-fallback), indepe
     await expect(
       router.complete("classify this", OutputSchema, { policy: "commodity", model: "claude-haiku-4-5-20251001" }),
     ).rejects.toThrow("gateway timeout");
+  });
+
+  // A fallback is a SMALLER model, so it has no more room than the primary
+  // did. Spending a second full-ceiling bill to be truncated again is the one
+  // failover that cannot succeed — and the caller is about to re-ask with a
+  // raised ceiling anyway (`BaseAgent.runOneTurn`).
+  it("does not fail over when the primary ran out of output room", async () => {
+    let calls = 0;
+    const gemini = fakeAdapter("gemini", async () => {
+      calls += 1;
+      throw new OutputLimitExceededError('google-gemini: model "gemini-2.5-pro" hit the 16384-token output limit', {
+        attemptedMaxTokens: 16_384,
+      });
+    });
+    const router = new DefaultModelRouter({ anthropic: fakeAdapter("anthropic"), gemini });
+
+    await expect(
+      router.complete("summarize this", OutputSchema, {
+        policy: "commodity",
+        model: "gemini-2.5-pro",
+        fallbackModel: "gemini-2.5-flash",
+        vendor: "gemini",
+      }),
+    ).rejects.toThrow(OutputLimitExceededError);
+    expect(calls).toBe(1);
   });
 });

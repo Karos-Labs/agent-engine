@@ -1,7 +1,7 @@
 import type OpenAI from "openai";
 import type { CompletionRequest, CompletionResult, ModelAdapter } from "./types.js";
 import { toRootObjectJsonSchema } from "./root-object-schema.js";
-import { parseStructuredOutput, parseStructuredOutputText } from "./structured-output.js";
+import { OUTPUT_LIMIT_RETRY_FLOOR, OutputLimitExceededError, parseStructuredOutput, parseStructuredOutputText } from "./structured-output.js";
 import { withRetry, type RetryOptions } from "./retry.js";
 
 /**
@@ -84,7 +84,18 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       },
       outputTokens: usage?.completion_tokens ?? 0,
     };
+    // The third adapter's missing truncation check. Anthropic and Gemini both
+    // named this failure; here a cut-off answer arrived as `parseStructuredOutputText`'s
+    // "it is not valid JSON", which reads as a model that cannot follow a
+    // schema and sends the step down the repair path — one more full turn, to
+    // be cut off at the same place. `finish_reason` said so all along.
     const parseContext = { providerId: this.providerId, model: req.model, usage: reportedUsage };
+    if (choice?.finish_reason === "length") {
+      throw new OutputLimitExceededError(
+        `${this.providerId}: model "${req.model}" hit the ${req.maxTokens ?? "default"}-token output limit before completing its structured output`,
+        { attemptedMaxTokens: req.maxTokens ?? OUTPUT_LIMIT_RETRY_FLOOR, usage: reportedUsage },
+      );
+    }
 
     const output = parseStructuredOutput(req.schema, parseStructuredOutputText(raw, parseContext), wrapped, parseContext);
 
