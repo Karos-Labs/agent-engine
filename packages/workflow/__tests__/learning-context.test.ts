@@ -6,7 +6,9 @@ import {
   craftRulesForPrompt,
   emptyLearningContext,
   feedbackForPrompt,
+  goalLineBullets,
   pickStrategyRow,
+  resolveGoalLine,
   readLearningContext,
   readRunDirection,
   stageForRun,
@@ -215,5 +217,49 @@ describe("readRunDirection carries slotStage (C3/C7)", () => {
     expect(readRunDirection({ slotStage: "expertise" }).slotStage).toBe("expertise");
     expect(readRunDirection({ slotStage: "awareness" }).slotStage).toBeUndefined();
     expect(readRunDirection({}).slotStage).toBeUndefined();
+  });
+});
+
+describe("resolveGoalLine and goalLineBullets (D11 / C3, SCRUM-457)", () => {
+  const fallback = { stage: "attention" as const, whyNow: "the next planned topic in the client's catalog" };
+
+  it("the model's own answer wins; what it left out falls back to what the run knows", () => {
+    expect(resolveGoalLine({ goal: "decide", audience: "ops leads", whyNow: "the pilot window opens" }, fallback)).toEqual({
+      goal: "decide",
+      goalText: "help them decide",
+      audience: "ops leads",
+      whyNow: "the pilot window opens",
+    });
+    // Nothing stated: the stage the run was written for, and the caller's line.
+    expect(resolveGoalLine({}, fallback)).toEqual({ goal: "attention", goalText: "earn attention", whyNow: fallback.whyNow });
+    // Blank is not an answer — a model that emits "" gets the fallback, not an empty card.
+    expect(resolveGoalLine({ whyNow: "   ", audience: "" }, { ...fallback, audience: "the whole market" })).toEqual({
+      goal: "attention",
+      goalText: "earn attention",
+      audience: "the whole market",
+      whyNow: fallback.whyNow,
+    });
+  });
+
+  it("renders the bullets the portal's drafts parsers already read, and omits the ones with nothing to say", () => {
+    expect(goalLineBullets({ goal: "expertise", goalText: "show expertise", audience: "ops leads whose intake breaks", whyNow: "a report landed" })).toEqual([
+      "**Goal:** show expertise",
+      "**For:** ops leads whose intake breaks",
+      "**Why now:** a report landed",
+    ]);
+    expect(goalLineBullets({ goal: "attention", goalText: "earn attention", whyNow: "" })).toEqual(["**Goal:** earn attention"]);
+  });
+
+  it("keeps URLs out of the why-now bullet, so the X parser can never read it as this draft's reply target", () => {
+    // classifyXMetaBullet reads a bullet's URL against a reply/quote PHRASE:
+    // "replying to <a real status URL>" in a why-now would drive the hand-off
+    // deep link at the wrong post. Links ride on the bullets built for them.
+    const bullets = goalLineBullets({
+      goal: "attention",
+      goalText: "earn attention",
+      whyNow: "we are replying to https://x.com/someone/status/123 while it is live",
+    });
+    expect(bullets[1]).toBe("**Why now:** we are replying to while it is live");
+    expect(bullets.join(" ")).not.toContain("http");
   });
 });

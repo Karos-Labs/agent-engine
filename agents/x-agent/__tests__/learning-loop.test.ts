@@ -152,6 +152,45 @@ describe("x-agent and the learning loop (C7)", () => {
     expect(record!.readiness.present).toContain("strategy-map");
   });
 
+  it("the goal line reaches the client's card, not only the reporting tables (C3 / SCRUM-457)", async () => {
+    const router = fakeRouterSequence([
+      finalTurn(goodPost({ goal: "expertise", audience: "ops leads whose intake breaks in month two", whyNow: "a benchmark report landed on Monday" })),
+    ]);
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(
+      createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true }),
+      { ...params, runId: "x_goal_card" },
+    );
+    expect(result.status).toBe("completed");
+
+    // The portal's `x-drafts.ts` pushes every `- **Label:** value` bullet onto
+    // the card, so these three ARE the goal line a client reads.
+    const deliverables = await env.store.listJson<{ deliverable: { draftsMarkdown: string } }>("acme", ["ledger", "deliverables", "x_goal_card", "_"]);
+    const markdown = deliverables[0]!.data.deliverable.draftsMarkdown;
+    expect(markdown).toContain("- **Goal:** show expertise");
+    expect(markdown).toContain("- **For:** ops leads whose intake breaks in month two");
+    expect(markdown).toContain("- **Why now:** a benchmark report landed on Monday");
+
+    // And the card and the record say the same thing — one resolution, two readers.
+    const record = await env.store.readJson<Record<string, unknown>>("acme", ["state", "runs", "x_goal_card"]);
+    expect(record!.deliverable).toMatchObject({ goal: "expertise", audience: "ops leads whose intake breaks in month two", whyNow: "a benchmark report landed on Monday" });
+    expect(record!.subjectRow).toMatchObject({ stage: "expertise", goal: "show expertise" });
+  });
+
+  it("with the model silent, the card still carries a goal — the stage the run was written for (D11)", async () => {
+    const router = fakeRouterSequence([finalTurn(goodPost())]);
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(
+      createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true }),
+      { ...params, runId: "x_goal_fallback", input: { slotStage: "decide" } },
+    );
+    expect(result.status).toBe("completed");
+    const deliverables = await env.store.listJson<{ deliverable: { draftsMarkdown: string } }>("acme", ["ledger", "deliverables", "x_goal_fallback", "_"]);
+    const markdown = deliverables[0]!.data.deliverable.draftsMarkdown;
+    expect(markdown).toContain("- **Goal:** help them decide");
+    expect(markdown).toMatch(/- \*\*Why now:\*\* .+/);
+    // No audience was stated and none is invented.
+    expect(markdown).not.toContain("- **For:**");
+  });
+
   it("a never-topic HOLDS an explicit request, and a subject in the window or a never-topic skips a catalog row", async () => {
     await projectAll(env);
     // Requested topic touches the never-topic → held, no model call spent.

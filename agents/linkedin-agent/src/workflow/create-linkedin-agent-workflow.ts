@@ -35,7 +35,7 @@ import {
   craftRulesForPrompt,
   feedbackForPrompt,
   writeRunState,
-  GOAL_LINE,
+  resolveGoalLine,
   platformStateForDrafting,
   preferencesForDrafting,
   strategyRowForDrafting,
@@ -996,12 +996,18 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
     // of `draft` stays untouched for any consumer that wants raw fields. The
     // media block rides beside it.
     const profileCompanyName = clientContext.profile["companyName"];
+    // D11 / C3 (SCRUM-457): resolved once, used for both the client's card and
+    // the state record below. `targetAudience` is the older, broader line the
+    // prompt has always produced, so it stands in when the model named no
+    // buyer problem of its own.
+    const goalLine = resolveGoalLine(draft, { stage, audience: draft.targetAudience, whyNow: whyNowFor(selected) });
     const draftsMarkdown = renderLinkedInDraftsMarkdown({
       identity: clientContext.identity,
       ...(typeof profileCompanyName === "string" ? { companyName: profileCompanyName } : {}),
       archetype: draft.archetype,
       topic: selected.topic,
       draft,
+      goalLine,
       media: mediaPlan,
     });
     const deliverableId = await finalizeDeliverable(wf, tools, ctx, {
@@ -1012,7 +1018,12 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
         ...draft,
         ...mediaForDeliverable(mediaPlan),
         contentMode: modeSelection.mode,
-        formattingNotes: formatting.notes,
+        // C3 (SCRUM-457): `formattingNotes` are the shape check's notes FOR THE
+        // REVIEWER (step 09b), and karosCMO's `materialize.ts` renders every
+        // name in its `metaFields` list onto the client's asset — so shipping
+        // them here put "the takeaway is missing a blank line before it" on a
+        // client's screen. They stay on the gate payload, where the reviewer
+        // reads them, and on the run report. Client copy never mentions review.
         ...(selected.trend !== undefined ? { trend: selected.trend } : {}),
         draftsMarkdown,
       },
@@ -1063,9 +1074,9 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       platform: "linkedin",
       deliverable: {
         kind: "linkedin-post",
-        goal: draft.goal ?? stage,
-        audience: draft.audience ?? draft.targetAudience,
-        whyNow: draft.whyNow ?? whyNowFor(selected),
+        goal: goalLine.goal,
+        ...(goalLine.audience !== undefined ? { audience: goalLine.audience } : {}),
+        whyNow: goalLine.whyNow,
         type: draft.archetype,
         sources: (researchDigest ?? []).map((d) => d.url).filter((u): u is string => typeof u === "string"),
       },
@@ -1073,8 +1084,8 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
         subject: selected.topic,
         angle: draft.takeaway,
         type: draft.archetype,
-        stage: draft.goal ?? stage,
-        goal: GOAL_LINE[draft.goal ?? stage],
+        stage: goalLine.goal,
+        goal: goalLine.goalText,
         status: "drafted",
         assetKind: "linkedin-post",
         strategyRowId: selected.strategyRowId ?? null,

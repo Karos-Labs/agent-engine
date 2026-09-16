@@ -38,7 +38,7 @@ import {
   craftRulesForPrompt,
   feedbackForPrompt,
   writeRunState,
-  GOAL_LINE,
+  resolveGoalLine,
   platformStateForDrafting,
   preferencesForDrafting,
   toAgentContext,
@@ -879,6 +879,7 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
       targetThreadTitle,
       targetSubreddit: selectedThread.targetSubreddit,
       draft,
+      ...(selectedThread.scoutBrief ? { whyThread: selectedThread.scoutBrief.why } : {}),
     });
     const deliverableId = await finalizeDeliverable(wf, tools, ctx, {
       persistDeliverableStepId: "19-persist-deliverable",
@@ -924,13 +925,18 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
     // One row per thread reply: the subject is the thread's question, the
     // type is `reddit-reply`, the stage is the slot's or the D32 walk. A
     // reply has no strategy row. Never fails the run.
+    const goalLine = resolveGoalLine(draft, {
+      stage,
+      audience: `r/${selectedThread.targetSubreddit}: the poster and readers of "${targetThreadTitle}"`,
+      whyNow: selectedThread.scoutBrief?.why ?? `a live question in r/${selectedThread.targetSubreddit} this week, chosen by ${selectedThread.selectedBy}`,
+    });
     await writeRunState(wf, tools, ctx, "22-write-run-state", {
       platform: "reddit",
       deliverable: {
         kind: "reddit-reply",
-        goal: draft.goal ?? stage,
-        audience: draft.audience ?? `r/${selectedThread.targetSubreddit}: the poster and readers of "${targetThreadTitle}"`,
-        whyNow: draft.whyNow ?? `a live question in r/${selectedThread.targetSubreddit} this week, chosen by ${selectedThread.selectedBy}`,
+        goal: goalLine.goal,
+        ...(goalLine.audience !== undefined ? { audience: goalLine.audience } : {}),
+        whyNow: goalLine.whyNow,
         type: "reddit-reply",
         sources: draft.sourcesUsed,
       },
@@ -938,8 +944,8 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
         subject: targetThreadTitle,
         angle,
         type: "reddit-reply",
-        stage: draft.goal ?? stage,
-        goal: GOAL_LINE[draft.goal ?? stage],
+        stage: goalLine.goal,
+        goal: goalLine.goalText,
         status: "drafted",
         assetKind: "reddit-reply",
         strategyRowId: null,

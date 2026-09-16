@@ -197,6 +197,7 @@ describe("linkedin-agent 2026-09 upgrade, end to end", () => {
       archetype: "teardown-framework",
       topic: "hybrid",
       draft: goodDraft() as never,
+      goalLine: { goal: "expertise", goalText: "show expertise", whyNow: "a live story this week" },
       media: {
         status: "stock",
         rationale: "a real photograph",

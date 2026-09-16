@@ -35,7 +35,7 @@ import {
   craftRulesForPrompt,
   feedbackForPrompt,
   writeRunState,
-  GOAL_LINE,
+  resolveGoalLine,
   platformStateForDrafting,
   preferencesForDrafting,
   strategyRowForDrafting,
@@ -970,11 +970,16 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
     // The media block (`media`, `mediaStatus`, `mediaRationale`) rides beside
     // it; `mediaRefs` carries the staged URL so the portal's existing
     // `metaFields` read picks it up unchanged.
+    // D11 / C3 (SCRUM-457): what this post is for, who for, and why now —
+    // resolved ONCE here and used for both the client's card and the state
+    // record below, so the two can never disagree about why the post exists.
+    const goalLine = resolveGoalLine(draft, { stage, whyNow: whyNowFor(selected) });
     const draftsMarkdown = renderXDraftsMarkdown({
       targetHandle: intake.xHandle,
       lane: laneSelection.lane,
       angle: laneSelection.angle,
       draft,
+      goalLine,
       media: mediaPlan,
     });
     const deliverableId = await finalizeDeliverable(wf, tools, ctx, {
@@ -1042,9 +1047,9 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       platform: "x",
       deliverable: {
         kind: "x-post",
-        goal: draft.goal ?? stage,
-        ...(draft.audience ? { audience: draft.audience } : {}),
-        whyNow: draft.whyNow ?? whyNowFor(selected),
+        goal: goalLine.goal,
+        ...(goalLine.audience !== undefined ? { audience: goalLine.audience } : {}),
+        whyNow: goalLine.whyNow,
         type: laneSelection.lane,
         sources: researchSources.map((r) => r.url),
       },
@@ -1052,8 +1057,8 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
         subject: selected.topic,
         angle: draft.angle,
         type: laneSelection.lane,
-        stage: draft.goal ?? stage,
-        goal: GOAL_LINE[draft.goal ?? stage],
+        stage: goalLine.goal,
+        goal: goalLine.goalText,
         status: "drafted",
         assetKind: "x-post",
         strategyRowId: selected.strategyRowId ?? null,

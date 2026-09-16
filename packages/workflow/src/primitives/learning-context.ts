@@ -312,6 +312,77 @@ export const GOAL_LINE: Record<FunnelStage, string> = {
   decide: "help them decide",
 };
 
+/** The goal line as one resolved object: what the post is for, who for, and why now (D11 / C3, SCRUM-457). */
+export interface ResolvedGoalLine {
+  /** The funnel stage, in the vocabulary `slotStage` and the subject row share. */
+  goal: FunnelStage;
+  /** The same stage in the client-facing words — what goes on the card. */
+  goalText: string;
+  /** Who it is for: the buyer problem it speaks to. Absent when neither the model nor the caller named one. */
+  audience?: string;
+  whyNow: string;
+}
+
+/**
+ * The one place the goal line is decided (SCRUM-457).
+ *
+ * The model's own answer wins when it gave one; otherwise the run falls back
+ * to what it knows — the stage it was written for, and a why-now derived from
+ * how the topic was chosen. Called ONCE per run and used for both the client's
+ * card and the state record, because a card and a record that disagree about
+ * why a post exists are worse than either alone.
+ */
+export function resolveGoalLine(
+  draft: { goal?: FunnelStage | undefined; audience?: string | undefined; whyNow?: string | undefined },
+  fallback: { stage: FunnelStage; audience?: string | undefined; whyNow: string },
+): ResolvedGoalLine {
+  const goal = draft.goal ?? fallback.stage;
+  const audience = trimmed(draft.audience) ?? trimmed(fallback.audience);
+  return {
+    goal,
+    goalText: GOAL_LINE[goal],
+    ...(audience !== undefined ? { audience } : {}),
+    whyNow: trimmed(draft.whyNow) ?? fallback.whyNow,
+  };
+}
+
+function trimmed(value: string | undefined): string | undefined {
+  const text = value?.trim();
+  return text !== undefined && text.length > 0 ? text : undefined;
+}
+
+/**
+ * The goal line as the meta bullets the portal's drafts parsers already
+ * render (`x-drafts.ts`, `li-drafts.ts`: any `- **Label:** value` line is
+ * pushed onto the card's meta list). This is what puts D11 in front of the
+ * client rather than only in the reporting tables.
+ *
+ * The why-now line carries NO URL, deliberately. `classifyXMetaBullet` reads
+ * a bullet's URL against its label and a reply/quote PHRASE — a why-now that
+ * said "replying to <a real status URL>" would be classified as this draft's
+ * reply target and drive the hand-off deep link. Links belong on the bullets
+ * built to carry them (`In reply to`, `First reply`, `Media`), so this one
+ * stays prose.
+ */
+export function goalLineBullets(line: ResolvedGoalLine): string[] {
+  const bullets = [`**Goal:** ${line.goalText}`];
+  if (line.audience !== undefined) bullets.push(`**For:** ${line.audience}`);
+  const whyNow = withoutUrls(line.whyNow);
+  if (whyNow.length > 0) bullets.push(`**Why now:** ${whyNow}`);
+  return bullets;
+}
+
+/** Drops URLs and tidies the whitespace they leave behind. */
+function withoutUrls(text: string): string {
+  return text
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/\(\s*\)/g, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([.,;:])/g, "$1")
+    .replace(/[\s,;:]+$/g, "")
+    .trim();
+}
+
 /**
  * The introduction doc (C7 §2.1), trimmed to what steers copy. Followers
  * and totals are reporting; what works, the top posts' "why" and the voice

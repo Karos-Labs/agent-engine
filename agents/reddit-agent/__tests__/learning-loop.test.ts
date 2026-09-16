@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createRedditAgentWorkflow } from "../src/workflow/create-reddit-agent-workflow.js";
+import { renderRedditDraftsEnvelope } from "../src/workflow/render-drafts-envelope.js";
 import {
   DEFAULT_TARGET_THREAD_TITLE,
   DEFAULT_TARGET_THREAD_URL,
@@ -99,6 +100,33 @@ describe("reddit-agent and the learning loop (C7)", () => {
     expect(record!.readiness).toEqual({ present: ["platform-state", "feedback", "craft", "preferences"], absent: ["subject-window", "what-works", "strategy-map"] });
     expect(record!.deliverable).toMatchObject({ goal: "expertise", audience: "a founder trialling a shorter week", whyNow: "a live trial report" });
     expect(record!.rulesApplied).toEqual(["L1-reddit-002"]);
+  });
+
+  it("the envelope carries why this thread, the slot the portal already renders (C3 / SCRUM-457)", () => {
+    // A reply's why-now IS why this thread: `envelopeToBatch` in karosCMO maps
+    // `whyThread` onto the card and the engine simply never filled it.
+    const envelope = JSON.parse(
+      renderRedditDraftsEnvelope({
+        account: "u/acme",
+        targetThreadUrl: DEFAULT_TARGET_THREAD_URL,
+        targetThreadTitle: DEFAULT_TARGET_THREAD_TITLE,
+        targetSubreddit: "smallbusiness",
+        draft: goodDraft() as never,
+        whyThread: "  the poster asked what broke after month one and nobody answered that  ",
+      }),
+    ) as { threads: Array<{ whyThread?: string }> };
+    expect(envelope.threads[0]!.whyThread).toBe("the poster asked what broke after month one and nobody answered that");
+
+    // A requested thread has no scout and therefore no reason to claim one.
+    const noScout = JSON.parse(
+      renderRedditDraftsEnvelope({
+        targetThreadUrl: DEFAULT_TARGET_THREAD_URL,
+        targetThreadTitle: DEFAULT_TARGET_THREAD_TITLE,
+        targetSubreddit: "smallbusiness",
+        draft: goodDraft() as never,
+      }),
+    ) as { threads: Array<{ whyThread?: string }> };
+    expect(noScout.threads[0]!.whyThread).toBeUndefined();
   });
 
   it("a requested thread whose title touches a never-topic HOLDS before any model call", async () => {

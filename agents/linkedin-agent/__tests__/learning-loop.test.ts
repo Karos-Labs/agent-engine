@@ -102,6 +102,44 @@ describe("linkedin-agent and the learning loop (C7)", () => {
     expect(record!.rulesApplied).toEqual(["L1-li-001"]);
   });
 
+  it("the goal line reaches the card and the reviewer's formatting notes do not (C3 / SCRUM-457)", async () => {
+    const router = fakeRouterSequence([
+      finalTurn(goodPost({ goal: "decide", audience: "ops leads picking a hybrid policy this quarter", whyNow: "the policy review lands in two weeks" })),
+    ]);
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(
+      createLinkedInAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true }),
+      { ...params, runId: "li_goal_card" },
+    );
+    expect(result.status).toBe("completed");
+
+    const deliverables = await env.store.listJson<{ deliverable: Record<string, unknown> }>("acme", ["ledger", "deliverables", "li_goal_card", "_"]);
+    const deliverable = deliverables[0]!.data.deliverable;
+    const markdown = deliverable.draftsMarkdown as string;
+    expect(markdown).toContain("- **Goal:** help them decide");
+    expect(markdown).toContain("- **For:** ops leads picking a hybrid policy this quarter");
+    expect(markdown).toContain("- **Why now:** the policy review lands in two weeks");
+
+    // The shape check's notes are FOR THE REVIEWER; karosCMO renders every
+    // `metaFields` name onto the client's asset, so they must not be here.
+    expect(deliverable.formattingNotes).toBeUndefined();
+
+    const record = await env.store.readJson<Record<string, unknown>>("acme", ["state", "runs", "li_goal_card"]);
+    expect(record!.deliverable).toMatchObject({ goal: "decide", whyNow: "the policy review lands in two weeks" });
+  });
+
+  it("with the model silent, the card carries the run's stage and the prompt's own audience line", async () => {
+    const router = fakeRouterSequence([finalTurn(goodPost())]);
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(
+      createLinkedInAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true }),
+      { ...params, runId: "li_goal_fallback" },
+    );
+    expect(result.status).toBe("completed");
+    const deliverables = await env.store.listJson<{ deliverable: { draftsMarkdown: string } }>("acme", ["ledger", "deliverables", "li_goal_fallback", "_"]);
+    const markdown = deliverables[0]!.data.deliverable.draftsMarkdown;
+    expect(markdown).toContain("- **Goal:** earn attention");
+    expect(markdown).toContain("- **For:** People leaders evaluating hybrid work policies");
+  });
+
   it("a never-topic HOLDS an explicit request; the window and the never list skip catalog rows", async () => {
     await projectAll(env);
     const heldRouter = fakeRouterSequence([finalTurn(goodPost())]);
