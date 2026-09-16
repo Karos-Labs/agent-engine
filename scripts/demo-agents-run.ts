@@ -219,6 +219,7 @@ async function runXAgentDemo(workspaceStore: WorkspaceStore, tools: ReturnType<t
     targetHandle: "@acmecorp",
     mediaRefs: [],
     thread: [],
+    rulesApplied: [],
   };
   const router = fakeRouterSequence([finalTurn(draft, { inputTokens: 140, outputTokens: 45 })]);
   const workflowFn = createXAgentWorkflow({ tools, promptStore, router });

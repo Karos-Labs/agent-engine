@@ -257,7 +257,7 @@ describe("SCRUM-325: prompt registry and latest.md drift", { timeout: 120_000 },
   it("injects a skillRef pinned to a version the registry does not declare and fails", () => {
     const root = fixtureRoot((r) => {
       const p = path.join(r, "agents", "x-agent", "src", "agent", "x-draft-agent.ts");
-      writeFileSync(p, readFileSync(p, "utf8").replace('skillRef: "x-craft@5"', 'skillRef: "x-craft@9"'));
+      writeFileSync(p, readFileSync(p, "utf8").replace('skillRef: "x-craft@6"', 'skillRef: "x-craft@9"'));
     });
     const { result, exitCode } = runCheck(root);
     const hits = result.problems.filter((p) => p.kind === "unresolvable-pin" && p.promptId === "x-craft");

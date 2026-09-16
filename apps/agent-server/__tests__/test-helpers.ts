@@ -226,6 +226,7 @@ export function makeSharedPromptStore(): InMemoryPromptStore {
   store.setPrompt("x-craft", "3", "X craft guidance.");
   store.setPrompt("x-craft", "4", "X craft guidance.");
   store.setPrompt("x-craft", "5", "X craft guidance.");
+  store.setPrompt("x-craft", "6", "X craft guidance."); // C7 learning loop (SCRUM-459/460)
   store.setPrompt("linkedin-craft", "1", "LinkedIn craft guidance.");
   store.setPrompt("linkedin-craft", "2", "LinkedIn craft guidance.");
   store.setPrompt("linkedin-craft", "3", "LinkedIn craft guidance.");

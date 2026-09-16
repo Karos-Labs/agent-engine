@@ -374,8 +374,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "x-craft",
     agent: "x-agent",
-    versions: ["1", "2", "3", "4", "5"],
-    latestVersion: "5",
+    versions: ["1", "2", "3", "4", "5", "6"],
+    latestVersion: "6",
     requires: { languageDirective: true, numbersSourced: true },
   },
 ];

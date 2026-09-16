@@ -1,3 +1,4 @@
+import type { FunnelStage } from "@agent-engine/core";
 import { readRichRunInput, type MediaAsset, type MediaSource } from "@agent-engine/core";
 import { CONTENT_MODES, type ContentMode } from "./social-trend-scout.js";
 
@@ -99,7 +100,13 @@ export interface RunDirection {
   mediaAssets: readonly MediaAsset[];
   /** Where this run's visuals may come from — see `MediaSource` in core. `"system"` unless the portal said otherwise. */
   mediaSource: MediaSource;
-  brief: RunBrief;
+  brief: RunBrief;  /**
+   * The funnel stage of the calendar slot this run fills (C7, SCRUM-458):
+   * `attention | expertise | decide`. Set by the portal's sequencing on a
+   * scheduled run; absent on a manual one, where the agent falls back to
+   * D32's default mix. Read through `readRichRunInput`, never-throws.
+   */
+  slotStage?: FunnelStage;
 }
 
 /**
@@ -276,6 +283,7 @@ export function readRunDirection(input: Readonly<Record<string, unknown>> | unde
     ...(modeOverride ? { modeOverride } : {}),
     mediaAssets: rich.mediaAssets,
     mediaSource: rich.mediaSource,
+    ...(rich.slotStage !== undefined ? { slotStage: rich.slotStage } : {}),
     brief,
   };
 }

@@ -140,7 +140,12 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // packages/tools/karos-media/__tests__/likeness-consent.test.ts instead,
     // and the `media.` line in the exclusion loop below is what keeps that
     // true rather than a comment saying so.)
-    expect(names.length).toBe(63);
+    //
+    // (C7, the learning loop — SCRUM-458/459/460 — adds two: the read side
+    // `client.getLearningContext` in karos-client and the write side
+    // `ledger.writeRunState` in karos-ledger. 63 -> 65, both in bundled
+    // servers this count covers. Measured off the assertion, as before.)
+    expect(names.length).toBe(65);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }
