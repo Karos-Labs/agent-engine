@@ -2,7 +2,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
 import { firstAsset } from "@agent-engine/core";
-import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail, readRunDirection, runDirectionField, readContextDoc, enforceContextDocPolicy, toAgentContext, finalizeDeliverable } from "@agent-engine/workflow";
+import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail, readRunDirection, runDirectionField, readContextDoc, enforceContextDocPolicy, toAgentContext, finalizeDeliverable, readLearningContext, stageForRun, touchesNeverTopic, craftRulesForPrompt, preferencesForDrafting, resolveGoalLine, writeRunState, type LearningContextLike, type ResolvedGoalLine } from "@agent-engine/workflow";
 import { BrandProfileSchema, type BrandProfile, type TranscriptWord, type VideoTranscript } from "@agent-engine/tool-karos-video";
 import { BrandedShortsGraphicsAgent } from "../agent/branded-shorts-graphics-agent.js";
 import { BrandedShortsHighlightsAgent } from "../agent/branded-shorts-highlights-agent.js";
@@ -170,6 +170,25 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
     const attachedVideo = firstAsset(runDirection.mediaAssets, "source");
     const clientMediaOnly = runDirection.mediaSource === "client";
 
+    // ── 01b: the learning context (C7 §2) ──
+    //
+    // This is D08's EDITING agent, and it is the one of the three that chooses
+    // nothing: the client hands over a finished video and says what it should
+    // communicate (D19 — on demand, outside sequencing). So it reads the loop
+    // for the two things that still apply — the craft rules the captions and
+    // graphics are held to, and the client's standing preferences — and writes
+    // its asset back so the subject table and the reporting see it.
+    //
+    // NO STRATEGY MAP, deliberately, and written down here rather than left as
+    // an omission (`docs/AGENT-ARCHITECTURE.md` §6): a map is a pool of
+    // subjects to pick from, and this agent has no subject to pick. The
+    // subject is whatever the client filmed.
+    //
+    // The platform key is `tiktok`, shared with clipping and content design,
+    // because the client has one TikTok account and one subject history on it.
+    const learning: LearningContextLike = await readLearningContext(wf, tools, ctx, "tiktok", "01b-read-learning-context");
+    const stage = stageForRun(runDirection.slotStage, learning.subjectWindow);
+
     // ── 00: brand resolve — the locked style and brand profile on file, or
     //        the same things DERIVED from the client's brand kit ──
     //
@@ -285,6 +304,24 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
       }
       return parsed.data;
     });
+
+    // C7: the takeaway is what this short is ABOUT, and a client's never-topic
+    // applies to it exactly as it applies to a subject someone typed on any
+    // other agent. It HOLDS rather than editing the video to say something
+    // else — nobody asked for that, and the client would read what came back
+    // as the short they asked for.
+    //
+    // OUTSIDE the intake step and after it, deliberately: the takeaway arrives
+    // by two roads (attached to this run, or the standing `brandedShortsIntake`
+    // block) and a check inside one branch is a check the other road walks
+    // straight past. It is still before the first model call and before a
+    // single frame is rendered, so the refusal costs nothing.
+    const refusedTakeaway = touchesNeverTopic(intake.takeaway, learning.preferences);
+    if (refusedTakeaway !== undefined) {
+      throw new WorkflowHeld(
+        `the takeaway for this short touches a never-topic the client set ("${refusedTakeaway}") — nothing was edited in its place`,
+      );
+    }
 
     // ── 01b: materialise the inputs — real files for a Python engine ──
     //
@@ -691,12 +728,39 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
       return outcome.result as { gcsUri: string; signedUrl?: string };
     });
 
+    /**
+     * D11's goal line — what this short is for, who for, and why now.
+     *
+     * Resolved once and used for both the client's card and the state record
+     * (C7 §3.2), in the structured shape clipping and content design use: the
+     * client receives an mp4, there is no drafts markdown to hang a meta
+     * bullet on.
+     *
+     * The why-now writes itself here and is the truest of the three agents':
+     * D19 makes editing on demand, so the reason this short exists now is that
+     * the client handed over a video and asked for it.
+     */
+    const goalLine: ResolvedGoalLine = resolveGoalLine(
+      {},
+      {
+        stage,
+        // The editing intake has no audience field — the client says what the
+        // short should LEAVE the viewer with, not who the viewer is. Left
+        // absent rather than filled with a guess: `goalLineBullets` and the
+        // record both omit it, and an invented audience on a client's card is
+        // worse than a missing one.
+        whyNow: "the client handed over this video and asked for a short from it",
+      },
+    );
+
     // ── 11-13: persist deliverable, dashboard snapshot, commit + record ──
     const deliverableId = await finalizeDeliverable(wf, tools, ctx, {
       persistDeliverableStepId: "11-persist-deliverable",
       persistManifestStepId: "12-persist-manifest",
       kind: "branded-shorts-video",
       deliverable: {
+        // D11 / C3: the point of the post, on the thing the client opens.
+        goalLine,
         outputPath: build!.outputPath,
         ...(uploaded ? { gcsUri: uploaded.gcsUri, ...(uploaded.signedUrl ? { signedUrl: uploaded.signedUrl } : {}) } : {}),
         durationSeconds: build!.durationSeconds,
@@ -726,6 +790,36 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
         },
         { ctx },
       );
+    });
+
+    // ── 14: what this run learned, handed back (C7 §3) ──
+    //
+    // Until D08's product table landed, this agent's runs were dispatched with
+    // no learning context and collected nothing — it mapped to no platform, so
+    // it drafted, delivered and silently learned nothing, which looked
+    // completely healthy from the outside. This is the other half of that fix.
+    await writeRunState(wf, tools, ctx, "14-write-run-state", {
+      platform: "tiktok",
+      deliverable: {
+        kind: "branded-shorts-video",
+        goal: goalLine.goal,
+        ...(goalLine.audience !== undefined ? { audience: goalLine.audience } : {}),
+        whyNow: goalLine.whyNow,
+        type: "edited-short",
+      },
+      subjectRow: {
+        subject: intake.takeaway,
+        type: "edited-short",
+        stage,
+        goal: goalLine.goalText,
+        status: "drafted",
+        assetKind: "branded-shorts-video",
+        // Never a strategy row: this agent picks no subject, so it can never
+        // be spending one. See the note at `01b`.
+        strategyRowId: null,
+      },
+      platformStateDelta: { postsByUs: 1, topics: [intake.takeaway] },
+      readiness: learning.readiness,
     });
 
     return {
