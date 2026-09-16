@@ -75,8 +75,23 @@ import { measureSlidePng, type SlideMetrics, type SlideProbe } from "./slide-met
  * wire, so this is where the bump belongs — and `karos-publish`'s three other
  * versioned tools (`draft`, `schedule`, `status`) are unchanged by it. The
  * push gate diffs against the previous PUSH rather than against `origin/main`.
+ *
+ * 1.5.1 — NOTHING MOVES ON THE WIRE. The only edit is `chromium.launch()`,
+ * which now passes `{ channel }` when `KAROS_BROWSER_CHANNEL` is set and
+ * `{}` — the previous call, exactly — when it is not. That variable is
+ * unset in CI and in prep, so every render this tool performs for a real
+ * caller launches the same pinned Playwright build it launched on 1.5.0, and
+ * every threshold in `interest-floor.ts` still faces the browser it was
+ * calibrated against. It is set only on a developer machine, where
+ * Playwright's installer leaves `chromium_headless_shell` missing and the
+ * render tests self-skip. See the comment at the launch site.
+ *
+ * A patch digit for the same reason 1.3.1 carried one: the gate compares a
+ * tool file against the previous push and cannot read a diff to know a change
+ * was inert on the wire. Semver already means "nothing a caller can observe
+ * moved", which is exactly the claim being made here.
  */
-const TOOL_VERSION = "1.5.0";
+const TOOL_VERSION = "1.5.1";
 
 // n/template/fields/images have no existing TSDoc to transcribe (SCRUM-293 flag) — descriptions
 // below synthesized from fillTemplate's/validateRenderInputs' usage of each field.
