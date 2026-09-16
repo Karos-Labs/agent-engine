@@ -246,7 +246,27 @@ export function createGetLearningContext(store: WorkspaceStoreLike) {
       const whatWorks = await read("what-works");
       if (whatWorks) out.whatWorks = whatWorks as WhatWorksDoc;
 
-      const strategyMap = await read("strategy-map");
+      let strategyMap = await read("strategy-map");
+      if (!strategyMap) {
+        // SCRUM-464: a map the ENGINE built on a setup / first run lives at
+        // `state/<platform>/strategy-map.json` until the middleware collects
+        // and projects it. Reading it here means the run after the one that
+        // built it does not build again (and pay again) in the gap. Marked
+        // `projectedBy: "engine-run"` so the readiness line says where it
+        // came from.
+        let built: Record<string, unknown> | undefined;
+        try {
+          built = await store.readJson<Record<string, unknown>>(ctx.clientSlug, ["state", platform, "strategy-map"]);
+        } catch {
+          built = undefined;
+        }
+        if (built && typeof built === "object" && !Array.isArray(built) && Array.isArray(built.rows)) {
+          absent.splice(absent.indexOf("strategy-map"), 1);
+          present.push("strategy-map");
+          sources["strategy-map"] = { projectedAt: typeof built.builtAt === "string" ? built.builtAt : "", projectedBy: "engine-run", contentHash: "" };
+          strategyMap = built;
+        }
+      }
       if (strategyMap) {
         const map = strategyMap as unknown as StrategyMapDoc;
         out.strategyMap = {

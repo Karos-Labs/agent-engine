@@ -106,6 +106,52 @@ describe("x-agent and the learning loop (C7)", () => {
     expect(record!.rulesApplied).toEqual(["L1-x-003", "L2-saas-x-002"]);
   });
 
+  it("with the loop live but no map, the first run builds one, writes it to state/, and the next run reads it back without building again (C1, SCRUM-464)", async () => {
+    // Only preferences projected: the loop is live for this client, nobody has planned for X yet.
+    await env.store.writeJson("acme", ["context", "learning", "preferences"], { kind: "preferences", data: { neverTopics: ["four-day weeks"] }, source: SOURCE });
+    const builderOutput = {
+      audience: [{ role: "Head of Ops", problems: ["intake breaks in month two", "no one owns the handoff"] }],
+      rows: [
+        { problem: "intake breaks in month two", stage: "attention", idea: "Why intake queues break in month two", evidence: "the product's intake module" },
+        { problem: "intake breaks in month two", stage: "expertise", idea: "The one number that predicts an intake collapse", evidence: "the profile's ops focus" },
+        { problem: "no one owns the handoff", stage: "attention", idea: "Handoffs fail on Fridays, and the calendar knows why", evidence: "the profile" },
+        { problem: "no one owns the handoff", stage: "expertise", idea: "How to make one person own a handoff without a new hire", evidence: "the profile" },
+        { problem: "no one owns the handoff", stage: "decide", idea: "A one-week pilot for handoff ownership", evidence: "the profile" },
+        { problem: "intake breaks in month two", stage: "decide", idea: "Three questions before you buy intake software", evidence: "the profile" },
+      ],
+      skipped: [],
+    };
+    // Builder first, then the draft: the fake router answers in call order.
+    const router = fakeRouterSequence([finalTurn(builderOutput), finalTurn(goodPost())]);
+    const store = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(store).run(createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true }), { ...params, runId: "x_learning_build" });
+    expect(result.status).toBe("completed");
+    const steps = (await store.listSteps("x_learning_build")).map((s) => s.stepId);
+    expect(steps).toContain("01c-build-strategy-map");
+    expect(steps).toContain("01c-build-strategy-map-write");
+
+    // The map landed where the middleware collects it, with an id and a stage on every row.
+    const built = await env.store.readJson<{ source: string; rows: Array<{ id: string; stage: string; status: string }> }>("acme", ["state", "x", "strategy-map"]);
+    expect(built).toBeDefined();
+    expect(built!.source).toBe("first-run");
+    expect(built!.rows.map((r) => r.id)).toEqual(["sm-x-001", "sm-x-002", "sm-x-003", "sm-x-004", "sm-x-005", "sm-x-006"]);
+    expect(built!.rows.every((r) => ["attention", "expertise", "decide"].includes(r.stage) && r.status === "open")).toBe(true);
+    // The map the run just built fed its own draft: the attention row, since the funnel starts there.
+    expect(draftInputOf(router, 1).strategyRow).toMatchObject({ id: "sm-x-001", stage: "attention" });
+
+    // The next run finds the map in state/ (not yet collected) and does not build again.
+    // (A different text, or the dedupe check would see a repeat of the run above.)
+    const other = "Handoffs fail on Fridays. The calendar knew before the team did.";
+    const router2 = fakeRouterSequence([finalTurn(goodPost({ text: other, mainPostText: other, hook: other }))]);
+    const store2 = new MemoryDurableStepStore();
+    const second = await new WorkflowEngine(store2).run(createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router: router2, autoApprove: true }), { ...params, runId: "x_learning_build_2" });
+    expect(second.status).toBe("completed");
+    expect((await store2.listSteps("x_learning_build_2")).map((s) => s.stepId)).not.toContain("01c-build-strategy-map");
+    expect(draftInputOf(router2, 0).strategyRow).toBeDefined();
+    const record = await env.store.readJson<{ readiness: { present: string[] } }>("acme", ["state", "runs", "x_learning_build_2"]);
+    expect(record!.readiness.present).toContain("strategy-map");
+  });
+
   it("a never-topic HOLDS an explicit request, and a subject in the window or a never-topic skips a catalog row", async () => {
     await projectAll(env);
     // Requested topic touches the never-topic → held, no model call spent.

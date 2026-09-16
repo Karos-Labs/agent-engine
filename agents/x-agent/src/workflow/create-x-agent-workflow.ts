@@ -27,6 +27,7 @@ import {
   commitDirectiveAfterExhaustion,
   readClientIntelContext,
   readLearningContext,
+  ensureStrategyMap,
   subjectWindowConflict,
   touchesNeverTopic,
   stageForRun,
@@ -307,7 +308,6 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
     // The stage this run writes for: the calendar slot's, else D32's default
     // mix walked against what the subject window already holds.
     const stage = stageForRun(runDirection.slotStage, learning.subjectWindow);
-    const strategyRow = pickStrategyRow(learning.strategyMap, stage, learning.subjectWindow);
 
     const beliefs = await wf.step.code("02-load-memory-shelf", async () => {
       const outcome = await tools["memory.read"]!.execute({ scope: "beliefs" }, { ctx });
@@ -400,6 +400,27 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
     // copy (voice rows, positioning, whitespace, meeting notes) — the client
     // knowledge this platform holds, read by the scout and the draft alike.
     const clientIntelContext = await readClientIntelContext(wf, tools, ctx, "read-intel-context");
+
+    // ── 01c: the strategy map — handed to the run, or built by it (C1, SCRUM-464) ──
+    //
+    // A client nobody has planned for reaches here with no map. This is the
+    // first moment a run holds the profile, the charter and the knowledge
+    // together, so it builds the map now (one model call, checkpointed),
+    // writes it to `state/x/strategy-map.json` for the middleware to collect,
+    // and selects from it below. The next run finds it and pays nothing.
+    const strategy = await ensureStrategyMap(wf, { tools, promptStore: options.promptStore, router: options.router }, ctx, {
+      platform: "x",
+      learning,
+      stepId: "01c-build-strategy-map",
+      input: {
+        today: new Date().toISOString().slice(0, 10),
+        clientProfile: clientContext.profile,
+        ...(clientContext.strategy ? { accountCharter: clientContext.strategy } : {}),
+        ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
+        forbiddenTopics: [...intake.forbiddenTopics, ...(learning.preferences?.neverTopics ?? [])],
+      },
+    });
+    const strategyRow = pickStrategyRow(strategy.map, stage, learning.subjectWindow);
     const clientVoiceContext = buildClientVoiceContext(clientContext.profile, clientContext.voiceRules, clientContext.brand);
 
     // ── 07a: the trend scout — only when no one planned this run's subject ──

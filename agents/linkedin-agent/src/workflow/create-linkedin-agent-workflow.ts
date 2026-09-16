@@ -27,6 +27,7 @@ import {
   dedupeRetryDirective,
   readClientIntelContext,
   readLearningContext,
+  ensureStrategyMap,
   subjectWindowConflict,
   touchesNeverTopic,
   stageForRun,
@@ -449,7 +450,6 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
     // The stage this run writes for: the calendar slot's, else D32's default
     // mix walked against what the subject window already holds.
     const stage = stageForRun(runDirection.slotStage, learning.subjectWindow);
-    const strategyRow = pickStrategyRow(learning.strategyMap, stage, learning.subjectWindow);
 
     const beliefs = await wf.step.code("02-load-memory-shelf", async () => {
       const outcome = await tools["memory.read"]!.execute({ scope: "beliefs" }, { ctx });
@@ -550,6 +550,22 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
     // copy — the client knowledge this platform holds, read by the scout and
     // the draft alike.
     const clientIntelContext = await readClientIntelContext(wf, tools, ctx, "read-intel-context");
+
+    // ── 01c: the strategy map — handed to the run, or built by it (C1, SCRUM-464) ──
+    // See x-agent's step of the same name. LinkedIn's rows carry the archetype as `type`.
+    const strategy = await ensureStrategyMap(wf, { tools, promptStore: options.promptStore, router: options.router }, ctx, {
+      platform: "linkedin",
+      learning,
+      stepId: "01c-build-strategy-map",
+      input: {
+        today: new Date().toISOString().slice(0, 10),
+        clientProfile: clientContext.profile,
+        ...(clientContext.strategy ? { accountCharter: clientContext.strategy } : {}),
+        ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
+        forbiddenTopics: [...intake.forbiddenTopics, ...(learning.preferences?.neverTopics ?? [])],
+      },
+    });
+    const strategyRow = pickStrategyRow(strategy.map, stage, learning.subjectWindow);
     const clientVoiceContext = buildClientVoiceContext(clientContext.profile, clientContext.voiceRules, clientContext.brand);
 
     // ── 07a: the trend scout — only when no one planned this run's subject ──

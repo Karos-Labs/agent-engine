@@ -144,8 +144,9 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // (C7, the learning loop — SCRUM-458/459/460 — adds two: the read side
     // `client.getLearningContext` in karos-client and the write side
     // `ledger.writeRunState` in karos-ledger. 63 -> 65, both in bundled
-    // servers this count covers. Measured off the assertion, as before.)
-    expect(names.length).toBe(65);
+    // servers this count covers. Measured off the assertion, as before.
+    // C1 / SCRUM-464 adds `ledger.writeStrategyMap`: 65 -> 66.)
+    expect(names.length).toBe(66);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }

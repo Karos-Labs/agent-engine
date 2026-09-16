@@ -100,6 +100,8 @@ export interface LearningContextLike {
   whatWorks?: Record<string, unknown>;
   strategyMap?: LearningStrategyMap;
   craft?: LearningCraft;
+  /** Provenance per present file (C7 §2.0 `source`), when the reader passed it through. */
+  sources?: Record<string, { projectedAt?: string; projectedBy?: string; contentHash?: string; rows?: number } | undefined>;
   readiness: { present: string[]; absent: string[] };
 }
 
