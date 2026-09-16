@@ -26,6 +26,18 @@ import {
   checkOutputDedupe,
   dedupeRetryDirective,
   readClientIntelContext,
+  readLearningContext,
+  subjectWindowConflict,
+  touchesNeverTopic,
+  stageForRun,
+  pickStrategyRow,
+  craftRulesForPrompt,
+  feedbackForPrompt,
+  writeRunState,
+  GOAL_LINE,
+  platformStateForDrafting,
+  preferencesForDrafting,
+  strategyRowForDrafting,
   toAgentContext,
   runGate,
   finalizeDeliverable,
@@ -50,6 +62,7 @@ import {
 import { LinkedInDraftAgent, type LinkedInPostOutput } from "../agent/linkedin-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderLinkedInDraftsMarkdown } from "./render-drafts-markdown.js";
+import { whyNowFor } from "./learning.js";
 import { checkLinkedInFormatting, reflowLinkedInText, type LinkedInFormattingReport } from "./linkedin-format.js";
 import {
   ARCHETYPES_FOR_MODE,
@@ -427,6 +440,17 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       };
     });
 
+    // ── 01b: what the PLATFORM has learned about this client on LinkedIn (C7, A1) ──
+    //
+    // The seven optional files the middleware projects before dispatch (see
+    // x-agent's step of the same name for the history). Best-effort and
+    // checkpointed: a client with nothing projected drafts exactly as before.
+    const learning = await readLearningContext(wf, tools, ctx, "linkedin", "01b-read-learning-context");
+    // The stage this run writes for: the calendar slot's, else D32's default
+    // mix walked against what the subject window already holds.
+    const stage = stageForRun(runDirection.slotStage, learning.subjectWindow);
+    const strategyRow = pickStrategyRow(learning.strategyMap, stage, learning.subjectWindow);
+
     const beliefs = await wf.step.code("02-load-memory-shelf", async () => {
       const outcome = await tools["memory.read"]!.execute({ scope: "beliefs" }, { ctx });
       return outcome.status === "success" ? outcome.result : { scope: "beliefs", beliefs: {} };
@@ -578,26 +602,44 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       // Single post selection precedence (RFC-02 §5, "same recipe" as X §3): an
       // explicit client request wins, then a reserved catalog topic, then the
       // scout's on-brand trend, then the research-derived fallback.
+      // C7: a topic the client said never to touch is refused whoever proposed
+      // it — an explicit request for one HOLDS with the reason, every other
+      // source falls through — and a subject already in this platform's
+      // window is not proposed again (same rules as x-agent's step 07).
+      const never = (topic: string) => touchesNeverTopic(topic, learning.preferences);
+      const repeated = (topic: string) => subjectWindowConflict(topic, learning.subjectWindow);
       if (runDirection.topicOverride) {
+        const hit = never(runDirection.topicOverride);
+        if (hit) throw new WorkflowHeld(`the requested topic touches a never-topic the client set ("${hit}") — a person has to decide this one`);
         return { topic: runDirection.topicOverride, source: "requested" };
       }
       if (clientContext.requestedTopic) {
+        const hit = never(clientContext.requestedTopic);
+        if (hit) throw new WorkflowHeld(`the configured topic touches a never-topic the client set ("${hit}") — a person has to decide this one`);
         return { topic: clientContext.requestedTopic, source: "requested" };
       }
       const trend =
         scout !== undefined
           ? selectTrendCandidate(scout.candidates, modeSelection.mode, { avoidTopics: [...recentDecisions.summaries, ...crossChannelAvoidTopics(crossChannel)] })
           : undefined;
-      if (trend !== undefined && intake.trendJacking === "always" && trend.brandFit >= 4 && reservation.topics.length > 0) {
-        return { topic: trend.topic, source: "trend", trend };
+      const trendOk = trend !== undefined && never(trend.topic) === undefined && repeated(trend.topic) === undefined ? trend : undefined;
+      const reservedOk = reservation.topics.filter((t) => never(t) === undefined && repeated(t) === undefined);
+      if (trendOk !== undefined && intake.trendJacking === "always" && trendOk.brandFit >= 4 && reservedOk.length > 0) {
+        return { topic: trendOk.topic, source: "trend", trend: trendOk };
       }
-      if (reservation.topics.length > 0) {
-        return { topic: reservation.topics[0]!, source: "reserved" };
+      if (reservedOk.length > 0) {
+        return { topic: reservedOk[0]!, source: "reserved" };
       }
-      if (trend !== undefined) {
-        return { topic: trend.topic, source: "trend", trend };
+      if (trendOk !== undefined) {
+        return { topic: trendOk.topic, source: "trend", trend: trendOk };
       }
-      if (candidateSummary.candidateTopic) {
+      // The strategy map (C1 / SCRUM-464): the client's own problem × stage
+      // rows, picked for this run's stage — above the research fallback,
+      // below the catalog and the scout.
+      if (strategyRow !== undefined && never(strategyRow.idea) === undefined) {
+        return { topic: strategyRow.idea, source: "strategy", strategyRowId: strategyRow.id };
+      }
+      if (candidateSummary.candidateTopic && never(candidateSummary.candidateTopic) === undefined && repeated(candidateSummary.candidateTopic) === undefined) {
         return { topic: candidateSummary.candidateTopic, source: "research" };
       }
       throw new WorkflowHeld("no candidate topic available for this run — nothing honestly cleared selection");
@@ -670,6 +712,12 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
     const researchSources = (researchDigest ?? []).filter((d) => d.url !== undefined).map((d) => ({ url: d.url!, title: d.title }));
 
     // ── 09-14: draft execution via LinkedInDraftAgent, with machine/claim/compliance/hygiene gates ──
+    // The learning context in the shapes the drafting prompt reads
+    // (linkedin-craft §0, §14). Pure functions of step 01b's output.
+    const craftRules = craftRulesForPrompt(learning.craft);
+    const clientFeedback = feedbackForPrompt(learning.feedback);
+    const clientPreferences = preferencesForDrafting(learning.preferences);
+
     const draftAgent = new LinkedInDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
     /**
      * One full drafting pass: draft, every deterministic content gate, the
@@ -735,6 +783,15 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
             ...(dedupeRetrySteer !== undefined ? { dedupeAvoid: dedupeRetrySteer } : {}),
             // Omitted rather than passed as null when absent (see x-agent).
             ...(clientContext.strategy ? { accountCharter: clientContext.strategy } : {}),
+            // ── C7 (A1): what the platform has learned, as the prompt's §0/§14 read it ──
+            // Every key is omitted when the file was absent.
+            slotStage: stage,
+            ...(strategyRow !== undefined ? { strategyRow: strategyRowForDrafting(strategyRow) } : {}),
+            ...(learning.platformState !== undefined ? { platformState: platformStateForDrafting(learning.platformState) } : {}),
+            ...(learning.whatWorks !== undefined ? { whatWorks: learning.whatWorks } : {}),
+            ...(craftRules !== undefined ? { craftRules } : {}),
+            ...(clientFeedback.length > 0 ? { clientFeedback } : {}),
+            ...(clientPreferences !== undefined ? { clientPreferences } : {}),
             // Two distinct steers, kept apart on purpose: `pastFeedback` is what
             // this client has said across previous RUNS, `revisionRequest` is what
             // a reviewer asked about THIS draft minutes ago.
@@ -977,6 +1034,44 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
         },
         { ctx },
       );
+    });
+
+    // ── 19: the learning loop's write side (C7 §3, A2) ──
+    //
+    // One normalised record the middleware collects into the subject table
+    // and the platform state, plus the D11 goal line. LinkedIn's `type` is
+    // the archetype (its own post-type vocabulary); `targetAudience` is the
+    // prompt's existing audience line, so the record carries one whether or
+    // not the model filled the new `audience` field. Never fails the run.
+    await writeRunState(wf, tools, ctx, "19-write-run-state", {
+      platform: "linkedin",
+      deliverable: {
+        kind: "linkedin-post",
+        goal: draft.goal ?? stage,
+        audience: draft.audience ?? draft.targetAudience,
+        whyNow: draft.whyNow ?? whyNowFor(selected),
+        type: draft.archetype,
+        sources: (researchDigest ?? []).map((d) => d.url).filter((u): u is string => typeof u === "string"),
+      },
+      subjectRow: {
+        subject: selected.topic,
+        angle: draft.takeaway,
+        type: draft.archetype,
+        stage: draft.goal ?? stage,
+        goal: GOAL_LINE[draft.goal ?? stage],
+        status: "drafted",
+        assetKind: "linkedin-post",
+        strategyRowId: selected.strategyRowId ?? null,
+      },
+      platformStateDelta: {
+        postsByUs: 1,
+        topics: [selected.topic],
+        voiceNotes: [],
+        account: clientContext.identity.scope === "executive" ? { handle: clientContext.identity.executiveName } : { handle: typeof clientContext.profile["companyName"] === "string" ? (clientContext.profile["companyName"] as string) : "company" },
+      },
+      voiceNotes: review.notes.map((n) => ({ lesson: n.feedback, fromRevision: n.revision })),
+      rulesApplied: draft.rulesApplied,
+      readiness: learning.readiness,
     });
 
     return {

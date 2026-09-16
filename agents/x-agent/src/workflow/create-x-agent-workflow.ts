@@ -34,6 +34,10 @@ import {
   craftRulesForPrompt,
   feedbackForPrompt,
   writeRunState,
+  GOAL_LINE,
+  platformStateForDrafting,
+  preferencesForDrafting,
+  strategyRowForDrafting,
   toAgentContext,
   runGate,
   finalizeDeliverable,
@@ -58,7 +62,7 @@ import {
 import { MAX_THREAD_PARTS, XDraftAgent, type Lane, type XPostOutput } from "../agent/x-draft-agent.js";
 import { renderPreview, X_CHARACTER_LIMIT, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderXDraftsMarkdown } from "./render-drafts-markdown.js";
-import { GOAL_LINE, platformStateForDrafting, preferencesForDrafting, whyNowFor } from "./learning.js";
+import { whyNowFor } from "./learning.js";
 import { countRecentEngagementPosts, ENGAGEMENT_DAILY_CAP, LANES_FOR_MODE, selectLane } from "./lane.js";
 import type {
   XAgentWorkflowResult,
@@ -658,7 +662,7 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
             // layers as instructions with their ids, so the model can report
             // `rulesApplied`. Every key is omitted when the file was absent.
             slotStage: stage,
-            ...(strategyRow !== undefined ? { strategyRow: { id: strategyRow.id, stage: strategyRow.stage, idea: strategyRow.idea, ...(strategyRow.problem ? { problem: strategyRow.problem } : {}) } } : {}),
+            ...(strategyRow !== undefined ? { strategyRow: strategyRowForDrafting(strategyRow) } : {}),
             ...(learning.platformState !== undefined ? { platformState: platformStateForDrafting(learning.platformState) } : {}),
             ...(learning.whatWorks !== undefined ? { whatWorks: learning.whatWorks } : {}),
             ...(craftRules !== undefined ? { craftRules } : {}),

@@ -202,7 +202,7 @@ describe("SCRUM-325: prompt registry and latest.md drift", { timeout: 120_000 },
 
     it("fails when a prompt says 'never invent numbers' but stops naming gate.numbersSourced", () => {
       const root = fixtureRoot((r) => {
-        for (const file of ["5.md", "latest.md"]) {
+        for (const file of ["6.md", "latest.md"]) {
           const p = promptFile(r, "linkedin-agent", "linkedin-craft", file);
           writeFileSync(p, readFileSync(p, "utf8").replaceAll("gate.numbersSourced", "the sourcing check"));
         }

@@ -269,8 +269,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "linkedin-craft",
     agent: "linkedin-agent",
-    versions: ["1", "2", "3", "4", "5"],
-    latestVersion: "5",
+    versions: ["1", "2", "3", "4", "5", "6"],
+    latestVersion: "6",
     requires: { languageDirective: true, numbersSourced: true },
   },
   {
@@ -318,8 +318,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "reddit-craft",
     agent: "reddit-agent",
-    versions: ["1", "2", "3", "4", "5"],
-    latestVersion: "5",
+    versions: ["1", "2", "3", "4", "5", "6"],
+    latestVersion: "6",
     requires: { languageDirective: true, numbersSourced: true, structuredOutput: true },
     structuredOutputFields: ["replyBody", "text", "targetThreadUrl", "targetThreadTitle", "targetSubreddit", "disclosureIncluded", "sourcesUsed"],
   },

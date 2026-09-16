@@ -280,11 +280,18 @@ export function craftRulesForPrompt(craft: LearningCraft | undefined, limit = 40
   return lines.join("\n");
 }
 
-/** Recent client feedback in the two-line form the prompts already use for `pastFeedback`: the action and what changed. Skips rows with nothing a writer can act on. */
+/**
+ * Recent client feedback in the two-line form the prompts already use for
+ * `pastFeedback`: the action and what changed. Newest first, whatever order
+ * the projector wrote (the middleware writes newest first; a hand-placed
+ * fixture may not), and rows with nothing a writer can act on are skipped.
+ */
 export function feedbackForPrompt(feedback: { rows: LearningFeedbackRow[] } | undefined, limit = 8): string[] {
   if (!feedback) return [];
   const out: string[] = [];
-  for (const row of feedback.rows.slice(-limit).reverse()) {
+  const newestFirst = [...feedback.rows].sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""));
+  for (const row of newestFirst) {
+    if (out.length >= limit) break;
     if (row.action === "posted_with_edits" && row.originalText && row.finalText) {
       out.push(`Edited before posting (${row.at ?? "recently"}): the client changed the draft. Original: "${row.originalText.slice(0, 200)}" → Final: "${row.finalText.slice(0, 200)}"`);
     } else if ((row.action === "skipped" || row.action === "change_requested") && row.reason) {
@@ -294,6 +301,61 @@ export function feedbackForPrompt(feedback: { rows: LearningFeedbackRow[] } | un
     }
   }
   return out;
+}
+
+/** D11's goal line, in the client-facing words 02 §3.5 uses for each stage. */
+export const GOAL_LINE: Record<FunnelStage, string> = {
+  attention: "earn attention",
+  expertise: "show expertise",
+  decide: "help them decide",
+};
+
+/**
+ * The introduction doc (C7 §2.1), trimmed to what steers copy. Followers
+ * and totals are reporting; what works, the top posts' "why" and the voice
+ * notes are craft. Bounded so a long-lived account cannot swamp the prompt.
+ */
+export function platformStateForDrafting(state: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const whatWorks = state.whatWorks;
+  if (Array.isArray(whatWorks) && whatWorks.length > 0) out.whatWorks = whatWorks.filter((w) => typeof w === "string").slice(0, 8);
+  const voiceNotes = state.voiceNotes;
+  if (Array.isArray(voiceNotes) && voiceNotes.length > 0) out.voiceNotes = voiceNotes.filter((w) => typeof w === "string").slice(-8);
+  const topPosts = state.topPosts;
+  if (Array.isArray(topPosts) && topPosts.length > 0) {
+    out.topPosts = topPosts
+      .filter((p): p is { why?: string; metric?: string; url?: string } => Boolean(p) && typeof p === "object")
+      .slice(0, 5)
+      .map((p) => ({ ...(p.why ? { why: p.why } : {}), ...(p.metric ? { metric: p.metric } : {}), ...(p.url ? { url: p.url } : {}) }));
+  }
+  if (typeof state.postsByUs === "number") out.postsByUs = state.postsByUs;
+  return out;
+}
+
+/**
+ * The derived preferences (C7 §2.4) as standing instructions for the draft:
+ * never-topics (the vet already refused the topic; this is so the copy does
+ * not wander into one), standing instructions, the voice lessons learned
+ * from the client's edits, and likes. Undefined when there is nothing to say.
+ */
+export function preferencesForDrafting(preferences: LearningPreferences | undefined): Record<string, unknown> | undefined {
+  if (!preferences) return undefined;
+  const out: Record<string, unknown> = {};
+  if (preferences.neverTopics && preferences.neverTopics.length > 0) out.neverTopics = preferences.neverTopics.slice(0, 20);
+  if (preferences.standingInstructions && preferences.standingInstructions.length > 0) out.standingInstructions = preferences.standingInstructions.slice(0, 10);
+  const lessons = (preferences.voiceNotes ?? []).map((n) => n.lesson).filter((l): l is string => typeof l === "string" && l.trim().length > 0);
+  if (lessons.length > 0) out.voiceLessons = lessons.slice(-8);
+  const likes = (preferences.likes ?? []).map((l) => l.note).filter((n): n is string => typeof n === "string" && n.trim().length > 0);
+  if (likes.length > 0) out.likes = likes.slice(-5);
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * The strategy row as the drafting prompt reads it (`strategyRow` in the
+ * craft guides' §0): id, stage, idea and the buyer problem when it has one.
+ */
+export function strategyRowForDrafting(row: LearningStrategyRow): Record<string, unknown> {
+  return { id: row.id, stage: row.stage, idea: row.idea, ...(row.problem ? { problem: row.problem } : {}) };
 }
 
 // ── The write side ──

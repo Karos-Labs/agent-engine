@@ -28,6 +28,8 @@ const REQUESTED_PATH_STEP_IDS = [
   "00-channel-setup",
   "00a-load-client-config",
   "01-load-client-context",
+  // C7 (2026-09-16): the learning loop's read side.
+  "01b-read-learning-context",
   "02-load-memory-shelf",
   "03-load-recent-decisions",
   "04-read-intel-context",
@@ -55,6 +57,8 @@ const REQUESTED_PATH_STEP_IDS = [
   "19-persist-deliverable",
   "20-persist-manifest",
   "21-commit-and-record",
+  // C7 (2026-09-16): the learning loop's write side.
+  "22-write-run-state",
 ];
 
 function goodDraft() {

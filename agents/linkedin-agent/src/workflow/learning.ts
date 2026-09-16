@@ -1,17 +1,15 @@
-import type { XSelectedCandidate } from "./types.js";
+import type { LinkedInSelectedCandidate } from "./types.js";
 
 /**
- * C7 (SCRUM-458/459/460) — what is X-specific about the learning loop. The
- * shapes shared with LinkedIn and Reddit (`GOAL_LINE`,
- * `platformStateForDrafting`, `preferencesForDrafting`) live in
- * `@agent-engine/workflow`.
+ * C7 (SCRUM-466) — what is LinkedIn-specific about the learning loop. The
+ * shared shapes live in `@agent-engine/workflow`.
  */
 
 /**
  * "Why now", derived from how the topic was chosen when the model did not
  * state one (02 §3.5: news, trend, the client's request, or a planned row).
  */
-export function whyNowFor(selected: XSelectedCandidate): string {
+export function whyNowFor(selected: LinkedInSelectedCandidate): string {
   switch (selected.source) {
     case "requested":
       return "the client asked for this topic on this run";

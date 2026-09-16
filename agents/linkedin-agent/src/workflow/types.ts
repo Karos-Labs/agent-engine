@@ -119,13 +119,16 @@ export interface LinkedInTopicReservation {
 }
 
 /** `trend`: the scout's on-brand candidate took the slot (2026-09). */
-export type LinkedInCandidateSource = "requested" | "reserved" | "trend" | "research";
+/** `strategy`: a row of the client's strategy map took the slot (C7 / SCRUM-464, 2026-09-16). */
+export type LinkedInCandidateSource = "requested" | "reserved" | "trend" | "strategy" | "research";
 
 export interface LinkedInSelectedCandidate {
   topic: string;
   source: LinkedInCandidateSource;
   /** Present when `source === "trend"`: the scouted candidate, with its angle, hook, why-now and brand-fit bridge. */
   trend?: TrendCandidate;
+  /** Present when `source === "strategy"`: the strategy-map row this run took, so the subject row can name it (C7 §3.1 `strategyRowId`). */
+  strategyRowId?: string;
 }
 
 /**
