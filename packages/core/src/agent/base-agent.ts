@@ -71,14 +71,24 @@ function addPriorAttemptCost<TOutput>(outcome: TurnOutcome<TOutput>, prior: { co
  * copy attempts between them to the wrong side of that coin flip. The
  * deliverable was never the thing that did not fit.
  *
- * 4,000 characters (~1,000 tokens) is a real budget, not a gag: it is more
- * than any planning note in a healthy step in the fleet, and it reaches the
- * model as `maxLength` on its own output schema, which is the one place a
- * length instruction is reliably read. `clampOversizeValues` trims an
- * overshoot rather than rejecting the turn, so this bound can never itself
- * become a reason a step fails.
+ * 8,000 characters — about 1,300 words, or 2,000 tokens — is set DELIBERATELY
+ * high, under the owner's 2026-09-16 ruling that quality outranks cost. It is
+ * room for a full structural plan of an eight-slide carousel and then some;
+ * it is not room to draft every slide's final text twice and then draft it
+ * again in `output`, which is what 50,520 characters was. The saving is a
+ * side effect. The point is that a copy turn now lands around 5,000 output
+ * tokens with 3x headroom under the default ceiling, instead of inside 79
+ * tokens of it.
+ *
+ * It reaches the model as `maxLength` on its own output schema, which is the
+ * one place a length instruction is reliably read, and `clampOversizeValues`
+ * trims an overshoot rather than rejecting the turn — so this bound can never
+ * itself become a reason a step fails.
+ *
+ * If copy quality moves after this landed, this is the first number to look
+ * at, and raising it is cheap: the ceiling above it is now self-raising.
  */
-export const THOUGHT_MAX_CHARS = 4_000;
+export const THOUGHT_MAX_CHARS = 8_000;
 
 /** Step-scoped loop counters, shared by the draft phase and every revision so neither can reset the other's bound. */
 interface LoopState {
