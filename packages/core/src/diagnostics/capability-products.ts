@@ -127,8 +127,39 @@ export const PRODUCT_CAPABILITIES: readonly ProductCapabilities[] = [
   },
   {
     productId: "tiktok-agent",
-    title: "TikTok video",
+    title: "TikTok video (legacy — replaced by the three below, D08)",
     requires: ["external-research", "durable-workspace", "prompt-store", "video-transcription", "video-engine"],
+    enhances: ["media-artifact-storage"],
+  },
+  // ── D08's three, and their requirements are genuinely different ──
+  //
+  // This is not bookkeeping. `requires` is what a run cannot start without, and
+  // it is checked at the door — so getting it wrong means a run fails deep
+  // instead of being refused with a sentence naming what is missing.
+  {
+    productId: "tiktok-clipping-agent",
+    title: "TikTok clipping — a moment out of long-form footage",
+    // Transcription is non-negotiable here: the whole product is finding the
+    // moment inside someone's speech. A client with no transcription wired
+    // cannot clip, and should be told so before the run, not after the upload.
+    requires: ["external-research", "durable-workspace", "prompt-store", "video-transcription", "video-engine"],
+    enhances: ["media-artifact-storage"],
+  },
+  {
+    productId: "tiktok-content-design-agent",
+    title: "TikTok content design — a scripted short (beta, D20)",
+    // NOT `video-transcription`: there is nothing to transcribe. A scripted
+    // short is written, then plated over generated or library footage.
+    requires: ["external-research", "durable-workspace", "prompt-store", "video-engine"],
+    enhances: ["media-artifact-storage"],
+  },
+  {
+    productId: "tiktok-editing-agent",
+    title: "TikTok editing — the client's own video, cut and captioned",
+    // NOT `external-research`: D19 makes this on demand and outside
+    // sequencing. The client hands over the video and says what to
+    // communicate; nothing is researched and no topic is chosen.
+    requires: ["durable-workspace", "prompt-store", "video-transcription", "video-engine"],
     enhances: ["media-artifact-storage"],
   },
 

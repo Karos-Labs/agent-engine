@@ -36,15 +36,38 @@ export const KNOWN_PRODUCT_IDS = [
   "newsletter-agent",
   "campaign-orchestrator",
   "landing-builder-agent",
-  "branded-shorts-agent",
   "reputation-agent",
   "seo-geo-agent",
   "intel-report-agent",
-  // The podcast/commentary clip system, migrated from karos-tiktok-agent. Its
-  // own product, not a branded-shorts variant: branded-shorts turns ONE
-  // talking-head video into one short, this finds a moment inside someone
-  // else's long-form episode and puts the client's commentary on it.
+  // ── D08: TikTok is three agents with three inputs (SCRUM-455) ──
+  //
+  // Three product ids, two workflows. Clipping and content design share a
+  // workspace because they share their whole first half — intake, profile, the
+  // catalog seed, the client's voice, media checks, topic discovery, the scout
+  // and the claim — and differ only in which closure runs at the end. Editing
+  // is `branded-shorts-agent`'s workflow, because it takes the client's own
+  // finished video and needs none of the sourcing cascade, the topic catalog
+  // or the script writer. `buildWorkflowForProduct` is where a product becomes
+  // a workflow, and that is the seam the split uses rather than three copies
+  // of two thousand lines.
+  //
+  // All three map to the platform key `tiktok`: the client has ONE TikTok
+  // account and one subject history on it, not one per product we sell.
+  "tiktok-clipping-agent",
+  "tiktok-editing-agent",
+  "tiktok-content-design-agent",
+  // ── The two ids the three above replace ──
+  //
+  // DEPRECATED, and kept working on purpose. An in-flight run carries its
+  // product id in a Pub/Sub message that was published before this deploy, and
+  // a client whose catalog card has not moved yet still dispatches the old id.
+  // Removing them would fail those runs at the door for a rename.
+  //
+  // `tiktok-agent` is the one whose behaviour cannot be predicted from the
+  // card: its format fell out of whichever sourcing tier happened to answer.
+  // That is what D08 fixed, and why it should not outlive the portal's move.
   "tiktok-agent",
+  "branded-shorts-agent",
 ] as const;
 export type ProductId = (typeof KNOWN_PRODUCT_IDS)[number];
 
@@ -178,10 +201,21 @@ export function buildWorkflowForProduct(productId: ProductId, deps: AgentRuntime
     }
     case "landing-builder-agent":
       return createLandingBuilderAgentWorkflow(deps);
+    // D08's "editing": the client uploads, the agent cuts and adds graphics and
+    // captions. On demand, outside sequencing (D19). One workflow, two ids
+    // until the portal's card moves.
+    case "tiktok-editing-agent":
     case "branded-shorts-agent":
       return createBrandedShortsAgentWorkflow(deps);
+    // D08's "clipping" and "content design". The variant is the only thing
+    // that differs, and it decides the ONE thing that used to be decided by
+    // accident: which format the run produces.
+    case "tiktok-clipping-agent":
+      return createTikTokAgentWorkflow({ ...deps, variant: "clipping" });
+    case "tiktok-content-design-agent":
+      return createTikTokAgentWorkflow({ ...deps, variant: "content-design" });
     case "tiktok-agent":
-      return createTikTokAgentWorkflow(deps);
+      return createTikTokAgentWorkflow({ ...deps, variant: "auto" });
     case "reputation-agent":
       return createReputationPulseWorkflow({ ...deps, store: deps.workspaceStore });
     // ── The two research agents run unattended, by product decision ──

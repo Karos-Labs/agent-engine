@@ -26,6 +26,24 @@ import {
   dedupeRetryDirective,
   persistReviewFeedbackToMemory,
   readClientIntelContext,
+  // C7, the learning loop (SCRUM-459/460/464/466). The six obligations in
+  // `docs/AGENT-ARCHITECTURE.md` §1, in that order — the order is the
+  // standard, not this agent's preference.
+  readLearningContext,
+  stageForRun,
+  touchesNeverTopic,
+  subjectWindowConflict,
+  ensureStrategyMap,
+  pickStrategyRow,
+  strategyRowForDrafting,
+  craftRulesForPrompt,
+  feedbackForPrompt,
+  preferencesForDrafting,
+  platformStateForDrafting,
+  resolveGoalLine,
+  writeRunState,
+  type LearningContextLike,
+  type ResolvedGoalLine,
   readOutputHistoryForDedup,
   readPastFeedback,
   readRunDirection,
@@ -50,6 +68,9 @@ import {
   CLIP_DURATION_MIN_SECONDS,
   CLIP_LANE,
   DEFAULT_CLIP_CONFIG,
+  formatForVariant,
+  modeForVariant,
+  type TikTokVariant,
   MAX_RUN_COST_USD,
   MomentSelectionSchema,
   ShortScriptSchema,
@@ -92,6 +113,13 @@ export interface CreateTikTokAgentWorkflowOptions {
   repoRoot?: string;
   /** Injectable for tests; the brand-logo download uses it. */
   fetchImpl?: typeof fetch;
+  /**
+   * Which of D08's three TikTok agents this is (SCRUM-455). Defaults to
+   * `auto`, the pre-split behaviour, so every existing caller and every
+   * in-flight run keeps working unchanged. `buildWorkflowForProduct` passes
+   * the real one.
+   */
+  variant?: TikTokVariant;
 }
 
 /**
@@ -927,7 +955,15 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         return { config: parsed.data, forbiddenTopics: readForbiddenTopics(raw), contentPillars: readStringList(raw, "contentPillars"), configured: true };
       },
     );
-    const config: TikTokClipConfig = intakeConfig.config;
+    const variant: TikTokVariant = options.variant ?? "auto";
+    /**
+     * The client's `mode` is a preference about what they are comfortable
+     * with; the variant is which product they pressed, and the product wins.
+     * A card that says "clipping" may not answer with a generated short
+     * because the client's block happens to say `original` — the two are
+     * answers to different questions, and only one of them is on the card.
+     */
+    const config: TikTokClipConfig = { ...intakeConfig.config, mode: modeForVariant(variant, intakeConfig.config.mode) };
     const forbiddenTopics: readonly string[] = intakeConfig.forbiddenTopics;
 
     // ── 00a: who the client is — the discovery step's grounding, and the
@@ -986,6 +1022,48 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     const recentPostsDirective = dedupeDirective(outputHistory);
     const clientIntelContext = await readClientIntelContext(wf, tools, ctx, "read-intel-context");
     const pastFeedback = await readPastFeedback(wf, tools, ctx, "read-past-feedback");
+
+    // ── 01b: the learning context (C7 §2) ──
+    //
+    // Above both produce-closures and their `rev()` scopes, so a revision
+    // drafts against the same context the first attempt saw. All three TikTok
+    // products share the platform key `tiktok`, because the client has ONE
+    // TikTok account and one subject history on it — not one per product we
+    // happen to sell.
+    const learning: LearningContextLike = await readLearningContext(wf, tools, ctx, "tiktok", "01b-read-learning-context");
+    const stage = stageForRun(runDirection.slotStage, learning.subjectWindow);
+    /** What this account has already said inside the window, plus what the client ruled out. */
+    const learningAvoid = [
+      ...(learning.subjectWindow?.rows ?? []).map((r) => r.subject).filter((v): v is string => typeof v === "string" && v.trim().length > 0),
+      ...(learning.preferences?.neverTopics ?? []),
+    ];
+
+    // ── 01c: the strategy map — the topic pool with a stage on every row ──
+    //
+    // Built here because it needs the profile and the intel report together,
+    // and both are in hand by now. `ensureStrategyMap` holds its own two
+    // guards: nothing for a client with nothing projected (C7 §4.1), nothing
+    // when there is no material to plan from. That matters more here than
+    // anywhere else — this agent runs under a hard $2 ceiling
+    // (`MAX_RUN_COST_USD`), and an unbudgeted model call on a cold client is
+    // what `tiktok-short-two-dollar-cap` exists to police.
+    const strategy = await ensureStrategyMap(
+      wf,
+      { tools, promptStore: options.promptStore, router: options.router },
+      ctx,
+      {
+        platform: "tiktok",
+        learning,
+        stepId: "01c-build-strategy-map",
+        input: {
+          today: new Date().toISOString().slice(0, 10),
+          clientProfile: profile,
+          ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
+          forbiddenTopics: [...forbiddenTopics, ...(learning.preferences?.neverTopics ?? [])],
+        },
+      },
+    );
+    const strategyRow = pickStrategyRow(strategy.map, stage, learning.subjectWindow);
 
     // ── 03r: the client's own documents, read ONCE for the writer ──
     //
@@ -1213,7 +1291,20 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       // SHARED PRIMITIVE, not a local read of `customPrompt` — the local
       // version promoted ANY typed sentence to a topic, so "keep it shorter
       // and skip the emoji" became the subject of the clip.
-      if (runDirection.topicOverride) return { topic: runDirection.topicOverride, topicSource: "requested" };
+      if (runDirection.topicOverride) {
+        // C7: a client's never-topic outranks a person's typed request, and it
+        // HOLDS. Someone asked for this subject by name; clipping a different
+        // one would read as having honoured the request. Before the scout,
+        // before transcription and before any drafting model, so the refusal
+        // costs nothing.
+        const refused = touchesNeverTopic(runDirection.topicOverride, learning.preferences);
+        if (refused !== undefined) {
+          throw new WorkflowHeld(
+            `"${runDirection.topicOverride}" touches a never-topic the client set ("${refused}") — nothing was drafted in its place`,
+          );
+        }
+        return { topic: runDirection.topicOverride, topicSource: "requested" };
+      }
 
       const reserved = await tryReserve();
       if (reserved !== undefined) return { ...reserved, topicSource: "reserved" };
@@ -1330,9 +1421,13 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       throw new WorkflowHeld(`no source footage from any tier — ${tierOutcomes.join("; ")}`);
     });
 
-    // `let`: a client's footage with no speech in it turns a commentary clip
-    // into an original short over that footage (see 02-transcribe).
-    let format: ClipFormat = intake.sourceTier === "stock" ? "original-short" : "commentary-clip";
+    // `let`: on `auto`, a client's footage with no speech in it turns a
+    // commentary clip into an original short over that footage (see
+    // 02-transcribe). On the two named variants the format is the product, so
+    // it is decided here and never moves — which is the whole point of the
+    // split: before it, what a run produced fell out of whichever sourcing
+    // tier happened to answer, and nobody pressing a button could predict it.
+    let format: ClipFormat = formatForVariant(variant) ?? (intake.sourceTier === "stock" ? "original-short" : "commentary-clip");
     /** The client's own silent footage, when it is what the plates are cut from. */
     let clientFootage: { path: string; durationSeconds: number } | undefined;
 
@@ -1421,6 +1516,17 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           clientFootage = { path: intake.sourcePath, durationSeconds: transcript.durationSeconds };
         } else {
           console.warn(`02-transcribe: the silent source is ${transcript.durationSeconds ?? "of unknown length"} s, under ${MIN_CLIENT_FOOTAGE_SECONDS}; the short's plates come from the library instead`);
+        }
+        if (variant === "clipping") {
+          // The clipping agent does not write scripts. A source with no speech
+          // in it has no moment to cut, and pivoting to a generated short here
+          // would hand back a different product than the one that was asked
+          // for — the same reasoning as the never-topic hold: answering a
+          // request with something else reads as having honoured it.
+          throw new WorkflowHeld(
+            `the source has no speech to clip — the clipping agent cuts moments out of real footage and does not write scripts; ` +
+              `a scripted short over this footage is the content-design agent's job`,
+          );
         }
         format = "original-short";
         moment = await wf.step.code("03-select-moment", () => ({
@@ -1715,6 +1821,12 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
               // place their direction and brief matter most.
               ...runDirectionField(runDirection),
               topic,
+              // ── C7: the same instructions the script writer gets (D41) ──
+              slotStage: stage,
+              ...(craftRulesForPrompt(learning.craft) !== undefined ? { craftRules: craftRulesForPrompt(learning.craft) } : {}),
+              ...(feedbackForPrompt(learning.feedback).length > 0 ? { clientFeedback: feedbackForPrompt(learning.feedback) } : {}),
+              ...(preferencesForDrafting(learning.preferences) !== undefined ? { clientPreferences: preferencesForDrafting(learning.preferences) } : {}),
+              ...(learning.platformState !== undefined ? { platformState: platformStateForDrafting(learning.platformState) } : {}),
               hookLine: moment.hookLine,
               hookType: moment.hookType,
               clipText: bounds.text,
@@ -1894,6 +2006,18 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
                   const exec = await runAgentStepWithCommitSteer(wf, agentStepId, agent, {
                     ...runDirectionField(runDirection),
                     topic,
+                    // ── C7: what the platform has learned, as INSTRUCTIONS (D41) ──
+                    //
+                    // Not a lint on the finished draft. Every field is absent
+                    // for a client nobody has projected anything for, and the
+                    // prompt then reads exactly as it did before the loop.
+                    slotStage: stage,
+                    ...(craftRulesForPrompt(learning.craft) !== undefined ? { craftRules: craftRulesForPrompt(learning.craft) } : {}),
+                    ...(feedbackForPrompt(learning.feedback).length > 0 ? { clientFeedback: feedbackForPrompt(learning.feedback) } : {}),
+                    ...(preferencesForDrafting(learning.preferences) !== undefined ? { clientPreferences: preferencesForDrafting(learning.preferences) } : {}),
+                    ...(learning.platformState !== undefined ? { platformState: platformStateForDrafting(learning.platformState) } : {}),
+                    ...(strategyRow !== undefined ? { strategyRow: strategyRowForDrafting(strategyRow) } : {}),
+
                     ...(intake.discovered ? { topicBrief: intake.discovered } : {}),
                     clientProfile: profile,
                     ...clientVoice,
@@ -2843,6 +2967,34 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     });
     const { commentary: copy, script, voiceover, renderedPath, durationSeconds, uploaded } = review.output;
 
+    /**
+     * D11's goal line — what this clip is for, who for, and why now.
+     *
+     * Resolved ONCE and used for both the client's card and the state record
+     * (C7 §3.2). Like instagram, this agent takes the structured-field shape:
+     * the client receives an mp4 and a caption, there is no drafts markdown to
+     * hang a meta bullet on, and the caption is what they paste into TikTok —
+     * our reasoning about funnel stages does not belong in it.
+     *
+     * Neither drafting model states a goal today, so every value comes from
+     * the fallback, which is `resolveGoalLine`'s designed path: D11 holds for
+     * a silent model.
+     */
+    const goalLine: ResolvedGoalLine = resolveGoalLine(
+      {},
+      {
+        stage,
+        whyNow:
+          intake.topicSource === "requested"
+            ? "asked for by name on this run"
+            : intake.topicSource === "footage"
+              ? "the client handed over this recording"
+              : intake.topicSource === "reserved"
+                ? `a planned row at the ${stage} stage`
+                : "what this client's audience is asking about now",
+      },
+    );
+
     // ── 12: QUEUE ──
     const deliverableId: string = await wf.step.code("12-persist-deliverable", async () => {
       const result = (await callTool(
@@ -2856,6 +3008,12 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             topicSource: intake.topicSource,
             lane: CLIP_LANE,
             format,
+            // D11 / C3: the point of the post, on the thing the client opens.
+            goalLine,
+            // Which of D08's three agents made this. `format` says what it is;
+            // this says which card was pressed, and on `auto` the two can
+            // still disagree — which is why the legacy id is deprecated.
+            variant,
             clipPath: renderedPath,
             caption: copy.caption,
             about: copy.about,
@@ -2912,6 +3070,39 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           { ctx },
         );
       }
+    });
+
+    // ── 14: what this run learned, handed back (C7 §3) ──
+    //
+    // Never throws: a failed write is recorded on the step and the clip still
+    // stands. A video the client can post is worth more than a row in a table,
+    // and the row can be rebuilt from the deliverable.
+    await writeRunState(wf, tools, ctx, "14-write-run-state", {
+      platform: "tiktok",
+      deliverable: {
+        kind: "tiktok-clip",
+        goal: goalLine.goal,
+        ...(goalLine.audience !== undefined ? { audience: goalLine.audience } : {}),
+        whyNow: goalLine.whyNow,
+        // TikTok's own type vocabulary is the format, which after the split is
+        // also the product: `commentary-clip` is clipping, `original-short` is
+        // content design.
+        type: format,
+      },
+      subjectRow: {
+        subject: topic,
+        type: format,
+        stage,
+        goal: goalLine.goalText,
+        status: "drafted",
+        assetKind: "tiktok-clip",
+        // Honest null rather than an invented id: a made-up row would make the
+        // map look spent. Only a topic that actually came off the map carries
+        // one, and on this agent the catalog is still the usual source.
+        strategyRowId: strategyRow !== undefined && intake.topicSource === "reserved" && strategyRow.idea === topic ? strategyRow.id : null,
+      },
+      platformStateDelta: { postsByUs: 1, topics: [topic] },
+      readiness: learning.readiness,
     });
 
     return {

@@ -112,6 +112,12 @@ const GATE_STEP_IDS_BY_NEW_PRODUCT: Record<Exclude<ProductId, OriginalChannelPro
   "seo-geo-agent": ["03-prompt-set-review", "12-fix-generation-review", "16-batch-review-r0"],
   "intel-report-agent": ["04-batch-review", "04-batch-review-r0"],
   "tiktok-agent": ["11-clip-review", "11-clip-review-r0"],
+  // D08's three (SCRUM-455). Two workflows, so two gate ids: clipping and
+  // content design are one workspace and share `11-clip-review`; editing is
+  // branded-shorts' workflow and keeps `10-delivery-review`.
+  "tiktok-clipping-agent": ["11-clip-review", "11-clip-review-r0"],
+  "tiktok-content-design-agent": ["11-clip-review", "11-clip-review-r0"],
+  "tiktok-editing-agent": ["10-delivery-review"],
 };
 
 /** Recovers a step id's intended ordering position from its own "NN-..." prefix — the convention every step id in this codebase already follows (`00-`, `01-`, `10a-`, ...). Ties (e.g. `"10-delivery-review"` vs `"10a-upload-to-gcs"`) fall back to a plain string compare. */

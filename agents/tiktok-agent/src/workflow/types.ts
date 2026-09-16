@@ -40,6 +40,63 @@ export const ClipFormatSchema = z.enum(["commentary-clip", "original-short"]);
 export type ClipFormat = z.infer<typeof ClipFormatSchema>;
 
 /**
+ * Which of D08's three TikTok agents this run is (SCRUM-455).
+ *
+ * D08: "TikTok is three agents with three inputs: clipping, editing (today
+ * 'Branded shorts', to rename), content design." Two of the three live in this
+ * workspace and the third is `branded-shorts-agent`, because editing takes the
+ * client's own finished video and needs none of the sourcing cascade, the
+ * topic catalog or the script writer.
+ *
+ * ONE WORKSPACE, THREE PRODUCT IDS — deliberately. Clipping and content design
+ * share their whole first half: intake, profile, the catalog seed, the client's
+ * voice, media checks, topic discovery, the scout and the claim. Splitting the
+ * file would have duplicated about two thousand lines whose only difference is
+ * which closure runs at the end, and a bug fixed in one copy is a bug left in
+ * the other. `buildWorkflowForProduct` is where a product becomes a workflow,
+ * and that is the seam this uses.
+ *
+ * What the variant decides is the ONE thing that was previously decided by
+ * accident: which format the run produces. `auto` is the legacy behaviour,
+ * where the format fell out of whichever sourcing tier happened to answer.
+ *
+ * - `clipping` — a moment out of real footage, and nothing else. It never
+ *   generates b-roll and never writes a script, so it HOLDS when there is
+ *   nothing to clip rather than quietly delivering a different product.
+ * - `content-design` — a scripted short, and nothing else. It never touches
+ *   anyone else's footage.
+ * - `auto` — the pre-split behaviour, kept for the legacy `tiktok-agent`
+ *   product id so an in-flight run and a client whose catalog card has not
+ *   moved yet both keep working. Deprecated; it is the one variant whose
+ *   output a client cannot predict from the card they pressed.
+ */
+export const TikTokVariantSchema = z.enum(["clipping", "content-design", "auto"]);
+export type TikTokVariant = z.infer<typeof TikTokVariantSchema>;
+
+/** The format a variant is allowed to produce, or `undefined` when it may produce either. */
+export function formatForVariant(variant: TikTokVariant): ClipFormat | undefined {
+  if (variant === "clipping") return "commentary-clip";
+  if (variant === "content-design") return "original-short";
+  return undefined;
+}
+
+/**
+ * The sourcing mode a variant forces on the client's config.
+ *
+ * The client's own `mode` is a preference about what they are comfortable
+ * with; the variant is which product they pressed. A product that says
+ * "clipping" on the card may not answer with a generated short because the
+ * client's block happens to say `original`, so the variant wins — and a client
+ * who set `commentary` still gets `commentary` from the clipping agent,
+ * because that is the same answer.
+ */
+export function modeForVariant(variant: TikTokVariant, configured: TikTokClipConfig["mode"]): TikTokClipConfig["mode"] {
+  if (variant === "clipping") return "commentary";
+  if (variant === "content-design") return "original";
+  return configured;
+}
+
+/**
  * The per-client settings. Every field is optional now — a client with no
  * `tiktokClips` block at all can still run in `original` mode, because an
  * original short needs no rights decision about anyone else's footage. What
