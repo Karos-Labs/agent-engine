@@ -8,6 +8,7 @@ import {
   feedbackForPrompt,
   goalLineBullets,
   pickStrategyRow,
+  preferredByPerformance,
   resolveGoalLine,
   readLearningContext,
   readRunDirection,
@@ -261,5 +262,51 @@ describe("resolveGoalLine and goalLineBullets (D11 / C3, SCRUM-457)", () => {
     });
     expect(bullets[1]).toBe("**Why now:** we are replying to while it is live");
     expect(bullets.join(" ")).not.toContain("http");
+  });
+});
+
+/**
+ * D17 for Instagram, and the same question everywhere else: which of the
+ * options this agent branches on does THIS account's own history favour.
+ *
+ * The run never sees a metric. Performance ingestion (N6) writes outliers with
+ * a lift into `what-works.json`, and this reads them — so the arithmetic lives
+ * where the numbers live and a reviewer disagrees with a lift, not a verdict.
+ */
+describe("preferredByPerformance", () => {
+  const allowed = ["carousel", "single"] as const;
+
+  it("with nothing measured, prefers nothing — the caller's default stands", () => {
+    expect(preferredByPerformance(undefined, allowed)).toBeUndefined();
+    expect(preferredByPerformance({}, allowed)).toBeUndefined();
+    expect(preferredByPerformance({ outliers: [] }, allowed)).toBeUndefined();
+  });
+
+  it("takes the strongest option and says by how much", () => {
+    const pick = preferredByPerformance(
+      { outliers: [{ trait: "carousel", lift: 1.4 }, { trait: "single", lift: 3.2 }] },
+      allowed,
+    );
+    expect(pick).toEqual({ option: "single", lift: 3.2, why: "single outperforms this account's median by 3.2×" });
+  });
+
+  it("ignores a lift that is not evidence of anything", () => {
+    // 1.0 is "no different from this account's median", and the floor sits
+    // just above it. A default that flips on noise is worse than a rotation,
+    // because it looks like a decision.
+    expect(preferredByPerformance({ outliers: [{ trait: "single", lift: 1.05 }] }, allowed)).toBeUndefined();
+    expect(preferredByPerformance({ outliers: [{ trait: "single", lift: 0.4 }] }, allowed)).toBeUndefined();
+  });
+
+  it("ignores traits that name no option, which is most of them", () => {
+    // `what-works` carries prose traits for the prompt to read — "a number in
+    // line 1" is a real outlier and a meaningless answer to "carousel or
+    // single". Only traits naming something the code branches on count.
+    expect(preferredByPerformance({ outliers: [{ trait: "a number in line 1", lift: 9 }] }, allowed)).toBeUndefined();
+  });
+
+  it("survives a malformed file without throwing, like every other reader here", () => {
+    expect(preferredByPerformance({ outliers: "not an array" }, allowed)).toBeUndefined();
+    expect(preferredByPerformance({ outliers: [null, 7, { trait: 12, lift: "high" }] as unknown[] }, allowed)).toBeUndefined();
   });
 });

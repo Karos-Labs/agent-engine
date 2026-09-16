@@ -352,6 +352,20 @@ could not run.
 11. **`agent-exhaustion.ts:94`** — not imported by this agent. Recorded so nobody "fixes" a hold that cannot
     fire here. Fixing a dead guard is how dead guards get written.
 12. **Every gate's bar.** Not one floor, threshold, rubric or banned list moves.
+13. **A typed request for a subject the client has ruled out** (`03-claim-topic`, added with the learning
+    loop — C7 / SCRUM-459). Someone typed this subject for this run, and the client has it on their
+    never-topics list. This is the one hold on the list that is not a fault in our machinery, and it is
+    still not a quality verdict: no judge scored anything, no floor refused anything, and no amount of
+    redrafting would make it deliverable. Drafting something else instead would be worse than holding,
+    because the person would receive a post and read it as the one they asked for. Compare the two
+    neighbours that deliberately do **not** hold: a catalogue-sourced candidate that touches a never-topic
+    is skipped and the run picks again, and the standing `requestedSubject` config field falls through to
+    the seed — because in neither case did a person ask for this subject on this run, so there is nobody to
+    answer. The refusal is also free: it fires at `03`, before research and before the copy model.
+
+**A fourth hold, added on purpose.** The count in `held-sites.test.ts` moved from three to four with this
+entry, which is exactly the protocol this section exists to enforce: the bar for a new hold in this agent is
+an RFC entry, not a code review.
 
 **Reclassified, not kept:** `WF:1246` → `WorkflowBlockedIntake`; `research-lanes.ts:320` →
 `WorkflowBlockedIntake`. Both stop the run; both stop it honestly, as a missing input rather than a

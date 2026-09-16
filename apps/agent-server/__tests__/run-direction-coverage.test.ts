@@ -57,16 +57,38 @@ function sourceFiles(dir: string): string[] {
 }
 
 /**
+ * The products that do NOT live in a directory of their own name.
+ *
+ * D08 (SCRUM-455) split TikTok into three product ids across two workflows:
+ * clipping and content design share `tiktok-agent`'s workspace because they
+ * share their whole first half and differ only in which closure runs at the
+ * end, and editing is `branded-shorts-agent`'s workflow. `KNOWN_PRODUCT_IDS`
+ * is the catalog; the tree is the code; the two are no longer one-to-one and
+ * should not be forced to be.
+ *
+ * Kept as a small explicit table rather than a heuristic on the name: a
+ * heuristic would have quietly mapped a future `tiktok-something-agent` to the
+ * wrong workspace, and the symptom would be a coverage test that passes
+ * because it scanned the wrong files.
+ */
+const PACKAGE_FOR_PRODUCT: Record<string, string> = {
+  "tiktok-clipping-agent": "tiktok-agent",
+  "tiktok-content-design-agent": "tiktok-agent",
+  "tiktok-editing-agent": "branded-shorts-agent",
+};
+
+/**
  * The package directory backing a product id.
  *
- * Derived rather than mapped, so a new agent joins the sweep by existing rather
- * than by someone remembering to add a table row. Every product is its own
- * directory of the same name; a product id with no directory is a real mismatch
- * between `KNOWN_PRODUCT_IDS` and the tree, and failing loudly here is better
- * than silently scanning some other package's source.
+ * Derived rather than mapped WHEREVER POSSIBLE, so a new agent joins the sweep
+ * by existing rather than by someone remembering to add a table row; the table
+ * above holds only the products that deliberately share a workspace. A product
+ * id with neither a directory nor an entry is a real mismatch between
+ * `KNOWN_PRODUCT_IDS` and the tree, and failing loudly here is better than
+ * silently scanning some other package's source.
  */
 function packageDirFor(productId: string): string {
-  const dir = path.join(AGENTS_ROOT, productId, "src");
+  const dir = path.join(AGENTS_ROOT, PACKAGE_FOR_PRODUCT[productId] ?? productId, "src");
   statSync(dir);
   return dir;
 }

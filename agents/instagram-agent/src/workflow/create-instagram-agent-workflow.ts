@@ -2,6 +2,28 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore, StyleEdit, TemplateFeedback } from "@agent-engine/core";
+import {
+  // C7, the learning loop (SCRUM-459/460/464/466). Read once at `01b`, before
+  // any revision scope; written back once at `10-write-run-state`. See
+  // `docs/AGENT-ARCHITECTURE.md` §1 — the order of these six is the standard,
+  // not this agent's preference.
+  readLearningContext,
+  stageForRun,
+  touchesNeverTopic,
+  subjectWindowConflict,
+  ensureStrategyMap,
+  pickStrategyRow,
+  strategyRowForDrafting,
+  craftRulesForPrompt,
+  feedbackForPrompt,
+  preferencesForDrafting,
+  platformStateForDrafting,
+  preferredByPerformance,
+  resolveGoalLine,
+  writeRunState,
+  type LearningContextLike,
+  type ResolvedGoalLine,
+} from "@agent-engine/workflow";
 import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientIntelContext, buildClientVoiceContext, readCrossChannelHistory, crossChannelDirective, crossChannelAvoidTopics, socialAccountsFromClient, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext, distillStylePreferences, varyLearnedStyle, buildTrendQueries, hasTopicSignalMaterial, pullTrendResearch, runTrendScout, researchDigestForScout, selectContentMode, trendCandidateForDrafting, type ContentMode, type DistilledStyle, type FeedbackEntryLike, type StyleVariationEntry, type TrendResearch, type TrendScoutOutput } from "@agent-engine/workflow";
 import type { ClientBrand, ClientBrief, ClientKnowledge, ClientProfile, VoiceRules } from "@agent-engine/tools";
 import type { ConceptMode, ConceptReport, InstagramFormat, InstagramTopicClaim as InstagramTopicClaimShape } from "./types.js";
@@ -1154,6 +1176,21 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         brandOutcome?.status === "success" ? (brandOutcome.result as Record<string, unknown>) : undefined,
       );
     });
+
+    // ── 01b: the learning context (C7 §2) ──
+    //
+    // HERE, and not lower: everything from `rev(id)` down runs again on every
+    // revision, and a context re-read between attempt 1 and attempt 2 would
+    // make the run disagree with its own readiness line. `readLearningContext`
+    // is checkpointed for the same reason `readContextDoc` is.
+    //
+    // Every one of the seven files is optional (C7 §4.1). A client nobody has
+    // projected anything for gets `readiness.absent` listing all seven and a
+    // run that behaves exactly as it did before this block existed.
+    const learning: LearningContextLike = await readLearningContext(wf, tools, ctx, "instagram", "01b-read-learning-context");
+    // The calendar slot's stage when sequencing named one (D15), else the
+    // stage this account is most behind on against D32's 3/2/1 mix.
+    const stage = stageForRun(runDirection.slotStage, learning.subjectWindow);
 
     // ── 02c: the client's Brand Kit — best-effort, never blocking ──
     //
@@ -3252,6 +3289,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * never told it issued a topic it did not.
        */
       if (runDirection.topicOverride) {
+        // C7: a client's never-topic outranks a person's typed request, and it
+        // HOLDS rather than quietly drafting something else. Someone asked for
+        // this subject by name; answering with a different one would look like
+        // the request was honoured. Before the research pull and before the
+        // copy model, so a refusal costs nothing.
+        const refused = touchesNeverTopic(runDirection.topicOverride, learning.preferences);
+        if (refused !== undefined) {
+          throw new WorkflowHeld(
+            `"${runDirection.topicOverride}" touches a never-topic the client set ("${refused}") — the request was not drafted, ` +
+              `and nothing else was drafted in its place`,
+          );
+        }
         return { topic: runDirection.topicOverride, source: "requested" };
       }
 
@@ -3309,8 +3358,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // 1. What the client actually asked for. Read into `InstagramRunClaim` at
       //    step 01 since that step was written and, until now, never once read —
       //    a client could set `requestedSubject` and have it silently ignored.
+      //    A never-topic SKIPS this one rather than holding the run, unlike the
+      //    typed override above: `requestedSubject` is a standing config field,
+      //    so nobody asked for it on this run and there is nothing to refuse to
+      //    someone's face. Falling through to the seed is the honest answer.
       if (runClaim.requestedSubject) {
-        return { topic: runClaim.requestedSubject, source: "requested" };
+        const refused = touchesNeverTopic(runClaim.requestedSubject, learning.preferences);
+        if (refused === undefined) {
+          return { topic: runClaim.requestedSubject, source: "requested" };
+        }
+        console.warn(`03-claim-topic: requestedSubject "${runClaim.requestedSubject}" touches never-topic "${refused}" — falling through`);
       }
 
       // 2. Nothing planned and nothing requested: the client's declared
@@ -3418,6 +3475,42 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         forbiddenTopics: readForbiddenTopics(config),
       };
     });
+    // ── 01c: the strategy map — the topic pool with a stage on every row ──
+    //
+    // HERE rather than at `01b`, for the same reason x-agent builds it after
+    // its reserve: it needs the profile, the charter and the intel report
+    // together, and the first two only exist from `03a`. `ensureStrategyMap`
+    // holds both guards itself — it builds nothing for a client with nothing
+    // projected (C7 §4.1), and nothing when there is no material to plan from
+    // — so a cold client pays for no model call here.
+    const strategy = await ensureStrategyMap(
+      wf,
+      { tools, promptStore: options.promptStore, router: options.router },
+      ctx,
+      {
+        platform: "instagram",
+        learning,
+        stepId: "01c-build-strategy-map",
+        input: {
+          today: new Date().toISOString().slice(0, 10),
+          clientProfile: trendProfile.profile,
+          ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
+          forbiddenTopics: [...trendProfile.forbiddenTopics, ...(learning.preferences?.neverTopics ?? [])],
+        },
+      },
+    );
+    const strategyRow = pickStrategyRow(strategy.map, stage, learning.subjectWindow);
+
+    // What this account has already said, inside the anti-repeat window, plus
+    // the topics the client has ruled out. Both feed the ranker and `03g`
+    // through the one `avoidTopics` channel they already read, so a subject in
+    // the window loses to a fresher one rather than being dropped by a filter
+    // nobody can see the reasoning of.
+    const learningAvoidTopics = [
+      ...(learning.subjectWindow?.rows ?? []).map((r) => r.subject).filter((s): s is string => typeof s === "string" && s.trim().length > 0),
+      ...(learning.preferences?.neverTopics ?? []),
+    ];
+
     // The request or the planned row is researched alongside the field, but
     // GROUNDED exactly as 04a grounds it (Phase 0, item C) — never verbatim.
     // The audited defect was this literal reaching a web index: "Create
@@ -3622,7 +3715,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           ...crossChannel.entries.slice(-5).map((e) => e.excerpt),
           ...recentDecisions.slice(0, 5).map((d) => d.summary),
         ],
-        avoidTopics: crossChannelAvoidTopics(crossChannel),
+        avoidTopics: [...crossChannelAvoidTopics(crossChannel), ...learningAvoidTopics],
         // Required for the reference-accounts engagement bonus: the measured
         // engagement lives in 03e's signals, matched to a candidate through
         // its `evidenceRefs`. Without it the bonus is a neutral 1.0, never a
@@ -3647,7 +3740,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       const configOutcome = await tools["client.getConfig"]?.execute({}, { ctx });
       const config = configOutcome?.status === "success" ? (configOutcome.result as Record<string, unknown>) : {};
       const resolved = resolveTopicClaim(claimedTopic, scout, modeSelection.mode, {
-        avoidTopics: crossChannelAvoidTopics(crossChannel),
+        avoidTopics: [...crossChannelAvoidTopics(crossChannel), ...learningAvoidTopics],
         trendJacking: typeof config["trendJacking"] === "string" ? (config["trendJacking"] as string) : undefined,
         recentExcerpts: crossChannel.entries.map((e) => e.excerpt),
         trendResearchMerged: trendResearch?.merged,
@@ -3677,6 +3770,25 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // never again become a `throw` here.
       if ("hold" in resolved) {
         const heldReason = String(resolved.hold);
+        // C7/C1: before falling back to the client's declared industry — which
+        // is a seed, not a subject — take a row off the strategy map if there
+        // is one. A planned row at the stage this run is for is a better
+        // answer than "<industry>" by every measure, and it is the row the
+        // client can already see in their strategy document (D16).
+        if (strategyRow !== undefined) {
+          return {
+            ...claimedTopic,
+            topic: strategyRow.idea,
+            source: "planned",
+            mode: modeSelection.mode,
+            scoutStatus,
+            weighting: {
+              rule:
+                `no scouted story cleared brand fit and no fetched headline was usable — strategy-map row ${strategyRow.id} ` +
+                `(${strategyRow.stage}) leads instead (${heldReason})`,
+            },
+          };
+        }
         return {
           ...claimedTopic,
           topic: claimedTopic.topic,
@@ -3702,14 +3814,25 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       return resolved.claim;
     });
 
-    // ── 04h: the post format — a request, the client's setting, or the rotation ──
+    // ── 04h: the post format — a request, then this account's own numbers ──
     //
-    // `carousel` unless someone asked otherwise. `auto` makes every third post
-    // a single image with a deep caption, counted on the shipped-output window
-    // so the rotation survives restarts without a decision log of its own.
+    // D17: "Instagram format and visuals are chosen per post by performance
+    // and relevance, never by a fixed ratio or rotation." The rotation below
+    // is what that decision was written against — every third post a single
+    // image, on a counter, regardless of whether single images work for this
+    // client. It survives only as the answer for an account with no numbers
+    // yet, which Craft 04 §11 puts at "under 8 posts → carousel".
+    //
+    // The engine does not compute the ranking. Performance ingestion (N6)
+    // writes outliers into `what-works.json` with a lift against the account's
+    // own median, and `preferredByPerformance` reads them — so the arithmetic
+    // lives where the metrics live, and a reviewer can disagree with a lift
+    // rather than with a verdict.
     const format = await wf.step.code("04h-select-format", (): { format: InstagramFormat; source: string } => {
       const requested = runClaim.requestedFormat;
       if (requested === "single" || requested === "carousel") return { format: requested, source: "requested" };
+      const measured = preferredByPerformance(learning.whatWorks, ["carousel", "single"] as const);
+      if (measured !== undefined) return { format: measured.option, source: `performance: ${measured.why}` };
       if (requested === "auto") return { format: ownShippedCount % 3 === 2 ? "single" : "carousel", source: "rotation" };
       return { format: "carousel", source: "default" };
     });
@@ -6043,6 +6166,20 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       const copyExec = await wf.step.agent(rev(`05-write-copy-attempt-${attempt}`), copyAgent, {
         ...runDirectionField(runDirection),
         topic: topicClaim.topic,
+        // ── C7: what the platform has learned, as INSTRUCTIONS (D41) ──
+        //
+        // Not a lint applied to the finished draft. A draft graded after the
+        // fact was written wrong first, which is slower and produces worse
+        // drafts; the pre-delivery checklist stays as the last gate rather
+        // than the method. Every one of these is absent for a client nobody
+        // has projected anything for, and the prompt reads exactly as it did
+        // before when they are.
+        slotStage: stage,
+        ...(craftRulesForPrompt(learning.craft) !== undefined ? { craftRules: craftRulesForPrompt(learning.craft) } : {}),
+        ...(feedbackForPrompt(learning.feedback).length > 0 ? { clientFeedback: feedbackForPrompt(learning.feedback) } : {}),
+        ...(preferencesForDrafting(learning.preferences) !== undefined ? { clientPreferences: preferencesForDrafting(learning.preferences) } : {}),
+        ...(learning.platformState !== undefined ? { platformState: platformStateForDrafting(learning.platformState) } : {}),
+        ...(strategyRow !== undefined ? { strategyRow: strategyRowForDrafting(strategyRow) } : {}),
         // Phase 0, item C — who this client is (prompt §15), read BEFORE the
         // facts; and, after an off-brief verdict, why the last draft failed
         // the relevance check and must be fixed, not argued with.
@@ -10706,6 +10843,42 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     }
 
     // ── 09b: deliver + log — the count invariant is real and checked, not just documented ──
+    /**
+     * D11's goal line — what this post is for, who for, and why now.
+     *
+     * Resolved ONCE and used for both the client's card and the state record,
+     * so the two can never disagree about why a post exists (C7 §3.2).
+     *
+     * Instagram takes the third of the three shapes in
+     * `docs/AGENT-ARCHITECTURE.md` §2: a structured `goalLine` field on the
+     * deliverable. It has no drafts markdown to hang a meta bullet on — what
+     * the client receives is rendered PNGs and a post package — and the
+     * caption is NOT the place for it: the caption is the text the client
+     * pastes into Instagram, and our reasoning about funnel stages has no
+     * business travelling there.
+     *
+     * The copy model does not state a goal today, so every value here comes
+     * from the fallback: the stage the run was written for, the ICP the brief
+     * resolved, and the sentence `03g` already wrote about how this subject
+     * won. That is `resolveGoalLine`'s designed path for a silent model, and
+     * it is why D11 holds before the prompt is ever bumped to ask for one.
+     */
+    const goalLine: ResolvedGoalLine = resolveGoalLine(
+      {},
+      {
+        stage,
+        audience: brief.icp.summary,
+        whyNow:
+          topicClaim.trend?.whyNow ??
+          topicClaim.weighting?.rule ??
+          (topicClaim.source === "requested"
+            ? "asked for by name on this run"
+            : topicClaim.source === "planned"
+              ? `a planned row at the ${stage} stage`
+              : "the strongest on-brand subject available to this run"),
+      },
+    );
+
     const deliverableId = await wf.step.code("09b-deliver-and-log", async () => {
       if (rendered.rendered.length !== slidesData.slides.length) {
         // A genuine internal inconsistency (the renderer's own contract is to
@@ -10724,6 +10897,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           deliverable: {
             postId: runClaim.postId,
             topic: topicClaim.topic,
+            // D11 / C3: the point of the post, on the thing the client opens.
+            // Structured rather than a markdown bullet — see the block above
+            // `09b` for why this agent takes that shape.
+            goalLine,
             // The format (2026-09) and, when a scouted story took the slot, its
             // why-now and brand-fit bridge for the reviewer.
             format: review.output.copy.format,
@@ -11181,6 +11358,48 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         }
       });
     }
+
+    // ── 10: what this run learned, handed back (C7 §3) ──
+    //
+    // One normalised record, written to the workspace, collected by the
+    // middleware. Never throws: a failed write is recorded on the step and the
+    // carousel still stands — a post the client can use is worth more than a
+    // row in a table, and the row can be rebuilt from the deliverable.
+    await writeRunState(wf, tools, ctx, "10-write-run-state", {
+      platform: "instagram",
+      deliverable: {
+        kind: "instagram-carousel",
+        goal: goalLine.goal,
+        ...(goalLine.audience !== undefined ? { audience: goalLine.audience } : {}),
+        whyNow: goalLine.whyNow,
+        // Instagram's own type vocabulary is its format — `carousel` or
+        // `single` — which is exactly the axis D17 says performance decides.
+        // Recording it per post is what lets ingestion compute the lift that
+        // `04h` reads back on the next run.
+        type: review.output.copy.format,
+        sources: (deepResearch.merged.result?.documents ?? [])
+          .map((d) => d.url)
+          .filter((u): u is string => typeof u === "string" && u.length > 0)
+          .slice(0, 20),
+      },
+      subjectRow: {
+        subject: topicClaim.topic,
+        ...(topicClaim.trend?.angle !== undefined ? { angle: topicClaim.trend.angle } : {}),
+        type: review.output.copy.format,
+        stage,
+        goal: goalLine.goalText,
+        status: "drafted",
+        assetKind: "instagram-carousel",
+        // The row this post came off, or an honest null. Never invented to
+        // avoid a null: a made-up id would make the map look spent.
+        strategyRowId: topicClaim.source === "planned" && strategyRow !== undefined ? strategyRow.id : null,
+      },
+      platformStateDelta: {
+        postsByUs: 1,
+        topics: [topicClaim.topic],
+      },
+      readiness: learning.readiness,
+    });
 
     return {
       postId: runClaim.postId,

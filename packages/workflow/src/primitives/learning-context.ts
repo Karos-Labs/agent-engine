@@ -405,6 +405,64 @@ export function platformStateForDrafting(state: Record<string, unknown>): Record
   return out;
 }
 
+/** What `what-works.json` (C7 §2.5) carries per outlier, as this reader needs it. */
+interface WhatWorksOutlier {
+  postRef?: string;
+  trait?: string;
+  lift?: number;
+}
+
+/** The answer `preferredByPerformance` gives, and the sentence a reviewer reads. */
+export interface PerformancePreference<T extends string> {
+  option: T;
+  lift: number;
+  why: string;
+}
+
+/**
+ * The option among `allowed` that this account's own numbers favour, or
+ * `undefined` when they do not favour one yet.
+ *
+ * D17 for Instagram ("format and visuals chosen per post by performance,
+ * never by a fixed ratio or rotation") and the same question on every other
+ * platform: which hook type, which archetype, which clip format. The run does
+ * NOT compute this from raw metrics — it never sees them. Performance
+ * ingestion (N6) writes outliers into `what-works.json` with a `lift`, and
+ * this reads them.
+ *
+ * `lift` is relative to the account's own median, so 1.0 is "no different"
+ * and anything at or below `floor` is not evidence of anything. A tie keeps
+ * the first of `allowed`, which is why the caller passes its own default
+ * first: absent evidence, nothing changes.
+ *
+ * Matching is on the trait naming the option — `"carousel-edu"` matches
+ * `"carousel-edu"`, and `"a number in line 1"` matches nothing, which is
+ * correct. Traits that name no option are left for the prompt to read as
+ * prose; this function is only for choosing between things the code branches
+ * on.
+ */
+export function preferredByPerformance<T extends string>(
+  whatWorks: Record<string, unknown> | undefined,
+  allowed: readonly T[],
+  floor = 1.1,
+): PerformancePreference<T> | undefined {
+  const outliers = whatWorks?.outliers;
+  if (!Array.isArray(outliers) || allowed.length === 0) return undefined;
+  let best: PerformancePreference<T> | undefined;
+  for (const raw of outliers as WhatWorksOutlier[]) {
+    if (!raw || typeof raw !== "object") continue;
+    const trait = typeof raw.trait === "string" ? raw.trait.trim().toLowerCase() : "";
+    const lift = typeof raw.lift === "number" && Number.isFinite(raw.lift) ? raw.lift : 0;
+    if (trait.length === 0 || lift <= floor) continue;
+    const option = allowed.find((a) => a.toLowerCase() === trait);
+    if (option === undefined) continue;
+    if (best === undefined || lift > best.lift) {
+      best = { option, lift, why: `${option} outperforms this account's median by ${lift.toFixed(1)}×` };
+    }
+  }
+  return best;
+}
+
 /**
  * The derived preferences (C7 §2.4) as standing instructions for the draft:
  * never-topics (the vet already refused the topic; this is so the copy does
