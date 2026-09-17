@@ -133,3 +133,36 @@ export async function setupTestEnvironment(
     cleanup: () => fs.rm(rootDir, { recursive: true, force: true }),
   };
 }
+
+/**
+ * The edition as the client actually receives it.
+ *
+ * Reads the persisted deliverable rather than the workflow's return value: the
+ * deliverable spreads every field, so `intro`, `sections[].body`, the flattened
+ * `text` and the rendered `html` all reach the subscriber. A repair that fixed
+ * one of them would show up here.
+ */
+export async function deliveredEdition(env: TestEnvironment, runId: string): Promise<Record<string, unknown>> {
+  const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", runId, "_"]);
+  if (deliverables.length !== 1) throw new Error(`expected exactly one deliverable for ${runId}, found ${deliverables.length}`);
+  return (deliverables[0] as { data: { deliverable: Record<string, unknown> } }).data.deliverable;
+}
+
+/**
+ * The edition's PROSE, excluding the repair ledger.
+ *
+ * `contentRepairs` names every span it removed — that is the point of a ledger
+ * — so asserting over the whole deliverable finds the span inside the record of
+ * its own removal.
+ */
+export function editionProse(edition: Record<string, unknown>): string {
+  return JSON.stringify([
+    edition["subjectLine"],
+    edition["previewText"],
+    edition["intro"],
+    edition["sections"],
+    edition["callToAction"],
+    edition["signoff"],
+    edition["text"],
+  ]);
+}

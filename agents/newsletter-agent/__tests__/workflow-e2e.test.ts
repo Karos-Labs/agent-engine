@@ -48,6 +48,10 @@ const ALL_20_STEP_IDS = [
   // the editor's verdict (an AI step). A failed gate or a `revise` verdict
   // redrafts under `-round-N` ids; a first-time-clean run has none.
   "15b-editorial-lint",
+  // The repair step. Always present, even on a clean edition: it asks what
+  // the round's gates objected to and returns the draft untouched when the
+  // answer is nothing, so its presence says the repair path ran.
+  "15r-repair-edition",
   "15c-editor-verdict",
   // Revision-scoped: `-r0` is the first review round. A `revise` decision
   // registers `-r1` after re-drafting.
