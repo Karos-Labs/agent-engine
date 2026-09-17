@@ -805,12 +805,28 @@ body.ta-center .acc { margin-inline: auto; }
 /* @ds:end */
 
 /* ---- stat-callout ------------------------------------------------------- */
+/* ── THE FIGURE'S BOUNDED OBJECT (RFC-20 §5.5). ──
+   `stat-callout` and `comparison-card` were the last two plates with no object
+   of their own, and they were the two the emptiness clause kept refusing on
+   short copy. The number sits on a surface: a declared box, `no-repeat`, one
+   ramp carrying tone to its far edge, and it stands down when there is no
+   figure for it to be the ground of. */
 .num-zone {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: var(--sp);
+  flex: 1 1 auto;
+  inline-size: 100%;
+  padding: var(--sp-2);
+  border-radius: 4px;
+  background-image: linear-gradient(150deg,
+    color-mix(in srgb, var(--accent) 24%, transparent),
+    color-mix(in srgb, var(--accent) 12%, transparent) 56%,
+    color-mix(in srgb, var(--fg) 15%, transparent) 100%);
+  background-repeat: no-repeat;
 }
+body:not(:has(#figure:not(:empty))) .num-zone { background-image: none; }
 .num-label { max-inline-size: min(18em, 100%); }
 .sc-foot {
   display: flex;
