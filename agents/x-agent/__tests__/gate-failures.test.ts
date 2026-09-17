@@ -290,7 +290,10 @@ describe("content gate failures (RFC-02 §3 steps 11-14d)", () => {
         goodPost({
           text: "Digital assets on a distributed ledger are finally getting sane custody rules.",
           mainPostText: "Digital assets on a distributed ledger are finally getting sane custody rules.",
-          hook: "Digital assets on a distributed ledger are finally getting sane custody rules.",
+          // Under the 70-character hook ceiling Craft 01 §5 now enforces: this
+          // fixture is about the TOPIC guardrail, and a hook that trips the
+          // length rule first would never reach it.
+          hook: "Distributed-ledger assets are getting sane custody rules.",
         }),
       ),
       // The guardrail verifier's own turn.

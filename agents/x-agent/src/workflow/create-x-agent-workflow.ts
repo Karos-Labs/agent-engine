@@ -1,4 +1,5 @@
 import { readForbiddenTopics, type AgentContext, type AgentToolRegistry, type GateResponse, type ModelRouter, type PromptStore } from "@agent-engine/core";
+import { weightedLengthForX } from "@agent-engine/tool-karos-gates";
 import {
   type WorkflowContext,
   type RevisionNote,
@@ -116,15 +117,21 @@ const MAX_DEDUPE_ATTEMPTS = 3;
 
 /**
  * Names every post in a draft that is over X's limit, as the steer for one
- * in-loop redraft, or `undefined` when the whole draft fits. Plain
- * `String.length`, exactly what `render.preview` (steps 13b and 14) counts,
- * so a draft this passes cannot then be held there for length.
+ * in-loop redraft, or `undefined` when the whole draft fits.
+ *
+ * X's OWN counting — 23 per URL, 2 per emoji — which is what `render.preview`
+ * (steps 13b and 14) and `gate.lintPost` both now count, so a draft this
+ * passes cannot then be held there for length. It used to be plain
+ * `String.length` in all three places, which agreed with itself and disagreed
+ * with X: a 275-character post carrying two links measured 275 here and 319
+ * on the platform.
  */
 export function describeLengthOverrun(draft: Pick<XPostOutput, "text" | "thread">): string | undefined {
   const over: string[] = [];
-  if (draft.text.length > X_CHARACTER_LIMIT) over.push(`part 1 (text) is ${draft.text.length} characters`);
+  const lengthOf = (text: string): number => weightedLengthForX(text);
+  if (lengthOf(draft.text) > X_CHARACTER_LIMIT) over.push(`part 1 (text) is ${lengthOf(draft.text)} characters`);
   draft.thread.forEach((part, index) => {
-    if (part.length > X_CHARACTER_LIMIT) over.push(`thread part ${index + 2} is ${part.length} characters`);
+    if (lengthOf(part) > X_CHARACTER_LIMIT) over.push(`thread part ${index + 2} is ${lengthOf(part)} characters`);
   });
   if (over.length === 0) return undefined;
   return (
@@ -887,9 +894,27 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
         sources: researchSources,
         postText: draft.text,
         art: artDirectionFromBrand(clientContext.brand),
-        // "Only media I upload": an attached picture still wins above; with
-        // none, the post ships as text and no tier is asked (2026-09-06).
-        clientMediaOnly: runDirection.mediaSource === "client",
+        // ── D24: X IS TEXT ONLY ──
+        //
+        // "X is text only: it does not create or source pictures; a client's
+        // own picture is attached if given" (05 Decisions log, D24).
+        //
+        // This used to read `runDirection.mediaSource === "client"`, which made
+        // the four-tier cascade — screenshot, harvest, stock, `image.generate`
+        // — the DEFAULT, and text-only an opt-in the client had to remember per
+        // run. That is the decision inverted. A generated illustration or a
+        // scraped screenshot on an X post is exactly what marks an account as
+        // automated, which is the reason the decision exists.
+        //
+        // Hardcoded `true` rather than left as an option: a flag someone can
+        // turn off is not a product rule. The attached-media path above is
+        // untouched and is the whole of the permitted half — `attached` still
+        // wins, the vision read still runs, and the post is still written TO
+        // the client's picture.
+        //
+        // The same cascade stays exactly as it was for linkedin, which has no
+        // such rule.
+        clientMediaOnly: true,
       });
 
       // ── 14b: terminal topic guardrail ──

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentContext } from "@agent-engine/core";
-import { createKarosGatesTools } from "../src/index.js";
+import { createKarosGatesTools, weightedLengthForX } from "../src/index.js";
 
 const ctx: AgentContext = {
   runId: "run_1",
@@ -190,6 +190,103 @@ describe("gate.lintPost", () => {
       const verdict = await verdictOf("gate.lintPost", { text: "Add this rule: .banner { display: none !important; } Ship it now!" });
       expect(verdict.verdict).toBe("content_fail");
     });
+  });
+});
+
+describe("gate.lintPost on X: the platform's own counting and Craft 01's caps", () => {
+  /**
+   * X counts a URL as 23 characters whatever its real length and an emoji as
+   * 2 (docs.x.com/resources/fundamentals/counting-characters). Counting
+   * plainly is how a post measured 275 here and 319 on the platform — it
+   * passed every check we had and would have been refused on publish.
+   */
+  describe("weightedLengthForX", () => {
+    it("charges 23 for a URL however long the URL is", () => {
+      expect(weightedLengthForX("https://x.com/a")).toBe(23);
+      expect(weightedLengthForX(`https://example.test/${"a".repeat(200)}`)).toBe(23);
+    });
+
+    it("charges 2 per emoji, and treats a ZWJ family as one emoji", () => {
+      expect(weightedLengthForX("🙂")).toBe(2);
+      // Seven code points, one glyph, one weighted pair.
+      expect(weightedLengthForX("👨‍👩‍👧‍👦")).toBe(2);
+    });
+
+    it("leaves ordinary prose alone", () => {
+      expect(weightedLengthForX("A perfectly reasonable post.")).toBe("A perfectly reasonable post.".length);
+    });
+  });
+
+  it("holds a post that is inside 280 plainly but over it the way X counts", async () => {
+    // 236 characters plus two SHORT urls. Plainly that is 262 and fits; on X
+    // each url costs 23 whatever it looks like, so it is 284 and does not.
+    // Short urls on purpose: this is the case plain counting gets wrong in
+    // the dangerous direction, where the gate says yes and the platform says
+    // no.
+    const text = `${"a".repeat(236)} https://a.co https://b.co`;
+    expect(text.length).toBeLessThan(280);
+    expect(weightedLengthForX(text)).toBeGreaterThan(280);
+    const verdict = await verdictOf("gate.lintPost", { text, platform: "x" });
+    expect(verdict.verdict).toBe("content_fail");
+    expect(String(verdict.reason)).toMatch(/weighted/);
+  });
+
+  it("does not apply X's counting to another platform", async () => {
+    const text = `${"a".repeat(236)} https://a.co https://b.co`;
+    expect((await verdictOf("gate.lintPost", { text, platform: "linkedin" })).verdict).toBe("pass");
+  });
+
+  describe("the hook (Craft 01 §5)", () => {
+    it("holds a hook over 70 characters", async () => {
+      const hook = "Digital assets on a distributed ledger are finally getting sane custody rules.";
+      expect(hook.length).toBeGreaterThan(70);
+      expect((await verdictOf("gate.lintPost", { text: "body", platform: "x", hook })).verdict).toBe("content_fail");
+    });
+
+    it("holds a hook carrying a mention, a hashtag, a link or an emoji", async () => {
+      for (const hook of ["@acme cut onboarding in half", "#onboarding cut in half", "see https://example.test", "Cut in half 🙂"]) {
+        const verdict = await verdictOf("gate.lintPost", { text: "body", platform: "x", hook });
+        expect(verdict.verdict, hook).toBe("content_fail");
+      }
+    });
+
+    it("passes a clean hook, and ignores the hook entirely off X", async () => {
+      expect((await verdictOf("gate.lintPost", { text: "body", platform: "x", hook: "Onboarding fell from 14 days to 3." })).verdict).toBe("pass");
+      // A LinkedIn hook is 140 characters and has its own rules; this gate
+      // must not quietly apply X's to it.
+      const long = "x".repeat(120);
+      expect((await verdictOf("gate.lintPost", { text: "body", platform: "linkedin", hook: long })).verdict).toBe("pass");
+    });
+  });
+
+  describe("hashtags and mentions (Craft 01 §11)", () => {
+    it("allows one hashtag and holds two", async () => {
+      expect((await verdictOf("gate.lintPost", { text: "We shipped #onboarding today.", platform: "x" })).verdict).toBe("pass");
+      expect((await verdictOf("gate.lintPost", { text: "We shipped it. #onboarding #saas", platform: "x" })).verdict).toBe("content_fail");
+    });
+
+    it("allows two mentions and holds three", async () => {
+      expect((await verdictOf("gate.lintPost", { text: "Good thread from @a and @b on this.", platform: "x" })).verdict).toBe("pass");
+      expect((await verdictOf("gate.lintPost", { text: "Good thread from @a and @b and @c.", platform: "x" })).verdict).toBe("content_fail");
+    });
+
+    it("holds a post that OPENS with a mention, which X shows to almost nobody", async () => {
+      const verdict = await verdictOf("gate.lintPost", { text: "@acme is right about onboarding.", platform: "x" });
+      expect(verdict.verdict).toBe("content_fail");
+      expect(String(verdict.reason)).toMatch(/reply/);
+    });
+
+    it("does not mistake an email address for a mention", async () => {
+      expect((await verdictOf("gate.lintPost", { text: "Write to us at hello@acme.com about it.", platform: "x" })).verdict).toBe("pass");
+    });
+
+    it("holds markdown bold, which X renders as literal asterisks", async () => {
+      expect((await verdictOf("gate.lintPost", { text: "This is **important** to us.", platform: "x" })).verdict).toBe("content_fail");
+    });
+  });
+
+  it("bans the negative-parallelism tell on every platform", async () => {
+    expect((await verdictOf("gate.lintPost", { text: "It's not just a tool, it is a philosophy.", platform: "linkedin" })).verdict).toBe("content_fail");
   });
 });
 

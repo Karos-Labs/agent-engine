@@ -167,7 +167,7 @@ export class XDraftAgent extends BaseAgent<XPostOutput> {
     // which is what lets the loop measure a rule (Craft 11 §4). Every new
     // input is optional, so a client with nothing projected yet drafts as
     // under v5. v5 stays frozen.
-    skillRef: "x-craft@6",
+    skillRef: "x-craft@7",
     selfCritique: {
       gateTool: "gate.lintPost",
       // Two revisions, not one: the second is what turns "thread part 3 is
@@ -185,6 +185,11 @@ export class XDraftAgent extends BaseAgent<XPostOutput> {
       gateInput: (draft) => ({
         text: typeof draft.text === "string" ? draft.text : "",
         parts: Array.isArray(draft.thread) ? draft.thread.filter((part): part is string => typeof part === "string") : [],
+        // The hook goes to the gate as its own field (Craft 01 §5: ≤70
+        // characters, no @/#/link/emoji). Checked HERE, in the model's own
+        // self-critique, so a long hook comes back as a rewrite rather than
+        // as a held run — the same reasoning the thread parts above got.
+        ...(typeof draft.hook === "string" ? { hook: draft.hook } : {}),
       }),
     },
   };

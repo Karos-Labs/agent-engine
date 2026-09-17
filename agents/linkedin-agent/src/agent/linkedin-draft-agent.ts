@@ -33,6 +33,20 @@ export const LinkedInPostOutputSchema = z.object({
   takeaway: z.string().min(1),
   hashtags: z.array(z.string()).default([]),
   callToAction: z.string().min(1),
+  /**
+   * D22 / Craft 02 §2, §11: the link goes in the FIRST COMMENT, never in the
+   * body, and the author posts it immediately.
+   *
+   * A field rather than a convention, for the same reason x-agent has
+   * `firstReplyUrl`: a rule that lives only in prose is a rule the reviewer
+   * has to remember, and this one has a measured cost — a body link runs
+   * -18.8% median reach (vdB 2026) to -26.5% average (Ordinal, 900K posts),
+   * and adding it later by EDITING the post costs -42% impressions, so there
+   * is no fixing it after delivery.
+   *
+   * Omitted when the post has no link to give, which is most posts.
+   */
+  firstCommentUrl: z.string().url().optional(),
   targetAudience: z.string().min(1),
   text: z.string().min(1),
   archetype: z.enum(LINKEDIN_ARCHETYPES),
@@ -101,7 +115,7 @@ export class LinkedInDraftAgent extends BaseAgent<LinkedInPostOutput> {
     // between every line, a stated `takeaway`), the machine-writing tells are
     // named, and a `mediaBrief` is required (a real photo or a document
     // screenshot over illustration; "none" is a valid answer). v4 stays frozen.
-    skillRef: "linkedin-craft@6", // C7: §0 learning inputs, §14 goal line + rulesApplied, §15 craft rules
+    skillRef: "linkedin-craft@7", // C7: §0 learning inputs, §14 goal line + rulesApplied, §15 craft rules; v7: §12b the eleven rules, §8 the image gates
     selfCritique: { gateTool: "gate.lintPost", maxRevisions: 1, gateArgs: { platform: "linkedin" } },
   };
 }
