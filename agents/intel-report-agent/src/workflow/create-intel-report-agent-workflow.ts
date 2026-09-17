@@ -488,6 +488,13 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       }
     });
 
+    /**
+     * What step 03 had to repair, per revision round. Written outside the step
+     * body so it survives a checkpoint replay (see step 03's own comment), and
+     * read back for the round the reviewer actually approved.
+     */
+    const numericGroundingByRevision = new Map<number, IntelReportNumericGroundingMarker | null>();
+
     // ── 02-03: generate the report, then verify its numeric claims — one full drafting pass ──
     /**
      * One full drafting pass: generate the report, then verify its numbers
@@ -505,13 +512,6 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
      * context, research) keeps its id and is reused. That reuse is why the
      * revision is in-run rather than a fresh run.
      */
-    /**
-     * What step 03 had to repair, per revision round. Written outside the step
-     * body so it survives a checkpoint replay (see step 03's own comment), and
-     * read back for the round the reviewer actually approved.
-     */
-    const numericGroundingByRevision = new Map<number, IntelReportNumericGroundingMarker | null>();
-
     const draftOnce = async (revision: number, notes: readonly RevisionNote[]): Promise<IntelReportOutput> => {
       /** Revision 0 keeps the ORIGINAL ids, so a first-pass trace is unchanged. */
       const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
