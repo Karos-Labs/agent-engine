@@ -120,6 +120,53 @@ describe("cost accuracy: every metered tool reports what it consumed", () => {
 
   const toPosix = (file: string): string => path.relative(repoRoot, file).split(path.sep).join("/");
 
+  /**
+   * Whether any `return success(...)` in this source passes a SECOND
+   * top-level argument, which is where usage goes.
+   *
+   * ## Why this is a scan and not a regular expression
+   *
+   * It was `/return success<[^>]+>\([\s\S]*?,\s*\[\s*\{\s*model/` — a
+   * specific encoding of the property the comment below states, and a
+   * strictly narrower one. It demanded that the usage argument be a LITERAL
+   * array whose first key is `model`, so a tool that computes its units
+   * (`served.map(([m, quantity]) => ({ model: m, unit: "image", quantity }))`,
+   * which is what per-model billing looks like when a call can fall between
+   * models) failed a guard whose stated subject it satisfies.
+   *
+   * Widening the pattern is not available either: the RESULT argument of a
+   * metered tool routinely carries a `model` field of its own, so any regex
+   * loose enough to accept a computed second argument also matches the first
+   * one and the guard stops being able to fail. Counting commas at depth one
+   * is the thing the sentence actually means.
+   */
+  function passesUsageToSuccess(source: string): boolean {
+    for (let at = source.indexOf("return success"); at >= 0; at = source.indexOf("return success", at + 1)) {
+      const open = source.indexOf("(", at);
+      if (open < 0) continue;
+      let depth = 0;
+      for (let i = open; i < source.length; i += 1) {
+        const ch = source[i]!;
+        if (ch === "(" || ch === "[" || ch === "{") depth += 1;
+        else if (ch === ")" || ch === "]" || ch === "}") {
+          depth -= 1;
+          if (depth === 0) break; // the call closed with one argument
+        } else if (ch === "," && depth === 1) return true;
+      }
+    }
+    return false;
+  }
+
+  it("the scan can fail — a bare success(result) is caught, and a computed usage argument is not", () => {
+    // `guards-that-cannot-fail`: this guard reads source text, so its own
+    // premise has to be asserted rather than assumed.
+    expect(passesUsageToSuccess("return success<T>({ candidates, model });")).toBe(false);
+    expect(passesUsageToSuccess("return success<T>({ model }, [{ model, unit: \"image\", quantity: 1 }]);")).toBe(true);
+    expect(passesUsageToSuccess("return success<T>({ model }, served.map((m) => ({ model: m })));")).toBe(true);
+    // A comma INSIDE the result object is not a second argument.
+    expect(passesUsageToSuccess("return success<T>({ a: 1, b: 2 });")).toBe(false);
+  });
+
   it.each(metered.map(({ file }) => toPosix(file)))(
     "%s passes usage to success()",
     (rel) => {
@@ -127,9 +174,7 @@ describe("cost accuracy: every metered tool reports what it consumed", () => {
       // `success(result, usage)` — a second argument. A metered tool returning
       // a bare `success(result)` is the exact shape that recorded $0.000000 for
       // two real, billed image generations.
-      expect(source, `${rel} calls a metered API but reports no units — its steps will record $0`).toMatch(
-        /return success<[^>]+>\([\s\S]*?,\s*\[\s*\{\s*model/,
-      );
+      expect(passesUsageToSuccess(source), `${rel} calls a metered API but reports no units — its steps will record $0`).toBe(true);
     },
   );
 });
