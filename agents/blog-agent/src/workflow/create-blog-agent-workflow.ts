@@ -235,7 +235,15 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
         topic = candidateSummary.candidateTopic;
         source = "research";
       } else {
-        throw new WorkflowHeld("no candidate topic available for this run — nothing honestly cleared selection");
+        // Nothing cleared selection — and that used to end the run, so a client
+        // whose research pull came back thin got an error instead of an
+        // article. Their own configured content pillar and target keyword ARE
+        // a topic, and the most defensible one available: it is what they said
+        // they want to be known for, not something invented on their behalf.
+        // Recorded as `client-strategy` so a reviewer can tell it apart from a
+        // researched topic at a glance.
+        topic = `${intake.contentPillars[0]}: ${intake.targetKeywords[0]}`;
+        source = "client-strategy";
       }
 
       // Target keyword: an explicit client request wins (if it's actually one of the

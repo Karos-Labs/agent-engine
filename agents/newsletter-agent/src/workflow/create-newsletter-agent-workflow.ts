@@ -389,7 +389,14 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
         source = "research";
         secondaryTopics = [];
       } else {
-        throw new WorkflowHeld("no candidate main story available for this run — nothing honestly cleared selection");
+        // Nothing cleared selection — which used to end the run, so a thin
+        // research week cost the client their edition. The audience they
+        // configured is a story: writing to what they told us they serve is
+        // the most defensible thing available when research and the catalog
+        // both come up empty, and it invents nothing on their behalf.
+        mainStory = `What ${intake.targetAudience} should be paying attention to right now`;
+        source = "client-strategy";
+        secondaryTopics = [];
       }
 
       return { mainStory, source, secondaryTopics };

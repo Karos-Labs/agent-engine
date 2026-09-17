@@ -649,15 +649,22 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       // window is not proposed again (same rules as x-agent's step 07).
       const never = (topic: string) => touchesNeverTopic(topic, learning.preferences);
       const repeated = (topic: string) => subjectWindowConflict(topic, learning.subjectWindow);
-      if (runDirection.topicOverride) {
-        const hit = never(runDirection.topicOverride);
-        if (hit) throw new WorkflowHeld(`the requested topic touches a never-topic the client set ("${hit}") — a person has to decide this one`);
-        return { topic: runDirection.topicOverride, source: "requested" };
-      }
-      if (clientContext.requestedTopic) {
-        const hit = never(clientContext.requestedTopic);
-        if (hit) throw new WorkflowHeld(`the configured topic touches a never-topic the client set ("${hit}") — a person has to decide this one`);
-        return { topic: clientContext.requestedTopic, source: "requested" };
+      // A topic on the client's never-list is refused whoever asked for it —
+      // including a person typing it into the portal. That rule is absolute and
+      // is NOT relaxed here.
+      //
+      // What changed is the consequence. This used to end the run, so the
+      // person who asked got an error and the client got no post that day.
+      // Now the request is declined, the refusal is carried out to the
+      // deliverable, and selection falls through to something this account IS
+      // allowed to talk about. The subject they asked for still never gets
+      // written.
+      let refusedRequest: string | undefined;
+      const requested = runDirection.topicOverride ?? clientContext.requestedTopic;
+      if (requested !== undefined) {
+        const hit = never(requested);
+        if (hit === undefined) return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: requested, source: "requested" };
+        refusedRequest = `the requested topic ("${requested}") touches a never-topic the client set ("${hit}"), so this run wrote about something else instead`;
       }
       const trend =
         scout !== undefined
@@ -666,24 +673,54 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       const trendOk = trend !== undefined && never(trend.topic) === undefined && repeated(trend.topic) === undefined ? trend : undefined;
       const reservedOk = reservation.topics.filter((t) => never(t) === undefined && repeated(t) === undefined);
       if (trendOk !== undefined && intake.trendJacking === "always" && trendOk.brandFit >= 4 && reservedOk.length > 0) {
-        return { topic: trendOk.topic, source: "trend", trend: trendOk };
+        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: trendOk.topic, source: "trend", trend: trendOk };
       }
       if (reservedOk.length > 0) {
-        return { topic: reservedOk[0]!, source: "reserved" };
+        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: reservedOk[0]!, source: "reserved" };
       }
       if (trendOk !== undefined) {
-        return { topic: trendOk.topic, source: "trend", trend: trendOk };
+        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: trendOk.topic, source: "trend", trend: trendOk };
       }
       // The strategy map (C1 / SCRUM-464): the client's own problem × stage
       // rows, picked for this run's stage — above the research fallback,
       // below the catalog and the scout.
       if (strategyRow !== undefined && never(strategyRow.idea) === undefined) {
-        return { topic: strategyRow.idea, source: "strategy", strategyRowId: strategyRow.id };
+        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: strategyRow.idea, source: "strategy", strategyRowId: strategyRow.id };
       }
       if (candidateSummary.candidateTopic && never(candidateSummary.candidateTopic) === undefined && repeated(candidateSummary.candidateTopic) === undefined) {
-        return { topic: candidateSummary.candidateTopic, source: "research" };
+        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: candidateSummary.candidateTopic, source: "research" };
       }
-      throw new WorkflowHeld("no candidate topic available for this run — nothing honestly cleared selection");
+      // ── nothing cleared selection ──
+      //
+      // This used to end the run. It no longer does, but the relaxation is
+      // deliberately one-sided: candidates are rejected here for two very
+      // different reasons, and only one of them is soft.
+      //
+      // `repeated` means this platform covered the subject recently. That is a
+      // freshness preference, and a slightly repetitive post the client can
+      // decline beats no post at all.
+      //
+      // `never` is a rule the client set about what they do not talk about.
+      // That is not relaxed, here or anywhere below — a topic on the
+      // never-list stays refused no matter how little else is available.
+      const reservedRepeatOk = reservation.topics.filter((t) => never(t) === undefined);
+      if (reservedRepeatOk.length > 0) {
+        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: reservedRepeatOk[0]!, source: "reserved" };
+      }
+      if (trend !== undefined && never(trend.topic) === undefined) {
+        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: trend.topic, source: "trend", trend };
+      }
+      if (strategyRow !== undefined && never(strategyRow.idea) === undefined) {
+        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: strategyRow.idea, source: "strategy", strategyRowId: strategyRow.id };
+      }
+      if (candidateSummary.candidateTopic && never(candidateSummary.candidateTopic) === undefined) {
+        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: candidateSummary.candidateTopic, source: "research" };
+      }
+      // Everything available is on the client's never-list. Refusing to write
+      // is the correct answer to that, and the only remaining honest one.
+      throw new WorkflowHeld(
+        "every available topic is on the client's never-list — there is nothing this account is permitted to post about this run",
+      );
     });
 
     /**
@@ -1287,6 +1324,11 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
     // them to act on, and the marker is what makes their decision unmissable.
     // Nothing here publishes anything — every deliverable still waits on a
     // human — so this changes what a reviewer KEEPS, not what ships.
+    // A topic someone asked for and did not get is something they must find
+    // out about, so it rides on the deliverable like every other adaptation.
+    if (selected.refusedRequest !== undefined) {
+      contentRepairs.push({ check: "never-topic", action: "substituted", detail: selected.refusedRequest });
+    }
     if (review.outcome !== undefined && review.outcome !== "approved") {
       contentRepairs.push({
         check: "human-review",

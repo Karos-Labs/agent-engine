@@ -191,18 +191,38 @@ describe("x-agent and the learning loop (C7)", () => {
     expect(markdown).not.toContain("- **For:**");
   });
 
-  it("a never-topic HOLDS an explicit request, and a subject in the window or a never-topic skips a catalog row", async () => {
+  it("a never-topic REFUSES an explicit request and the account posts about something else", async () => {
     await projectAll(env);
-    // Requested topic touches the never-topic → held, no model call spent.
-    const heldRouter = fakeRouterSequence([finalTurn(goodPost())]);
-    const held = await new WorkflowEngine(new MemoryDurableStepStore()).run(
-      createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router: heldRouter, autoApprove: true }),
+    const refusedRouter = fakeRouterSequence([finalTurn(goodPost()), finalTurn(goodPost()), finalTurn(goodPost())]);
+    const refusedStore = new MemoryDurableStepStore();
+    const refused = await new WorkflowEngine(refusedStore).run(
+      createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router: refusedRouter, autoApprove: true }),
       { ...params, runId: "x_learning_held", input: { requestedTopic: "four-day weeks for ops teams" } },
     );
-    expect(held.status).toBe("held");
-    if (held.status !== "held") throw new Error("unreachable");
-    expect(held.reason).toMatch(/never-topic/);
-    expect((heldRouter.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls).toHaveLength(0);
+
+    // The client's rule is absolute and unchanged: the requested subject is NOT
+    // posted about. What changed is that the account posts about something it
+    // IS allowed to discuss, and whoever asked is told their request was
+    // declined — instead of the run ending with an error and no post.
+    expect(refused.status).toBe("completed");
+    if (refused.status !== "completed") throw new Error("unreachable");
+    expect(refused.output.topic).not.toMatch(/four-day weeks/i);
+
+    const refusedSelection = (await refusedStore.listSteps("x_learning_held")).find((st) => st.stepId === "07-select-candidate")!.output as {
+      refusedRequest?: string;
+    };
+    expect(refusedSelection.refusedRequest).toMatch(/never-topic/);
+  });
+
+  it("a subject in the window or a never-topic skips a catalog row", async () => {
+    await projectAll(env);
+    // Reserve-and-commit the first catalog row, which the sibling test above
+    // used to do as a side effect. Explicit here so the two tests do not
+    // depend on how the other consumes the catalog.
+    const firstCtx = { runId: "seed-first", clientSlug: "acme", productId: "x-agent", runKind: "recurring" as const, metadata: {} };
+    const first = await env.tools["topics.reserve"]!.execute({ reservationKey: "seed__first", count: 1 }, { ctx: firstCtx });
+    expect(first.status).toBe("success");
+    await env.tools["topics.commit"]!.execute({ reservationKey: "seed__first" }, { ctx: firstCtx });
 
     // Catalog order is remote work → hybrid teams → four-day weeks. Drain
     // "remote work" so the first candidate is the one in the window.
