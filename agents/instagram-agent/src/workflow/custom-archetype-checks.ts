@@ -76,6 +76,7 @@ export const KNOWN_SLOT_NAMES: ReadonlySet<string> = new Set([
   "groundStyle",
   "coverForm",
   "accentForm",
+  "compositionAnchor",
   "slideIndex",
   "deviceFigures",
   "deviceKind",

@@ -425,6 +425,7 @@ export const LAYOUT_FIELD_KEYS: ReadonlySet<string> = new Set([
   "groundStyle",
   "coverForm",
   "accentForm",
+  "compositionAnchor",
   "slideIndex",
   "deviceFigures",
   "deviceKind",

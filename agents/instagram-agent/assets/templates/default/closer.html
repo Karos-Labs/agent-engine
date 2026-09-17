@@ -331,14 +331,29 @@ body:has(.hero) .plate::after { display: none; }
   flex: 1 1 0;
   min-block-size: 0;
 }
-/* The run's composition grammar can still send the copy to the top instead. */
-body[data-anchor="top"] .plate::before { display: none; }
-body[data-anchor="top"] .plate::after {
+/* ── THE RUN'S COMPOSITION GRAMMAR, AS SOMETHING CSS CAN SELECT ON. ──
+   `bottom` is the default and the spacer above is it. The other three move the
+   spacer, or stand it down in favour of `space-between`. The grammar used to
+   arrive only as `--lockup-anchor`, a custom property, and a custom property
+   cannot appear in a selector — so all four grammars put the lockup at the same
+   y, measured on a real render. */
+body[data-anchor="top"] .plate::before,
+body[data-anchor="split"] .plate::before { display: none; }
+
+body[data-anchor="top"] .plate::after,
+body[data-anchor="centre"] .plate::after {
   content: "";
   display: block;
   flex: 1 1 0;
   min-block-size: 0;
 }
+
+/* `split-band` is the one grammar that is not an anchor: the head of the field
+   takes the statement and its foot takes whatever follows, with a band of
+   ground between them. `space-between` degrades to `flex-start` when the
+   content is taller than the field, so overflow still goes DOWNWARD where the
+   fit ladder can see it. */
+body[data-anchor="split"] .plate { justify-content: space-between; }
 
 /* ---- the brand band: mark on one side, eyebrow on the other ------------- */
 .zone-mark {
@@ -758,7 +773,7 @@ body.ta-center .acc { margin-inline: auto; }
 .cl-question:not(:has(> span:not(:empty))) { display: none; }
 </style>
 </head>
-<body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-ground="{{groundStyle}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}">
+<body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-ground="{{groundStyle}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}" data-anchor="{{compositionAnchor}}">
   <div class="ground" aria-hidden="true"></div>
 
   <div class="zone-mark">

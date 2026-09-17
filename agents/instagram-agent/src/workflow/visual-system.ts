@@ -593,6 +593,13 @@ export const COVER_FORM_BAND_PX: Record<CoverForm, number> = {
 export interface CarouselVisualSystem {
   /** Stable across a resume, written to skeleton memory and to the cross-client belief. */
   systemId: string;
+  /**
+   * The client's composition grammar, carried on the RESOLVED system so the
+   * slide data can hand it to the plate as a selectable keyword. It was
+   * published only as `--lockup-anchor`, and a custom property cannot be used
+   * in a selector — so all four grammars put the lockup at the same y.
+   */
+  compositionGrammar: CompositionGrammar;
   ground: SystemGround;
   /**
    * THE ONLY slides on which any template may paint an accent rule, band or
@@ -756,6 +763,7 @@ export function pickVisualSystem(params: PickVisualSystemParams): CarouselVisual
 
   const count = Number.isFinite(params.slideCount) ? Math.max(2, Math.floor(params.slideCount)) : 2;
   const accentSlides = accentSlidesFor(count, entry.accentForm, seed);
+  const compositionGrammar = params.client.compositionGrammar;
   const numeralSlides = params.client.pagination === "all" ? interiorSlides(count) : [];
   const eyebrow: CarouselVisualSystem["eyebrow"] = eyebrowFor(params.client, count);
 
@@ -768,6 +776,7 @@ export function pickVisualSystem(params: PickVisualSystemParams): CarouselVisual
 
   return {
     systemId: entry.id,
+    compositionGrammar,
     ground: entry.ground,
     accentSlides,
     accentForm: entry.accentForm,

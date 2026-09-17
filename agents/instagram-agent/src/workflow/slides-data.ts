@@ -1400,6 +1400,8 @@ function contentFor(
     groundStyle?: SlideGroundStyle | undefined;
     /** The run's cover form and accent form, carried to the plate as layout metadata so the axes the system decides actually reach the pixels. */
     coverForm?: string | undefined;
+    /** The run's composition grammar as a selectable keyword — `top` | `centre` | `split` | `bottom`. */
+    compositionAnchor?: string | undefined;
     accentForm?: string | undefined;
     targetLanguage?: string | undefined;
     /**
@@ -1649,6 +1651,7 @@ function contentFor(
     // slide's CONTENT ever sees them.
     groundStyle: context?.groundStyle ?? "grid",
     coverForm: context?.coverForm ?? "figure",
+    compositionAnchor: context?.compositionAnchor ?? "bottom",
     accentForm: context?.accentForm ?? "rule",
     slideIndex: String(slide.n).padStart(2, "0"),
     ...(eyebrowText !== undefined ? { kicker: iso(eyebrowText) } : {}),
@@ -2615,6 +2618,19 @@ export function assembleSlidesData(params: {
         // code: *"שכל פוסט יראה שונה"*, decided and then discarded.
         // They ride as layout metadata, exactly like `groundStyle`: no prose,
         // nothing a content gate counts, one attribute each on `<body>`.
+        // The composition grammar, as a keyword the CSS can SELECT on. It was
+        // published as `--lockup-anchor`, a custom property — and a custom
+        // property cannot be used in a selector, so four grammars moved nothing:
+        // measured on a real render, `headline-focus` put its lockup at the
+        // same y under `top-column` and under `bottom-column`.
+        compositionAnchor:
+          params.visualSystem?.compositionGrammar === "top-column"
+            ? "top"
+            : params.visualSystem?.compositionGrammar === "centre-measure"
+              ? "centre"
+              : params.visualSystem?.compositionGrammar === "split-band"
+                ? "split"
+                : "bottom",
         coverForm: params.visualSystem?.coverForm ?? "figure",
         accentForm: params.visualSystem?.accentForm ?? "rule",
         ...(eyebrowSlides !== undefined ? { eyebrowSlides } : {}),
