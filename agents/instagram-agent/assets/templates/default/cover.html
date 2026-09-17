@@ -109,7 +109,15 @@ body {
    interest-floor calibration reads to anchor a measurement to a named ground.
    Without it the sweep cannot name the ground it is measuring against and
    refuses to run at all. */
-body {
+/* ── ON `:root`, NOT ON `body`, AND THE DIFFERENCE IS TOTAL. ──
+   The brand kit declares its tokens on `:root` and is spliced AFTER this sheet,
+   so on equal specificity the kit wins — which is the whole contract. Declaring
+   these on `body` instead makes them MORE specific than the kit's, so a
+   template default silently defeats every client's colours. Measured: on a
+   light-ground kit the plate rendered this sheet's near-white `--fg` on the
+   kit's light `--bg` and the floor reported "0% of the frame carries any ink at
+   all; the render looks broken" — which it was, invisibly. */
+:root {
   --bg: #17181C;
   --fg: #F4F2EC;
   /* The faces the bundled set requests, and the set's own last word on what a
@@ -122,13 +130,13 @@ body {
   --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
 }
 
-body { --accent: {{accentColor}}; }
+:root { --accent: {{accentColor}}; }
 
 /* The badge slot is not in the bundled markup, but its placement rule is (see
    `.brand-badge`), and a rule that READS a token nobody declares resolves to
    nothing — an ink of `initial` on a client template that does carry the slot.
    Declared here so the value exists wherever the rule can apply. */
-body { --badge-ink: color-mix(in srgb, var(--fg) 55%, transparent); }
+:root { --badge-ink: color-mix(in srgb, var(--fg) 55%, transparent); }
 
 /* The reviewer's type-scale request. Hebrew sets ~6% larger at the same step,
    so the script sheet may override this; `script-fonts.ts` owns that. */
