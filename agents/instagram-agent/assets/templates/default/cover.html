@@ -67,9 +67,15 @@
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 
+/* THE CANVAS IS 1080x1440. `render-carousel.ts` defaults `canvas` to
+   `{ w: 1080, h: 1440 }` and every clause of the interest floor measures
+   against those coordinates. This system's first draft said 1350 — Instagram's
+   4:5 in CSS pixels — and laid every plate out in the top 1350px of a 1440px
+   frame, leaving a 90px dead band under the foot zone on all eight and
+   inflating every empty-rectangle measurement taken off them. */
 body {
   inline-size: 1080px;
-  block-size: 1350px;
+  block-size: 1440px;
   position: relative;
   overflow: hidden;
   background: var(--bg, #14151a);
@@ -184,6 +190,34 @@ body:not([data-hero-scrim]) .scrim,
 body[data-hero-scrim=""] .scrim { display: none; }
 .bg:empty ~ .scrim { display: none; }
 
+/* ---- the BOUNDED picture ------------------------------------------------ */
+/* TWO KINDS OF PICTURE, AND THE DIFFERENCE IS DELIBERATE (RFC-20 §11.1).
+   On the cover and on `slide` the photograph IS the plate: full bleed, copy
+   over a scrim, and a reader scrolling past sees a photograph. On the four
+   panel archetypes it is a bounded band beside type that keeps its own ground,
+   and a reader sees a typographic slide with a picture in it — which is the
+   owner's *"שהסלייד עצמו לפעמים יכיל תמונה וטקסט"*.
+
+   Keeping both is what makes a carousel vary from plate to plate. Making every
+   plate full bleed (this system's first attempt) removed that variation AND
+   handed every plate a full-frame layer it had not earned, which the interest
+   floor's clauses are calibrated to read as evidence of something else. */
+.sc-figure-band {
+  inline-size: 100%;
+  block-size: 300px;
+  overflow: hidden;
+  border-radius: 3px;
+  flex: none;
+}
+.sc-figure-band img {
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* `onerror` removes the `<img>`, so a band with no picture leaves no hole. */
+.sc-figure-band:empty { display: none; }
+
 /* ---- the three bands ---------------------------------------------------- */
 /* A plate is: the mark band, the field, the foot band. Content lives in the
    field and NEVER enters the other two — that reservation is the whole answer
@@ -191,7 +225,9 @@ body[data-hero-scrim=""] .scrim { display: none; }
 .plate {
   position: relative;
   z-index: 3;
-  block-size: 1350px;
+  /* The canvas's height, taken from the body rather than restated — one number
+     for the frame, and a plate that cannot disagree with it. */
+  block-size: 100%;
   padding: var(--zone-mark) var(--mx) var(--zone-foot);
   display: flex;
   flex-direction: column;
@@ -204,24 +240,35 @@ body[data-hero-scrim=""] .scrim { display: none; }
      direction, so the fit ladder could not see the thing it exists to prevent.
      With `flex-start` plus the auto margin below, a stack that does not fit
      grows DOWNWARD, which `scrollHeight` reports and the ladder then steps. */
-  justify-content: flex-start;
+  /* SPACE-BETWEEN, so a plate's blocks DISTRIBUTE across the field instead of
+     clustering at one end. The interest floor refuses a plate whose largest
+     empty rectangle covers more than 22% of it, and a single block anchored to
+     one edge of a 1142px field leaves 35-44% — measured on this tree, on six of
+     eight plates. Splitting the air into two gaps is what a composition does.
+
+     `space-between` and not `flex-end`: when content is taller than the field
+     it falls back to packing from the START, so overflow goes DOWNWARD where
+     `scrollHeight` reports it and the fit ladder can step. `flex-end` overflows
+     upward through the reserved brand band, silently — this system shipped that
+     bug for one render and the eyebrow printed into the headline. */
+  justify-content: space-between;
   gap: var(--sp-2);
   overflow: visible;
 }
 /* The run's composition grammar decides which edge the copy sits on. It arrives
    as `data-anchor` on the body — a CSS custom property cannot be selected on,
    which is half of why `--lockup-anchor` was emitted and read by nothing. */
-/* THE AUTO MARGIN IS ON THE FIRST CHILD, so the whole stack moves as ONE unit
-   and the free space becomes a top margin. Putting it on the last child instead
-   distributes the air BETWEEN the blocks: measured on the cover, that opened
-   300px between the figure and the headline it is evidence for, and the plate
-   read as two unrelated halves. A plate's blocks belong together; the air
-   belongs outside them. */
-.plate > :first-child          { margin-block-start: auto; }  /* bottom, default */
-body[data-anchor="top"]    .plate > :first-child { margin-block-start: 0; }
-body[data-anchor="top"]    .plate > :last-child  { margin-block-end: auto; }
-body[data-anchor="centre"] .plate > :first-child { margin-block-start: auto; }
-body[data-anchor="centre"] .plate > :last-child  { margin-block-end: auto; }
+/* The run's composition grammar still decides which end a plate leans to, for
+   the plates that have one dominant block. */
+/* OVER A PHOTOGRAPH THE COPY GOES TO THE FOOT. The scrim is built to darken
+   downward, so the bottom of the plate is where type is legible and where it is
+   not standing on somebody's face. With the picture as the only subject the
+   field has one block in it, and `space-between` puts a lone block at the top —
+   which is the one place a photo cover should not put its headline. */
+body:has(.hero) .plate > :last-child { margin-block-start: auto; }
+
+body[data-anchor="bottom"] .plate { justify-content: flex-start; }
+body[data-anchor="bottom"] .plate > :first-child { margin-block-end: auto; }
 
 /* ---- the brand band: mark on one side, eyebrow on the other ------------- */
 .zone-mark {
@@ -314,12 +361,17 @@ body[data-anchor="centre"] .plate > :last-child  { margin-block-end: auto; }
 /* RULE — a short horizontal block above the headline. */
 body[data-accent="rule"] .acc { border-radius: 1px; }
 
-/* BRACKET — the same weight stood on end, on the reading edge of the lockup.
-   Vertical, so it reads as a margin mark rather than as an underline. */
-body[data-accent="bracket"] .acc {
-  inline-size: var(--fx-accent-h, 10px);
-  block-size: var(--fx-accent-w, 88px);
-}
+/* TINT — no mark at all. The accent colours something that was going to be on
+   the plate anyway: the list's numerals, the recap's numerals, the source line.
+   This replaces a `bracket` form that stood the rule on its end as a vertical
+   bar beside the lockup; the owner's verdict on it was *"גם הקו האנכי שהוספת
+   נראה ממש רע - תוריד, עדיף פשוט לפעמים להשאיר אלמנט בצבע השני"*, and he is
+   right: a free-standing stroke with nothing to do is furniture whichever way
+   it is turned. Colour carried by content is the quietest accent there is. */
+body[data-accent="tint"] .acc { display: none; }
+body[data-accent="tint"] .source-line,
+body[data-accent="tint"] .eyebrow,
+body[data-accent="tint"] .kicker { color: var(--fx-accent-ink, var(--accent)); }
 
 /* BAND — the accent becomes the eyebrow's own plate. No free-standing mark at
    all: the colour is carried by a label that was going to be there anyway,
@@ -432,6 +484,13 @@ body[data-accent="none"] .acc { display: none; }
 [data-fit="-1"].r-statement { font-size: var(--t-display); }
 [data-fit="-1"].r-lead      { font-size: var(--t-statement); }
 
+/* The second grow rung. Only the roles that START below the top of the scale
+   have one — a display host is already at the largest step by `-1` and there is
+   nothing above `--t-figure` to give it. */
+[data-fit="-2"].r-display   { font-size: var(--t-figure); }
+[data-fit="-2"].r-statement { font-size: var(--t-figure); }
+[data-fit="-2"].r-lead      { font-size: var(--t-display); }
+
 [data-fit="1"].r-figure     { font-size: var(--t-display); }
 [data-fit="1"].r-display    { font-size: var(--t-statement); }
 [data-fit="1"].r-statement  { font-size: var(--t-lead); }
@@ -535,10 +594,14 @@ body.ta-center .acc { margin-inline: auto; }
   align-items: flex-end;
   justify-content: flex-start;
 }
-/* Over a photograph the photograph IS the subject, so the band collapses and
-   the whole plate becomes image plus lockup. */
-body:has(.hero[src]:not([src=""])) .cov-subject { flex-basis: 0; }
-.cov-subject:has(.device:empty) { flex-basis: 0; }
+/* Over a photograph the photograph IS the subject: the band STANDS DOWN. It
+   used to collapse to `flex-basis: 0` instead, which left the device in a
+   zero-height box — measured on this tree, a 230px figure rendered from y=-98
+   to y=132, so "90%" printed off the top edge of the plate and through the
+   brand band. Collapsing a container is not the same as removing what is in
+   it. A bounded object on top of a photograph is two subjects anyway. */
+body:has(.hero) .cov-subject { display: none; }
+.cov-subject:has(.device:empty) { display: none; }
 
 /* ============================================================================
    THE FOUR COVER FORMS. The run picks one and holds it against recent runs, so
@@ -779,10 +842,21 @@ body[data-cover="typographic-poster"] .lockup { gap: var(--sp-2); }
     /* Grow: only the primary host, only one step, only if it still fits. A plate
        whose copy is short should read as a deliberate large statement rather
        than as a small thing adrift in a grey field. */
-    if (!overflows() && primary.length) {
-      set(primary, -1);
-      closeInk();
-      if (overflows()) { set(primary, 0); closeInk(); }
+    /* GROW WHILE IT FITS, not exactly once. The interest floor refuses a plate
+       whose largest empty rectangle covers more than 22% of it, and measured on
+       this tree the bottom-anchored stacks were reporting 28-44% — the same
+       thing the owner sees as *"חלק מהשקפים ריקים"*. One rung was not enough to
+       close that on a short headline. Each rung is still a step of the scale,
+       and the loop stops the moment anything would overflow, so filling the
+       plate can never become clipping it. */
+    if (primary.length) {
+      var grown = 0;
+      while (grown > -2 && !overflows()) {
+        grown -= 1;
+        set(primary, grown);
+        closeInk();
+      }
+      if (overflows()) { grown += 1; set(primary, grown); closeInk(); }
     }
 
     /* Shrink: everything together, so the relationship between the headline and

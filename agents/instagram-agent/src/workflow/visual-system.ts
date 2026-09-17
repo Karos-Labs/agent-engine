@@ -533,7 +533,7 @@ export const SYSTEM_GROUNDS = ["flat", "grid", "glyph"] as const;
 export type SystemGround = (typeof SYSTEM_GROUNDS)[number];
 
 /** The shape the accent takes where it is allowed to appear at all. */
-export const ACCENT_FORMS = ["rule", "band", "bracket", "field", "none"] as const;
+export const ACCENT_FORMS = ["rule", "band", "tint", "field", "none"] as const;
 export type AccentForm = (typeof ACCENT_FORMS)[number];
 
 /** What the cover leads with. Read by the cover template and (W2-C) by the `coverSubject` clause. */
@@ -560,8 +560,10 @@ export const ACCENT_FORM_GEOMETRY: Record<AccentForm, { w: string; h: string }> 
   rule: { w: "calc(240px * var(--ts, 1))", h: "calc(10px * var(--ts, 1))" },
   /** A band across most of the measure — the loudest mark short of a surface. */
   band: { w: "calc(560px * var(--ts, 1))", h: "calc(16px * var(--ts, 1))" },
-  /** A short heavy tick. A `bracket` client spends its colour in small marks. */
-  bracket: { w: "calc(96px * var(--ts, 1))", h: "calc(18px * var(--ts, 1))" },
+  /** `tint` paints no mark — it spends the colour on the numerals and labels the
+   *  plate already carries — so its geometry is zero by construction, not by
+   *  omission. Listed so the record stays total. */
+  tint: { w: "0", h: "0" },
   /** The full measure, set as a surface edge. `field` takes ONE slide per carousel (see `accentSlidesFor`). */
   field: { w: "100%", h: "calc(24px * var(--ts, 1))" },
   none: { w: "0", h: "0" },
@@ -661,10 +663,10 @@ export interface VisualSystemEntry {
 export const VISUAL_SYSTEM_CATALOG: readonly VisualSystemEntry[] = [
   { id: "quiet-rule", ground: "flat", accentForm: "rule", coverForm: "typographic-poster", typeScale: "editorial", gutter: "wide", accentRoles: ["punctuation", "information"] },
   { id: "quiet-figure", ground: "flat", accentForm: "none", coverForm: "figure", typeScale: "display", gutter: "wide", accentRoles: ["punctuation", "mark", "information"] },
-  { id: "quiet-portrait", ground: "flat", accentForm: "bracket", coverForm: "portrait", typeScale: "editorial", gutter: "tight", accentRoles: ["punctuation", "mark"] },
+  { id: "quiet-portrait", ground: "flat", accentForm: "tint", coverForm: "portrait", typeScale: "editorial", gutter: "tight", accentRoles: ["punctuation", "mark"] },
   { id: "ruled-object", ground: "grid", accentForm: "rule", coverForm: "object", typeScale: "display", gutter: "wide", accentRoles: ["information", "punctuation"] },
   { id: "ruled-poster", ground: "grid", accentForm: "band", coverForm: "typographic-poster", typeScale: "condensed", gutter: "tight", accentRoles: ["field", "information"] },
-  { id: "ruled-portrait", ground: "grid", accentForm: "bracket", coverForm: "portrait", typeScale: "editorial", gutter: "wide", accentRoles: ["mark", "punctuation"] },
+  { id: "ruled-portrait", ground: "grid", accentForm: "tint", coverForm: "portrait", typeScale: "editorial", gutter: "wide", accentRoles: ["mark", "punctuation"] },
   { id: "glyph-figure", ground: "glyph", accentForm: "rule", coverForm: "figure", typeScale: "display", gutter: "tight", accentRoles: ["information", "punctuation"] },
   { id: "glyph-poster", ground: "glyph", accentForm: "field", coverForm: "typographic-poster", typeScale: "condensed", gutter: "wide", accentRoles: ["field"] },
   { id: "glyph-object", ground: "glyph", accentForm: "band", coverForm: "object", typeScale: "display", gutter: "wide", accentRoles: ["field", "information"] },
@@ -675,7 +677,7 @@ export const VISUAL_SYSTEM_CATALOG: readonly VisualSystemEntry[] = [
   // not punctuation.
   { id: "marked-portrait", ground: "flat", accentForm: "none", coverForm: "portrait", typeScale: "display", gutter: "tight", accentRoles: ["mark"] },
   { id: "banded-object", ground: "grid", accentForm: "band", coverForm: "object", typeScale: "editorial", gutter: "tight", accentRoles: ["field", "mark"] },
-  { id: "bracketed-figure", ground: "glyph", accentForm: "bracket", coverForm: "figure", typeScale: "condensed", gutter: "wide", accentRoles: ["punctuation", "mark", "information"] },
+  { id: "bracketed-figure", ground: "glyph", accentForm: "tint", coverForm: "figure", typeScale: "condensed", gutter: "wide", accentRoles: ["punctuation", "mark", "information"] },
 ];
 
 /**

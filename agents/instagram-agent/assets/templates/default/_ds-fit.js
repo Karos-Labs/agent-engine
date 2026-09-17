@@ -131,10 +131,21 @@
     /* Grow: only the primary host, only one step, only if it still fits. A plate
        whose copy is short should read as a deliberate large statement rather
        than as a small thing adrift in a grey field. */
-    if (!overflows() && primary.length) {
-      set(primary, -1);
-      closeInk();
-      if (overflows()) { set(primary, 0); closeInk(); }
+    /* GROW WHILE IT FITS, not exactly once. The interest floor refuses a plate
+       whose largest empty rectangle covers more than 22% of it, and measured on
+       this tree the bottom-anchored stacks were reporting 28-44% — the same
+       thing the owner sees as *"חלק מהשקפים ריקים"*. One rung was not enough to
+       close that on a short headline. Each rung is still a step of the scale,
+       and the loop stops the moment anything would overflow, so filling the
+       plate can never become clipping it. */
+    if (primary.length) {
+      var grown = 0;
+      while (grown > -2 && !overflows()) {
+        grown -= 1;
+        set(primary, grown);
+        closeInk();
+      }
+      if (overflows()) { grown += 1; set(primary, grown); closeInk(); }
     }
 
     /* Shrink: everything together, so the relationship between the headline and
