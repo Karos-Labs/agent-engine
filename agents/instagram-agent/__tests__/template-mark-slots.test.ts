@@ -824,24 +824,37 @@ describe("RFC-17 twin slots: BREAK IT — the guards refuse a broken template", 
    * string in memory, and requires `auditTwinSlots` to report it. A guard
    * nobody has watched refuse is not a guard.
    */
-  it("removing one collapse rule is caught — the plain twin would render alongside the runs", async () => {
+  it("removing the shared collapse rule is caught — the plain twin would render alongside the runs", async () => {
     const html = await readTemplate("cover.html");
-    const broken = html.replace(".headline:has(.mk-runs:not(:empty)) .mk-plain { display: none; }", "");
-    expect(broken).not.toBe(html);
+    const broken = html.replace(".mk-runs:not(:empty) + .mk-plain { display: none; }", "");
+    expect(broken, "the shared collapse rule is not in cover.html to remove").not.toBe(html);
     const problems = auditTwinSlots(broken, TWIN_SLOTS["cover.html"]!);
-    expect(problems.join(" | ")).toMatch(/headline: no collapse rule/);
-    // And the pair it belongs to is still perfectly well-formed in the
-    // markup, which is exactly why the source scan has to look at both halves.
+    expect(problems.join(" | ")).toMatch(/no shared twin collapse rule/);
+    // And the pairs it serves are still perfectly well-formed in the markup,
+    // which is exactly why the source scan has to look at both halves.
     expect(problems.join(" | ")).not.toMatch(/markup does not declare/);
   });
 
-  it("a typo'd host in a collapse rule is caught twice — the pair loses its rule AND the rule names nothing", async () => {
-    const html = await readTemplate("headline-focus.html");
-    const broken = html.replace(".hf-headline:has(.mk-runs:not(:empty))", ".hf-headlne:has(.mk-runs:not(:empty))");
+  /**
+   * THE TYPO CASE, INVERTED.
+   *
+   * There used to be a case here for a misspelt HOST in a per-host collapse
+   * rule (`.headlne:has(…)`), which left the real pair unruled and the rule
+   * pointing at nothing. The shared rule names no host, so that typo cannot be
+   * written any more — and the failure mode that replaces it is a per-host rule
+   * coming BACK, which is the drift this consolidation removed. Two mechanisms
+   * for one relationship is how the set drifted to begin with.
+   */
+  it("a per-host collapse rule coming back is caught as drift", async () => {
+    const html = await readTemplate("cover.html");
+    const broken = html.replace(
+      ".mk-runs:not(:empty) + .mk-plain { display: none; }",
+      `.mk-runs:not(:empty) + .mk-plain { display: none; }
+.headline:has(.mk-runs:not(:empty)) .mk-plain { display: none; }`,
+    );
     expect(broken).not.toBe(html);
-    const problems = auditTwinSlots(broken, TWIN_SLOTS["headline-focus.html"]!);
-    expect(problems.join(" | ")).toMatch(/hf-headline: no collapse rule/);
-    expect(problems.join(" | ")).toMatch(/collapse rule names \.hf-headlne/);
+    const problems = auditTwinSlots(broken, TWIN_SLOTS["cover.html"]!);
+    expect(problems.join(" | ")).toMatch(/per-host collapse rule for \.headline/);
   });
 
   it("a STRAIGHT SWAP — the runs slot alone, no plain fallback — is caught", async () => {
