@@ -596,8 +596,12 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     // it was built from. Nothing publishes: the carousel still waits on a human.
     expect(result.status).toBe("completed");
 
+    // The carousel IS persisted now — keeping the work is the whole point —
+    // and it carries the reviewer's decision where nobody can miss it.
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", runId, "_"]);
-    expect(deliverables).toHaveLength(0);
+    expect(deliverables).toHaveLength(1);
+    const carousel = (deliverables[0] as { data: { deliverable: Record<string, unknown> } }).data.deliverable;
+    expect(carousel["reviewOutcome"]).toMatchObject({ outcome: "rejected" });
   }, 60000);
 
   it("09b writes all THREE belief keys in ONE memory.updateBeliefs diff, and the gate payload carries the skeleton", async () => {
