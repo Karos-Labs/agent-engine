@@ -158,82 +158,56 @@ body {
   z-index: 0;
 }
 /* The vocabulary is the system catalogue's own — `flat | grid | glyph` — and it
-   arrives on every slide as `groundStyle`. All three are modulated: a single
-   flat fill is the "mostly grey screen" and no plate in the set paints one. */
+   arrives on every slide as `groundStyle`.
 
-/* FLAT — one soft tonal fall, lit from the lockup's corner. Quiet, not empty. */
+   ── EVERY ONE OF THEM IS BOUNDED, AND THAT IS NOT A STYLE CHOICE. ──
+   The first version painted each treatment across the WHOLE plate. It looked
+   quiet and it broke the measurement: a full-frame gradient moves the mean of
+   every cell it covers, so `slide.html` with no photograph measured
+   `inkShare 0.96` and `textBoxShare 0` — the interest floor reported "the
+   ground layers rendered and the copy did not" on a plate whose copy was
+   perfectly visible. `slide-metrics.ts` keeps two masks precisely so a
+   DECORATIVE texture cannot be mistaken for content, and a screen that fills
+   whatever room it is given is the shape RFC-20 §5.2 deleted.
+
+   So each ground is one bounded mass with `no-repeat` and a declared extent,
+   and the rest of the plate is the brand's own ground colour. */
+
+/* FLAT — one soft mass lifting the lockup's corner. Quiet, not empty. */
 body[data-ground="flat"] .ground {
-  background:
-    radial-gradient(135% 95% at 8% 100%,
-      color-mix(in srgb, var(--fg) calc(var(--ground-texture-alpha, 0.10) * 55%), transparent),
-      transparent 58%),
-    var(--bg, #14151a);
+  background-image: radial-gradient(circle at 50% 50%,
+    color-mix(in srgb, var(--fg) calc(var(--ground-texture-alpha, 0.10) * 60%), transparent),
+    transparent 70%);
+  background-repeat: no-repeat;
+  background-position: -14% 108%;
+  background-size: 92% 620px;
 }
 
-/* GRID — a drawn field. The lines are ground, not furniture: they are uniform,
-   they never terminate next to text, and at this alpha they read as paper
-   rather than as a mark, which is the distinction the accent rule protects. */
+/* GRID — a drawn field, held to a band rather than tiled over the plate. The
+   lines are uniform and they never terminate next to text. */
 body[data-ground="grid"] .ground {
-  background:
+  background-image:
     repeating-linear-gradient(0deg,
-      color-mix(in srgb, var(--fg) calc(var(--ground-texture-alpha, 0.10) * 30%), transparent) 0 1px,
+      color-mix(in srgb, var(--fg) calc(var(--ground-texture-alpha, 0.10) * 34%), transparent) 0 1px,
       transparent 1px 90px),
     repeating-linear-gradient(90deg,
-      color-mix(in srgb, var(--fg) calc(var(--ground-texture-alpha, 0.10) * 30%), transparent) 0 1px,
-      transparent 1px 90px),
-    var(--bg, #14151a);
+      color-mix(in srgb, var(--fg) calc(var(--ground-texture-alpha, 0.10) * 34%), transparent) 0 1px,
+      transparent 1px 90px);
+  background-repeat: no-repeat, no-repeat;
+  background-position: 0 0, 0 0;
+  background-size: 100% 540px, 100% 540px;
 }
 
 /* GLYPH — one oversized accent form bled off a corner. No letterform: a text
    glyph in the ground is the thing that read as a watermark on a template. */
 body[data-ground="glyph"] .ground {
-  background:
-    radial-gradient(58% 44% at 88% 12%,
-      color-mix(in srgb, var(--accent) calc(var(--ground-texture-alpha, 0.10) * 130%), transparent),
-      transparent 70%),
-    radial-gradient(90% 70% at 0% 100%,
-      color-mix(in srgb, var(--fg) calc(var(--ground-texture-alpha, 0.10) * 40%), transparent),
-      transparent 62%),
-    var(--bg, #14151a);
+  background-image: radial-gradient(circle at 50% 50%,
+    color-mix(in srgb, var(--accent) calc(var(--ground-texture-alpha, 0.10) * 150%), transparent),
+    transparent 68%);
+  background-repeat: no-repeat;
+  background-position: 108% -10%;
+  background-size: 74% 560px;
 }
-
-/* ---- hero photograph ---------------------------------------------------- */
-.hero, .bg img {
-  position: absolute;
-  inset: 0;
-  inline-size: 100%;
-  block-size: 100%;
-  object-fit: cover;
-  z-index: 1;
-}
-.scrim {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  /* THE SCRIM DARKENS WHERE THE COPY IS, AND NOWHERE ELSE. The first version
-     ran from 30% at the top to 94% at the foot and flattened the photograph
-     underneath it: measured through the real renderer, a plate reading
-     `imagery 97.2%` came back with a `quantisedColourCount` of ONE — the
-     picture was there and its colour was gone. A carousel whose images are the
-     point cannot wash them out. Transparent over the top third, and only the
-     band the lockup sits in is darkened enough to read on. */
-  /* `to top`, and these exact stops, because they are the ones that were
-     MEASURED to leave a photograph its colour. A scrim is a gradient laid over
-     the picture, so its shape decides how much of the plate keeps the image's
-     own palette: a version running 30% at the head to 94% at the foot took a
-     plate reading `imagery 97.2%` down to a `quantisedColourCount` of ONE —
-     the picture was there and its colour was gone, which is the opposite of
-     what a carousel built around its images needs. Fully transparent above
-     62%, and only the band the lockup sits in is dark enough to read on. */
-  background: linear-gradient(to top,
-    color-mix(in srgb, var(--bg) 96%, transparent) 0%,
-    color-mix(in srgb, var(--bg) 86%, transparent) 22%,
-    color-mix(in srgb, var(--bg) 52%, transparent) 42%,
-    color-mix(in srgb, var(--bg) 0%, transparent) 62%);
-}
-body:not([data-hero-scrim]) .scrim,
-body[data-hero-scrim=""] .scrim { display: none; }
-.bg:empty ~ .scrim { display: none; }
 
 /* ---- the BOUNDED picture ------------------------------------------------ */
 /* TWO KINDS OF PICTURE, AND THE DIFFERENCE IS DELIBERATE (RFC-20 §11.1).
