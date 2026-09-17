@@ -243,14 +243,17 @@ describe("no Instagram step resolves to a premium model, in any language (RFC-15
     const RETIRED = ["gemini-2.5-pro", "gemini-2.5-flash"];
     for (const id of RETIRED) expect(MODEL_CAPABILITIES[id], `${id} should still have a row, for stored runs`).toBeDefined();
 
-    const qualifying = Object.entries(MODEL_CAPABILITIES)
-      .filter(([id]) => !RETIRED.includes(id))
+    const capable = Object.entries(MODEL_CAPABILITIES)
       .filter(([, caps]) => caps.languageStrength === "multilingual-strong" && caps.rtlSupport === "strong")
       .filter(([, caps]) => caps.costTier !== "premium");
+    const qualifying = capable.filter(([id]) => !RETIRED.includes(id));
 
-    // The premise: there is more than one, so "cheapest" is a real ranking
-    // rather than a one-element list dressed up as one.
-    expect(qualifying.length).toBeGreaterThan(1);
+    // The premise: the ranking is a real one — more than one capable row —
+    // and the exclusion is doing visible work rather than being the whole
+    // answer. Both halves asserted, so a catalog that lost its Gemini rows
+    // entirely could not pass this by leaving one survivor.
+    expect(capable.length).toBeGreaterThan(1);
+    expect(capable.map(([id]) => id)).toContain("gemini-2.5-pro");
     expect(qualifying.map(([id]) => id)).toContain("gemini-3.1-pro-preview");
 
     // Ranked on the blended cost of THIS call's shape — ~6.0k in, ~0.65k out
