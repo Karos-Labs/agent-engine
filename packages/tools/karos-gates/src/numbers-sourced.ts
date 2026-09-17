@@ -40,7 +40,18 @@ import { defineTool, success } from "@agent-engine/tool-common";
 // reports and many trade sources print it) verifies a draft's "$78 billion".
 // The code is folded to the symbol on both sides. Prep run
 // pubsub-21500057884542573 (blog-agent, 2026-09-07) held on exactly that.
-const TOOL_VERSION = "1.5.0";
+//
+// 1.6.0 - a range whose endpoints carry a MAGNITUDE ("$5M-$30M ARR",
+// "$5K-$30K/month", "$2B-$5B") was not recognised as a range at all.
+// `NUMERIC_RANGE_PATTERN` allowed a percent, an "x" or a multiplication sign
+// on an endpoint but nothing else, so a draft quoting its source's range
+// verbatim fell through to the bare upper endpoint, which the
+// range-fragment lookbehind then correctly rejected - the one guard
+// depending on the other having done its job first. Prep run
+// pubsub-21854296073980161 (intel-report-agent, karoslabs, 2026-09-17) was
+// held on "$30M" while its research pull carried "($5M-$30M ARR)" verbatim.
+// Minor bump, same reasoning as 1.1.0.
+const TOOL_VERSION = "1.6.0";
 
 /** A magnitude suffix that belongs to the figure in front of it: written out, or the common abbreviations. */
 const MAGNITUDE_SUFFIX = "(?:trillion|billion|million|thousand|tn|bn|mn|[kmbt])";
@@ -136,8 +147,19 @@ function exactRangePattern(normalizedRange: string): RegExp {
  * — an unbounded walk outward from the claim swallows neighbouring numbers
  * ("in 2024, $100-$500" would widen to "2024,$100-$500", which appears in no
  * source and would silently un-verify a claim that is in fact quoted exactly).
+ *
+ * An endpoint may carry a magnitude as well as a percent or a multiplier
+ * ("$5M-$30M", "$5K-$30K", "$2 billion-$5 billion"): `normalizeClaim` already
+ * folds those to one spelling, and `exactClaimPattern`'s `(?<!\d[kmbt]-)`
+ * lookbehind already assumes this pattern will have caught "$1b-$2b" as a
+ * range before a bare endpoint is judged. Until 1.6.0 it did not, and the two
+ * guards disagreed: the lookbehind rejected the endpoint as a range fragment
+ * while this pattern denied the range existed. The `\b` matters - without it
+ * "5 mark-up" would parse as the magnitude "5m" and widen into a range that
+ * is not one.
  */
-const NUMERIC_RANGE_PATTERN = /[$€£]?\s?\d[\d,]*(?:\.\d+)?\s?(?:%|x\b|×)?\s*[-‐-―]\s*[$€£]?\s?\d[\d,]*(?:\.\d+)?\s?(?:%|x\b|×)?/g;
+const RANGE_ENDPOINT = String.raw`[$€£]?\s?\d[\d,]*(?:\.\d+)?\s?(?:%|x\b|×|${MAGNITUDE_SUFFIX}\b)?`;
+const NUMERIC_RANGE_PATTERN = new RegExp(String.raw`${RANGE_ENDPOINT}\s*[-‐-―]\s*${RANGE_ENDPOINT}`, "gi");
 
 /**
  * The words that make a figure a BOUND rather than a value: "up to 34%",

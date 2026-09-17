@@ -15,7 +15,6 @@ import {
   runDirectionField,
   type WorkflowContext,
   WorkflowBlockedIntake,
-  WorkflowHeld,
   WorkflowToolingFailure,
   toAgentContext,
   runGate,
@@ -171,6 +170,93 @@ const ANALYSIS_FIELDS = [
 
 function concatenateAnalysisProse(report: IntelReportOutput): string {
   return ANALYSIS_FIELDS.map((field) => report[field]).join("\n\n");
+}
+
+/**
+ * What step 03 had to do to a report before it could go forward — attached to
+ * the deliverable and to this workflow's return value, exactly like
+ * `contextGrounding`'s DEGRADED marker, so the repair is visible rather than
+ * silent.
+ *
+ * Absent entirely on the normal path: a report whose figures all traced to a
+ * source carries no marker at all.
+ */
+export interface IntelReportNumericGroundingMarker {
+  /** Figures that could not be traced to a source and whose sentences were therefore dropped. */
+  redactedFigures: string[];
+  /**
+   * Figures still unverifiable after every repair. Reported rather than
+   * hidden — and normally empty, because redaction removes the sentence that
+   * carries the figure.
+   */
+  unsourcedFigures: string[];
+}
+
+/**
+ * Sentence boundaries, crudely: a terminator followed by whitespace.
+ *
+ * Deliberately crude. The only thing that depends on this split is which span
+ * of prose gets dropped when a figure cannot be sourced, and dropping one
+ * clause too many is strictly better than the alternative — surgically
+ * excising "$30M" from "$5M–$30M ARR" and shipping "$5M– ARR" to a client.
+ */
+function splitSentences(prose: string): string[] {
+  return prose.split(/(?<=[.!?])\s+/).filter((sentence) => sentence.trim().length > 0);
+}
+
+/**
+ * What a section says when every sentence in it rested on an unverifiable
+ * figure. Honest about the gap rather than silently short: a reviewer reading
+ * the report has to be able to tell "we found nothing to say here" from "the
+ * numbers did not hold up".
+ */
+const ANALYSIS_WITHHELD =
+  "This section is not reported: the figures it rested on could not be traced to any source gathered for this run, and unsourced numbers are withheld rather than published.";
+
+/**
+ * The deterministic floor under step 03: drops every sentence still carrying a
+ * figure `gate.numbersSourced` could not trace to a source.
+ *
+ * Exported for its own test. Pure, and monotone — each call removes at least
+ * one sentence or reports that it located none, which is what lets step 03
+ * loop over it without spinning.
+ *
+ * Over-removal is the deliberate bias. A claim like "$30M" also matches inside
+ * "$130M", so a sentence may be dropped that did not strictly have to be; that
+ * costs a sentence of analysis, while under-removal costs the client a figure
+ * the report cannot stand behind.
+ */
+export function redactUnsourcedClaims(
+  report: IntelReportOutput,
+  claims: readonly string[],
+): { report: IntelReportOutput; redactedFigures: string[]; droppedSentences: number } {
+  const wanted = [...new Set(claims.map((claim) => claim.trim()).filter((claim) => claim.length > 0))];
+  if (wanted.length === 0) return { report, redactedFigures: [], droppedSentences: 0 };
+
+  const hit = new Set<string>();
+  let droppedSentences = 0;
+  const repaired: Partial<Record<(typeof ANALYSIS_FIELDS)[number], string>> = {};
+
+  for (const field of ANALYSIS_FIELDS) {
+    const prose = report[field];
+    if (typeof prose !== "string" || prose.length === 0) continue;
+    let dropped = 0;
+    const kept = splitSentences(prose).filter((sentence) => {
+      const carries = wanted.filter((claim) => sentence.includes(claim));
+      if (carries.length === 0) return true;
+      for (const claim of carries) hit.add(claim);
+      dropped += 1;
+      return false;
+    });
+    // A section that lost nothing is left byte-identical. Rebuilding it would
+    // flatten its paragraph breaks into single spaces for no reason.
+    if (dropped === 0) continue;
+    droppedSentences += dropped;
+    const rebuilt = kept.join(" ").trim();
+    repaired[field] = rebuilt.length > 0 ? rebuilt : ANALYSIS_WITHHELD;
+  }
+
+  return { report: { ...report, ...repaired }, redactedFigures: [...hit], droppedSentences };
 }
 
 /**
@@ -402,6 +488,13 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       }
     });
 
+    /**
+     * What step 03 had to repair, per revision round. Written outside the step
+     * body so it survives a checkpoint replay (see step 03's own comment), and
+     * read back for the round the reviewer actually approved.
+     */
+    const numericGroundingByRevision = new Map<number, IntelReportNumericGroundingMarker | null>();
+
     // ── 02-03: generate the report, then verify its numeric claims — one full drafting pass ──
     /**
      * One full drafting pass: generate the report, then verify its numbers
@@ -469,7 +562,8 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
         { modelPolicy: route.policy },
       );
 
-      const draftResult = await wf.step.agent(rev("02-generate-report"), draftAgent, {
+      // Hoisted out of the call so the retry below sends byte-identical input.
+      const draftInput = {
         ...runDirectionField(runDirection),
         profile: clientContext.profile,
         // The freshly-read kit, not step 00's checkpointed copy.
@@ -498,15 +592,34 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
         // a reviewer asked about THIS report minutes ago.
         ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
         ...(directive !== undefined ? { revisionRequest: directive } : {}),
-      });
+      };
 
-      if (draftResult.status === "content_fail") {
-        throw new WorkflowHeld(`report draft did not produce a valid structured output: ${draftResult.status}`);
+      const draftResult = await wf.step.agent(rev("02-generate-report"), draftAgent, draftInput);
+
+      // ── a draft that came back unusable gets ANOTHER draft, not a held run ──
+      //
+      // `content_fail` here does not mean the model judged the report
+      // impossible — it means the turn came back without a parseable
+      // structured output, the known long-no-tool-step shape where the type
+      // discriminator is dropped. That is a coin flip, not a verdict, and
+      // re-flipping it costs one drafting turn against a run that otherwise
+      // ends with the client holding nothing. Its own step id, so the retry
+      // checkpoints separately and a resumed run does not redo it.
+      const usableDraft =
+        draftResult.status === "content_fail"
+          ? await wf.step.agent(rev("02a-regenerate-report"), draftAgent, draftInput)
+          : draftResult;
+
+      if (usableDraft.status === "content_fail") {
+        // Twice is no longer a coin flip. Nothing was drafted, so there is no
+        // content to repair and nothing this workflow can hand the client —
+        // the honest outcome, and the one the engine retries.
+        throw new WorkflowToolingFailure("report draft did not produce a valid structured output on two consecutive attempts");
       }
-      if (draftResult.status !== "completed") {
-        throw new WorkflowToolingFailure(`report generation step resolved to "${draftResult.status}"`);
+      if (usableDraft.status !== "completed") {
+        throw new WorkflowToolingFailure(`report generation step resolved to "${usableDraft.status}"`);
       }
-      const report = draftResult.finalOutput!;
+      const report = usableDraft.finalOutput!;
 
       // ── verify — every numeric claim across the 7 analysis sections must trace back
       // to the research pull's own content (RFC-05 §5 / §3 step 4's "reconcile the
@@ -516,9 +629,24 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       // dimension scores themselves). ──
       // Every evidence block is a source: a figure the site audit measured or
       // the SEO/GEO snapshot scored is as citable as one a web page stated.
+      //
+      // THE PROMPT'S EVIDENCE AND THE GATE'S SOURCES ARE THE SAME SET, and
+      // keeping them in step is what makes the gate honest. Every block below
+      // is one the drafting prompt above reads as fact, and a figure the draft
+      // takes from one of them is quoted, not invented — so the client's own
+      // profile and the two projected context documents belong here exactly as
+      // much as the research pull does. They were missing, and the gap has a
+      // shape: a report that correctly wrote "(context-provided: ...)" against
+      // a figure stated in its market-strategy document had that figure
+      // reported as unsourced, because the only place the gate was allowed to
+      // look was the web research. Anything added to `draftInput` as evidence
+      // has to be added here too.
       const sources = [
         research.query,
         JSON.stringify(research.result),
+        JSON.stringify(clientContext.profile),
+        ...(targetAudience !== undefined ? [JSON.stringify(targetAudience)] : []),
+        ...(marketStrategy !== undefined ? [JSON.stringify(marketStrategy)] : []),
         ...(siteAudit ? [JSON.stringify(siteAudit)] : []),
         ...(clientResearch ? [clientResearch.query, JSON.stringify(clientResearch.result)] : []),
         ...(competitorSites ? [JSON.stringify(competitorSites)] : []),
@@ -565,15 +693,100 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       // judgment calls, never invented numbers to be caught here — this gate is about the
       // report's *prose* claims, e.g. "conversion rate improved 30%", not about the
       // dimension scores themselves). ──
-      await wf.step.code(rev("03-verify-numbers-sourced"), async () => {
-        const text = concatenateAnalysisProse(groundedReport);
-        const verdict = await runGate(tools, "gate.numbersSourced", { text, sources }, ctx);
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
-        if (verdict.verdict === "content_fail") throw new WorkflowHeld(`numbers not sourced: ${verdict.reason}`);
-        return verdict;
-      });
+      //
+      // THIS STEP NO LONGER HOLDS THE RUN. It used to: a `content_fail` threw
+      // `WorkflowHeld`, the run ended at `held`, and the client got an error
+      // message where a report should have been — over, typically, one figure
+      // in one sentence out of seven sections. Prep run
+      // pubsub-21854296073980161 (2026-09-17) is the case that settled it:
+      // $0.46 of research and drafting was discarded because the draft wrote
+      // its source's "$5M-$30M ARR" range with an en dash, and the gate's
+      // range pattern could not read a magnitude endpoint (fixed separately,
+      // `numbers-sourced.ts` 1.6.0). A gate misreading is an INTERNAL fault;
+      // billing it to the client as a failed deliverable is the wrong trade
+      // even when the gate is right, because an unsourced figure is a reason
+      // to drop that figure, never a reason to withhold six sound sections.
+      //
+      // So the gate keeps its full authority over what may be PUBLISHED — no
+      // unsourced figure survives this step — and loses its authority to end
+      // the run. Two repairs, in ascending order of bluntness:
+      //
+      //   1. the correction pass again, told exactly which figures survived
+      //      its first attempt (02b gave it the gate's opening verdict; this
+      //      gives it the residue). Kept only if it is strictly closer, so a
+      //      bad rewrite can never make the report worse than what it got.
+      //   2. the deterministic floor: drop the sentences that still carry an
+      //      unsourced figure, and re-gate. No model, no judgment, no way for
+      //      it to fail to converge.
+      //
+      // `tooling_error` still throws: a gate that could not run has made no
+      // judgment at all, and pretending it passed would ship exactly the
+      // unsourced figures this step exists to catch.
+      const verified = await wf.step.code(
+        rev("03-verify-numbers-sourced"),
+        async (): Promise<{ report: IntelReportOutput; marker: IntelReportNumericGroundingMarker | null }> => {
+          const gate = async (candidate: IntelReportOutput): Promise<GateVerdict> => {
+            const verdict = await runGate(tools, "gate.numbersSourced", { text: concatenateAnalysisProse(candidate), sources }, ctx);
+            if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
+            return verdict;
+          };
 
-      return groundedReport;
+          let report = groundedReport;
+          let verdict = await gate(report);
+          if (verdict.verdict !== "content_fail") return { report, marker: null };
+
+          // ── repair 1: the correction pass, handed the residue ──
+          const retryAgent = new IntelReportGroundingAgent({ router: options.router, tools, promptStore: options.promptStore });
+          const retry = await retryAgent.run(ctx, {
+            flaggedClaims: verdict.evidence ?? [],
+            sections: Object.fromEntries(ANALYSIS_FIELDS.map((field) => [field, report[field]])),
+            sources,
+          });
+          if (retry.status === "completed" && retry.finalOutput) {
+            const output = retry.finalOutput;
+            const candidate: IntelReportOutput = {
+              ...report,
+              ...Object.fromEntries(ANALYSIS_FIELDS.map((field) => [field, output[field]])),
+            };
+            const retryVerdict = await gate(candidate);
+            if (retryVerdict.verdict !== "content_fail") return { report: candidate, marker: null };
+            if ((retryVerdict.evidence ?? []).length < (verdict.evidence ?? []).length) {
+              report = candidate;
+              verdict = retryVerdict;
+            }
+          }
+
+          // ── repair 2: the floor ──
+          //
+          // Bounded, and each pass either removes at least one sentence or
+          // reports that it located none and stops — so this terminates
+          // whatever the gate keeps saying.
+          const redactedFigures = new Set<string>();
+          let residual = verdict.evidence ?? [];
+          for (let pass = 0; pass < 3 && residual.length > 0; pass += 1) {
+            const floor = redactUnsourcedClaims(report, residual);
+            if (floor.droppedSentences === 0) break;
+            for (const figure of floor.redactedFigures) redactedFigures.add(figure);
+            report = floor.report;
+            const after = await gate(report);
+            residual = after.verdict === "content_fail" ? (after.evidence ?? []) : [];
+          }
+
+          return {
+            report,
+            marker: { redactedFigures: [...redactedFigures], unsourcedFigures: [...residual] },
+          };
+        },
+      );
+
+      // Outside the step body on purpose: a checkpointed step is REPLAYED
+      // from its stored value on a resumed run and its body never runs again,
+      // so a marker recorded inside it would vanish the moment this run came
+      // back from its 24-hour review gate. Keyed by revision because only the
+      // approved round's repairs describe the report that ships.
+      numericGroundingByRevision.set(revision, verified.marker);
+
+      return verified.report;
     };
 
     // ── The universal approve / revise / reject cycle ──
@@ -611,6 +824,12 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       },
     });
     const report = review.output;
+    /**
+     * The repairs step 03 made to the round that was approved — not to the
+     * last round attempted, which on an approve-after-revise run is the same
+     * thing only by luck.
+     */
+    const numericGrounding = numericGroundingByRevision.get(review.revision) ?? null;
 
     // ── 05: persist — intel.writeReport computes overallScore/overallGrade deterministically ──
     const writeOutcome = await wf.step.code("05-persist-report", async () => {
@@ -630,6 +849,10 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
         // SCRUM-242/SCRUM-388 (T-A10): the DEGRADED marker, on the actual
         // persisted deliverable a reviewer looks at — see 01e's own comment.
         ...(contextGrounding.decision === "degraded" ? { contextGrounding: contextGrounding.marker } : {}),
+        // Same principle as the DEGRADED marker above: a report that reached
+        // the client only because step 03 removed something says so on the
+        // deliverable a reviewer opens, not only in a log line.
+        ...(numericGrounding ? { numericGrounding } : {}),
       },
       snapshot: (deliverableId) => ({ ...writeOutcome, deliverableId }),
     });
@@ -668,6 +891,7 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       // SCRUM-242/SCRUM-388 (T-A10): same DEGRADED marker, on the workflow's
       // own typed return value — see 01e's own comment.
       ...(contextGrounding.decision === "degraded" ? { contextGrounding: contextGrounding.marker } : {}),
+      ...(numericGrounding ? { numericGrounding } : {}),
     };
   };
 }

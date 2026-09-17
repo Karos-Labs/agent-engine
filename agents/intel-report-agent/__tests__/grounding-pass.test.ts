@@ -97,23 +97,25 @@ describe("02b-ground-numeric-claims", () => {
     expect(result.status).toBe("completed");
   });
 
-  it("keeps the original draft when the correction pass itself fails", async () => {
+  it("keeps the original draft when the correction pass itself fails, and step 03 still delivers", async () => {
     // Losing a drafted report because a repair attempt errored would be
-    // strictly worse than not attempting one. The run is still held by the
-    // gate, with the message it would have had anyway.
+    // strictly worse than not attempting one. Both model repairs are
+    // unavailable here, so what carries the run is step 03's deterministic
+    // floor: the sentence with the unsourced figure is dropped and the rest
+    // of the report ships.
     const fabricated = goodIntelReport({
       conversionAnalysis: "Acme's conversion rate improved 43% after the last redesign.",
     });
-    // One turn only: the grounding agent's request exhausts the queue.
+    // One turn only: every grounding request after the draft exhausts the queue.
     const router = fakeRouterSequence([finalTurn(fabricated)]);
     const workflowFn = createIntelReportAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true });
 
     const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFn, { ...baseParams, runId: "intel_grounding_failed" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/numbers not sourced/i);
-    expect(result.reason).toMatch(/43%/);
+    expect(result.status).toBe("completed");
+    const stored = await env.tools["intel.getReport"]!.execute({}, { ctx: { ...baseParams, runId: "verify", metadata: {} } });
+    const { report } = (stored as { result: { report: Record<string, string> } }).result;
+    expect(report["conversionAnalysis"]).not.toMatch(/43%/);
   });
 
   it("CANNOT wave a report through — a correction that invents a new figure is still held", async () => {
@@ -132,10 +134,15 @@ describe("02b-ground-numeric-claims", () => {
 
     const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFn, { ...baseParams, runId: "intel_grounding_cannot_bypass" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    // The gate reports the NEW invented figure, proving it checked the
-    // corrected text rather than the draft.
-    expect(result.reason).toMatch(/61%/);
+    // The run completes — step 03 no longer holds — but the correction's OWN
+    // invented figure is caught by the same gate that caught the draft's and
+    // is removed before anything is persisted. That is the load-bearing
+    // property: this step can improve a report's chances and can never wave
+    // one through.
+    expect(result.status).toBe("completed");
+    const stored = await env.tools["intel.getReport"]!.execute({}, { ctx: { ...baseParams, runId: "verify", metadata: {} } });
+    const { report } = (stored as { result: { report: Record<string, string> } }).result;
+    expect(JSON.stringify(report)).not.toContain("61%");
+    expect(JSON.stringify(report)).not.toContain("43%");
   });
 });
