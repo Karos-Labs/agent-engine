@@ -220,6 +220,47 @@ body[data-ground="glyph"] .ground {
   background-size: 74% 560px;
 }
 
+/* ---- the FULL-BLEED picture --------------------------------------------- */
+/* THE PHOTOGRAPH IS TAKEN OUT OF FLOW, AND THAT IS LOAD-BEARING. `.bg` is a
+   plain wrapper; if its `<img>` stays in normal flow it is 1080x1440 of layout
+   and it pushes the entire plate below the canvas. Measured after an edit had
+   silently deleted this rule: `.bg` was 1444px tall, `.plate` started at
+   y=1444 and the headline sat at y=2395 — every such plate screenshotted as
+   bare ground, and the interest floor reported "only 0% of the frame carries
+   any ink at all; the render looks broken", which it was. */
+.hero,
+.bg img {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+  display: block;
+  z-index: 1;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  /* `to top`, and these exact stops, because they are the ones that were
+     MEASURED to leave a photograph its colour. A scrim is a gradient laid over
+     the picture, so its shape decides how much of the plate keeps the image's
+     own palette. Fully transparent above 62%, and only the band the lockup
+     sits in is dark enough to read on. */
+  background: linear-gradient(to top,
+    color-mix(in srgb, var(--bg) 96%, transparent) 0%,
+    color-mix(in srgb, var(--bg) 86%, transparent) 22%,
+    color-mix(in srgb, var(--bg) 52%, transparent) 42%,
+    color-mix(in srgb, var(--bg) 0%, transparent) 62%);
+}
+/* No photograph, no scrim: it exists to make copy legible over a picture, and
+   over bare ground it only flattens the ground. */
+body:not([data-hero-scrim]) .scrim,
+body[data-hero-scrim=""] .scrim { display: none; }
+.bg:empty ~ .scrim { display: none; }
+
 /* ---- the BOUNDED picture ------------------------------------------------ */
 /* TWO KINDS OF PICTURE, AND THE DIFFERENCE IS DELIBERATE (RFC-20 §11.1).
    On the cover and on `slide` the photograph IS the plate: full bleed, copy
