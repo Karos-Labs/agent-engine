@@ -104,6 +104,14 @@ body {
 body {
   --bg: #17181C;
   --fg: #F4F2EC;
+  /* The faces the bundled set requests, and the set's own last word on what a
+     plate looks like without a kit. A sheet that READS `--f-display` and never
+     declares it renders in `system-ui` and `ui-monospace` — which is exactly
+     what the calibration caught ("cover rendered in fallback faces"), and what
+     a client with no display face of its own would have shipped. */
+  --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+  --f-body: 'Inter', system-ui, -apple-system, sans-serif;
+  --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
 }
 
 body { --accent: {{accentColor}}; }
