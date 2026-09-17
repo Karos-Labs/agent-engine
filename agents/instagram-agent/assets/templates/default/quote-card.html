@@ -549,7 +549,11 @@ body[data-accent="none"] .acc { display: none; }
   font-weight: 400;
   line-height: 1.42;
   max-inline-size: 22em;
-  color: color-mix(in srgb, var(--fg) 82%, transparent);
+  /* 90%, not 82%. `.body-text` is a MARK-BEARING host: an emphasis swatch can
+     be painted behind it, and `MARK_HOST_INK_ALPHA` is the floor at which the
+     text stays legible on top of that block. Softening a mark host's ink is
+     how a marked word becomes less readable than an unmarked one. */
+  color: color-mix(in srgb, var(--fg) 90%, transparent);
   margin: 0;
 }
 .source-line, .note {
@@ -617,6 +621,13 @@ body[data-accent="none"] .acc { display: none; }
    start edge, and without it a marked headline's first line is clipped.
    The fallback is the HEBREW value, because a document composed without the
    run sheet cannot know its own script and has to be safe for the worse case. */
+/* ── A TWIN HOST IS NEVER `:empty`, SO IT NEEDS A DIFFERENT QUESTION. ──
+   The slot renders as two `<span>` children on every plate, filled or not, so
+   `.host:empty` is permanently false: an unfilled host would keep its box, its
+   padding and its gap, holding the layout open around nothing. Ask about the
+   CHILDREN instead — no non-empty span, no host. */
+*:has(> span.mk-plain):not(:has(> span:not(:empty))) { display: none; }
+
 *:has(> span.mk-plain) { padding-block-start: max(var(--mk-twin-bleed, .22em), var(--mk-face-bleed, 0em)); }
 
 .mk-runs  { display: contents; }
@@ -675,12 +686,27 @@ body.ta-center .acc { margin-inline: auto; }
 /* @ds:end */
 
 /* ---- quote-card --------------------------------------------------------- */
+/* ── THE QUOTATION'S BOUNDED OBJECT (RFC-20 §5.5). ──
+   One soft ramp behind the quotation, bounded by the block's own box and not
+   repeating. A quote card is a card; this is the surface it is set on, and it
+   is the term this archetype's clause-E `imageryOrDeviceShare` constant (47.30,
+   measured in RFC-20 §5.2) was taken against — remove it and the constant is
+   describing a plate that no longer exists. */
 .quote-block {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: var(--sp);
+  padding: var(--sp-2);
+  border-radius: 4px;
+  background-image: linear-gradient(152deg,
+    color-mix(in srgb, var(--accent) 16%, transparent),
+    color-mix(in srgb, var(--fg) 5%, transparent) 62%,
+    transparent 88%);
+  background-repeat: no-repeat;
 }
+/* Content-guarded: no quotation, no surface. */
+body:not(:has(#quote > span:not(:empty))) .quote-block { background-image: none; }
 /* A quotation is read, not scanned, so it takes a narrower measure than a
    headline: ~34 characters a line rather than the headline's 15 words. */
 .quote-text { max-inline-size: min(17ch, 100%); }

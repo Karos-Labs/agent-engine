@@ -565,7 +565,11 @@ body[data-accent="none"] .acc { display: none; }
   font-weight: 400;
   line-height: 1.42;
   max-inline-size: 22em;
-  color: color-mix(in srgb, var(--fg) 82%, transparent);
+  /* 90%, not 82%. `.body-text` is a MARK-BEARING host: an emphasis swatch can
+     be painted behind it, and `MARK_HOST_INK_ALPHA` is the floor at which the
+     text stays legible on top of that block. Softening a mark host's ink is
+     how a marked word becomes less readable than an unmarked one. */
+  color: color-mix(in srgb, var(--fg) 90%, transparent);
   margin: 0;
 }
 .source-line, .note {
@@ -633,6 +637,13 @@ body[data-accent="none"] .acc { display: none; }
    start edge, and without it a marked headline's first line is clipped.
    The fallback is the HEBREW value, because a document composed without the
    run sheet cannot know its own script and has to be safe for the worse case. */
+/* ── A TWIN HOST IS NEVER `:empty`, SO IT NEEDS A DIFFERENT QUESTION. ──
+   The slot renders as two `<span>` children on every plate, filled or not, so
+   `.host:empty` is permanently false: an unfilled host would keep its box, its
+   padding and its gap, holding the layout open around nothing. Ask about the
+   CHILDREN instead — no non-empty span, no host. */
+*:has(> span.mk-plain):not(:has(> span:not(:empty))) { display: none; }
+
 *:has(> span.mk-plain) { padding-block-start: max(var(--mk-twin-bleed, .22em), var(--mk-face-bleed, 0em)); }
 
 .mk-runs  { display: contents; }
@@ -784,6 +795,32 @@ body[data-cover="typographic-poster"] .cov-field { display: none; }
 body[data-cover="typographic-poster"] .lockup { margin-block-start: auto; }
 body[data-cover="typographic-poster"] .lockup .headline { max-inline-size: min(11ch, 100%); }
 body[data-cover="typographic-poster"] .lockup { gap: var(--sp-2); }
+
+/* ── THE COVER'S BOUNDED OBJECT (RFC-20 §5.5). ──
+   On the no-photograph path the subject band becomes an object: a fixed band,
+   the run's own `--cover-band` tall, carrying one tonal ramp. It is what gives
+   a type-only cover something to look at, and it is the term the archetype's
+   clause-E `imageryOrDeviceShare` constant was measured against — take it away
+   and the constant is measuring a plate that no longer exists.
+
+   BOUNDED, not a screen. The extent is a declared `block-size` on the element
+   rather than the leftover space, the paint does not repeat, and it is a single
+   ramp rather than a tiling gradient — §5.2 deleted the screens for filling
+   whatever room they were given. */
+body:not(:has(.hero)) .cov-field {
+  block-size: var(--cover-band, 600px);
+  background-image: linear-gradient(158deg,
+    color-mix(in srgb, var(--accent) 30%, transparent),
+    color-mix(in srgb, var(--fg) 6%, transparent) 58%,
+    transparent 82%);
+  background-repeat: no-repeat;
+  border-radius: 4px;
+  padding: var(--sp-2);
+}
+/* CONTENT-GUARDED. A cover with no title has nothing for the object to be the
+   ground of, and a ramp painted on an empty plate is the empty plate with a
+   colour on it — which is the case G2 refuses. */
+body:not(:has(#title > span:not(:empty))) .cov-field { background-image: none; }
 
 /* The lockup is one block: mark, title, subtitle, on one rhythm. */
 .lockup {

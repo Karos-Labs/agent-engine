@@ -179,6 +179,16 @@ function stylesOf(html: string): string {
 }
 
 /** The markup half, with every comment stripped, so a prose mention cannot satisfy a markup assertion. */
+/** The plate's inline script — the fit ladder, which is generated into every
+ *  template between the `@ds:fit-start` / `@ds:fit-end` markers. */
+function scriptOf(html: string): string {
+  const body = (html.match(/<script[^>]*>([\s\S]*?)<\/script>/) ?? ["", ""])[1]!;
+  /* Comments stripped: these guards read CODE. The ladder's own doc comment
+     names `textContent` as the thing it replaced, and a scan that cannot tell
+     an explanation from a call fails on the explanation — which it did. */
+  return body.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+}
+
 function markupOf(html: string): string {
   const body = html.slice(html.indexOf("</style>"));
   return body.replace(/<!--[\s\S]*?-->/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
@@ -304,12 +314,20 @@ describe("RFC-17 twin slots: the six changed archetypes declare both members of 
       expect(auditTwinSlots(html, pairs)).toEqual([]);
     });
   }
-
-  it("every collapse rule in the set is accounted for — no orphan rule, no missing one", async () => {
+  it("the set carries exactly one collapse rule per file, whatever its pair count", async () => {
+    /* The accounting used to be "one rule per PAIR" — sixteen rules across the
+       set, each naming a host, and this limb existed to catch one going
+       missing or one naming a host that is not a pair. The shared rule states
+       the relationship between the two TWINS instead, so the count no longer
+       tracks the pair count: one rule serves a file with three pairs exactly as
+       it serves a file with one, and a per-host rule reappearing is reported as
+       drift by `auditTwinSlots`. */
     for (const [file, pairs] of Object.entries(TWIN_SLOTS)) {
       const styles = stylesOf(await readTemplate(file));
-      const rules = [...styles.matchAll(/:has\(\.mk-runs:not\(:empty\)\)\s+\.mk-plain/g)];
-      expect(rules.length, `${file} has ${rules.length} collapse rules for ${pairs.length} pairs`).toBe(pairs.length);
+      const shared = [...styles.matchAll(/\.mk-runs:not\(:empty\)\s*\+\s*\.mk-plain/g)];
+      expect(shared.length, `${file} has ${shared.length} shared collapse rules, serving ${pairs.length} pair(s)`).toBe(1);
+      const perHost = [...styles.matchAll(/:has\(\.mk-runs:not\(:empty\)\)\s+\.mk-plain/g)];
+      expect(perHost.length, `${file} still carries ${perHost.length} per-host collapse rule(s)`).toBe(0);
     }
   });
 
@@ -479,9 +497,12 @@ describe("RFC-17 twin slots: the eight pinned slot names, spelled one way", () =
 
   it("BREAK IT: a style tag spelled out in a comment is caught", async () => {
     const shipped = await readTemplate("cover.html");
-    // Injected into the twin-slot comment block, exactly where the real one
-    // was written — inside the stylesheet, above the collapse rules.
-    const anchor = "A NOTE ON HOW THE SLOT NAMES ARE SPELLED BELOW";
+    // Injected into a comment INSIDE the stylesheet, which is where the real
+    // one was written. The anchor moved to the shared sheet's own banner when
+    // the eight per-template blocks became one generated block; what the case
+    // proves is unchanged — a `</style>` spelled out in a CSS comment ends the
+    // sheet early and every rule after it stops being CSS.
+    const anchor = "THE DESIGN SYSTEM — one source of truth for all eight plates.";
     expect(shipped, "the anchor this break-it hangs on is gone").toContain(anchor);
     const broken = shipped.replace(anchor, "the fragment's own </style> closes this one. " + anchor);
     expect(broken, "the break-it mutation did not apply").not.toBe(shipped);
@@ -899,7 +920,7 @@ describe("RFC-17 twin slots: BREAK IT — the guards refuse a broken template", 
 
   it("moving the id off the twin host is caught — every ground rule naming it would select nothing", async () => {
     const html = await readTemplate("closer.html");
-    const broken = html.replace('<div class="headline" id="takeaway">', '<div class="headline">');
+    const broken = html.replace('class="headline r-display" id="takeaway"', 'class="headline r-display"');
     expect(broken).not.toBe(html);
     expect(auditTwinSlots(broken, TWIN_SLOTS["closer.html"]!).join(" | ")).toMatch(/#takeaway is not on the \.headline element/);
   });
@@ -932,85 +953,38 @@ describe("RFC-17 twin slots: BREAK IT — the guards refuse a broken template", 
  * SHIPPED function out of the SHIPPED template and runs it against a stub.
  * It is the real code, not a copy of it.
  */
-describe("RFC-17 twin slots: the length ladders measure the visible twin", () => {
-  /** Pulls `function mkLen(el) { ... }` (or closer's `var len = function (el) { ... }`) out of a template by brace-matching. */
-  function extractHelper(html: string): string {
-    const start = html.search(/(?:function mkLen\(el\)|var len = function \(el\))/);
-    if (start === -1) throw new Error("no twin-aware length helper in this template");
-    const open = html.indexOf("{", start);
-    let depth = 0;
-    for (let i = open; i < html.length; i += 1) {
-      if (html[i] === "{") depth += 1;
-      else if (html[i] === "}") {
-        depth -= 1;
-        if (depth === 0) return `${html.slice(start, i + 1)}`;
-      }
+/**
+ * ── THE LADDER NO LONGER READS TEXT, SO IT CANNOT MISCOUNT IT. ──
+ *
+ * Every plate used to carry its own ladder that picked a size from
+ * `textContent.length`, and the cases here unit-tested the helper each one
+ * needed in order to count the copy ONCE: `textContent` reads a `display: none`
+ * subtree, so a marked render counted its copy twice and a 30-character
+ * headline scored 60 and took a step it did not need. A second helper stripped
+ * the zero-width bidi controls an isolated Hebrew run carries, so that a step
+ * did not depend on how the copy was marked.
+ *
+ * `_ds-fit.js` measures the LAID-OUT BOX instead. Geometry only sees the
+ * visible twin, a zero-width character occupies no width by definition, and
+ * there is no threshold table to keep in sync with eight files or with the
+ * reviewer's type scale. The property those cases asserted is now structural,
+ * so what is left to guard is that nobody reintroduces a text-counting ladder.
+ */
+describe("RFC-17 twin slots: the fit ladder measures geometry, not text", () => {
+  it("reads no text from the plate at all", async () => {
+    for (const file of Object.keys(TWIN_SLOTS)) {
+      const script = scriptOf(await readTemplate(file));
+      expect(script, `${file}'s ladder reads textContent — a hidden twin counts twice`).not.toMatch(/textContent/);
+      expect(script, `${file}'s ladder reads innerText`).not.toMatch(/innerText/);
+      expect(script, `${file}'s ladder measures string length`).not.toMatch(/\.length\s*[><]/);
     }
-    throw new Error("unbalanced braces in the length helper");
-  }
+  });
 
-  function compile(source: string): (el: unknown) => number {
-    const body = source.startsWith("var len")
-      ? `${source}; return len;`
-      : `${source}; return mkLen;`;
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
-    return new Function(body)() as (el: unknown) => number;
-  }
-
-  function host(runsText: string, plainText: string): unknown {
-    const runs = { textContent: runsText };
-    const plain = { textContent: plainText };
-    return {
-      textContent: runsText + plainText,
-      querySelector: (sel: string) => (sel === ".mk-runs" ? runs : sel === ".mk-plain" ? plain : null),
-    };
-  }
-
-  const FILES = ["cover.html", "slide.html", "headline-focus.html", "closer.html", "quote-card.html"];
-
-  for (const file of FILES) {
-    it(`${file}'s ladder measures the copy once, marked or not`, async () => {
-      const mkLen = compile(extractHelper(await readTemplate(file)));
-      const copy = "Most marketing calendars fail in month two";
-
-      // Unmarked: the runs twin is empty (fillTemplate erased the slot), the
-      // plain twin carries the copy.
-      expect(mkLen(host("", copy))).toBe(copy.length);
-      // Marked: BOTH twins carry it, one of them hidden. The count must not
-      // double — this is the assertion the whole helper exists for.
-      expect(mkLen(host(copy, copy))).toBe(copy.length);
-      // Everything empty.
-      expect(mkLen(host("", ""))).toBe(0);
-      expect(mkLen(null)).toBe(0);
-    });
-
-    it(`${file}'s ladder ignores zero-width bidi controls, so a Hebrew twin measures the same as a Latin one`, async () => {
-      const mkLen = compile(extractHelper(await readTemplate(file)));
-      // `iso()` wraps a Latin run inside a Hebrew field in FSI/PDI, and the
-      // marked fragment isolates each of its own runs again. Those characters
-      // have no width, so counting them would make the step depend on how the
-      // copy was marked rather than on how long it is.
-      const FSI = "\u2068";
-      const PDI = "\u2069";
-      const plain = `שוחרר ${FSI}Gemini 3${PDI} בגרסה חדשה`;
-      const marked = `שוחרר ${FSI}Gemini${PDI} ${FSI}3${PDI} בגרסה חדשה`;
-      expect(mkLen(host("", plain))).toBe(mkLen(host(marked, marked)));
-    });
-  }
-
-  it("BREAK IT: a ladder that reads the host's own textContent doubles a marked count", async () => {
-    // The naive version, which is what all five files shipped before this
-    // change. Compiled from the same stub, so the difference is the helper
-    // and nothing else.
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
-    const naive = new Function('return function (el) { return el === null ? 0 : (el.textContent || "").trim().length; };')() as (el: unknown) => number;
-    const copy = "Most marketing calendars fail in month two";
-    expect(naive(host("", copy))).toBe(copy.length);
-    expect(naive(host(copy, copy))).toBe(copy.length * 2);
-
-    // And the shipped one does not.
-    const mkLen = compile(extractHelper(await readTemplate("cover.html")));
-    expect(mkLen(host(copy, copy))).toBe(copy.length);
+  it("measures the field and the hosts, which is what a reader sees", async () => {
+    for (const file of Object.keys(TWIN_SLOTS)) {
+      const script = scriptOf(await readTemplate(file));
+      expect(script, `${file}'s ladder never measures a laid-out box`).toMatch(/getBoundingClientRect|scrollHeight/);
+    }
   });
 });
 
