@@ -315,7 +315,7 @@ export function estimateOriginalShortCost(input: {
   const round = (n: number) => Math.round(n * 1_000_000) / 1_000_000;
   const voiceUsd = input.voiceover ? input.narrationChars * unitPriceUsd("elevenlabs-tts-multilingual-v2") : 0;
   const transcribeUsd = input.voiceover ? (input.narrationChars / NARRATION_CHARS_PER_SECOND) * unitPriceUsd("elevenlabs-scribe") : 0;
-  const stillsWorstCaseUsd = input.stillsAllowed ? input.beats * unitPriceUsd("gemini-2.5-flash-image") : 0;
+  const stillsWorstCaseUsd = input.stillsAllowed ? input.beats * unitPriceUsd("gemini-3.1-flash-image") : 0;
   const visualQaUsd = input.visualQaRegistered ? VISUAL_QA_ESTIMATE_USD : 0;
   return {
     estimatedTotalUsd: round(input.spentSoFarUsd + voiceUsd + transcribeUsd + stillsWorstCaseUsd + visualQaUsd),

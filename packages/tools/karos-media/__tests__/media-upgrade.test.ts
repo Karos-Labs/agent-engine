@@ -77,7 +77,7 @@ describe("media.inspectImages", () => {
     if (outcome.status !== "success") throw new Error("unreachable");
     const result = outcome.result as { inspections: Array<{ ref: string; fitScore?: number; hasWatermark: boolean }>; unreadable: Array<{ ref: string }>; model: string };
     // Two images reached the model as inline data, the brief travelled in the instructions.
-    expect(seen?.model).toBe("gemini-2.5-flash");
+    expect(seen?.model).toBe("gemini-3.8-flash");
     const inline = seen!.contents[0]!.parts.filter((p) => typeof p === "object" && p !== null && "inlineData" in (p as object));
     expect(inline).toHaveLength(2);
     expect(JSON.stringify(seen!.contents[0]!.parts[0])).toContain("the launch chart");
@@ -88,8 +88,8 @@ describe("media.inspectImages", () => {
     expect(result.unreadable.map((u) => u.ref)).toEqual(["missing"]);
     // Billed at the real captured token counts, on the vision SKUs.
     expect(outcome.usage).toEqual([
-      { model: "gemini-2.5-flash-vision-analysis-input-token", unit: "input-token", quantity: 1200 },
-      { model: "gemini-2.5-flash-vision-analysis-output-token", unit: "output-token", quantity: 80 },
+      { model: "gemini-3.8-flash-vision-analysis-input-token", unit: "input-token", quantity: 1200 },
+      { model: "gemini-3.8-flash-vision-analysis-output-token", unit: "output-token", quantity: 80 },
     ]);
   });
 

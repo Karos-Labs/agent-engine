@@ -5,7 +5,7 @@ import { fakeRouterSequence, finalTurn, goodIntelReport, makePromptStore, setupT
 
 const baseParams = { clientSlug: "acme", productId: "intel-report-agent", runKind: "recurring" as const };
 
-describe("03-verify-numbers-sourced: a fabricated numeric claim holds the run before it ever reaches a human (RFC-05 §5)", () => {
+describe("03-verify-numbers-sourced: a fabricated numeric claim is removed from the report, and never reaches the client (RFC-05 §5)", () => {
   let env: TestEnvironment;
 
   beforeEach(async () => {
@@ -16,7 +16,7 @@ describe("03-verify-numbers-sourced: a fabricated numeric claim holds the run be
     await env.cleanup();
   });
 
-  it("an unsourced percentage in the analysis prose fails gate.numbersSourced -> held, never reaching batch-review", async () => {
+  it("an unsourced percentage is REPAIRED, not held: the client still gets a report and the figure is gone", async () => {
     const promptStore = makePromptStore();
     // research.pull's Phase-1 stand-in result only ever contains the query text and a
     // fixed "note" string (see packages/tools/karos-research/src/pull.ts) — it can never
@@ -32,22 +32,65 @@ describe("03-verify-numbers-sourced: a fabricated numeric claim holds the run be
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "intel_run_gate_numbers" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/numbers not sourced/i);
-    expect(result.reason).toMatch(/43%/);
+    // The old contract was `held`: the gate threw, the run ended, and the
+    // client got an error message instead of six sound sections. The gate's
+    // authority over what may be PUBLISHED is unchanged and asserted below —
+    // what it lost is the authority to end the run.
+    expect(result.status).toBe("completed");
 
     const stepRecords = await durableStore.listSteps("intel_run_gate_numbers");
     const ids = stepRecords.map((s) => s.stepId);
     expect(ids).toContain("02-generate-report");
     expect(ids).toContain("03-verify-numbers-sourced");
-    expect(ids).not.toContain("04-batch-review");
+    expect(ids).toContain("04-batch-review-r0");
 
+    // The report really landed, and the invented figure really did not.
     const readReport = await env.tools["intel.getReport"]!.execute(
       {},
       { ctx: { ...baseParams, runId: "verify", metadata: {} } },
     );
-    expect(readReport.status).toBe("not_available");
+    expect(readReport.status).toBe("success");
+    const { report } = (readReport as { result: { report: Record<string, string> } }).result;
+    expect(report["conversionAnalysis"]).not.toMatch(/43%/);
+    // The other six sections are untouched — one bad sentence costs one
+    // sentence, not the report.
+    expect(report["seoAnalysis"]).toBe(fabricatedReport.seoAnalysis);
+
+    // And the repair is on the record rather than silent.
+    expect(result.status === "completed" && (result.output as { numericGrounding?: { redactedFigures: string[] } }).numericGrounding)
+      .toMatchObject({ redactedFigures: ["43%"] });
+  });
+
+  it("never ends at held, however many figures the gate rejects", async () => {
+    // The guarantee the owner asked for, stated directly: an internal quality
+    // check failing is not a reason to bill the client a failed deliverable.
+    const promptStore = makePromptStore();
+    const fabricated = goodIntelReport({
+      contentAnalysis: "Traffic grew 12% last quarter.",
+      conversionAnalysis: "Conversion improved 43% after the redesign.",
+      seoAnalysis: "Rankings moved 88% of tracked terms into the top three.",
+      growthAnalysis: "Pipeline is up $4.2 million year over year.",
+    });
+    const router = fakeRouterSequence([finalTurn(fabricated)]);
+    const workflowFn = createIntelReportAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const durableStore = new MemoryDurableStepStore();
+
+    const result = await new WorkflowEngine(durableStore).run(workflowFn, { ...baseParams, runId: "intel_run_gate_numbers_many" });
+
+    expect(result.status).toBe("completed");
+    const stored = await env.tools["intel.getReport"]!.execute({}, { ctx: { ...baseParams, runId: "verify", metadata: {} } });
+    const { report } = (stored as { result: { report: Record<string, string> } }).result;
+    // The seven analysis fields only — `dimensionScores` carries a literal
+    // `"weight": 12`, and this gate has never been about the scores.
+    const prose = ["contentAnalysis", "conversionAnalysis", "seoAnalysis", "geoAnalysis", "positioningAnalysis", "brandAnalysis", "growthAnalysis"]
+      .map((field) => report[field])
+      .join(" ");
+    for (const figure of ["12%", "43%", "88%", "$4.2 million"]) {
+      expect(prose).not.toContain(figure);
+    }
+    // A section whose every sentence rested on an unsourced figure says so
+    // rather than coming back empty.
+    expect(report["contentAnalysis"]).toMatch(/not reported/i);
   });
 
   it("a numeric claim that genuinely appears in the research pull's own content clears the gate", async () => {

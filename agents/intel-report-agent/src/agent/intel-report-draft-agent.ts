@@ -11,7 +11,7 @@ export const INTEL_REPORT_DRAFT_STEP_ID = "intel-report-draft";
  * completion, so a fit decision made from input size alone would be wrong by
  * 32k tokens on exactly the instances where it matters.
  */
-export const INTEL_REPORT_DRAFT_MAX_TOKENS = 32_000;
+export const INTEL_REPORT_DRAFT_MAX_TOKENS = 48_000;
 
 /**
  * This step's compiled, env-resolved default policy — the FLOOR every other
@@ -101,7 +101,26 @@ const INTEL_REPORT_DRAFT_STEP_CONFIG: AgentStepConfig<IntelReportOutput> = {
   // naming its evidence, and the "score 50-65 when uncertain" reflex that landed
   // every report in the same mid-60s band is replaced by "score what the evidence
   // shows, and say so". v5 stays frozen.
-  skillRef: "intel-report-craft@6",
+  // v7 (2026-09-17) adds §14 `brandVoiceSpec` and §15 `productInformation`,
+  // the two blocks the portal's `brand-voice` and `product-information`
+  // context documents had no field to be built from. Those two documents were
+  // composed out of this report's COMPETITOR fields — `brandAnalysis` plus the
+  // two per-company comparison tables, and three assessments of the client's
+  // marketing — so the document every publishing agent reads to sound like the
+  // brand carried competitor archetypes and no writing rule, and the document
+  // that should say what the client sells said nothing about the product. The
+  // step's ceiling rises with the schema (32k → 48k). v6 stays frozen.
+  // v8 (2026-09-17) closes the rest of the gap to the curated lab profile the
+  // owner set as the bar: sec 16 `messaging` (positioning statement, value
+  // propositions, messaging pillars and the HIERARCHY between them, each
+  // channel's job), sec 17 `visualDirection` (logo usage, imagery direction,
+  // iconography, layout, motion — the visual rules a renderer needs and a
+  // palette cannot give it), sec 18 `perPlatformReality` + `watchList`, and
+  // `targetAudience.rulesForContentAgents` (lab sec 8), the one part of the ICP
+  // blueprint addressed to the writer rather than describing the reader.
+  // Measured before: this report covered 3 of brand-voice.md's 13 sections and
+  // roughly 0 of product-information.md's 12. v7 stays frozen.
+  skillRef: "intel-report-craft@8",
 };
 
 export interface IntelReportDraftAgentOptions {

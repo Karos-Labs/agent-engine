@@ -66,6 +66,24 @@
  * Pricing: Sonnet 4.6 $3/$15, Gemini 2.5 Flash $0.30/$2.50, Haiku 4.5 $1/$5
  * per 1M tokens; `gemini-2.5-flash-image` $0.039/image; ScrappyCoco
  * $0.007/execution (`scrappycoco.ts` header).
+ *
+ * ── THESE ESTIMATES ARE STILL DERIVED FROM THE 2.5 RATES (2026-09-17) ──
+ *
+ * The Gemini steps below moved a generation on that date — flash steps to
+ * `gemini-3.8-flash` ($0.75/$3.75 per 1M, rising to $1.50/$7.50 on 2027-01-01),
+ * pro steps to `gemini-3.1-pro-preview` ($2/$12), pictures to
+ * `gemini-3.1-flash-image` ($0.067/image) — and every per-step figure in this
+ * file was computed from the OLD rates. They are therefore low, by roughly
+ * 2.5x on a flash step and 1.6x on a pro one.
+ *
+ * Deliberately NOT rescaled by hand here. Each figure below is a token
+ * estimate times a rate, and multiplying the product by a fudge factor would
+ * turn a derived number into a plausible invented one — the failure
+ * `telemetry/pricing.ts` exists to prevent. The engine records estimate AND
+ * actual per run (`recordRunInHistory`), and the plan adapts on the actual, so
+ * the first 3.x runs measure the real figures; recalibrate from those, not
+ * from arithmetic on paper. Until then a run may overrun its estimate, which
+ * this budget is built to absorb — it adapts, it never holds.
  */
 
 // Phase 5.5 (spec §5 D1) — the discriminated setup outcome a stored record now

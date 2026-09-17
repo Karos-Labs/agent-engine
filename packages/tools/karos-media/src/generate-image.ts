@@ -28,20 +28,30 @@ import { buildImageProvenance } from "./image-provenance.js";
 // set of `toContain`s. But when a list IS non-empty the standing constraint
 // line changes shape, and the tool-version gate on main exists precisely so a
 // prompt change is legible in the version.
+// 1.3.0: the default model moved from gemini-2.5-flash-image to
+// gemini-3.1-flash-image (a different generation, a different per-image rate),
+// and the client's Vertex location moved to `global` because that is the only
+// endpoint serving it. Both change what a call does, so a telemetry record
+// from before must not read as one from after.
 // 2.0.0 (Phase 5.6, items D2/A8/A11): three changes, one of which is
-// breaking. The MODEL is no longer a constant — an unpinned caller now gets
-// the best rung of `IMAGE_MODEL_LADDER` this project can actually reach,
-// which means two callers passing identical input can receive frames from
-// different models, and `result.model` can name more than one. A generated
-// frame must now clear the same 1080px floor a sourced one does, so a call
-// that previously returned a small image now reports it unmet. And every
-// candidate carries `provenance`. The MAJOR digit is for the first of those:
-// the tool's output is no longer a function of its input alone, and a caller
-// that pinned its expectations to `gemini-2.5-flash-image` will see something
-// else. A caller passing `model` explicitly is unaffected — the ladder
-// collapses to that single rung.
+// breaking. The MODEL is no longer a constant — an unpinned caller gets the
+// best rung of `IMAGE_MODEL_LADDER` this project can actually reach, so two
+// callers passing identical input can receive frames from different models
+// and `result.model` can name more than one. A generated frame must now clear
+// the same 1080px floor a sourced one does, so a call that previously
+// returned a small image now reports it unmet. And every candidate carries
+// `provenance`. The MAJOR digit is for the first: the tool's output is no
+// longer a function of its input alone. A caller passing `model` explicitly
+// is unaffected — the ladder collapses to that single rung.
+//
+// 1.3.0 landed on main while this was in flight and is KEPT: it moved the
+// default to `gemini-3.1-flash-image`, which is the right model and is now
+// the ladder's top rung rather than its only one. The two changes want the
+// same thing from opposite directions — 1.3.0 picked a better default, this
+// stops a default from being the whole answer — and 1.3.0's own note that
+// 3.1 serves ONLY on the `global` endpoint is exactly the fragility a ladder
+// exists for.
 const TOOL_VERSION = "2.0.0";
-
 /**
  * The image-generation call, narrowed to what this tool uses so the package
  * does not take a type dependency on the whole `@google/genai` surface.
@@ -50,9 +60,12 @@ const TOOL_VERSION = "2.0.0";
  * `generateImages` ("will be removed in the next major release… use the
  * generateContent method with image models instead"), and the Imagen publisher
  * models it targets are not available in this deployment at all — every
- * `imagen-*` id returns 404 for `karoscmo-prep`, while `gemini-2.5-flash-image`
- * answers on both `global` and `us-central1`. Probed directly before this was
- * written rather than assumed.
+ * `imagen-*` id returns 404 for `karoscmo-prep` — re-probed 2026-09-17, still
+ * true for imagen-4.0, imagen-4.0-fast and imagen-3.0. The model that answers
+ * is a Gemini image id, today `gemini-3.1-flash-image`, and ONLY on the
+ * `global` endpoint: unlike the outgoing `gemini-2.5-flash-image`, which
+ * served both, every 3.x id 404s at `us-central1`. Probed directly, as the
+ * worker's own service account, before this was written rather than assumed.
  */
 export interface ImageGenerationClient {
   models: {
@@ -191,15 +204,16 @@ export interface GenerateImageResult {
 /**
  * The model this tool falls back to, and no longer the model it starts from.
  *
- * It kept that name for three releases on the strength of a note that said
- * *"Verified reachable in prep; every `imagen-*` id 404s there"* — a true
- * observation about one project on one afternoon, which then decided every
- * picture the fleet made. `IMAGE_MODEL_LADDER` asks the question again on
- * each process instead; this constant is the ladder's last rung, kept
- * exported because it is still the answer to "what will definitely work".
+ * For three releases this was `gemini-2.5-flash-image`, on the strength of a
+ * note reading *"Verified reachable in prep; every `imagen-*` id 404s there"*
+ * — a true observation about one project on one afternoon, which then decided
+ * every picture the fleet made. Main has since moved it to
+ * `gemini-3.1-flash-image`, which is the current model and the right answer;
+ * `IMAGE_MODEL_LADDER` is the other half, so that the next time the right
+ * answer changes, or the `global`-only endpoint 3.1 needs is unavailable, a
+ * run loses no pictures waiting for someone to edit a constant.
  */
-export const DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image";
-
+export const DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image";
 /**
  * Whether a `generateContent` failure is quota/availability noise rather than
  * a real answer about the request.

@@ -309,14 +309,19 @@ describe("createDefaultCaptureAdapters: env-derived wiring (T-A3/SCRUM-237)", ()
   it("calls the regional Vertex host, with the model in the path, when it falls back", async () => {
     const calls: string[] = [];
     const adapters = createDefaultCaptureAdapters({
+      // VERTEX_AI_LOCATION is set and is deliberately NOT what the capture
+      // uses: it holds the concrete region Veo needs, and every Gemini 3.x id
+      // 404s there. The capture goes to `global` unless GEMINI_CAPTURE_LOCATION
+      // says otherwise — the assertion below is what stops that reverting.
       env: { GEMINI_VERTEX_PROJECT_ID: "karoscmo-prep", VERTEX_AI_LOCATION: "us-central1" },
       vertexAuthorize: async () => "Bearer test",
       fetchImpl: stubFetch(calls),
     });
     await adapters.gemini!({ promptId: "p1", promptText: "who?", engine: "gemini" as const, clientDomains: ["x.com"], competitorRoster: [] });
 
-    expect(calls[0]).toContain("us-central1-aiplatform.googleapis.com");
-    expect(calls[0]).toContain("/projects/karoscmo-prep/locations/us-central1/publishers/google/models/");
+    expect(calls[0]).toContain("aiplatform.googleapis.com");
+    expect(calls[0]).not.toContain("us-central1-aiplatform.googleapis.com");
+    expect(calls[0]).toContain("/projects/karoscmo-prep/locations/global/publishers/google/models/");
     expect(calls[0]).not.toContain("key=");
   });
 

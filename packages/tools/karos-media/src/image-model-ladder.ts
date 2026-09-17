@@ -4,16 +4,23 @@
  *
  * ## Why this exists
  *
- * `DEFAULT_IMAGE_MODEL` was `gemini-2.5-flash-image`, and the comment above it
- * said why: *"Verified reachable in prep; every `imagen-*` id 404s there."*
- * That is an honest note about an outage, and it hardened into a product
- * decision. The model this pipeline uses for every picture was chosen because
- * the better one was unreachable on one afternoon in one project — and
- * nothing ever re-asked.
+ * `DEFAULT_IMAGE_MODEL` was `gemini-2.5-flash-image` for three releases, and
+ * the comment above it said why: *"Verified reachable in prep; every
+ * `imagen-*` id 404s there."* That is an honest note about an outage, and it
+ * hardened into a product decision — the model this pipeline used for every
+ * picture was chosen because something else was unreachable on one afternoon
+ * in one project, and nothing ever re-asked.
  *
- * Vertex's availability has since changed at least twice in this project
- * (a billing hold that 403'd everything, and its clearing). A constant cannot
- * track that. A probe can.
+ * Somebody did re-ask, eventually, by hand: main moved the default to
+ * `gemini-3.1-flash-image` while this module was being written. That is the
+ * right answer and it is this ladder's top rung. It is also the argument for
+ * the ladder rather than against it — the fix took a person noticing, and the
+ * new default serves on one endpoint only.
+ *
+ * Vertex's availability has changed at least three times in this project: a
+ * billing hold that 403'd everything, its clearing, and a whole model
+ * generation moving to a `global`-only endpoint. A constant cannot track
+ * that. A probe can.
  *
  * ## How it decides
  *
@@ -36,23 +43,36 @@
  */
 
 /**
- * Best first.
+ * Best first, and the order is evidence rather than taste.
  *
- * Imagen leads because it is Google's dedicated image model and the Gemini
- * flash image path is a general multimodal model doing image output as a
- * side job — which is visible in exactly the way the owner described: frames
- * that look competent and generic. The two Imagen ids are the current
- * generate-capable ones; both are listed because a project may be entitled to
- * one and not the other.
+ * **`gemini-3.1-flash-image`** leads because it is Google's current image
+ * model and main moved the default to it while this was being written. Its
+ * one fragility is stated in `generate-image.ts`'s own version note: it
+ * serves ONLY on the `global` endpoint, where the model below it serves
+ * everywhere. That is precisely the kind of fact a ladder exists to survive.
  *
- * `gemini-2.5-flash-image` stays last and stays REACHABLE — it is the one
- * verified to work in prep, so the ladder always has a floor and a run never
- * loses its pictures to a model-availability question.
+ * **`gemini-2.5-flash-image`** is the floor and stays reachable. It is the id
+ * verified working in prep, so a generation-level outage above it costs a run
+ * nothing.
+ *
+ * **`imagen-4.0-generate-001`** is last and is a different family, not a
+ * better one. It is here for the case both Gemini image ids are unavailable
+ * at once — a generation-wide problem, which a same-family fallback does not
+ * help with. It is NOT placed above them: an earlier draft of this ladder put
+ * Imagen on top on the reasoning that a dedicated image model beats a
+ * multimodal one doing images as a side job, and that reasoning was written
+ * before `gemini-3.1-flash-image` existed. Promoting an older dedicated model
+ * over a newer flagship on a general argument would be exactly the
+ * assumption this module was built to stop.
+ *
+ * Every rung is priced in `UNIT_PRICING`, and it has to be: `pricingForUnit`
+ * throws on an unpriced unit, so an unpriced rung would kill a run at the
+ * cost step with the money already spent.
  */
 export const IMAGE_MODEL_LADDER: readonly string[] = [
-  "imagen-4.0-generate-001",
-  "imagen-3.0-generate-002",
+  "gemini-3.1-flash-image",
   "gemini-2.5-flash-image",
+  "imagen-4.0-generate-001",
 ];
 
 /**

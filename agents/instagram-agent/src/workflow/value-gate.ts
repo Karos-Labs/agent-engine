@@ -792,7 +792,7 @@ export async function runValueJudge(
       // attempt (see this module's header for the arithmetic and for why Pro
       // and Opus are both out). `resolveModelPolicy` keeps the per-step env
       // override path, and `contentLanguageSensitive` is deliberately absent.
-      modelPolicy: resolveModelPolicy("instagram-value-judge", { policy: "pinned", model: "gemini-2.5-flash", vendor: "gemini" }),
+      modelPolicy: resolveModelPolicy("instagram-value-judge", { policy: "pinned", model: "gemini-3.8-flash", vendor: "gemini" }),
       maxSteps: 1,
     },
     buildValueSystemPrompt(),

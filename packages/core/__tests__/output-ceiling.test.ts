@@ -82,12 +82,17 @@ describe("raisedOutputLimit", () => {
   });
 
   it("doubles a ceiling that is already the default, up to the hard stop", () => {
-    expect(raisedOutputLimit(16_384)).toBe(OUTPUT_LIMIT_RETRY_CEILING);
+    // The doubling used to be invisible here: 16,384 doubles to 32,768, which
+    // the old 32,000 stop clamped straight back to the stop itself, so the
+    // assertion read as "goes to the ceiling". With the stop at 64,000 the
+    // raise is the double it always was.
+    expect(raisedOutputLimit(16_384)).toBe(32_768);
+    expect(raisedOutputLimit(40_000)).toBe(OUTPUT_LIMIT_RETRY_CEILING);
   });
 
   it("refuses to raise a ceiling that is already at the stop — that step is over-specified, not under-budgeted", () => {
     expect(raisedOutputLimit(OUTPUT_LIMIT_RETRY_CEILING)).toBeUndefined();
-    expect(raisedOutputLimit(60_000)).toBeUndefined();
+    expect(raisedOutputLimit(OUTPUT_LIMIT_RETRY_CEILING + 1)).toBeUndefined();
   });
 });
 

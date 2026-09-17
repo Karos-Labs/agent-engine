@@ -62,7 +62,7 @@ export class InstagramEntityAgent extends BaseAgent<EntitySet> {
     // reliable on and the shape a stronger model would buy nothing on. The
     // judgement that needed the tier rise this phase is the VET, which looks
     // at pictures (`instagram-image-vet@6`, now `gemini-2.5-pro`).
-    modelPolicy: resolveModelPolicy("instagram-entities", { policy: "pinned", model: "gemini-2.5-flash", vendor: "gemini" }),
+    modelPolicy: resolveModelPolicy("instagram-entities", { policy: "pinned", model: "gemini-3.8-flash", vendor: "gemini" }),
     skillRef: "instagram-entities@1",
   };
 }

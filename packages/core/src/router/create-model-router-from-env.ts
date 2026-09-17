@@ -178,7 +178,7 @@ function createAnthropicVendorAdapter(env: Record<string, string | undefined>): 
     // costing a fraction of that (~40x overstatement). the per-unit cost work — shipped without a Jira ticket's
     // check-model-pricing found it, and that fix is orthogonal to whether the
     // direct-Anthropic hop exists.
-    ...(tertiary ? { tertiary, tertiaryModel: readEnv(env, "CLAUDE_FALLBACK_GEMINI_MODEL") ?? "gemini-2.5-flash" } : {}),
+    ...(tertiary ? { tertiary, tertiaryModel: readEnv(env, "CLAUDE_FALLBACK_GEMINI_MODEL") ?? "gemini-3.8-flash" } : {}),
   });
 }
 

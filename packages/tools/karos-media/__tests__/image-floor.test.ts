@@ -15,6 +15,7 @@ import {
   type ImageSearchHit,
   type ImageSearchProvider,
 } from "../src/index.js";
+import { pricingForUnit } from "@agent-engine/core";
 import { realJpeg, realPng, realPngBase64, tooSmallPng } from "./image-fixtures.js";
 
 /**
@@ -192,9 +193,20 @@ describe("client-supplied media is measured, not refused", () => {
 // ─────────────────────────────────────────────────────────────────────────
 
 describe("ImageModelLadder", () => {
-  it("prefers Imagen, and keeps the verified-reachable Gemini path as its floor", () => {
-    expect(IMAGE_MODEL_LADDER[0]).toMatch(/^imagen-/);
-    expect(IMAGE_MODEL_LADDER.at(-1)).toBe("gemini-2.5-flash-image");
+  it("leads with the CURRENT image model and keeps a different family as the last resort", () => {
+    // Order is evidence, not taste: 3.1 is the model main moved the default
+    // to, 2.5 is the id verified working in prep, and Imagen is last because
+    // it is a different family rather than a better model — it earns its
+    // place only if both Gemini image ids are out at once.
+    expect(IMAGE_MODEL_LADDER[0]).toBe("gemini-3.1-flash-image");
+    expect(IMAGE_MODEL_LADDER).toContain("gemini-2.5-flash-image");
+    expect(IMAGE_MODEL_LADDER.at(-1)).toMatch(/^imagen-/);
+  });
+
+  it("names only models that carry a per-unit price — an unpriced rung kills a run at the cost step", () => {
+    for (const model of IMAGE_MODEL_LADDER) {
+      expect(() => pricingForUnit(model), model).not.toThrow();
+    }
   });
 
   it("falls to the next rung once a model reports it does not exist here", () => {
@@ -217,6 +229,10 @@ describe("ImageModelLadder", () => {
     expect(ladder.available()).toEqual(["gemini-2.5-flash-image"]);
   });
 
+  it('reads "was not found" for an Imagen id too, which is how the old default came to be chosen', () => {
+    expect(isModelUnavailableError("Publisher Model `imagen-4.0-generate-001` was not found")).toBe(true);
+  });
+
   it("reads 404 / NOT_FOUND as 'this model does not exist here'", () => {
     expect(isModelUnavailableError('{"error":{"code":404,"status":"NOT_FOUND"}}')).toBe(true);
     expect(isModelUnavailableError("Publisher Model `imagen-4.0-generate-001` was not found")).toBe(true);
@@ -235,13 +251,15 @@ describe("image.generate walks the ladder", () => {
     candidates: [{ finishReason: "STOP", content: { parts: [{ inlineData: { data: realPngBase64(), mimeType: "image/png" } }] } }],
   });
 
-  it("falls from a 404ing Imagen to the reachable model, and says which one served", async () => {
+  it("falls from a 404ing top rung to the one that answers, and says which one served", async () => {
     const asked: string[] = [];
     const client = {
       models: {
         async generateContent(req: { model: string }) {
           asked.push(req.model);
-          if (req.model.startsWith("imagen-")) throw new Error('{"error":{"code":404,"status":"NOT_FOUND"}}');
+          // 3.1 serves only on the `global` endpoint, so a project pointed
+          // anywhere else gets exactly this.
+          if (req.model === "gemini-3.1-flash-image") throw new Error('{"error":{"code":404,"status":"NOT_FOUND"}}');
           return generationResponse() as never;
         },
       },
@@ -253,7 +271,7 @@ describe("image.generate walks the ladder", () => {
     );
 
     expect(outcome.status).toBe("success");
-    expect(asked[0]).toMatch(/^imagen-/);
+    expect(asked[0]).toBe("gemini-3.1-flash-image");
     expect(asked.at(-1)).toBe("gemini-2.5-flash-image");
     const result = (outcome as { result: { model: string } }).result;
     expect(result.model).toBe("gemini-2.5-flash-image");
@@ -265,7 +283,7 @@ describe("image.generate walks the ladder", () => {
       models: {
         async generateContent(req: { model: string }) {
           asked.push(req.model);
-          if (req.model.startsWith("imagen-")) throw new Error("NOT_FOUND");
+          if (req.model === "gemini-3.1-flash-image") throw new Error("NOT_FOUND");
           return generationResponse() as never;
         },
       },
@@ -275,8 +293,8 @@ describe("image.generate walks the ladder", () => {
       { repoRoot, runId: "ladder2", needs: [{ n: 1, prompt: "a" }, { n: 2, prompt: "b" }], perNeed: 1 },
       { ctx: CTX } as never,
     );
-    // Exactly one probe per Imagen rung across BOTH needs, not one per need.
-    expect(asked.filter((m) => m.startsWith("imagen-")).length).toBe(IMAGE_MODEL_LADDER.filter((m) => m.startsWith("imagen-")).length);
+    // Exactly ONE probe of the absent rung across BOTH needs, not one per need.
+    expect(asked.filter((m) => m === "gemini-3.1-flash-image")).toHaveLength(1);
   });
 
   it("refuses a generated frame that misses the floor — 'we made it' is not a reason to place a small picture", async () => {

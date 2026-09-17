@@ -159,7 +159,7 @@ const HIGH_COMPLEXITY_MODEL = "claude-opus-4-8";
  * which is the single property this branch exists to buy. It is also a
  * VENDOR change, which is why it is gated — see `allowVendorEscalation`.
  */
-const LARGE_CONTEXT_MODEL = "gemini-2.5-pro";
+const LARGE_CONTEXT_MODEL = "gemini-3.1-pro-preview";
 
 export type DocumentComplexityTier = "standard" | "high";
 
