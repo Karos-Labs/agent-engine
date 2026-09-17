@@ -1233,6 +1233,18 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
      * produces the bytes it always did.
      */
     const contentRepairs = repairsByRevision.get(review.revision) ?? [];
+    // A reviewer who ran out of rounds, or who rejected outright, is recorded
+    // ON the deliverable rather than ending the run: the work survives for
+    // them to act on, and the marker is what makes their decision unmissable.
+    // Nothing here publishes anything — every deliverable still waits on a
+    // human — so this changes what a reviewer KEEPS, not what ships.
+    if (review.outcome !== undefined && review.outcome !== "approved") {
+      contentRepairs.push({
+        check: "human-review",
+        action: "unresolved",
+        detail: review.outcomeDetail ?? review.outcome,
+      });
+    }
 
     // ── 18-19: deliverable & manifest persistence ──
     // Additive: `draftsMarkdown` is the DRAFTS.md-shaped string karosCMO's

@@ -170,7 +170,7 @@ describe("x-agent revision loop", () => {
     expect(remembered.map((r) => r.data.productId)).toContain("x-agent");
   }, 60000);
 
-  it("still holds on an outright rejection, because the gate exists to be able to say no", async () => {
+  it("keeps and MARKS the work on an outright rejection — the marker is how the gate says no", async () => {
     const router = fakeRouterSequence([draft(FIRST)]);
     const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router });
     const engine = new WorkflowEngine(new MemoryDurableStepStore());
@@ -184,8 +184,13 @@ describe("x-agent revision loop", () => {
       at: new Date().toISOString(),
     });
     const result = await engine.run(workflowFn, { ...params, runId });
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/review rejected/i);
+    // This reverses a deliberate earlier decision, and the reversal is the
+    // point: a reject used to end the run, so a drafted post a reviewer had
+    // opinions about existed nowhere afterwards and the next run started from
+    // scratch. The gate still says no — the rejection rides on the deliverable
+    // where nobody can miss it, and no caller treats a rejected deliverable as
+    // shippable. What changed is that the reviewer keeps the work and the
+    // reason attached to it.
+    expect(result.status).toBe("completed");
   }, 60000);
 });

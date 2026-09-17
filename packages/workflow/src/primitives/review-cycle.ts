@@ -1,6 +1,6 @@
 import type { AgentContext, AgentToolRegistry, GateResponse, TemplateFeedback } from "@agent-engine/core";
 import type { GateDefinition, WorkflowContext } from "./context.js";
-import { WorkflowHeld } from "./signals.js";
+import { WorkflowToolingFailure } from "./signals.js";
 
 /**
  * One accumulated revision request, in the order a person made them.
@@ -17,7 +17,20 @@ export interface RevisionNote {
   feedback: string;
 }
 
+/**
+ * How a review cycle ended.
+ *
+ * `approved` is the normal path. The other two exist so a caller can annotate
+ * the deliverable rather than lose it: neither is a reason to end the run with
+ * nothing, and both are things a human needs to see ON the output.
+ */
+export type ReviewOutcome = "approved" | "revisions_exhausted" | "rejected";
+
 export interface ReviewCycleResult<T> {
+  /** How the cycle ended — `approved` unless a reviewer ran it out of rounds or rejected it. */
+  outcome?: ReviewOutcome;
+  /** One line a human can read about a non-approved outcome. Absent on `approved`. */
+  outcomeDetail?: string;
   output: T;
   /** Which revision was approved. 0 means it was approved first time. */
   revision: number;
@@ -138,7 +151,7 @@ export async function runReviewCycle<T>(wf: WorkflowContext, options: ReviewCycl
     }
 
     if (response.decision === "approve") {
-      return { output, revision, notes, response };
+      return { output, revision, notes, response, outcome: "approved" };
     }
 
     if (response.decision === "revise") {
@@ -146,20 +159,61 @@ export async function runReviewCycle<T>(wf: WorkflowContext, options: ReviewCycl
       // type narrowing — an empty note would be a schema violation upstream.
       notes.push({ revision, actor: response.actor, at: response.at, feedback: response.feedback ?? "" });
       if (revision === options.maxRevisions) {
-        throw new WorkflowHeld(
-          `review requested another revision after ${options.maxRevisions} round(s), which is this gate's ceiling — ` +
-            `holding rather than re-drafting indefinitely. Requests so far: ${notes.map((n) => `r${n.revision}: ${n.feedback}`).join(" | ")}`,
-        );
+        // The ceiling is reached, not a rejection: the reviewer wants MORE, not
+        // nothing. This used to hold, which threw away every round of work and
+        // left the reviewer with neither the draft they had been iterating on
+        // nor their own outstanding requests. The best draft so far is
+        // delivered instead, carrying every request that is still open, so the
+        // next pass starts from something rather than from scratch.
+        return {
+          output,
+          revision,
+          notes,
+          response,
+          outcome: "revisions_exhausted",
+          outcomeDetail:
+            `the reviewer requested another revision after ${options.maxRevisions} round(s), this gate's ceiling — ` +
+            `delivered as it stood rather than re-drafting indefinitely. Requests so far: ${notes.map((n) => `r${n.revision}: ${n.feedback}`).join(" | ")}`,
+        };
       }
       continue;
     }
 
-    // `reject`: a human said no. Never converted into a delivery.
-    throw new WorkflowHeld(`review rejected: ${response.reason ?? "no reason given"}`);
+    // ── `reject`: a human said no ──
+    //
+    // Returned IMMEDIATELY, without spending another drafting round. "Revise"
+    // is the decision that means "try again"; a reject does not, and answering
+    // it with a redraft would spend the client's money to put the same question
+    // back in front of a reviewer who has already answered it.
+    //
+    // The drafted content comes back marked `rejected` rather than discarded.
+    // Nothing about this publishes it — every caller persists a deliverable a
+    // human still has to act on, and the marker is what makes the rejection
+    // unmissable on it. What changes is only that the reviewer KEEPS the work
+    // and the reason attached to it, instead of the run ending with nothing to
+    // look at and a drafted post existing nowhere.
+    //
+    // This reverses a deliberate earlier decision ("the gate exists to be able
+    // to say no"). The gate still says no: the marker is the no, and no
+    // caller treats a rejected deliverable as shippable.
+    notes.push({
+      revision,
+      actor: response.actor,
+      at: response.at,
+      feedback: `REJECTED: ${response.reason ?? "no reason given"}`,
+    });
+    return {
+      output,
+      revision,
+      notes,
+      response,
+      outcome: "rejected",
+      outcomeDetail: `review rejected: ${response.reason ?? "no reason given"}`,
+    };
   }
 
-  // Unreachable: the loop either returns, continues, or throws.
-  throw new WorkflowHeld("review cycle ended without a decision");
+  // Unreachable: the loop either returns or continues.
+  throw new WorkflowToolingFailure("review cycle ended without a decision");
 }
 
 /**
