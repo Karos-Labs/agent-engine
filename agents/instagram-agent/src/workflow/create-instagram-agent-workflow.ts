@@ -13013,6 +13013,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           runId: wf.runId,
           kind: "instagram-carousel",
           deliverable: {
+            // The reviewer's decision on the thing they actually open. This is
+            // the PERSISTED deliverable — `ledger.writeDeliverable` — not the
+            // run-record copy further down; a marker on the wrong one of the
+            // two reads as if nothing was recorded at all.
+            ...(reviewOutcome ? { reviewOutcome } : {}),
             postId: runClaim.postId,
             topic: topicClaim.topic,
             // D11 / C3: the point of the post, on the thing the client opens.
