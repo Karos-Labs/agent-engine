@@ -439,6 +439,14 @@ body[data-anchor="split"] .plate { justify-content: space-between; }
    never meet. */
 .zone-mark .eyebrow { margin-inline-start: auto; }
 
+/* OVER A PHOTOGRAPH THE EYEBROW IS AT FULL INK. The scrim is transparent across
+   the top third by design — that is what leaves a picture its colour — so a
+   62% eyebrow sits on bare photograph and measured 2.16:1 against a 4.5 floor.
+   A reader could not see it. Full strength costs the composition nothing at
+   this size and buys the only thing the line is there for. */
+body:has(.hero) .eyebrow,
+body:has(.hero) .kicker { color: var(--fg); }
+
 .eyebrow, .kicker {
   font-family: var(--f-mono, ui-monospace, monospace);
   font-size: var(--t-micro);
