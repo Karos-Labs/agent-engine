@@ -837,14 +837,19 @@ body.ta-center .acc { margin-inline: auto; }
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  /* PACKED, not `space-between`. Pushing the takeaway and the ask to the
+     panel's two ends leaves the gap in the middle of the object, where the ramp
+     is at its faintest and the measurement reads it as empty ground: 27-33% of
+     the plate in one rectangle. Together, a rhythm apart, on a surface that
+     carries tone the whole way down. */
+  justify-content: flex-start;
   gap: var(--sp-2);
   padding: var(--sp-2);
   border-radius: 4px;
   background-image: linear-gradient(146deg,
     color-mix(in srgb, var(--accent) 26%, transparent),
     color-mix(in srgb, var(--accent) 12%, transparent) 56%,
-    color-mix(in srgb, var(--fg) 8%, transparent) 100%);
+    color-mix(in srgb, var(--fg) 16%, transparent) 100%);
   background-repeat: no-repeat;
 }
 body:not(:has(#takeaway > span:not(:empty))) .cl-panel { background-image: none; }
