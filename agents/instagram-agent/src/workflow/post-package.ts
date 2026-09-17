@@ -44,6 +44,17 @@ import type { SlidesDataSelfCheck } from "./types.js";
  * paid one, and the paid re-ask (`08c-package-post-retry`) is bought only
  * after all of this has said no.
  *
+ * ## The wire is wider than the invariant (Phase 5.5, item G2)
+ *
+ * Every prose field here is accepted wide and clamped in code to the limit
+ * the platform actually imposes. The evidence: on 2026-09-16 `alt` was
+ * `.max(125)` on the wire, and two of three live runs lost their hashtags,
+ * their alt text and their first comment — the whole package — because one
+ * alt text ran a few characters long. The limits did not change; who enforces
+ * them did. A limit a model has to hit exactly is a coin flip; a limit code
+ * applies afterwards is an invariant. See `ALT_TEXT_WIRE_MAX_CHARS` for why
+ * hashtags are the one field that is still refused rather than cut.
+ *
  * ## Fail-open, whole
  *
  * Nothing in this module can hold a run. Every field it describes is
@@ -67,8 +78,75 @@ export const MAX_HASHTAGS = 5;
  */
 export const ALT_TEXT_MAX_CHARS = 125;
 
+/**
+ * What the WIRE accepts for one alt text, before `clampAltText` brings it
+ * back to `ALT_TEXT_MAX_CHARS`.
+ *
+ * **A schema max on a model output is a coin flip that loses the whole
+ * step.** On 2026-09-16 `altText[].alt` was `.max(125)` on the wire and two
+ * of three live runs came back with one alt at 130-ish characters, failed
+ * structured-output validation, and shipped with **no hashtags, no alt text
+ * and no first comment at all** — the entire package lost to a field the
+ * packager had written correctly except for five characters. 125 is the right
+ * OUTPUT invariant (Instagram's own truncation point) and it is still
+ * guaranteed; what changed is who enforces it. The model is given room to
+ * overshoot and code cuts the sentence at a word boundary, which is what a
+ * human editor would have done with the same 130 characters.
+ *
+ * 400 rather than 1,000: three times the target is enough headroom for a
+ * model that ran long, while a return three times longer than that is a
+ * packager that misunderstood the field, and refusing THAT is still right.
+ */
+export const ALT_TEXT_WIRE_MAX_CHARS = 400;
+
+/**
+ * `text` at no more than `max` characters, cut at a word boundary, with a
+ * single ellipsis marking that it was cut.
+ *
+ * The ellipsis is not decoration. It is what makes the cut AUDIBLE to the
+ * screen-reader user the field exists for (a sentence that simply stops is
+ * heard as a transcription fault), and it is the only mark `clampedAltSlides`
+ * can read the clamp back off afterwards. It counts against `max`, so the
+ * result is never longer than the cap.
+ *
+ * The cut looks for the last space in the kept region; a script with no
+ * spaces at all (Chinese, Japanese, Thai) has no word boundary to find, so it
+ * falls back to a hard cut, which is correct for those scripts rather than a
+ * compromise. Hebrew and Arabic are space-separated and take the word path.
+ */
+export function truncateOnWordBoundary(text: string, max: number): string {
+  const tidy = text.trim();
+  if (tidy.length <= max) return tidy;
+  // One character of room for the ellipsis, and the cut is made INSIDE it.
+  const room = max - 1;
+  const head = tidy.slice(0, room);
+  const lastSpace = head.lastIndexOf(" ");
+  // A boundary in the last fifth of the kept text only: a string whose only
+  // space is at character 3 would otherwise be cut to one word.
+  const cut = lastSpace > room * 0.6 ? head.slice(0, lastSpace) : head;
+  return `${cut.trimEnd()}…`;
+}
+
+/** One alt text, at Instagram's own limit, whatever length it arrived at. Applied by `PostPackageSchema` itself, so no caller can forget it. */
+export function clampAltText(alt: string): string {
+  return truncateOnWordBoundary(alt, ALT_TEXT_MAX_CHARS);
+}
+
 /** Long enough for a sourced note, short enough that it is a comment and not a second caption. */
 export const FIRST_COMMENT_MAX_CHARS = 600;
+
+/**
+ * The same widen-and-clamp as `ALT_TEXT_WIRE_MAX_CHARS`, for the same reason:
+ * a first comment eleven characters long loses the hashtags too, because the
+ * package is one structured output and a schema refusal takes all of it.
+ *
+ * **Hashtags deliberately get no such treatment.** Prose can be cut at a word
+ * boundary and still be the same prose; a tag cut short is a DIFFERENT tag,
+ * pointing at a different search, so an over-long tag stays a refusal that
+ * `checkPackageRules` catches for $0 and the one re-ask fixes. The rule is
+ * "clamp what truncation preserves, refuse what it changes".
+ */
+export const FIRST_COMMENT_WIRE_MAX_CHARS = 1_200;
 
 /** Past four, a first comment is a bibliography. The cards are ranked, so the cap keeps the best four. */
 export const FIRST_COMMENT_MAX_SOURCES = 4;
@@ -156,13 +234,60 @@ const ALT_REDUNDANT_OPENERS: readonly string[] = [
 export const PostPackageSchema = z.object({
   hashtags: z.array(z.string().min(2).max(40)).min(MIN_HASHTAGS).max(MAX_HASHTAGS),
   altText: z
-    .array(z.object({ n: z.number().int().min(1).max(8), alt: z.string().min(1).max(ALT_TEXT_MAX_CHARS) }))
+    .array(
+      z.object({
+        n: z.number().int().min(1).max(8),
+        /**
+         * `.overwrite()`, NOT `.transform()`, and the difference is
+         * load-bearing.
+         *
+         * The structured-output path converts this very schema to JSON Schema
+         * (`toRootObjectJsonSchema` → `z.toJSONSchema`) to send as the tool's
+         * input schema, and zod 4 THROWS `Transforms cannot be represented in
+         * JSON Schema` on a `.transform()` — which would turn every packager
+         * call into a `tooling_error` and lose the package on 100% of runs
+         * instead of the 67% the `.max(125)` was losing. `.overwrite()` is
+         * zod's string-to-string refinement: it is invisible to
+         * `z.toJSONSchema` (verified: the emitted schema is
+         * `{type:"string",minLength:1,maxLength:400}`) and it runs inside
+         * `parse`, which is what `parseStructuredOutput` and
+         * `BaseAgent.validateAndFinish` both call. So the clamp is a property
+         * of the SCHEMA, applied wherever the package is parsed, and there is
+         * no call site that can forget it.
+         *
+         * Order matters: `.max()` is checked against what the model actually
+         * wrote (so a 3,000-character essay is still refused), and the clamp
+         * runs after.
+         */
+        alt: z.string().min(1).max(ALT_TEXT_WIRE_MAX_CHARS).overwrite(clampAltText),
+      }),
+    )
     .min(1)
     .max(8),
-  /** Prose only. The model never writes a URL, and there is nowhere in this schema for one to go. */
-  firstCommentText: z.string().min(1).max(FIRST_COMMENT_MAX_CHARS),
+  /** Prose only. The model never writes a URL, and there is nowhere in this schema for one to go. Clamped, not refused — see `FIRST_COMMENT_WIRE_MAX_CHARS`. */
+  firstCommentText: z
+    .string()
+    .min(1)
+    .max(FIRST_COMMENT_WIRE_MAX_CHARS)
+    .overwrite((text) => truncateOnWordBoundary(text, FIRST_COMMENT_MAX_CHARS)),
 });
 export type PostPackage = z.infer<typeof PostPackageSchema>;
+
+/**
+ * The slides whose alt text the schema cut, for the gate payload's packaging
+ * block — so a reviewer reading "8 alt texts" can also see that two of them
+ * were shortened rather than written that way.
+ *
+ * Read off the ellipsis `clampAltText` leaves, which makes it BEST-EFFORT
+ * REPORTING and nothing else: a packager that legitimately ends an alt with
+ * an ellipsis is counted here too. That false positive costs a line on a
+ * payload; the alternative — threading the pre-parse string out of zod — would
+ * cost the guarantee that the clamp happens wherever the package is parsed.
+ * Nothing branches on this.
+ */
+export function clampedAltSlides(pkg: PostPackage): number[] {
+  return pkg.altText.filter((entry) => entry.alt.endsWith("…")).map((entry) => entry.n);
+}
 
 /** One sourced line of the first comment. Built by `buildFirstCommentSources` and by nothing else. */
 export interface FirstCommentSource {
@@ -514,6 +639,11 @@ export function checkPackageRules(input: PostPackageCheckInput): SlidesDataSelfC
     if (alt === undefined || alt.trim().length === 0) {
       return { ok: false, reason: `slide ${slide.n} has no alt text — every slide a reader can see needs one a reader who cannot can hear` };
     }
+    // Unreachable for a package that came through `PostPackageSchema` (the
+    // `.overwrite` clamp guarantees the length), and deliberately kept: this
+    // function is also called on packages built in code — the native-correction
+    // patcher rebuilds `altText` entry by entry — and a hand-built one has no
+    // schema in front of it.
     if (alt.length > ALT_TEXT_MAX_CHARS) {
       return { ok: false, reason: `slide ${slide.n}'s alt text is ${alt.length} characters, past the ${ALT_TEXT_MAX_CHARS}-character cap` };
     }

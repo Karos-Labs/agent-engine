@@ -48,9 +48,40 @@ function git(root: string, args: string[]): string {
  * commit is a MISCONFIGURATION, not "nothing to check" — so this throws,
  * which fails the run loudly instead of silently reporting zero problems
  * forever.
+ *
+ * ## An explicit base that no longer EXISTS is not the same as no base
+ *
+ * `github.event.before` is the branch's previous tip, and a FORCE-PUSH orphans
+ * it: after `git rebase origin/main && git push --force-with-lease`, the SHA
+ * the workflow hands this script is unreachable in the fresh checkout and every
+ * `git diff` against it dies with `fatal: bad object`. That is not a drift
+ * finding and it is not a misconfiguration — it is the repo's own standing
+ * instruction ("every PR targets main and is rebased before merge") colliding
+ * with a push-event field. It killed the whole quality job on
+ * `feat/instagram-phase55-cmo-grade` on 2026-09-17, on a push whose tool
+ * versions were all correctly bumped.
+ *
+ * So an unresolvable explicit base falls through to the SAME ladder as no base
+ * at all, loudly. The fallback is strictly SAFER than the ref it replaces: the
+ * merge-base with `origin/main` is at or behind the orphaned tip, so it can
+ * only widen the diff — more files considered changed, more bumps demanded,
+ * never fewer. And if nothing below resolves either, this still throws, so the
+ * "structurally incapable of failing" shape stays impossible
+ * (`tool-version-drift.test.ts` pins both halves).
  */
 function resolveBaseRef(root: string, requested: string | undefined): string {
-  if (requested !== undefined && requested !== "") return requested;
+  if (requested !== undefined && requested !== "") {
+    try {
+      git(root, ["rev-parse", "--verify", "--quiet", `${requested}^{commit}`]);
+      return requested;
+    } catch {
+      console.error(
+        `${DIM}  check:tool-versions: base ref "${requested}" does not resolve in this checkout ` +
+          `(a force-push orphans github.event.before) — falling back to the merge-base with origin/main, ` +
+          `which can only widen the diff.${RESET}`,
+      );
+    }
+  }
   try {
     return git(root, ["merge-base", "HEAD", "origin/main"]);
   } catch {

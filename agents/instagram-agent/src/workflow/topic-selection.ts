@@ -13,7 +13,7 @@ import {
   type TrendCandidate,
   type TrendScoutOutput,
 } from "@agent-engine/workflow";
-import type { InstagramTopicClaim, TopicAlternative, TopicAlternativeReason, TopicScoutStatus, TopicWeighting } from "./types.js";
+import { INSTAGRAM_FORMATS, type InstagramFormat, type InstagramTopicClaim, type TopicAlternative, type TopicAlternativeReason, type TopicScoutStatus, type TopicWeighting } from "./types.js";
 
 /**
  * Topic selection for the Instagram agent (RFC-13 §E, 2026-09).
@@ -42,7 +42,8 @@ import type { InstagramTopicClaim, TopicAlternative, TopicAlternativeReason, Top
  *   request, or the bare industry) and the scout's candidates and decides the
  *   subject under ONE precedence order: a person's request > a planned row
  *   (unless the client opted into trend-jacking and a story clearly beats
- *   it) > the strongest on-brand trend > a real fetched headline > the
+ *   it, or the row is outclassed by more than `1 / CATALOG_MIN_FIT_RATIO` —
+ *   the mis-seeded-catalog case) > the strongest on-brand trend > a real fetched headline > the
  *   client's own declared industry. Everything not chosen is recorded as an
  *   alternative with the rule that outranked it, so the reviewer at the gate
  *   sees the road not taken.
@@ -88,6 +89,76 @@ export const PLANNED_ROW_SCORE = 12;
 /** A trend may displace a planned row only when it is unmistakably on-brand AND stops a reader — both 4+, never one carrying the other. */
 export const TREND_JACK_MIN_BRAND_FIT = 4;
 export const TREND_JACK_MIN_INTEREST = 4;
+
+/**
+ * How far a planned catalog row may be outclassed and still keep its slot
+ * (Phase 5.5, spec §6 G5.1).
+ *
+ * ## The run this exists because of
+ *
+ * thepitchbydeel, 2026-09-16. `03g` recorded `source: "reserved",
+ * plannedScore: 12, bestCandidateScore: 37.5` and marked FIVE candidates
+ * scoring 18.4 to 37.5 `outranked-by-catalog`. The row that beat them was
+ * *"a workflow we would rebuild from scratch"* — Karos Labs' subject matter,
+ * seeded on deel's catalog — and the post it produced argued about running one
+ * LLM call for every task and about specialised agents, for a pitch
+ * competition's audience of founders. `07g` scored it 3 and named the missing
+ * bridge, and the gate dropped the bridge on the floor (see
+ * `relevance-gate.ts`).
+ *
+ * ## Why a ratio and not a threshold
+ *
+ * `PLANNED_ROW_SCORE` is a CONSTANT: every row is worth 12 because a human
+ * planned it, and nothing in the catalog says whether a particular row still
+ * fits this client. There is therefore no absolute number that separates a good
+ * row from a mis-seeded one. What there is, is the field it is standing in: a
+ * row the week's best on-brand story beats by more than two to one is a row
+ * whose planner is not in the room, and the plan is not evidence about THIS
+ * week.
+ *
+ * ## WHY 0.4 AND NOT THE 0.5 THE SPEC WROTE
+ *
+ * The spec's 0.5 was written against a variable planned score ("a row at 30 vs
+ * 37.5 keeps it"), and `PLANNED_ROW_SCORE` is not variable. With the constant
+ * 12, a ratio of 0.5 means the row loses to any candidate scoring above 24 —
+ * and a plain 5/5 story with no overlap scores `5 × 5 × 1.0 = 25` on the Phase 0
+ * path. So 0.5 would take a catalog row away from EVERY client whose scout found
+ * one strong story, which is the `trendJacking: "always"` behaviour arriving
+ * without the client's opt-in. `topic-selection.test.ts` pins that invariant by
+ * name ("stays regardless of the story when the client has not opted into
+ * trend-jacking") and it is a promise about a client SETTING, not a tuning
+ * choice for this phase to reverse.
+ *
+ * Two measured numbers bracket the answer:
+ *
+ * - **25 is the CEILING of the scout's own two judgments**: `scoreCandidate` is
+ *   `brandFit × interest × distance` with both scores capped at 5 and distance
+ *   at 1. 28.75 is that ceiling with the mode bonus. A story at the top of the
+ *   raw scale must NOT take a human's row — `topic-selection.test.ts` pins that
+ *   as a promise about the `trendJacking` SETTING.
+ * - deel's mis-seeded row was outclassed **12 against 37.5** and must lose.
+ *
+ * The rule fires when `best > PLANNED_ROW_SCORE / ratio`, so the threshold has
+ * to land between 28.75 and 37.5. 0.4 puts it at **30**, which has a meaning and
+ * not just a value: a row is taken only when the candidate scores ABOVE
+ * ANYTHING THE SCOUT ALONE CAN AWARD — that is, only when the five-engine
+ * ranking's own evidence (the client's own case study with an offer to lead to,
+ * a peer post that measurably outperformed) has pushed it past a perfect
+ * scouted story. It is deliberately a rule that fires rarely: the human's plan
+ * is still the default, and this only removes the case where the plan is being
+ * outvoted by a factor.
+ *
+ * The spec wrote 0.5, whose threshold is 24 — below the raw ceiling, so every
+ * client with one strong story would lose their planned row and `trendJacking`
+ * would only decide the 12-to-24 band. That is a bigger change to a client
+ * SETTING than G5.1 asked for, and 0.4 is the value that fixes deel without
+ * making it.
+ *
+ * A row that loses its slot is RELEASED back to the catalog, not consumed, so
+ * the planner's row is still there to be posted on a week when nothing outclasses
+ * it.
+ */
+export const CATALOG_MIN_FIT_RATIO = 0.4;
 
 /** How many not-chosen stories the claim carries forward to the gate. Enough to show the field; not the scout's whole `skipped` list. */
 export const MAX_ALTERNATIVES = 5;
@@ -339,11 +410,115 @@ export function rankTopicCandidates(candidates: readonly TrendCandidate[], optio
  * older rows) are skipped, not defaulted.
  */
 export function recentModesFromDecisions(decisions: ReadonlyArray<{ at?: unknown; summary: string }>): ContentMode[] {
-  const at = (d: { at?: unknown }): number => (typeof d.at === "number" ? d.at : 0);
-  return [...decisions]
-    .sort((a, b) => at(a) - at(b))
+  return sortedOldestFirst(decisions)
     .map((d) => parseContentModeFromSummary(d.summary))
     .filter((mode): mode is ContentMode => mode !== undefined);
+}
+
+/** Oldest-first, shared by both readers of the decision log. `memory.read` with a `limit` hands rows back NEWEST-first (`boundHistory`). */
+function sortedOldestFirst<T extends { at?: unknown }>(rows: readonly T[]): T[] {
+  const at = (d: { at?: unknown }): number => (typeof d.at === "number" ? d.at : 0);
+  return [...rows].sort((a, b) => at(a) - at(b));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Post format (Phase 5.5, spec §5 D3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * How many DELIVERED posts back the format rotation looks.
+ *
+ * ## What it replaces
+ *
+ * `04h-select-format` rotated on `ownShippedCount % 3`, where `ownShippedCount`
+ * is the number of this agent's rows in the cross-channel history read at `04e`.
+ * That is the same counter shape `03d` was already fixed for and which this
+ * module's header has documented as wrong since Phase 0: it counts a window of
+ * entries rather than a rotation position, so a client whose ledger window
+ * slides, or whose runs fail, or who posts twice in a day, sits on one format
+ * for weeks — and the `single` format the rotation exists to produce may never
+ * arrive at all.
+ *
+ * ## Why two and not three
+ *
+ * There are exactly two formats. "Pick the format not used in the last two
+ * delivered posts" therefore selects `single` only when the last two delivered
+ * posts were BOTH carousels, which reproduces the one-in-three cadence the
+ * modulo was written for — `C, C, S, C, C, S` — while advancing only on posts
+ * that actually shipped. Set it to 1 and every other post is a single; set it
+ * to 3 and a single appears once every four. Two is the value that keeps the
+ * behaviour the old rule intended and fixes only the counter behind it.
+ */
+export const POST_FORMAT_WINDOW = 2;
+
+/** The default when the window is not yet full: a client's first two posts are carousels, exactly as `ownShippedCount % 3` gave them. */
+export const DEFAULT_POST_FORMAT: InstagramFormat = "carousel";
+
+/**
+ * The format out of one decision-log row, or `undefined` for a row that does
+ * not carry one.
+ *
+ * Deliberately shaped like `parseContentModeFromSummary`: matched wherever it
+ * appears inside the parenthesis rather than at a fixed position, and a row
+ * without it is SKIPPED rather than defaulted. Every row written before this
+ * phase has no `format:` key, so an existing client's log degrades to an empty
+ * window and their next two posts are carousels — the same thing a new client
+ * gets, and never a wrong answer dressed as a read.
+ */
+export function parsePostFormatFromSummary(summary: string): InstagramFormat | undefined {
+  const match = /format: ([a-z]+)/.exec(summary);
+  const candidate = match?.[1];
+  return (INSTAGRAM_FORMATS as readonly string[]).includes(candidate ?? "") ? (candidate as InstagramFormat) : undefined;
+}
+
+/** The oldest-first delivered-format list `selectPostFormat` wants, out of the decision log as `memory.read` returns it. */
+export function recentFormatsFromDecisions(decisions: ReadonlyArray<{ at?: unknown; summary: string }>): InstagramFormat[] {
+  return sortedOldestFirst(decisions)
+    .map((d) => parsePostFormatFromSummary(d.summary))
+    .filter((format): format is InstagramFormat => format !== undefined);
+}
+
+/** Which format this run takes, and the sentence the gate payload shows for why. */
+export interface PostFormatSelection {
+  format: InstagramFormat;
+  source: "requested" | "rotation" | "default";
+  rule: string;
+}
+
+/**
+ * Picks this run's format. Pure; `recentFormats` is oldest-first and comes from
+ * the caller's own decision-log read, exactly as `selectContentMode`'s does.
+ *
+ * An explicit `single`/`carousel` request wins outright. `auto` rotates. Any
+ * other value (unset, an unknown string) is the standing default.
+ */
+export function selectPostFormat(requested: string | undefined, recentFormats: readonly InstagramFormat[]): PostFormatSelection {
+  if (requested === "single" || requested === "carousel") {
+    return { format: requested, source: "requested", rule: `the run or the client asked for a ${requested}` };
+  }
+  if (requested !== "auto") {
+    return { format: DEFAULT_POST_FORMAT, source: "default", rule: `no format was requested, so this post is a ${DEFAULT_POST_FORMAT}` };
+  }
+  const window = recentFormats.slice(-POST_FORMAT_WINDOW);
+  // The window must be FULL before it can say a format is unused: one delivered
+  // carousel is not evidence that the client has had enough of carousels, and
+  // treating it as such would make a new client's second post a single.
+  const unused = window.length < POST_FORMAT_WINDOW ? undefined : INSTAGRAM_FORMATS.find((f) => !window.includes(f));
+  if (unused !== undefined) {
+    return {
+      format: unused,
+      source: "rotation",
+      rule: `format is "auto" and the last ${POST_FORMAT_WINDOW} DELIVERED posts were both ${window[0]}, so this one is a ${unused}`,
+    };
+  }
+  return {
+    format: DEFAULT_POST_FORMAT,
+    source: "rotation",
+    rule:
+      window.length < POST_FORMAT_WINDOW
+        ? `format is "auto" and this client has ${window.length} delivered post(s) on record, fewer than the ${POST_FORMAT_WINDOW} the rotation reads, so this one is a ${DEFAULT_POST_FORMAT}`
+        : `format is "auto" and the last ${POST_FORMAT_WINDOW} delivered posts already used both formats, so this one is a ${DEFAULT_POST_FORMAT}`,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -467,7 +642,9 @@ export function resolveTopicClaim(seed: InstagramTopicClaim, scout: TrendScoutOu
 
   // 2. A planned catalog row keeps its slot — unless the client opted into
   //    trend-jacking AND a story is unmistakably on-brand, stops a reader,
-  //    and beats the row's planned score with distance applied.
+  //    and beats the row's planned score with distance applied; or unless the
+  //    row is outclassed by more than `1 / CATALOG_MIN_FIT_RATIO`, which is the
+  //    mis-seeded-catalog case and applies to every client.
   if (seed.source === "reserved") {
     const jackable = scored.filter(
       ({ candidate }) =>
@@ -476,9 +653,23 @@ export function resolveTopicClaim(seed: InstagramTopicClaim, scout: TrendScoutOu
         !overlaps(candidate.topic, options.avoidTopics) &&
         !overlaps(candidate.headline, options.avoidTopics),
     );
-    const winner = options.trendJacking === "always" ? jackable.find(({ score }) => score > PLANNED_ROW_SCORE) : undefined;
+    // Two ways a row can lose its slot, and they answer different questions.
+    //
+    // `trendJacking: "always"` is the CLIENT'S OPT-IN: this account wants the
+    // week's story whenever one clears the bar, and the bar is the row's own
+    // score. It is unchanged.
+    //
+    // The catalog-fit test below applies to EVERY client, opted in or not, and
+    // asks a narrower question: is this row still about this client's business
+    // at all? A plan that the week's best on-brand story beats by more than
+    // `1 / CATALOG_MIN_FIT_RATIO` is a plan the evidence does not support, and
+    // deel's 2026-09-16 post is what shipping one looks like.
+    const jacked = options.trendJacking === "always" ? jackable.find(({ score }) => score > PLANNED_ROW_SCORE) : undefined;
+    const outclassing = jackable.find(({ score }) => PLANNED_ROW_SCORE < CATALOG_MIN_FIT_RATIO * score);
+    const winner = jacked ?? outclassing;
     if (winner !== undefined) {
       const { candidate } = winner;
+      const ratio = winner.score > 0 ? round3(PLANNED_ROW_SCORE / winner.score) : 1;
       const rowAsAlternative: TopicAlternative = { topic: seed.topic, reason: "outranked-by-trend", score: PLANNED_ROW_SCORE };
       const others = scored.filter((s) => s.candidate !== candidate).map((s) => alternativeFromCandidate(s.candidate, "lower-rank", recent, s.score));
       // No `reservationKey` on the new claim: the row goes back to the
@@ -497,19 +688,40 @@ export function resolveTopicClaim(seed: InstagramTopicClaim, scout: TrendScoutOu
           weighting: {
             plannedScore: PLANNED_ROW_SCORE,
             bestCandidateScore: round3(winner.score),
-            rule: `trendJacking is "always" and a story with brand fit ${candidate.brandFit}/5 and interest ${candidate.interest}/5 scored ${round3(winner.score)} > the planned row's ${PLANNED_ROW_SCORE}`,
+            // WHICH BRANCH FIRED, in the reviewer's own view of the decision.
+            // The two rules take the row away for different reasons and a
+            // reviewer who disagrees needs to know which one to argue with:
+            // one is a setting this client chose, the other is a catalog row
+            // that no longer fits.
+            rule:
+              jacked !== undefined
+                ? `trendJacking is "always" and a story with brand fit ${candidate.brandFit}/5 and interest ${candidate.interest}/5 scored ${round3(winner.score)} > the planned row's ${PLANNED_ROW_SCORE}`
+                : `the planned catalog row lost its slot on fit: it is worth ${PLANNED_ROW_SCORE} against this week's best on-brand story at ${round3(winner.score)} ` +
+                  `(ratio ${ratio}, below the ${CATALOG_MIN_FIT_RATIO} a row must keep to hold its slot), so the row was released back to the catalog rather than posted`,
           },
         },
         releaseReservation: true,
       };
     }
+    // The row kept its slot, and the reason says so WITH the fit arithmetic in
+    // it. The old sentence ("a planned catalog row keeps its slot; trends
+    // compete with it only when the client sets trendJacking to \"always\"")
+    // was true of deel's run and told the reviewer nothing about the 12-against-
+    // 37.5 that should have taken the slot away, which is why the reason string
+    // now carries the ratio on the keeping path as well as the losing one.
+    const bestJackableScore = jackable[0]?.score;
+    const keptOnFit =
+      bestJackableScore !== undefined
+        ? `it is worth ${PLANNED_ROW_SCORE} against this week's best on-brand story at ${round3(bestJackableScore)} ` +
+          `(ratio ${bestJackableScore > 0 ? round3(PLANNED_ROW_SCORE / bestJackableScore) : 1}, at or above the ${CATALOG_MIN_FIT_RATIO} floor)`
+        : "no scouted story was on-brand enough to compete with it";
     const weighting: TopicWeighting = {
       plannedScore: PLANNED_ROW_SCORE,
       ...(best !== undefined ? { bestCandidateScore: round3(best.score) } : {}),
       rule:
         options.trendJacking === "always"
-          ? `trendJacking is "always" but no story cleared brand fit ${TREND_JACK_MIN_BRAND_FIT}+, interest ${TREND_JACK_MIN_INTEREST}+ and a score above the planned row's ${PLANNED_ROW_SCORE}`
-          : "a planned catalog row keeps its slot; trends compete with it only when the client sets trendJacking to \"always\"",
+          ? `trendJacking is "always" but no story cleared brand fit ${TREND_JACK_MIN_BRAND_FIT}+, interest ${TREND_JACK_MIN_INTEREST}+ and a score above the planned row's ${PLANNED_ROW_SCORE}; the row also keeps its slot on fit — ${keptOnFit}`
+          : `a planned catalog row keeps its slot on fit — ${keptOnFit}; trends displace it outright only when the client sets trendJacking to "always"`,
     };
     return {
       claim: {
@@ -637,9 +849,26 @@ export function resolveTopicClaim(seed: InstagramTopicClaim, scout: TrendScoutOu
  * templates shipped (audit finding 8) at zero cost — the row Phase 1's angle
  * ledger extends.
  */
-export function topicDecisionSummary(input: { topic: string; mode: ContentMode; source: InstagramTopicClaim["source"]; archetypes: readonly string[] }): string {
+export function topicDecisionSummary(input: {
+  topic: string;
+  mode: ContentMode;
+  source: InstagramTopicClaim["source"];
+  archetypes: readonly string[];
+  /**
+   * The format this post DELIVERED in, so next run's `04h` rotates on posts
+   * that shipped rather than on a sliding window of ledger entries
+   * (`selectPostFormat`).
+   *
+   * Optional, and appended only when supplied, for two reasons: every row
+   * already in every client's decision log was written without it, and a
+   * caller that does not know the format must write a row that says nothing
+   * rather than a row that guesses `carousel`.
+   */
+  format?: InstagramFormat;
+}): string {
   const archetypes = input.archetypes.length > 0 ? [...new Set(input.archetypes)].join(",") : "none";
-  return `instagram post: "${input.topic}" (mode: ${input.mode}; source: ${input.source}; archetypes: ${archetypes})`;
+  const format = input.format !== undefined ? `; format: ${input.format}` : "";
+  return `instagram post: "${input.topic}" (mode: ${input.mode}; source: ${input.source}${format}; archetypes: ${archetypes})`;
 }
 
 /** What the gate payload and the deliverable carry as `topicDecision` — the reviewer's view of the choice and the road not taken. */

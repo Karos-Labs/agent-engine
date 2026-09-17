@@ -1,0 +1,166 @@
+{
+  "client": "geektime",
+  "runId": "pubsub-21868533047825082",
+  "stepId": "07c-emit-slides-data-attempt-3",
+  "slides": [
+    {
+      "n": 1,
+      "template": "cover.html",
+      "fields": {
+        "accentColor": "#a5e82b",
+        "dir": "rtl",
+        "lang": "he",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "grid",
+        "slideIndex": "01",
+        "kicker": "מאז ⁨2009⁩",
+        "seriesBadge": "field notes",
+        "eyebrow": "מאז ⁨2009⁩",
+        "title": "ב-⁨2009⁩ נפתח בלוג בעברית על טכנולוגיה",
+        "subtitle": "כשהוא צמח, הוא הפך לזירה",
+        "deviceFigures": "2009|2026",
+        "deviceKind": "timeline"
+      },
+      "images": {},
+      "htmlFragments": {
+        "device": "<div class=\"dv dv-timeline-block\"><div class=\"dv-timeline\"><div class=\"dv-tl-point\"><div class=\"dv-tl-dot\"></div><span c…[truncated for the fixture: only the PRESENCE of a fragment is read]"
+      }
+    },
+    {
+      "n": 2,
+      "template": "headline-focus.html",
+      "fields": {
+        "accentColor": "#a5e82b",
+        "dir": "rtl",
+        "lang": "he",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "grid",
+        "slideIndex": "02",
+        "seriesBadge": "field notes",
+        "headline": "עברית היא לא שפת תרגום",
+        "body": "השיח הטכנולוגי בעברית לא מגיע אחרי הגלובלי. הוא קורה ראשון, בין קהילה שמכירה אחת את השנייה."
+      },
+      "images": {},
+      "htmlFragments": {}
+    },
+    {
+      "n": 3,
+      "template": "slide.html",
+      "fields": {
+        "accentColor": "#a5e82b",
+        "dir": "rtl",
+        "lang": "he",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "grid",
+        "slideIndex": "03",
+        "seriesBadge": "field notes",
+        "headline": "הקהל בחר. לא בטעות",
+        "body": "מפתחים, מייסדים ו-⁨CTOs⁩ פותחים כל בוקר עם גיקטיים. אין תחליף לקול שגדל מתוך הנוף."
+      },
+      "images": {
+        "hero": ".media-cache/pubsub-21868533047825082/n3-ca19478c9267.jpg"
+      },
+      "htmlFragments": {}
+    },
+    {
+      "n": 4,
+      "template": "slide.html",
+      "fields": {
+        "accentColor": "#a5e82b",
+        "dir": "rtl",
+        "lang": "he",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "grid",
+        "slideIndex": "04",
+        "seriesBadge": "field notes",
+        "headline": "גיקטיים לא כותבת על ההייטק הישראלי",
+        "body": "היא חלק ממנו. ההבדל הזה לא שיווקי, הוא מבני. לא נמצא ציטוט משתתף ישיר בחומרים; השקף נושא את הטענה בכותרת ובגוף."
+      },
+      "images": {},
+      "htmlFragments": {}
+    },
+    {
+      "n": 5,
+      "template": "stat-callout.html",
+      "fields": {
+        "accentColor": "#a5e82b",
+        "dir": "rtl",
+        "lang": "he",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "grid",
+        "slideIndex": "05",
+        "seriesBadge": "field notes",
+        "figure": "1.5M",
+        "subLabel": "כניסות בחודש לגיקטיים (יוני ⁨2026⁩)",
+        "body": "לא תנועה. קהל שמגיע כי אין לו תחליף.",
+        "sourceLine": "⁨Similarweb⁩, ⁨geektime.co.il⁩"
+      },
+      "images": {},
+      "htmlFragments": {}
+    },
+    {
+      "n": 6,
+      "template": "list-takeaway.html",
+      "fields": {
+        "accentColor": "#a5e82b",
+        "dir": "rtl",
+        "lang": "he",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "grid",
+        "slideIndex": "06",
+        "seriesBadge": "field notes",
+        "headline": "ארבעה מוצרים. אקוסיסטם אחד"
+      },
+      "images": {},
+      "htmlFragments": {
+        "itemRows": "<div class=\"me-row\"><span class=\"diamond\"></span><div><div class=\"me-title\">עיתונאות יומית</div><div class=\"me-note\">⁨AI…[truncated for the fixture: only the PRESENCE of a fragment is read]"
+      }
+    },
+    {
+      "n": 7,
+      "template": "slide.html",
+      "fields": {
+        "accentColor": "#a5e82b",
+        "dir": "rtl",
+        "lang": "he",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "grid",
+        "slideIndex": "07",
+        "seriesBadge": "field notes",
+        "headline": "כנס ⁨Code⁩. מפגש הקהילה השנתי",
+        "body": "מדי שנה, מפתחים ומנהלי טכנולוגיה נפגשים. השיח שמתנהל שם מגיע למחרת לאתר."
+      },
+      "images": {
+        "hero": ".media-cache/pubsub-21868533047825082/n7-889cc4a63da8.jpg"
+      },
+      "htmlFragments": {}
+    },
+    {
+      "n": 8,
+      "template": "closer.html",
+      "fields": {
+        "accentColor": "#a5e82b",
+        "dir": "rtl",
+        "lang": "he",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "grid",
+        "slideIndex": "08",
+        "seriesBadge": "field notes",
+        "takeaway": "גיקטיים היא לא פלטפורמה לפרסום",
+        "cta": "היא הזירה שבה נקבעות קריירות ומוניטין בהייטק הישראלי."
+      },
+      "images": {},
+      "htmlFragments": {
+        "recap": "<div class=\"rc-strip\"><div class=\"rc-plate\"><div class=\"rc-n\">01</div><div class=\"item-title\">2009</div></div><div class…[truncated for the fixture: only the PRESENCE of a fragment is read]"
+      }
+    }
+  ]
+}

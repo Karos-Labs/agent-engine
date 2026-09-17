@@ -4,6 +4,7 @@ import type { WorkflowContext } from "@agent-engine/workflow";
 import type { FactCardForPrompt } from "../src/workflow/fact-cards.js";
 import type { InstagramCopyOutput, InstagramSlideCopy } from "../src/workflow/types.js";
 import {
+  UNSPECIFIED_FIX_TARGET,
   VALUE_AXES,
   VALUE_FIX_MAX_CHARS,
   VALUE_KEEP_QUOTE_CHARS,
@@ -214,7 +215,10 @@ describe("buildValueSystemPrompt — the rubric in full (§5.2)", () => {
   });
 
   it("states rule 2 to the model as well as enforcing it in code", () => {
-    expect(prompt).toContain("A weak or a fail with no fix is discarded and the axis is treated as a pass");
+    // Phase 5.5 (spec §6 G7): "with no fix" became "with no remedy sentence".
+    // A fix now survives on its instruction, not on its target, and the rubric
+    // says the same thing to the model that the code enforces.
+    expect(prompt).toContain("A weak or a fail with no remedy sentence is discarded and the axis is treated as a pass");
     expect(prompt).toContain("do not raise a problem you cannot say the remedy for");
   });
 
@@ -522,14 +526,34 @@ describe("normaliseValueVerdict rule 2 — the fix rule (§5.4)", () => {
 
   it.each([
     ["an axis nobody defined", { fixAxes: ["tone", "position", "payload", "action"] }],
-    ["a target outside cover / caption / slide:1-8", { fixTargets: ["slide:9", "cover", "slide:2", "caption"] }],
-    ["a target written as prose", { fixTargets: ["the third slide", "cover", "slide:2", "caption"] }],
     ["an empty instruction", { fixInstructions: ["   ", "Assert the cause.", "Say what the downtime costs.", "Ask for one thing."] }],
-    ["an array shorter than fixAxes", { fixTargets: [] as string[] }],
   ])("discards a fix carrying %s, and rule 2 then acts on the axis it left bare", (_shape, overrides) => {
     const out = normaliseValueVerdict({ ...worthlessRaw(), ...overrides }, draftOf(worthlessPost()));
     expect(out.fixes.some((f) => f.axis === "newFact")).toBe(false);
     expect(out.axes.newFact).toBe("pass");
+  });
+
+  /**
+   * CHANGED BY PHASE 5.5 (spec §6 G7). A fix used to be discarded for its
+   * TARGET as well as for its instruction, and a discarded fix let rule 2
+   * revert the axis to `pass`. thepitchbydeel's `07j` on 2026-09-16 answered
+   * `payload: "weak"` with `fixTargets: ["declaredStructure"]` — a word the
+   * rubric's own payload question hands the judge — and the run shipped a
+   * refusal as a pass.
+   *
+   * A fix now survives on its INSTRUCTION. An unrecognised target is recorded
+   * as `UNSPECIFIED_FIX_TARGET` and the axis keeps the verdict the judge gave
+   * it. `value-fix-target.test.ts` pins the deel verdict verbatim.
+   */
+  it.each([
+    ["a target outside the recognised set", { fixTargets: ["slide:9", "cover", "slide:2", "caption"] }],
+    ["a target written as prose", { fixTargets: ["the third slide", "cover", "slide:2", "caption"] }],
+    ["no target array at all", { fixTargets: [] as string[] }],
+  ])("keeps a fix carrying %s, re-pointed at 'unspecified', and the axis stays refused", (_shape, overrides) => {
+    const out = normaliseValueVerdict({ ...worthlessRaw(), ...overrides }, draftOf(worthlessPost()));
+    expect(out.fixes.find((f) => f.axis === "newFact")).toMatchObject({ target: UNSPECIFIED_FIX_TARGET });
+    expect(out.axes.newFact).toBe("fail");
+    expect(out.notes.some((n) => /is not a place in this post/u.test(n))).toBe(true);
   });
 
   /**

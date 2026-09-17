@@ -68,15 +68,18 @@ describe("ImageSelectionSchema: claimMatch is required on every selection", () =
   });
 });
 
-describe("InstagramImageVettingAgent @5", () => {
-  it("is pinned to instagram-image-vet@5, and @5 keeps every v4 rule the claim-match belt depends on", () => {
+describe("InstagramImageVettingAgent @6", () => {
+  it("is pinned to instagram-image-vet@6, and every frozen version still carries the rule the next one was built on", () => {
     // Phase 3, item R bumped the pin to @4 (the scene brief); RFC-16 §6.1
-    // bumps it to @5 (a DECLARED metaphor, §1c). What this test has always
+    // bumped it to @5 (a DECLARED metaphor, §1c); Phase 5.5 item A3 bumps it to
+    // @6 (the SUBJECT, and `scene` re-declared as decoration — see
+    // `image-vet-floor.test.ts` for the run that made it necessary). What this
+    // test has always
     // been about is the RUBRIC, and each version restates all of it — so the
     // assertions below run against the version the agent actually reads.
     // `prompt-resolution.test.ts` owns the `N.md === latest.md` byte check.
     const agent = new InstagramImageVettingAgent({ router: fakeRouterSequence([]), tools: {}, promptStore: makePromptStore() });
-    expect((agent as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-image-vet@5");
+    expect((agent as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-image-vet@6");
 
     const v5 = readFileSync(path.join(PROMPTS_ROOT, "instagram-image-vet", "5.md"), "utf8");
     expect(v5.split(/\r?\n/)[0]).toBe("# Instagram Image Vetting Craft Guide — v5");

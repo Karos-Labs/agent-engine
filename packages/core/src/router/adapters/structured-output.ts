@@ -134,6 +134,13 @@ export class OutputLimitExceededError extends Error {
  * `OutputLimitExceededError` instead, because no amount of re-prompting
  * inside the same budget will produce a complete payload — that one is
  * re-asked with a raised ceiling, not with feedback.
+ *
+ * It carries its usage for the same reason `StructuredOutputValidationError`
+ * does: until 2026-09-16 a truncated turn threw before usage was resolved, so
+ * every one of them booked $0 — seventeen calls across the six Instagram prep
+ * runs of that day, about $0.57 a run of real money the meter could not see,
+ * on runs whose budget ladder was deleting the post's pictures to stay under a
+ * target it could not actually measure.
  */
 export function parseStructuredOutput<TOutput>(
   schema: ZodSchema<TOutput>,

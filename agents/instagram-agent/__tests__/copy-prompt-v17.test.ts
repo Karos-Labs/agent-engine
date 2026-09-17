@@ -48,19 +48,27 @@ const BUMPED = [
   {
     // FOLLOWS THE LIVE VERSION. Pinned at @17 these five steps would keep passing forever while guarding a
     // file no run loads any more — a guard that cannot fail in the way that matters, which is the failure
-    // mode this repo keeps catching. @20 is @18 plus section 29 and inherits all 28 of its sections, so
-    // following costs this suite no coverage and restores it to the prompt a run actually reads.
+    // mode this repo keeps catching. @22 (Phase 5.5, spec §2 A2/A3) is @21 plus the scene brief's SUBJECT in
+    // §22, the `namedEntities` input in §6 and the non-blocking `sceneSteer` in §16; it inherits every other
+    // section unchanged, so following costs this suite no coverage and keeps it pointed at the prompt a run
+    // actually reads. The Phase 5 sections the second block below asserts by name are all still present at
+    // @22, which is what makes following safe rather than merely cheap.
     promptId: "instagram-copy",
-    version: "20",
-    h1: "# Instagram Copy Craft Guide, v20",
-    skillRef: "instagram-copy@20",
+    version: "22",
+    h1: "# Instagram Copy Craft Guide, v22",
+    skillRef: "instagram-copy@22",
     agent: () => new InstagramCopyAgent({ router: fakeRouterSequence([]), tools: {}, promptStore: makePromptStore() }),
   },
   {
+    // FOLLOWS THE LIVE VERSION, for the same reason the copy row above does.
+    // Phase 5.5 (spec §6 G2): @2 states the 125-CHARACTER alt-text limit the
+    // wire had always enforced and the prompt had never mentioned, which is
+    // what cost two of three live runs on 2026-09-16 their hashtags AND their
+    // alt text on one over-long `alt`.
     promptId: "instagram-post-package",
-    version: "1",
-    h1: "# Instagram Post Package Guide, v1",
-    skillRef: "instagram-post-package@1",
+    version: "2",
+    h1: "# Instagram Post Package Guide, v2",
+    skillRef: "instagram-post-package@2",
     agent: () => new InstagramPostPackagerAgent({ router: fakeRouterSequence([]), tools: {}, promptStore: makePromptStore() }),
   },
 ] as const;
@@ -69,7 +77,7 @@ const readPrompt = (promptId: string, file: string): string => readFileSync(path
 
 const skillRefOf = (agent: unknown): string => (agent as { config: { skillRef: string } }).config.skillRef;
 
-describe("the copy prompt bump: instagram-copy@20 (live) and instagram-post-package@1 (RFC-18 §12)", () => {
+describe("the copy prompt bump: instagram-copy@22 (live) and instagram-post-package@2 (live)", () => {
   for (const { promptId, version, h1, skillRef, agent } of BUMPED) {
     describe(`${promptId}@${version}`, () => {
       it(`step 1: prompts/${promptId}/${version}.md exists and is not a stub`, () => {
@@ -169,9 +177,11 @@ describe("the copy prompt bump: instagram-copy@20 (live) and instagram-post-pack
     // assertion that depended on WHERE it wrapped would fail the next time anyone reflowed the paragraph.
     expect(copy.replace(/\s+/g, " ")).toContain("Text quoted under KEEP AS WRITTEN has already been accepted. Reproduce it unchanged.");
 
-    const pkg = readPrompt("instagram-post-package", "1.md");
+    // Follows the live version with the row above: @2 inherits every one of
+    // @1's three field sections and adds the alt-text limit.
+    const pkg = readPrompt("instagram-post-package", "2.md");
     for (const field of ["`hashtags`", "`altText`", "`firstCommentText`"]) {
-      expect(pkg, `instagram-post-package@1 never names ${field}`).toContain(field);
+      expect(pkg, `instagram-post-package@2 never names ${field}`).toContain(field);
     }
   });
 

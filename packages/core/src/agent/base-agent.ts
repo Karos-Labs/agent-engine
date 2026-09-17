@@ -705,6 +705,14 @@ export abstract class BaseAgent<TOutput> {
       // is how `05-write-copy-attempt-3` came to be recorded at $0 on a run
       // whose two surviving attempts cost $0.40 each. A step that failed
       // expensively must not read as the cheapest step in the run.
+      //
+      // Phase 5.5 arrived at the same defect from the Instagram side and
+      // proposed a second error type for it; this branch already books it, and
+      // one error type that BOTH raises the ceiling and reports the spend is
+      // strictly better than two that each do half. The zeros below are still
+      // correct for the generic case, and only there: a dead provider, a 403,
+      // a bad key or a timeout never produced a response, so there is no usage
+      // to report.
       const ceilingUsage = err instanceof OutputLimitExceededError ? err.usage : undefined;
       return {
         kind: "tooling_error",

@@ -16,7 +16,15 @@ import { DEFAULT_VISION_MODEL, type VisionAnalysisClient, type VisionPart } from
 // 1.0.0 — new: the first tool in this package that LOOKS at pixels on behalf
 // of a content agent. Until it, every image judgment in the engine was made
 // from a provider's alt text.
-const TOOL_VERSION = "1.1.0";
+// 1.1.1 — NO behaviour change. The doc block below gained the record of this
+// tool's single-sourcing (Phase 5.5's review found it: the router's resilient
+// adapters do not cover a tool invoked directly, so a Vertex 403 takes the
+// whole vision path down and nothing on the gate says so). A PATCH because
+// nothing a caller can observe moved; the bump is here because
+// `scripts/check-tool-versions.ts` reads the FILE and cannot tell a comment
+// from a call, and a gate that could be argued out of on "it was only a
+// comment" would be no gate.
+const TOOL_VERSION = "1.1.1";
 
 /** Ceiling on one inspected image. Same bound the visual-pattern ingestion uses; well under the model's inline-data limit. */
 const MAX_IMAGE_BYTES = 4_000_000;
@@ -236,6 +244,34 @@ async function fetchRemoteImage(fetchImpl: typeof fetch, url: string): Promise<{
  * One call for the whole batch, on Gemini 2.5 Flash on Vertex: multimodal,
  * cheap, and the same credential `image.generate` already holds. Unconfigured
  * it reports `not_available`, like every other capability in this package.
+ *
+ * ## SINGLE-SOURCED, AND THAT IS AN OPEN FINDING RATHER THAN A DESIGN
+ *
+ * There is ONE backend here: `options.client.models.generateContent` is called
+ * once, a throw becomes a `toolingError` and an empty response becomes a
+ * `contentFail`. There is no alternate provider and no cross-provider retry.
+ *
+ * The engine's failover machinery lives in
+ * `packages/core/src/router/adapters/` (`resilient-claude-adapter.ts`,
+ * `resilient-gemini-adapter.ts`) and covers ROUTER-ROUTED model calls only.
+ * `media.inspectImages` is invoked directly as a tool — Instagram's workflow
+ * calls it at `create-instagram-agent-workflow.ts` 11387 and 11473 and again
+ * at 05c/06e for candidate vetting — so none of that reaches it.
+ *
+ * The exposure is not theoretical: the memory note
+ * `vertex-billing-hold-2026-09-10` records Vertex returning 403 in BOTH
+ * projects, and the part of the quality path that goes dark under that is
+ * exactly this one — 06/06e candidate vetting and 08a4's rendered inspection.
+ * A run then vets its pictures on alt text again, which is the defect this
+ * tool exists to end, and nothing on the gate says so.
+ *
+ * **Phase 5.5 does NOT fix this and does not touch this file's behaviour.**
+ * Giving the vision path the resilient adapter means either routing it through
+ * the model router (which would change how every caller passes credentials) or
+ * a second `VisionAnalysisClient` with its own provider — both are engine-level
+ * changes with their own TOOL_VERSION bump and their own evals. It belongs to
+ * the phase that owns the vision path, and it is named here so the next reader
+ * does not mistake the router's failover for cover this tool has.
  */
 export function createInspectImages(options: { client?: VisionAnalysisClient | undefined; model?: string; fetchImpl?: typeof fetch }) {
   const model = options.model ?? DEFAULT_VISION_MODEL;

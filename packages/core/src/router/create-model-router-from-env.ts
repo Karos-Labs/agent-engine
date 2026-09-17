@@ -6,9 +6,10 @@ import OpenAI from "openai";
 import { AgentPlatformAdapter } from "./adapters/agent-platform-adapter.js";
 import { regionEnvVarNamesFor } from "./adapters/agent-platform-model-ids.js";
 import { AnthropicAdapter } from "./adapters/anthropic-adapter.js";
-import { GeminiAdapter } from "./adapters/gemini-adapter.js";
+import { GeminiAdapter, createDirectGeminiAdapter } from "./adapters/gemini-adapter.js";
 import { OpenAICompatibleAdapter } from "./adapters/openai-compatible-adapter.js";
 import { ResilientClaudeAdapter } from "./adapters/resilient-claude-adapter.js";
+import { ResilientGeminiAdapter } from "./adapters/resilient-gemini-adapter.js";
 import type { MessagesApiClient, ModelAdapter } from "./adapters/types.js";
 import { createVertexModelGardenFetch, vertexModelGardenBaseUrl } from "./adapters/vertex-model-garden-client.js";
 import { DefaultModelRouter, type ModelRouter, type ModelRouterAdapters } from "./model-router.js";
@@ -160,6 +161,11 @@ function createAnthropicVendorAdapter(env: Record<string, string | undefined>): 
 
   const primary = createClaudeAgentPlatformAdapter(env);
   const secondary = readEnv(env, "ANTHROPIC_API_KEY") ? createClaudeDirectAdapter(env) : undefined;
+  // Deliberately built WITHOUT the Claude text substitution: this adapter is
+  // already Claude's own last resort, and handing it a Claude hop of its own
+  // would close a Claude -> Gemini -> Claude ring whose second Claude hop is
+  // the transport that just failed. The Vertex -> direct-Gemini half still
+  // applies here, which is the half that is worth anything in this position.
   const tertiary = createGeminiVendorAdapter(env);
 
   if (!secondary && !tertiary) return primary;
@@ -216,7 +222,10 @@ export function resolveGeminiRoute(env: Record<string, string | undefined>): Gem
  * client per resolved region, for the same reason `AgentPlatformAdapter`
  * keys Claude's clients that way.
  */
-function createGeminiVendorAdapter(env: Record<string, string | undefined>): ModelAdapter | undefined {
+function createGeminiVendorAdapter(
+  env: Record<string, string | undefined>,
+  claudeForSubstitution?: ModelAdapter,
+): ModelAdapter | undefined {
   // AU59 (Vertex-only): the direct Gemini Developer API route is gone —
   // GEMINI_API_KEY built a `GoogleGenAI({ apiKey })` client here; that
   // construction is removed, not just gated differently. A deployment that
@@ -244,7 +253,36 @@ function createGeminiVendorAdapter(env: Record<string, string | undefined>): Mod
     return clientForRegion(region);
   };
 
-  return new GeminiAdapter({ client: clientForModel });
+  // Phase 5.5 item G6 (W2-E). Gemini's missing failover chain, wired here so
+  // every agent that routes a step to Gemini gets it and none of them has to
+  // know it exists: Vertex (ADC) -> the Gemini Developer API (`GEMINI_API_KEY`,
+  // the SAME model ids on a different transport, so no pinned model is ever
+  // silently swapped) -> and, only where a text answer is honest, a Claude
+  // model. Saying nothing means REFUSE, which is why `textSubstitution` is
+  // omitted entirely rather than defaulted when no Claude adapter was handed in.
+  //
+  // `GEMINI_API_KEY` is wired in NEITHER prep NOR prod today. Until the owner
+  // adds it the chain runs Vertex -> (no direct hop) -> Claude-or-refuse, which
+  // is still strictly better than the single-sourced route that let a Vertex
+  // 403 gut the 2026-09-13/14 runs in silence.
+  //
+  // NOTE the route rule this does NOT re-open: `resolveGeminiRoute === "direct"`
+  // still returns `undefined` above. The direct endpoint is a failover
+  // TRANSPORT here, never a selectable route.
+  const directKey = readEnv(env, "GEMINI_API_KEY");
+  return new ResilientGeminiAdapter({
+    primary: new GeminiAdapter({ client: clientForModel }),
+    ...(directKey ? { direct: createDirectGeminiAdapter(directKey) } : {}),
+    ...(claudeForSubstitution
+      ? {
+          textSubstitution: {
+            kind: "allow" as const,
+            adapter: claudeForSubstitution,
+            model: readEnv(env, "GEMINI_FALLBACK_CLAUDE_MODEL") ?? "claude-haiku-4-5",
+          },
+        }
+      : {}),
+  });
 }
 
 /**
@@ -332,7 +370,13 @@ export function createModelRouterFromEnv(options: CreateModelRouterFromEnvOption
 
   const adapters: ModelRouterAdapters = { anthropic: createAnthropicVendorAdapter(env) };
 
-  const gemini = createGeminiVendorAdapter(env);
+  // The Claude family is the Gemini chain's last resort, and it is the
+  // `anthropic` vendor adapter this router already built — the same resilient
+  // Claude the rest of the engine uses, not a second construction of it. A
+  // step that reads PIXELS must never take this hop; see
+  // `ResilientGeminiAdapter`'s `textSubstitution`, which is a per-request
+  // decision the construction site declares.
+  const gemini = createGeminiVendorAdapter(env, adapters.anthropic);
   if (gemini) adapters.gemini = gemini;
 
   const modelGarden = createModelGardenVendorAdapter(env);

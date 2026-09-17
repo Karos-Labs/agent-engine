@@ -1,0 +1,180 @@
+{
+  "client": "thepitchbydeel",
+  "runId": "pubsub-21864573169935321",
+  "stepId": "07c-emit-slides-data-attempt-3",
+  "slides": [
+    {
+      "n": 1,
+      "template": "cover.html",
+      "fields": {
+        "accentColor": "#5938b7",
+        "dir": "ltr",
+        "lang": "en",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "glyph",
+        "slideIndex": "01",
+        "kicker": "by the numbers",
+        "brandHandle": "@deelpitch",
+        "seriesBadge": "by the numbers",
+        "eyebrow": "by the numbers",
+        "title": "Five criteria, two layers. Not a vibe check.",
+        "subtitle": "The Pitch by Deel publishes exactly what it scores for. Most competitions do not."
+      },
+      "images": {},
+      "htmlFragments": {}
+    },
+    {
+      "n": 2,
+      "template": "stat-callout.html",
+      "fields": {
+        "accentColor": "#5938b7",
+        "dir": "ltr",
+        "lang": "en",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "glyph",
+        "slideIndex": "02",
+        "kicker": "how you are scored",
+        "brandHandle": "@deelpitch",
+        "seriesBadge": "by the numbers",
+        "figure": "5 criteria",
+        "subLabel": "The Pitch by Deel scores against, published in full",
+        "body": "Product strength, market opportunity, team capability, traction, scalability. Each one a named bar, not a general impression.",
+        "sourceLine": "The Pitch by Deel product-information document, 2026"
+      },
+      "images": {},
+      "htmlFragments": {}
+    },
+    {
+      "n": 3,
+      "template": "slide.html",
+      "fields": {
+        "accentColor": "#5938b7",
+        "dir": "ltr",
+        "lang": "en",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "glyph",
+        "slideIndex": "03",
+        "kicker": "the review system",
+        "brandHandle": "@deelpitch",
+        "seriesBadge": "by the numbers",
+        "headline": "Two layers means two filters, not one opinion",
+        "body": "AI analysis runs first. Expert judges run second. The same five criteria govern both passes, so the score is consistent rather than one panel's gut call."
+      },
+      "images": {
+        "hero": ".media-cache/pubsub-21864573169935321/n3-98504087e4e2.jpg"
+      },
+      "htmlFragments": {}
+    },
+    {
+      "n": 4,
+      "template": "slide.html",
+      "fields": {
+        "accentColor": "#5938b7",
+        "dir": "ltr",
+        "lang": "en",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "glyph",
+        "slideIndex": "04",
+        "kicker": "the cost of one agent doing everything",
+        "brandHandle": "@deelpitch",
+        "seriesBadge": "by the numbers",
+        "headline": "One LLM call for all tasks cuts corners on the facts that decide eligibility",
+        "body": "Discovery, validation, scoring and drafting in a single prompt means no step can be verified independently."
+      },
+      "images": {
+        "hero": ".media-cache/pubsub-21864573169935321/n4-bd7977311529.jpg"
+      },
+      "htmlFragments": {}
+    },
+    {
+      "n": 5,
+      "template": "headline-focus.html",
+      "fields": {
+        "accentColor": "#5938b7",
+        "dir": "ltr",
+        "lang": "en",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "glyph",
+        "slideIndex": "05",
+        "kicker": "the principle",
+        "brandHandle": "@deelpitch",
+        "seriesBadge": "by the numbers",
+        "headline": "Scoring and validation belong to scripts. Drafting belongs to agents.",
+        "body": "Keep deterministic work deterministic. Generative tools are for synthesis, not for auditing the facts that determine whether you qualify."
+      },
+      "images": {},
+      "htmlFragments": {}
+    },
+    {
+      "n": 6,
+      "template": "slide.html",
+      "fields": {
+        "accentColor": "#5938b7",
+        "dir": "ltr",
+        "lang": "en",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "glyph",
+        "slideIndex": "06",
+        "kicker": "pipeline design",
+        "brandHandle": "@deelpitch",
+        "seriesBadge": "by the numbers",
+        "headline": "Specialized agents, small jobs, verifiable results",
+        "body": "Each agent in the pipeline owns one bounded task. That is what makes the overall system trustworthy rather than opaque."
+      },
+      "images": {
+        "hero": ".media-cache/pubsub-21864573169935321/n6-16f557fe0c95.jpg"
+      },
+      "htmlFragments": {}
+    },
+    {
+      "n": 7,
+      "template": "list-takeaway.html",
+      "fields": {
+        "accentColor": "#5938b7",
+        "dir": "ltr",
+        "lang": "en",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "glyph",
+        "slideIndex": "07",
+        "kicker": "rebuild checklist",
+        "brandHandle": "@deelpitch",
+        "seriesBadge": "by the numbers",
+        "headline": "What a rebuilt workflow actually preserves"
+      },
+      "images": {},
+      "htmlFragments": {
+        "itemRows": "<div class=\"me-row\"><span class=\"diamond\"></span><div><div class=\"me-title\">Request</div><div class=\"me-note\">What chang…[truncated for the fixture: only the PRESENCE of a fragment is read]"
+      }
+    },
+    {
+      "n": 8,
+      "template": "closer.html",
+      "fields": {
+        "accentColor": "#5938b7",
+        "dir": "ltr",
+        "lang": "en",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "glyph",
+        "slideIndex": "08",
+        "kicker": "your next move",
+        "brandHandle": "@deelpitch",
+        "seriesBadge": "by the numbers",
+        "eyebrow": "your next move",
+        "takeaway": "Five criteria, two layers. Now you know what to prepare for.",
+        "cta": "The Pitch by Deel publishes its scoring framework. Most founders never read it before they apply. The ones who do show up differently."
+      },
+      "images": {},
+      "htmlFragments": {
+        "recap": "<div class=\"rc-strip\"><div class=\"rc-plate\"><div class=\"rc-n\">01</div><div class=\"item-title\">Five criteria, two layers.…[truncated for the fixture: only the PRESENCE of a fragment is read]"
+      }
+    }
+  ]
+}

@@ -197,6 +197,52 @@ export function skeletonFor(series: EditorialSeries, slideCount: number): Instag
   return [COVER, ...middle, CLOSER];
 }
 
+/**
+ * Which slides are wearing the layout THE SERIES gave them, by slide number.
+ *
+ * ## Why this exists
+ *
+ * `slides-data.ts` degrades any archetype a second slide in the same carousel
+ * asks for. That rule was written against a writer that repeated `stat_callout`
+ * on its own initiative, and it is right about that case — but four of the six
+ * bundled series direct a repeat ON PURPOSE (`by_the_numbers` is three
+ * `stat_callout`s; `the_playbook` three `list_takeaway`s; `head_to_head` and
+ * `in_their_words` two each), so those four formats could not ship without
+ * degraded plates. karoslabs' 2026-09-16 `by_the_numbers` post rendered slides
+ * 4, 5 and 6 on the client's bare base template for exactly this reason.
+ * `resolveLayout`'s `seriesDirected` parameter carries this set and skips the
+ * repeat check for its members.
+ *
+ * ## Why a MATCH rather than "every slide, because a series ran"
+ *
+ * The exemption is for a repeat the series asked for, not for every layout on
+ * a run that happens to have a series. A writer that ignores the skeleton and
+ * puts a third `comparison_card` where the series asked for a photo is the
+ * case the singleton rule was built for, and it keeps binding. So a slide is
+ * directed only where its own requested layout EQUALS the skeleton's entry for
+ * its position.
+ *
+ * Compared by POSITION in the drafted array rather than by `n`, because the
+ * skeleton is positional (`skeletonFor` truncates from the end) and `n` is a
+ * model-authored field: a draft that numbers its slides 1,2,2,4 would silently
+ * exempt the wrong plate. The RETURNED numbers are each slide's own `n`,
+ * because that is what `resolveLayout` sees.
+ *
+ * Pure, total, $0 — and it needs the drafted slides, so it is called after
+ * `05` rather than at selection time.
+ */
+export function seriesDirectedSlides(
+  series: EditorialSeries,
+  slides: readonly { n: number; layout?: InstagramSlideCopy["layout"] | undefined }[],
+): ReadonlySet<number> {
+  const skeleton = skeletonFor(series, slides.length);
+  const directed = new Set<number>();
+  slides.forEach((slide, index) => {
+    if (slide.layout !== undefined && slide.layout === skeleton[index]) directed.add(slide.n);
+  });
+  return directed;
+}
+
 /** The evidence a series is chosen from — all of it already on the run before this step. */
 export interface SeriesEvidence {
   /** The angle the run chose, if `04i` produced one. Absent on a run whose angle step failed open. */
@@ -207,7 +253,41 @@ export interface SeriesEvidence {
   comparedEntities?: number | undefined;
   /** The series used by the previous shipped posts, newest first. Read from `skeleton-memory`. */
   recentSeriesIds?: readonly string[] | undefined;
+  /**
+   * Phase 5.5, item D2 — the series **other clients** shipped in the fleet's
+   * last few posts, newest first. From `crossClientSeriesIds(...)` in
+   * `visual-system.ts`, which reads the agent-level
+   * `CROSS_CLIENT_FORMAT_BELIEF_KEY`.
+   *
+   * The owner's sharpest complaint about the 2026-09-16 batch was not that a
+   * client repeated itself — it was that two different clients' posts were
+   * recognisably one machine's output on the same day. `skeleton-memory` is
+   * per-client and structurally cannot see that: karoslabs and thepitchbydeel
+   * both landed `by_the_numbers` for two unrelated stories and neither
+   * client's own history said anything was wrong.
+   *
+   * Absent or empty means NO PENALTY. The belief is fleet-scoped and optional;
+   * an unreadable one must cost a post nothing.
+   */
+  crossClientSeriesIds?: readonly string[] | undefined;
 }
+
+/**
+ * What a series costs for having been used by ANOTHER client recently.
+ *
+ * Two points, and the number is chosen against the live scores rather than
+ * picked. `scoreOf` ranges 0-5, and on the three 2026-09-16 runs the winning
+ * margins were 5 (`by_the_numbers`, two stat cards plus the matching angle)
+ * against `the_breakdown`'s standing 1. A 2-point penalty moves that to 3
+ * against 1 — **a story that genuinely is number-led still gets the
+ * number-led format**, which is the property the test pins. What 2 points DO
+ * decide is the case where the evidence is thin and two formats are within a
+ * point of each other, which is exactly when two clients land on the same one.
+ *
+ * A penalty rather than an exclusion, for the same reason `SERIES_ROTATION_HOLD`
+ * is only two posts long: a forced format is a worse post than a repeated one.
+ */
+export const CROSS_CLIENT_SERIES_PENALTY = 2;
 
 export interface SeriesChoice {
   series: EditorialSeries;
@@ -215,8 +295,10 @@ export interface SeriesChoice {
   reason: string;
   /** The ids excluded by rotation, so "why not the obvious one" is answerable without re-deriving it. */
   rotatedAway: EditorialSeriesId[];
-  /** Every series' score, for the trace. A choice nobody can audit is a choice nobody can correct. */
+  /** Every series' score BEFORE the cross-client penalty, for the trace. A choice nobody can audit is a choice nobody can correct. */
   scores: Record<EditorialSeriesId, number>;
+  /** The ids another client shipped recently, each of which lost `CROSS_CLIENT_SERIES_PENALTY`. Empty when the fleet belief was absent, unreadable or silent. */
+  crossClientPenalised: EditorialSeriesId[];
 }
 
 /**
@@ -303,16 +385,27 @@ export function selectSeries(evidence: SeriesEvidence, catalogue: readonly Edito
   const held = new Set((evidence.recentSeriesIds ?? []).slice(0, SERIES_ROTATION_HOLD));
   const rotatedAway = catalogue.filter((series) => held.has(series.id)).map((series) => series.id);
 
+  // ── Item D2: the fleet's own recent formats. ──
+  //
+  // A PENALTY on a separate ladder rather than a term inside `scoreOf`, and
+  // the separation is the point: `scores` stays the answer to "what does this
+  // STORY fit", which is what a reviewer reads, and the penalty is a visible
+  // second column. Folding it in would make a story's fit look weaker than it
+  // is on the payload and there would be no way to tell the two apart.
+  const crossClient = new Set(evidence.crossClientSeriesIds ?? []);
+  const crossClientPenalised = catalogue.filter((series) => crossClient.has(series.id)).map((series) => series.id);
+  const adjustedOf = (id: EditorialSeriesId): number => scores[id]! - (crossClient.has(id) ? CROSS_CLIENT_SERIES_PENALTY : 0);
+
   const eligible = catalogue.filter((series) => !held.has(series.id));
   // Every series held out is possible only on a catalogue of two or fewer.
   // The post still ships: rotation is a preference, and a repeated format is
   // better than no format at all.
   const pool = eligible.length > 0 ? eligible : catalogue;
   let best = pool[0]!;
-  for (const series of pool) if (scores[series.id]! > scores[best.id]!) best = series;
+  for (const series of pool) if (adjustedOf(series.id) > adjustedOf(best.id)) best = series;
 
-  const runnerUp = pool.filter((series) => series.id !== best.id).sort((a, b) => scores[b.id]! - scores[a.id]!)[0];
-  const margin = runnerUp === undefined ? undefined : scores[best.id]! - scores[runnerUp.id]!;
+  const runnerUp = pool.filter((series) => series.id !== best.id).sort((a, b) => adjustedOf(b.id) - adjustedOf(a.id))[0];
+  const margin = runnerUp === undefined ? undefined : adjustedOf(best.id) - adjustedOf(runnerUp.id);
   const why =
     scores[best.id]! <= 1
       ? "no format had a signal in this story's own evidence, so the general teardown was taken"
@@ -320,9 +413,13 @@ export function selectSeries(evidence: SeriesEvidence, catalogue: readonly Edito
 
   return {
     series: best,
-    reason: `series "${best.id}": ${why}${rotatedAway.length > 0 ? ` (held out as recently used: ${rotatedAway.join(", ")})` : ""}`,
+    reason:
+      `series "${best.id}": ${why}` +
+      `${rotatedAway.length > 0 ? ` (held out as recently used: ${rotatedAway.join(", ")})` : ""}` +
+      `${crossClientPenalised.length > 0 ? ` (-${CROSS_CLIENT_SERIES_PENALTY} each, shipped by another client this week: ${crossClientPenalised.join(", ")})` : ""}`,
     rotatedAway,
     scores,
+    crossClientPenalised,
   };
 }
 
@@ -450,6 +547,24 @@ export function seriesDirective(choice: SeriesChoice, slideCount: number): strin
     // must therefore be identical.
     `If your post is shorter than ${skeleton.length} slides, take the FIRST slides of that order and finish on the closer — slide 1 is always the cover and the last slide is always the closer. Do not re-order and do not pick out of the middle of the list.`,
     "",
-    "Write to that order. Do not re-choose the layouts — section 7's menu tells you what each archetype REQUIRES, and that still binds: a slide whose content cannot fill the layout it was given is a slide whose content is wrong, not a layout to swap. If a required object genuinely cannot be written from the cards you were given, say so in that slide's content and leave the object out rather than substituting a different archetype.",
+    // THE SENTENCE THAT REACHED A READER. Until 2026-09-16 this line ended
+    // "...say so in that slide's content and leave the object out", and on
+    // 2026-09-16 the writer did exactly as it was told: geektime's slide 4,
+    // whose `field_notes` skeleton asks for a quote card and whose cards held
+    // no quote, shipped `לא נמצא ציטוט משתתף ישיר בחומרים; השקף נושא את הטענה
+    // בכותרת ובגוף` — a note to the pipeline, set at 31px in front of the
+    // client's audience. The reporting channel was the defect, not the
+    // reporting: a writer that cannot fill a required object MUST still say
+    // so, or the run has no way to tell an empty plate from a chosen one.
+    // So the channel moves off the plate, and `craft-hygiene.ts`'s
+    // `work-notes` clause refuses a draft that narrates it anyway.
+    //
+    // The `unfillable` field is added to `InstagramSlideCopySchema` alongside
+    // copy prompt @21. The second half of the sentence is what makes this
+    // directive safe to ship on EITHER side of that change: a schema without
+    // the field drops the value silently (the copy output schema strips
+    // unknown keys), which is the right outcome — a note about the materials
+    // is never reader copy, whether or not there is somewhere to put it.
+    "Write to that order. Do not re-choose the layouts — section 7's menu tells you what each archetype REQUIRES, and that still binds: a slide whose content cannot fill the layout it was given is a slide whose content is wrong, not a layout to swap. If a required object genuinely cannot be written from the cards you were given, leave the object out and name it in that slide's `unfillable` field — never in `headline`, `body`, or any other text the reader sees. If your output has no `unfillable` field, leave it unsaid: a note about the cards, the materials, the brief or this slide itself is working text, and working text on a plate is a defect the reader is looking at.",
   ].join("\n");
 }

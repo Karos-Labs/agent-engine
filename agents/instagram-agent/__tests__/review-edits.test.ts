@@ -17,14 +17,14 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
-import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
+import { DEFAULT_ENTITIES_TURN, DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 const base = { clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
 function happyRouter() {
   return fakeRouterSequence([
-    finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+    finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
     finalTurn(goodCopyOutput()),
     finalTurn(goodImageVettingOutput()),
     finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),

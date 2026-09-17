@@ -108,19 +108,28 @@ describe("RFC-21 Part 3 wiring: a real run chooses a series and the writer is to
     expect(recentSeriesIds(history)).toContain(series!.series!.id);
     expect(SKELETON_BELIEF_KEY).toBe("instagramSkeletons");
 
-    // ── 4. AND THE READER IS TOLD TOO. ──
+    // ── 4. AND THE READER IS *NOT* TOLD — THE BADGE IS RETIRED. ──
     //
-    // The `seriesBadge` slot is the visible half: it exists on every bundled
-    // template and, until this phase, carried a per-CLIENT string frozen at
-    // setup, so the hook the reference feed uses sat in the tree with nothing
-    // choosing it. `seriesBadgeFor` was written, tested and then CALLED BY
-    // NOBODY until this assertion went looking for it — the badge on the
-    // rendered slides has to be the chosen series'.
+    // RFC-21 Part 3 announced the series through the `seriesBadge` slot, and
+    // Phase 5.5 item C3 deleted it. The owner's 2026-09-16 verdict is the whole
+    // reason: "BY THE NUMBERS" / "{ FIELD NOTES }" is an INTERNAL label a
+    // reader cannot use, it printed on all eight slides of all three posts, and
+    // on geektime the brand logo disc landed on it and clipped it to `{ FIELD`
+    // eight times over.
+    //
+    // So the assertion inverts, and what it now guards is that the SERIES still
+    // does everything worth doing while reaching no pixel: it directed the
+    // skeleton (asserted above), it is recorded in skeleton memory (asserted
+    // above), and it prints nothing. A client's OWN standing `seriesBadge` is
+    // untouched — `contentFor` still emits it, and the
+    // explicit-brand-decision precedence is unchanged — which is why this
+    // fixture, whose client sets none, reads `undefined` rather than "".
     const slidesData = steps.find((s) => s.stepId.startsWith("07c-emit-slides-data"))?.output as
       | { slides?: Array<{ fields?: Record<string, unknown> }> }
       | undefined;
     const badges = new Set((slidesData?.slides ?? []).map((slide) => slide.fields?.["seriesBadge"]));
-    expect([...badges], "the rendered slides do not carry the chosen series' badge").toContain(series!.series!.badge);
+    expect([...badges], "the derived series badge reached the render, and item C3 retired it").not.toContain(series!.series!.badge);
+    expect([...badges], "this client sets no standing badge of its own, so the slot is simply absent").toEqual([undefined]);
   }, 120_000);
 
   it("ASSERT THE PREMISE: an angle that fails open leaves no series and no directive, and the run still delivers", async () => {

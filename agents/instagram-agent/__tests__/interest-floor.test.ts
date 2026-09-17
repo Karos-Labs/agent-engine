@@ -133,8 +133,15 @@ describe("checkInterestFloor: every clause fires alone", () => {
     expect(kinds(check(metrics({ inkShare: INK_SHARE_FLOOR - EPS }), "interior"))).toEqual(["render-integrity"]);
   });
 
+  // ON A PLATE THAT CARRIES NO PHOTOGRAPH, which `bare()` is. Phase 5.5 moved
+  // `FULL_BLEED_IMAGERY_SHARE` to 0.28 from the live photo band (0.329-0.593
+  // against 0.022-0.145 for every typographic plate), and
+  // `passingSlideMetrics` is a PHOTO-BEARING plate at `imageryOrDeviceShare`
+  // 0.34 — so the baseline fixture is now inside the full-bleed exemption,
+  // which is the correction the move exists for. The pixel limb is about type
+  // running off a plate that is not a photograph; the case says so.
   it("B — clipped: ink inside the bleed band fails on its own", () => {
-    const verdict = check(metrics({ clippedEdgeShare: CLIPPED_EDGE_SHARE_CEILING + EPS }), "interior", 4);
+    const verdict = check(bare({ clippedEdgeShare: CLIPPED_EDGE_SHARE_CEILING + EPS }), "interior", 4);
     expect(kinds(verdict)).toEqual(["clipped"]);
     expect(verdict.findings[0]?.sentence).toMatch(/0\.5% of the frame is ink inside the 8px bleed band \(ceiling 0\.4%\)/);
     expect(verdict.findings[0]?.steer).toMatch(/fontScale/);
@@ -156,10 +163,10 @@ describe("checkInterestFloor: every clause fires alone", () => {
   // photograph: `clippedEdgeShare` 2.57% against clause B's 0.4% ceiling,
   // six times over, with `imageryShare` 82.9%. Unexempted, clause B would
   // therefore fail EVERY photo slide and every hero-bearing cover on every
-  // attempt. The exemption is deliberately narrow in two ways, and both are
-  // asserted here: it applies only to the PIXEL limb, and only above
-  // `FULL_BLEED_IMAGERY_SHARE` — so a scrimmed photo panel (the default
-  // fixture's 0.34) is still held to the ceiling.
+  // attempt. The exemption is deliberately narrow in three ways, and all
+  // three are asserted here and in the case after it: it applies only to the
+  // PIXEL limb, only above `FULL_BLEED_IMAGERY_SHARE`, and (since Phase 5.5)
+  // only to a plate the assembled document says carries a photograph.
   it("B — the bleed-band limb is inert on a FULL-BLEED slide, and only on one", () => {
     const clipped = { clippedEdgeShare: 0.0257 };
     const fullBleed = metrics({ ...clipped, imageryShare: 0.829, imageryOrDeviceShare: FULL_BLEED_IMAGERY_SHARE, textShare: 0.05 });
@@ -179,6 +186,110 @@ describe("checkInterestFloor: every clause fires alone", () => {
       { slide: 1 },
     );
     expect(kinds(bleedingAndOverflowing)).toEqual(["clipped"]);
+  });
+
+  /**
+   * ── PHASE 5.5: THE PHOTO BAND, AND THE DOM LIMB THAT KEEPS IT HONEST. ──
+   *
+   * THE DEFECT, from the three live runs of 2026-09-16: three of the five real
+   * photo slides in those posts measured `imageryOrDeviceShare` between 0.329
+   * and 0.468 and were failed as `clipped` — **while `probe.overflow` was
+   * FALSE**. Nothing was running off those plates. A photograph reaching the
+   * frame edge was being read as type spilling out of its box, on the one
+   * thing the owner had asked for more of, and each false finding cost a
+   * drafting attempt and sent the writer to cut copy that fits.
+   *
+   * The bands do not overlap: photo 0.329 / 0.452 / 0.468 / 0.573 / 0.593
+   * against 0.022-0.145 for every typographic plate. Midpoint 0.237, rounded
+   * toward the photo band: 0.28.
+   *
+   * What the rounding costs is the second limb's job. Between 0.28 and 0.5 a
+   * DRAWN field can now measure like a photograph, so the exemption asks the
+   * assembled document whether the plate actually has one.
+   */
+  it("B — a real photo slide at 0.33 is no longer clipped, and a drawn field at 0.33 still is", () => {
+    const edgeInk = { clippedEdgeShare: 0.0257 };
+    // The measured live plate: a photograph at 0.33, no overflow.
+    const photo = metrics({ ...edgeInk, imageryShare: 0.33, graphicShare: 0, imageryOrDeviceShare: 0.33 });
+    expect(checkInterestFloor(photo, passingSlideProbe(3), "interior", { slide: 3, hasHero: true }).findings).toEqual([]);
+    // The same numbers with NO photograph on the assembled slide: a drawn
+    // field cannot claim a photograph's exemption.
+    expect(kinds(checkInterestFloor(photo, passingSlideProbe(3), "interior", { slide: 3, hasHero: false }))).toEqual(["clipped"]);
+    // Unknown abstains, because a caller that cannot say what the plate
+    // carries must not have a photograph refused on its behalf.
+    expect(checkInterestFloor(photo, passingSlideProbe(3), "interior", { slide: 3 }).findings).toEqual([]);
+    // And a genuinely overflowing plate still fails, photograph or not — the
+    // DOM limb is what catches Hebrew type sized for Latin glyph widths.
+    const overflowing = checkInterestFloor(photo, passingSlideProbe(3, { overflow: true, overflowing: [".headline"] }), "interior", {
+      slide: 3,
+      hasHero: true,
+    });
+    expect(kinds(overflowing)).toEqual(["clipped"]);
+  });
+
+  /**
+   * ── PHASE 5.5, CLAUSE H: THE WEIGHT, AND THE KICKER THAT CANNOT LIFT IT. ──
+   *
+   * The reproduction against the owner's own verdicts lives in
+   * `content-weight-floor.test.ts`, which scores the three archived live
+   * posts. This is the clause's own unit behaviour: which input it reads,
+   * which floor it compares against, and the gameability guard.
+   */
+  it("H — the weighted floor refuses a plate a kicker cannot lift, at the role's own number", () => {
+    // headline + body = 2.0 on an interior plate, floor 3.0.
+    const thin = checkInterestFloor(metrics(), passingSlideProbe(4), "interior", { slide: 4, contentWeight: 2 });
+    expect(kinds(thin)).toEqual(["one-element"]);
+    expect(thin.findings[0]?.threshold).toBe(3);
+    expect(thin.findings[0]?.sentence).toMatch(/content weighs 2\.00 against a floor of 3\.00/u);
+    // THE GAMEABILITY GUARD: + a kicker (0.25) is 2.25 and still fails. That
+    // is the whole reason the weights exist — a flat floor of 3 would have
+    // been cleared by printing exactly the furniture the owner complained of.
+    expect(checkInterestFloor(metrics(), passingSlideProbe(4), "interior", { slide: 4, contentWeight: 2.25 }).ok).toBe(false);
+    // A picture (2.0) on the same plate clears it.
+    expect(checkInterestFloor(metrics(), passingSlideProbe(4), "interior", { slide: 4, contentWeight: 4 }).ok).toBe(true);
+    // The COVER is held to 4.0: a title, a subtitle and two pieces of furniture
+    // (2.5) is the cover the owner called empty, and 4.0 is reachable by a
+    // cover three ways (a photograph, a figure device, a drawn graphic).
+    expect(kinds(checkInterestFloor(metrics(), passingSlideProbe(1), "cover", { slide: 1, contentWeight: 2.5 }))).toContain("one-element");
+    // The CLOSER is held to 3.5, which is a closer's own MAXIMUM composition —
+    // `closer` declares no hero slot and emits two prose slots into one elastic
+    // middle, so `takeaway 1.0 + cta 1.0 + recap 1.5` is its ceiling. A complete
+    // closer therefore passes and a closer that lost its recap (2.0) fails,
+    // which is the plate this clause is actually about. See
+    // `CONTENT_WEIGHT_FLOOR`'s own note for why 4.0 was unreachable.
+    expect(checkInterestFloor(metrics(), passingSlideProbe(8), "closer", { slide: 8, contentWeight: 3.5 }).ok).toBe(true);
+    expect(kinds(checkInterestFloor(metrics(), passingSlideProbe(8), "closer", { slide: 8, contentWeight: 2 }))).toContain("one-element");
+    // ABSTAINS with neither input, exactly as the count-only limb does.
+    expect(checkInterestFloor(metrics(), passingSlideProbe(4), "interior", { slide: 4 }).ok).toBe(true);
+    // And the WEIGHT WINS when both are supplied: a 4-element plate weighing
+    // 2.25 is the plate this clause exists to refuse.
+    expect(checkInterestFloor(metrics(), passingSlideProbe(4), "interior", { slide: 4, contentElements: 4, contentWeight: 2.25 }).ok).toBe(false);
+  });
+
+  /**
+   * ── PHASE 5.5, CLAUSE I: A GRADIENT IS NOT A SUBJECT. ──
+   *
+   * The cover that drew *"השקף הראשון יחסית ריק ומשעמם"* passed every clause
+   * in this file, because `cover.html`'s own ramp measures
+   * `imageryOrDeviceShare` 0.165-0.188 before any content lands on it. The
+   * answer is not a higher pixel share — that would be a threshold fitted to
+   * one palette — but a question asked of the DOM. The real-Chromium cases are
+   * in `cover-subject.test.ts`; these are the policy's own.
+   */
+  it("I — the cover carries a subject, measured as boxes, and abstains when nothing measured them", () => {
+    const gradientCover = { hero: 0, device: 0.004, graphic: 0.01 };
+    const verdict = checkInterestFloor(metrics(), passingSlideProbe(1, { subjectBoxes: gradientCover }), "cover", { slide: 1 });
+    expect(kinds(verdict)).toContain("cover-subject");
+    expect(verdict.findings.find((f) => f.kind === "cover-subject")?.steer).not.toMatch(/device built from the strongest number/u);
+    // A full-bleed photograph, a real figure device and a drawn graphic each
+    // satisfy it on their own.
+    for (const boxes of [{ hero: 0.45, device: 0, graphic: 0 }, { hero: 0, device: 0.12, graphic: 0 }, { hero: 0, device: 0, graphic: 0.12 }]) {
+      expect(kinds(checkInterestFloor(metrics(), passingSlideProbe(1, { subjectBoxes: boxes }), "cover", { slide: 1 }))).not.toContain("cover-subject");
+    }
+    // An interior slide is allowed to be a quiet typographic turn.
+    expect(kinds(checkInterestFloor(metrics(), passingSlideProbe(3, { subjectBoxes: gradientCover }), "interior", { slide: 3 }))).not.toContain("cover-subject");
+    // And with no boxes measured the clause sits out rather than guessing.
+    expect(kinds(checkInterestFloor(metrics(), passingSlideProbe(1), "cover", { slide: 1 }))).not.toContain("cover-subject");
   });
 
   it("C — dead space: one contiguous hole over the role's ceiling, with the rectangle's own corners in the sentence", () => {
@@ -1143,7 +1254,12 @@ describe("checkSlidesInterestFloor: the whole attempt", () => {
 function findingFor(kind: InterestFinding["kind"], slide: number, role: SlideRole): InterestFinding {
   const byKind: Record<InterestFinding["kind"], Partial<SlideMetrics>> = {
     "render-integrity": { inkShare: 0.004 },
-    clipped: { clippedEdgeShare: 0.02 },
+    // NOT a photo-bearing plate, since Phase 5.5: the full-bleed exemption
+    // starts at `imageryOrDeviceShare` 0.28 (the live photo band is
+    // 0.329-0.593), and the baseline fixture sits at 0.34 — so a `clipped`
+    // specimen has to be a plate that carries no photograph, which is what
+    // the pixel limb is about.
+    clipped: { clippedEdgeShare: 0.02, imageryShare: 0, graphicShare: 0.05, imageryOrDeviceShare: 0.05 },
     // `imageryOrDeviceShare: 0` since 2026-09-14: clause C abstains on a plate
     // that carries a subject, so a dead-space fixture has to be a BARE plate or
     // it is exercising the waiver instead of the clause.
@@ -1169,6 +1285,20 @@ function findingFor(kind: InterestFinding["kind"], slide: number, role: SlideRol
     // metrics object can produce it. Its cases live in
     // `interest-floor-marks.test.ts`.
     "marks-missing": {},
+    // Phase 5.5's clause I reads no metrics either: it reads
+    // `probe.subjectBoxes`, laid-out boxes rather than pixels, which
+    // `byKindProbe` below supplies. The real-Chromium cases are in
+    // `cover-subject.test.ts`. The empty row is the honest entry.
+    "cover-subject": {},
+    // Phase 5.5's type-discipline clause reads `probe.typeSteps` /
+    // `probe.alignmentColumns` and no metrics at all — and it can only ever
+    // produce a FINDING when one of the three `*_ARMED` flags in
+    // `interest-floor.ts` is `true`, which none of them is. So this helper
+    // cannot build a specimen of it today, by design, and the empty row is
+    // both the honest entry and the reason `typeDisciplineLimbs` is exported
+    // as a pure function: its own cases test the routing directly, with the
+    // flags passed in.
+    "type-discipline": {},
   };
   // The DOM side of the same table, and `empty` is the only row that needs
   // one: clause G's refusal is `probe.textBoxShare` below
@@ -1177,6 +1307,9 @@ function findingFor(kind: InterestFinding["kind"], slide: number, role: SlideRol
   // the pixels. Every other clause still reads metrics.
   const byKindProbe: Partial<Record<InterestFinding["kind"], Parameters<typeof passingSlideProbe>[1]>> = {
     empty: { textBoxShare: 0.004 },
+    // The gradient cover, as boxes: no photograph, a rule and a badge under
+    // 1% of the canvas between them, nothing that reaches the object floor.
+    "cover-subject": { subjectBoxes: { hero: 0, device: 0.004, graphic: 0.01 } },
   };
   // Clause H abstains unless the caller supplies a count, so only its own row
   // sets one — every other kind keeps the abstention, which is what stops this
@@ -1318,13 +1451,31 @@ describe("planInterestRelayout: the fixed table", () => {
     expect(plan?.changes[0]?.kind).not.toBe("promote-image-to-cover");
   });
 
-  it("...else builds a figure device from the strongest sourced statistic in the post", () => {
+  /**
+   * ── THE COVER'S FACT-CARD DEVICE LIMB IS DELETED (Phase 5.5 §4.7). ──
+   *
+   * It read: build a figure device from the strongest sourced `kind: "stat"`
+   * card in the post. On 2026-09-16 that shipped
+   *
+   *     7.2%   Only of organizations respond to inbound leads within five
+   *            minutes, meaning
+   *
+   * on the cover of a post about generative-engine optimisation — a figure
+   * from a card the post's own angle does not rest on, labelled with the
+   * middle of that card's sentence, **and the identical figure appeared on a
+   * second post about a different subject**, because "the strongest stat card"
+   * is a property of the research and not of the argument.
+   *
+   * A cover's subject is the one thing this module may not invent. What is
+   * left is a real picture and the archetype's own ground.
+   */
+  it("...and NEVER builds a cover device from a fact card the post's own angle did not rest on", () => {
     const plan = planInterestRelayout(goodCopyOutput(), unusableSelections(), facts, [findingFor("no-device", 1, "cover")]);
-    const change = plan?.changes[0] as Extract<InterestRelayoutChange, { kind: "attach-device" }> | undefined;
-    expect(change?.kind).toBe("attach-device");
-    expect(change?.device.value).toBe("4");
-    expect(change?.device.source).toBe("internal client survey");
-    expect(change?.device.label.length).toBeGreaterThan(0);
+    expect(plan?.changes[0]?.kind).not.toBe("attach-device");
+    expect(plan?.changes[0]).toMatchObject({ kind: "colour-block-ground", slide: 1, archetype: "cover" });
+    // Not one change in the plan carries a figure the cover's own copy does
+    // not state — which is the property, stated as the property.
+    expect(JSON.stringify(plan)).not.toContain("device");
   });
 
   it("...else falls back to the cover archetype's colour-block ground, which cannot be a headline on flat ground", () => {
@@ -1384,16 +1535,50 @@ describe("planInterestRelayout: the fixed table", () => {
    * both sides of it are driven below: a hole inside the field takes the
    * device, a hole over the lockup does not.
    */
-  it("a dead-space hole INSIDE .cov-field takes the cover's device remedy, ahead of the ladder", () => {
+  it("a dead-space hole INSIDE .cov-field takes the cover's PICTURE remedy, ahead of the ladder", () => {
     // The measured rectangle, verbatim: y 236, h 376, inside the field.
     const finding = coverDeadSpace({ x: 0, y: 236, w: 1080, h: 376 }, 0.2361);
+    // Slides 3-6 shipped typographic, so their vetted pictures are going
+    // nowhere and one of them can close the band.
+    const copy = copyWithLayouts({ 1: "cover", 3: "text_only", 4: "text_only" });
+    const withoutOwnFigure: InstagramCopyOutput = {
+      ...copy,
+      slides: copy.slides.map((s) => (s.n === 1 ? { ...s, headline: "What changed this quarter", body: "The team reworked its intake process end to end." } : s)),
+    };
+    const plan = planInterestRelayout(withoutOwnFigure, goodImageVettingOutput().selections, SIX_RESEARCH_FACTS, [finding]);
+    expect(plan?.changes[0]).toMatchObject({ kind: "promote-image-to-cover", slide: 1, archetype: "cover" });
+  });
+
+  it("...and with no picture to promote it fabricates NOTHING: the cover limb declines and the ladder answers", () => {
+    // Phase 5.5: this is the case that used to produce the `7.2% / "Only of
+    // organizations respond… meaning"` cover. The limb's device rung is gone,
+    // so a cover with a hole and no picture goes back to the writer with
+    // clause C's steer — at most one more copy attempt.
+    const finding = coverDeadSpace({ x: 0, y: 236, w: 1080, h: 376 }, 0.2361);
     const plan = planInterestRelayout(coverCopyWithoutItsOwnFigure(), unusableSelections(), SIX_RESEARCH_FACTS, [finding]);
-    const change = plan?.changes[0] as Extract<InterestRelayoutChange, { kind: "attach-device" }> | undefined;
-    expect(change?.kind).toBe("attach-device");
-    expect(change?.device.value).toBe("4");
-    expect(change?.device.source).toBe("internal client survey");
-    // Already on `cover`, so no switch rides along — the slot is there.
-    expect(change?.archetype).toBeUndefined();
+    expect(plan?.changes[0]?.kind).not.toBe("attach-device");
+    expect(plan?.changes[0]).toMatchObject({ kind: "font-scale", slide: 1 });
+  });
+
+  /**
+   * ── CLAUSE I's REMEDY IS A PICTURE OR NOTHING. ──
+   *
+   * A cover with no subject has exactly one free remedy, and if it is not
+   * available the finding goes back to `05`. That is the whole design: the two
+   * live attempts at inventing a cover subject produced a digit cut out of the
+   * word `B2B` and a figure from another post's argument.
+   */
+  it("cover-subject promotes a vetted picture, and has no second rung", () => {
+    const withPicture = planInterestRelayout(
+      copyWithLayouts({ 1: "cover", 3: "text_only" }),
+      goodImageVettingOutput().selections,
+      facts,
+      [findingFor("cover-subject", 1, "cover")],
+    );
+    expect(withPicture?.changes[0]).toMatchObject({ kind: "promote-image-to-cover", slide: 1, archetype: "cover" });
+
+    const withNone = planInterestRelayout(goodCopyOutput(), unusableSelections(), facts, [findingFor("cover-subject", 1, "cover")]);
+    expect(withNone).toBeUndefined();
   });
 
   it("...and a hole over the LOCKUP does not: that is too little copy, and it gets the ladder", () => {
@@ -1431,21 +1616,90 @@ describe("planInterestRelayout: the fixed table", () => {
     expect(noDevice?.changes[0]).toMatchObject({ kind: "colour-block-ground", slide: 1, archetype: "cover" });
   });
 
-  it("dead-space and empty both set a figure already in the slide's own text as a device", () => {
-    // On an archetype that PAINTS one. `headline_focus` declares
-    // `{{html:device}}`, so the fragment reaches the pixels and the re-render
-    // can actually differ.
+  /**
+   * ── THE DEVICE IS THE LAST RUNG NOW, NOT THE FIRST (Phase 5.5 §4.7). ──
+   *
+   * The ladder is: merge the slide away, promote a picture onto it, render the
+   * content it already has through the archetype that shows it, raise the type
+   * step, and only then set a figure as a device. Every rung above the device
+   * shows the reader something that already exists; the device rung re-sets a
+   * number that is already on the plate, and it is the rung that fabricated
+   * the digit `2` out of the word `B2B`.
+   *
+   * So this case asserts BOTH halves: the device is not reached while a rung
+   * above it can act, and it still fires when nothing above it can.
+   */
+  it("dead-space and empty set a figure from the slide's own text as a device — LAST, after the rungs that add real content", () => {
+    // `headline_focus` on a slide whose copy also fills a `stat` block: the
+    // archetype rung can act, so it does, and the device does not.
     const copy = copyWithLayouts({ 2: "headline_focus" });
     for (const kind of ["dead-space", "empty"] as const) {
       const plan = planInterestRelayout(copy, goodImageVettingOutput().selections, facts, [findingFor(kind, 2, "interior")]);
+      expect(plan?.changes[0]?.kind, kind).toBe("switch-archetype");
+      // `photo`: slide 2 has a vetted picture of its OWN that the typographic
+      // archetype was not rendering, and showing it is worth more than
+      // re-setting a number the plate already prints.
+      expect(plan?.changes[0], kind).toMatchObject({ from: "headline_focus", to: "photo" });
+    }
+
+    // Strip the structured block and the picture, and the device rung is what
+    // is left — from the slide's OWN body ("30%"), with its own source.
+    const plain = copyWithLayouts({ 2: "headline_focus" });
+    const noBlocks: InstagramCopyOutput = {
+      ...plain,
+      slides: plain.slides.map((s) => (s.n === 2 ? { ...s, stat: undefined, items: undefined, quote: undefined, comparison: undefined } : s)),
+    };
+    for (const kind of ["dead-space", "empty"] as const) {
+      const plan = planInterestRelayout(noBlocks, unusableSelections(), facts, [findingFor(kind, 2, "interior")], {
+        // At the top of the type ladder, so the font-scale rung cannot act
+        // either and the device rung is genuinely last.
+        styleOverrides: new Map([[2, { fontScale: "l" as const }]]),
+      });
       const change = plan?.changes[0] as Extract<InterestRelayoutChange, { kind: "attach-device" }> | undefined;
       expect(change?.kind, kind).toBe("attach-device");
-      // Slide 2's own body says 30%, and its fact card names the source.
       expect(change?.device.value, kind).toBe("30%");
       expect(change?.device.source, kind).toBe("support dashboard export");
       // Already on a device-slot archetype, so no switch rides along.
       expect(change?.archetype, kind).toBeUndefined();
     }
+  });
+
+  /**
+   * ── THE `B2B` CASE, REPLAYED. ──
+   *
+   * `interest-floor.ts` records it in its own comment: on run
+   * `pubsub-21839432908803804` the `attach-device` remedy fabricated the digit
+   * `2` out of the middle of the word `B2B`, labelled it with the claim minus
+   * that digit, and sourced it to a real company. `figuresInText`'s
+   * word-boundary guard closed that hole; `verbatimDeviceFor` is the second,
+   * independent reading of the same property, and this case is the control
+   * that says both are still there.
+   */
+  it("never fabricates a figure out of the middle of a word, and never labels one with a fragment", () => {
+    const copy = copyWithLayouts({ 2: "headline_focus" });
+    const b2b: InstagramCopyOutput = {
+      ...copy,
+      slides: copy.slides.map((s) =>
+        s.n === 2
+          ? {
+              ...s,
+              headline: "B2B buyers changed where they look",
+              body: "Discovery moved, and the funnel followed it.",
+              stat: undefined,
+              items: undefined,
+              quote: undefined,
+              comparison: undefined,
+            }
+          : s,
+      ),
+    };
+    const plan = planInterestRelayout(b2b, unusableSelections(), facts, [findingFor("empty", 2, "interior")], {
+      styleOverrides: new Map([[2, { fontScale: "l" as const }]]),
+    });
+    // No figure in the slide's own words, so no device — and no plan at all,
+    // because every other rung has already declined. The redraft is what this
+    // case is for.
+    expect(plan).toBeUndefined();
   });
 
   /**
@@ -1544,7 +1798,9 @@ describe("planInterestRelayout: the bounds", () => {
     expect(plan?.changes).toHaveLength(1);
     // The highest-priority failing kind for the slide wins: `no-device`
     // before `dead-space`, because fixing the missing device fixes the hole.
-    expect(plan?.changes[0]?.kind).toBe("attach-device");
+    // With no picture to promote and the fact-card device limb deleted, what
+    // `no-device` has left on a cover is the archetype's own ground.
+    expect(plan?.changes[0]?.kind).toBe("colour-block-ground");
   });
 
   it("plans one change per slide across several failing slides, in slide order", () => {
@@ -1584,7 +1840,7 @@ describe("planInterestRelayout: the bounds", () => {
   it("carries one reviewer-readable note per change, so the gate shows that CODE fixed the writer's slide", () => {
     const plan = planInterestRelayout(goodCopyOutput(), unusableSelections(), SIX_RESEARCH_FACTS, [findingFor("no-device", 1, "cover")]);
     expect(plan?.notes).toHaveLength(1);
-    expect(plan?.notes[0]).toMatch(/^attach-device \(slide 1\): /);
+    expect(plan?.notes[0]).toMatch(/^colour-block-ground \(slide 1\): /);
   });
 
   it("reports a finding for a slide the copy does not contain as unremedied rather than guessing", () => {

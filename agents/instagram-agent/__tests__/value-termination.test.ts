@@ -6,7 +6,7 @@ import { DEFAULT_RUN_SHAPE, planRunBudget } from "../src/workflow/run-budget.js"
 import { VALUE_MAX_RETURNS } from "../src/workflow/value-gate.js";
 import { checkValueSignals } from "../src/workflow/value-signals.js";
 import { factCardsForPrompt } from "../src/workflow/fact-cards.js";
-import { standardTurns } from "./turns.js";
+import { DEFAULT_ENTITIES_TURN, standardTurns } from "./turns.js";
 import {
   SIX_RESEARCH_FACTS,
   fakeRenderCarousel,
@@ -174,7 +174,7 @@ describe("07j — the value gate terminates by DELIVERING, never by holding (RFC
 
   /** The run-level turns every case here shares: they are bought once per run (or, for the angle, once per revision), never per attempt. */
   function runPrefix(): Array<() => CompletionResult<unknown>> {
-    return [finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal())];
+    return [finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN)];
   }
 
   it("ROW 6 — below the bar on the FINAL attempt SHIPS: status completed, value below-bar, ONE ledger warn, and no WorkflowHeld", async () => {
@@ -438,7 +438,7 @@ describe("07i — the free value floor refuses a draft every other gate passes, 
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()),
       finalTurn(goodResearchOutput()),
-      finalTurn(goodAngleProposal()),
+      finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       // Attempt 1 — refused at `07i`, which sits ABOVE every paid step. No
       // relevance turn, no value turn, no QA turn: queue any of them here and
       // attempt 2's copy call would eat it. That omission IS the cost claim.
@@ -509,7 +509,7 @@ describe("07i — the free value floor refuses a draft every other gate passes, 
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()),
       finalTurn(goodResearchOutput()),
-      finalTurn(goodAngleProposal()),
+      finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       // Attempt 1 — refused at `07i` above every paid step, exactly as in the
       // test above.
       ...standardTurns({ copy: weakCopyOutput(), vet: goodImageVettingOutput() }),

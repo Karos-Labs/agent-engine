@@ -17,7 +17,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
-import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
+import { DEFAULT_ENTITIES_TURN, DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import type { InstagramCopyOutput } from "../src/workflow/types.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
@@ -53,7 +53,7 @@ describe("07-emit-slides-data: self-check retry, capped at two returns to step 0
     const badCopy = copyOutputWithBannedWord();
     const goodCopy = goodCopyOutput();
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(badCopy),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodCopy),
@@ -75,7 +75,8 @@ describe("07-emit-slides-data: self-check retry, capped at two returns to step 0
 
     // scout + research + angle + (copy + vet) + (copy + vet + relevance + QA): a failed 07 self-check never reaches the relevance judge.
     expect(result.status).toBe("completed");
-    expect(router.complete).toHaveBeenCalledTimes(11);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(12);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("05-write-copy-attempt-1");
@@ -120,7 +121,7 @@ describe("07-emit-slides-data: self-check retry, capped at two returns to step 0
     const promptStore = makePromptStore();
     const badCopy = copyOutputWithBannedWord();
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(badCopy),
       finalTurn(goodImageVettingOutput()),
       finalTurn(badCopy),
@@ -145,7 +146,8 @@ describe("07-emit-slides-data: self-check retry, capped at two returns to step 0
 
     expect(result.status).toBe("completed");
     if (result.status !== "completed") throw new Error("unreachable");
-    expect(router.complete).toHaveBeenCalledTimes(13);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(14);
 
     const stepIds = (await durableStore.listSteps(runId)).map((s) => s.stepId);
     expect(stepIds).toContain("05-write-copy-attempt-1");

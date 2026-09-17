@@ -16,9 +16,9 @@ import { createWikimediaProvider } from "./providers/wikimedia.js";
  * photography of that exact place; a mood slide wants the cleanest licence
  * available and does not care which building it is.
  */
-export type MediaRoute = "named_venue" | "mood" | "default";
+export type MediaRoute = "named_venue" | "entity" | "mood" | "default";
 
-export const MEDIA_ROUTES: readonly MediaRoute[] = ["named_venue", "mood", "default"];
+export const MEDIA_ROUTES: readonly MediaRoute[] = ["named_venue", "entity", "mood", "default"];
 
 /**
  * Ordered provider preference per route. Names not present in the built
@@ -57,6 +57,46 @@ export const ROUTE_CHAINS: Record<MediaRoute, readonly string[]> = {
     "openverse",
     "wikimedia",
   ],
+  /**
+   * A NAMED SUBJECT — a product, a company, a public figure, a dated event, a
+   * named work — added 2026-09-16 for the Instagram entity route.
+   *
+   * ## Why the order is this one
+   *
+   * Ranked by how likely a source is to have a correctly IDENTIFIED picture of
+   * the thing, because identification is what the vet actually scores and
+   * licence is the secondary question. That is the same trade `named_venue`
+   * above already makes, for the same reason, and it is stated there as "a
+   * correctly-identified venue photo needing credit is more useful than a
+   * beautifully-licensed photo of the wrong place."
+   *
+   * **Wikimedia leads.** It is the only source in the chain whose records name
+   * the person, product or event in the FILE'S OWN metadata rather than in a
+   * photographer's free-text caption, which is what makes `find-images`'
+   * `requireTerm` a real filter here and a lottery on a stock index. Openverse
+   * follows because it aggregates the same class of record from museums and
+   * Flickr. `google_places` is third and earns its place only for `place` and
+   * `event` entities, where a venue really is the subject.
+   *
+   * **`ddg_images` stays last**, as it does on every chain, and for the
+   * unchanged reason: its hits are `licenseConfidence: "unknown"` by
+   * construction. It is on this chain at all because a named entity is
+   * precisely the case where a web index has the picture and the licensed
+   * libraries do not — and the caller decides whether it may be taken:
+   * `find-images`' `allowUnknownLicence` is false for a person the run did not
+   * classify as a public figure, which drops every DDG hit for that entity
+   * before a byte is fetched.
+   *
+   * The stock libraries are ABSENT on purpose. Unsplash, Pexels and Pixabay
+   * answer any query with something plausible and nothing identified — that is
+   * how a request for a server corridor returned a road tunnel on 2026-09-16 —
+   * and a hit from them would interleave ahead of a correctly-named Commons
+   * record on a chain whose whole job is identification. A slide whose entity
+   * tiers come up empty falls through to `default`, which is those libraries,
+   * by the caller's own cascade rather than by this chain quietly including
+   * them.
+   */
+  entity: ["wikimedia", "openverse", "google_places", "ddg_images"],
   // `pexels`/`pixabay` sit beside `unsplash`: same `blanket` licence tier
   // (free commercial use, no attribution), distinct catalogues, so a need
   // that comes up short on one routinely hits on another before the pool

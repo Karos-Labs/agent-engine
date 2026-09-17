@@ -14,6 +14,13 @@ _to_delete/
 # has to live inside the repo root (assertInside requires a repo-relative outDir),
 # cleaned up in afterEach but ignored here as a backstop against a crashed run.
 .tmp-render-test-*/
+# The same backstop for the two render suites that grew their own scratch outDir
+# after that line was written: interest-floor-calibration.test.ts and
+# template-mark-slots.test.ts. Both clean up in afterEach, and both leave a
+# directory behind when a run is killed mid-render — which is how an uncommitted
+# `.tmp-calibration-*` came within a `git add -A` of being committed.
+.tmp-calibration-*/
+.tmp-mark-slots-*/
 # Per-run scratch that MUST live under repoRoot, because publish.renderCarousel's
 # assertInside only accepts repo-relative paths. Both are written by a real run
 # (not only by tests), and in local development repoRoot IS this repo, so without

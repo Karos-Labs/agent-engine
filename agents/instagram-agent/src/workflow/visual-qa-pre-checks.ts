@@ -1,8 +1,10 @@
 import type { BrandLogoPlacement } from "@agent-engine/tool-karos-media";
 import type { RenderCarouselInput, Slide } from "@agent-engine/tool-karos-publish";
 import { ACCENT_GROUND_CONTRAST_FLOOR, TEXT_CONTRAST_FLOOR, contrastRatio } from "./brand-render-tokens.js";
+import { CONTENT_FIELD_WEIGHTS, CONTENT_WEIGHTS } from "./interest-floor.js";
 import { NO_IMAGE_MEANS_DEVICE_RULE, checkNoImageMeansDevice } from "./scene-brief.js";
 import { INVERTED_TEMPLATE_SUFFIX } from "./slides-data.js";
+import { HERO_GRADE_FIELD_KEYS } from "./style-lock.js";
 import type { InstagramCopyOutput, SlidesDataSelfCheck, StyleRule } from "./types.js";
 
 /**
@@ -432,6 +434,25 @@ export const LAYOUT_FIELD_KEYS: ReadonlySet<string> = new Set([
   // corpus (`slidesTextFor`), and must not appear in the reviewer's
   // editable-fields view — "he" is not a thing a person edits on a slide.
   "lang",
+  // Phase 5.5, item A4 (`HERO_GRADE_FIELD_KEYS`, `style-lock.ts`). The three
+  // keys `gradePictureSet` writes onto EVERY hero-bearing slide: the colour
+  // grade, the hero's own treatment token and the scrim strength that keeps a
+  // headline legible over a photograph. All three are CSS switches read by
+  // `imageTreatmentCssBlock` / `heroScrimCssBlock` and by nothing else.
+  //
+  // They are declared here because item A4 made them reach every photo slide
+  // of every client, and `countContentElements` / `weighContentElements` count
+  // any field NOT on this list as a content element: undeclared, grading a
+  // picture would have handed every photo slide two free content elements and
+  // made the interest floor's content limb satisfiable by furniture — the
+  // exact defect the weighted floor exists to refuse. `imageTreatment` is not
+  // new here; it got away with being undeclared only because
+  // `explainImageTreatment` returned `none` for the whole fleet.
+  //
+  // `style-lock.ts` exports the same three strings as `HERO_GRADE_FIELD_KEYS`
+  // and `style-lock.test.ts` pins that list against `gradePictureSet`'s real
+  // output, so this set cannot drift from what is actually written.
+  ...HERO_GRADE_FIELD_KEYS,
 ]);
 
 /**
@@ -643,6 +664,70 @@ export function countContentElements(slide: Slide, isCover: boolean): number {
   if (slide.htmlFragments?.["device"]) count += 1;
   if (slide.htmlFragments?.["recap"]) count += 1;
   return count;
+}
+
+/** What one slide's content weighs, and which parts it weighed — see `weighContentElements`. */
+export interface ContentWeighing {
+  weight: number;
+  /** Every part that contributed, in the order it was read, so a verdict can be audited without re-deriving it. */
+  parts: Array<{ part: string; weight: number }>;
+}
+
+/**
+ * The SAME reading as `countContentElements`, priced (Phase 5.5, clause H).
+ *
+ * `CONTENT_WEIGHTS` (`interest-floor.ts`) carries the argument, the
+ * reproduction against the owner's own verdicts, and the per-archetype table.
+ * The short version is one sentence: **the unweighted floor can be cleared by
+ * adding a kicker**, which is the exact furniture the owner named as the tell
+ * that a post was made by a machine, so the floor has to price a kicker at a
+ * quarter of a sentence.
+ *
+ * Deliberately a second function rather than a rewrite of the counter above.
+ * They answer the same question for two different consequences —
+ * `default:two-elements-per-slide` REPORTS a count to a judge, clause H
+ * REFUSES on a weight — and a count that had silently become a weight would
+ * make "carries 2.25 content element(s)" a sentence a reviewer has to decode.
+ * They read the same document through the same `proseFieldsOf`, so they can
+ * never disagree about WHAT is on the plate, only about what it is worth.
+ */
+export function weighContentElements(slide: Slide, isCover: boolean): ContentWeighing {
+  const prose = proseFieldsOf(slide);
+  const keys = new Set(prose.map(([key]) => key));
+  const parts: ContentWeighing["parts"] = [];
+  for (const [key] of prose) parts.push({ part: key, weight: CONTENT_FIELD_WEIGHTS[key] ?? CONTENT_WEIGHTS.prose });
+  // The same subtraction `countContentElements` makes, for the same reason: on
+  // the COVER a `headline_focus` statement and its sub-line are one lockup,
+  // not two competing elements. Priced as one block of prose rather than two.
+  if (isCover && templateBasename(slide.template) === HEADLINE_FOCUS_BASENAME && keys.has("headline") && keys.has("body")) {
+    parts.push({ part: "headline_focus cover lockup (headline and sub-line are one object)", weight: -CONTENT_WEIGHTS.prose });
+  }
+  if (slide.images?.["hero"]) parts.push({ part: "hero", weight: CONTENT_WEIGHTS.hero });
+  if (slide.htmlFragments?.["itemRows"]) parts.push({ part: "itemRows", weight: CONTENT_WEIGHTS.itemRows });
+  if (slide.htmlFragments?.["device"]) parts.push({ part: "device", weight: CONTENT_WEIGHTS.device });
+  // ── THE CLOSER'S MIDDLE IS WEIGHED BY WHAT IS IN IT, NOT BY WHICH SLOT IT
+  //    ARRIVED THROUGH. ──
+  //
+  // `closer.html` declares ONE elastic middle, `{{html:recap}}`, and
+  // `contentFor`'s closer branch puts either the recap strip or the slide's own
+  // designed object into it. Priced off the KEY alone, a closer that carries a
+  // sourced figure with a complete label and one that carries a truncated
+  // contents strip weighed the same — and since every carousel has enough
+  // earlier slides for a recap, that one number was the only number any closer
+  // ever produced.
+  //
+  // `deviceFigures`/`deviceKind` are set by that same branch EXACTLY when the
+  // fragment is the device, so this is a fact the assembler already recorded,
+  // not an inference from markup. On every other archetype a device arrives
+  // under its own `device` key and this branch never sees one.
+  if (slide.htmlFragments?.["recap"]) {
+    const isDevice = typeof slide.fields?.["deviceKind"] === "string" && slide.fields["deviceKind"] !== "";
+    parts.push(isDevice ? { part: "device (closer)", weight: CONTENT_WEIGHTS.device } : { part: "recap", weight: CONTENT_WEIGHTS.recap });
+  }
+  // Rounded to two decimals because the weights are quarters and a float sum
+  // of them prints as 3.0000000000000004 on a gate payload.
+  const weight = Math.round(parts.reduce((sum, p) => sum + p.weight, 0) * 100) / 100;
+  return { weight, parts };
 }
 
 /**

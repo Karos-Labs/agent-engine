@@ -69,7 +69,7 @@ export class InstagramArtDirectorAgent extends BaseAgent<ArtDirectorOutput> {
   protected readonly config: AgentStepConfig<ArtDirectorOutput> = {
     id: "instagram-art-director",
     description:
-      "Derive this client's standing visual direction: six to ten generation-ready lines across subject, light, palette and treatment, an explicit forbid list and one style lock — each line grounded in a named basis (an evidence URL from the client's own posts, a brand-kit token, or a site page), and anything that cannot be grounded reported as a gap rather than asserted.",
+      "Derive this client's standing visual direction: six to ten generation-ready lines across subject, light, palette and treatment, an explicit forbid list, one style lock, and the six frozen axes of the client's slide system (accent role, display register, composition grammar, imagery register, pagination, ground texture) — each line and each axis grounded in a named basis (an evidence URL from the client's own posts, a brand-kit token, or a site page), and anything that cannot be grounded reported as a gap rather than asserted.",
     allowedTools: [],
     outputSchema: ArtDirectorOutputSchema,
     maxSteps: 1,
@@ -80,11 +80,19 @@ export class InstagramArtDirectorAgent extends BaseAgent<ArtDirectorOutput> {
     //
     // 3k bought none of that headroom. Both prep runs of 2026-09-16 truncated
     // here and fell through to `fallbackVisualDirection`, which is the flat
-    // four-line template this whole step exists to replace — for a quarter.
-    // The ceiling is the engine default now; the raise on top of it is
-    // `raisedOutputLimit`'s job, not a reviewer's.
+    // four-line template this whole step exists to replace — for a quarter,
+    // because each failure also wrote a marker that suppressed the retry for
+    // seven days. The ceiling is the engine default now; the raise on top of
+    // it is `raisedOutputLimit`'s job, not a reviewer's.
+    //
+    // `setup-ceilings.test.ts` measures this schema's maximal instance at
+    // ~10,100 characters (~2,795 tokens, 93% of the old 3,000), so a director
+    // that used the ten lines it is asked for was spending the whole ceiling
+    // on the answer with nothing left for the envelope. Phase 5.5 (@2) adds
+    // `system` — six enum axes plus six one-sentence bases, ~900 characters at
+    // its maximum — which fits here with room to spare.
     maxTokens: 16_384,
     modelPolicy: resolveModelPolicy("instagram-art-director", { policy: "pinned", model: "claude-sonnet-4-6", contentLanguageSensitive: false }),
-    skillRef: "instagram-art-director@1",
+    skillRef: "instagram-art-director@2",
   };
 }

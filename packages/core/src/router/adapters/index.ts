@@ -8,5 +8,6 @@ export * from "./resilient-claude-adapter.js";
 export * from "./agent-platform-model-ids.js";
 export * from "./agent-platform-adapter.js";
 export * from "./gemini-adapter.js";
+export * from "./resilient-gemini-adapter.js";
 export * from "./vertex-model-garden-client.js";
 export * from "./openai-compatible-adapter.js";

@@ -55,6 +55,29 @@ import { ResearchOutputSchema, type ResearchOutput } from "../workflow/types.js"
  * Retargetable per deployment
  * (`MODEL_STEP_INSTAGRAM_RESEARCH_VENDOR/_MODEL`) and per run in Studio
  * (`stageModels["instagram-research"]`).
+ *
+ * ## The output ceiling (Phase 5.5, 2026-09-16)
+ *
+ * This step declared none and inherited `GEMINI_DEFAULT_MAX_TOKENS` (16,384).
+ * On geektime (prep run `pubsub-21868533047825082`) it hit that ceiling and
+ * resolved `tooling_error`, so the post was written from **zero fact cards** —
+ * the single most expensive failure in the run, and it reported $0 because a
+ * truncated turn booked nothing (`OutputLimitExceededError` now carries the
+ * usage, and `BaseAgent` raises the ceiling once before giving up).
+ *
+ * 24,000 is measured, not padded. The three extractions that completed that
+ * day returned 3,059 / 3,127 / 3,263 *visible* output tokens on 65,137 /
+ * 71,686 / 75,804 input. The gap between that and a 16,384-token cut-off is
+ * thinking: Gemini 2.5 counts `thoughtsTokenCount` against `maxOutputTokens`
+ * while excluding it from `candidatesTokenCount`, so the visible payload is
+ * only ever part of the budget and the headroom this step needs is the part
+ * nobody could see. 24,000 leaves ~7.5x the largest measured visible payload
+ * for thoughts plus payload together.
+ *
+ * Cost: nothing until it is used, and bounded at +7,616 output tokens ×
+ * $2.50/1M = **+$0.019** in the worst case — against a run that otherwise
+ * ships with no sourced facts at all. Per the 2026-09-16 cost ruling, a
+ * quality-affecting ceiling is not optional spend.
  */
 export class InstagramResearchAgent extends BaseAgent<ResearchOutput> {
   protected readonly config: AgentStepConfig<ResearchOutput> = {
@@ -64,5 +87,7 @@ export class InstagramResearchAgent extends BaseAgent<ResearchOutput> {
     outputSchema: ResearchOutputSchema,
     modelPolicy: resolveModelPolicy("instagram-research", { policy: "pinned", model: "gemini-2.5-flash", vendor: "gemini" }),
     skillRef: "instagram-research@2",
+    /** See "The output ceiling" above — 16,384 truncated this step on geektime and cost that post every one of its fact cards. */
+    maxTokens: 24_000,
   };
 }

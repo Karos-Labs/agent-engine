@@ -298,7 +298,12 @@ describe("03d-select-content-mode rotates over the decision log 09b writes", () 
     const decision = items.find((d) => d.decisionId === "ig_scout_decision__topic");
     expect(decision).toBeDefined();
     expect(parseContentModeFromSummary(decision!.summary)).toBe(modeStep?.mode);
-    expect(decision!.summary).toMatch(/^instagram post: ".+" \(mode: [a-z-]+; source: reserved; archetypes: .+\)$/);
+    // Phase 5.5 (spec §6 G7): the row now also carries `format: …`, appended
+    // between `source` and `archetypes` by `topicDecisionSummary`, because the
+    // new `04h` rotation reads DELIVERED formats out of this log instead of a
+    // modulus over an output count. Every existing parser matches on its own
+    // labelled segment, which is why the marker could be inserted at all.
+    expect(decision!.summary).toMatch(/^instagram post: ".+" \(mode: [a-z-]+; source: reserved; format: (carousel|single); archetypes: .+\)$/);
   });
 
   it("seeded (mode: deep-value) then (mode: hot-news) → open-discussion; a requestedMode wins", async () => {

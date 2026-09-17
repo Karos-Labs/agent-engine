@@ -184,9 +184,10 @@ const AXIS_FIELD_DESCRIPTION =
  * (`AgentDefinitionFieldSchema`) is `"string" | "number" | "boolean" |
  * "string[]"` and has no `object[]`. Misalignment is not trusted: an index
  * whose axis is not one of the four, or names an axis that came back `pass`,
- * or whose target does not match `^(cover|caption|slide:[1-8])$`, is
- * DISCARDED — and a discarded fix leaves its axis with no fix, which rule 2
- * then acts on.
+ * or carries no instruction, is DISCARDED — and a discarded fix leaves its
+ * axis with no fix, which rule 2 then acts on. An index whose TARGET is not
+ * one `FIX_TARGET` recognises is kept and re-pointed at
+ * `UNSPECIFIED_FIX_TARGET`: the remedy is the part the writer acts on.
  *
  * There is deliberately no `keepable` field. The bar is computed in
  * `decideValue`, never requested.
@@ -201,7 +202,14 @@ export const VALUE_OUTPUT_FIELDS: readonly AgentDefinitionField[] = [
   { name: "payloadQuote", type: "string", description: "Required when payload is pass: the one slide body that best shows a claim plus its consequence, copied from the post character for character.", optional: true },
   { name: "actionQuote", type: "string", description: "Required when action is pass: the action, copied from the post character for character.", optional: true },
   { name: "fixAxes", type: "string[]", description: "One entry per weak or fail axis, naming it: newFact, position, payload or action. Index-aligned with fixTargets and fixInstructions.", optional: true },
-  { name: "fixTargets", type: "string[]", description: "Where each fix applies: cover, caption, or slide:N (N is the slide number). Index-aligned with fixAxes.", optional: true },
+  {
+    name: "fixTargets",
+    type: "string[]",
+    description:
+      "Where each fix applies: cover, caption, closer, hook, cta, declaredStructure, post, or slide:N (N is the slide number). " +
+      "declaredStructure is for a payload fix about the structure the writer declared; post is for a fix that is about the whole carousel. Index-aligned with fixAxes.",
+    optional: true,
+  },
   {
     name: "fixInstructions",
     type: "string[]",
@@ -259,8 +267,34 @@ const VALUE_AXIS_ASKS: Record<ValueAxis, string> = {
   action: "end the caption with one thing the reader can do today with what they already have, and say what they get back for doing it.",
 };
 
-/** The target shapes a fix may name. Anything else is a fix that cannot be applied and is discarded. */
-const FIX_TARGET = /^(cover|caption|slide:[1-8])$/;
+/**
+ * The target shapes a fix may name.
+ *
+ * ## Why it grew (Phase 5.5, spec §6 G7)
+ *
+ * It was `^(cover|caption|slide:[1-8])$`, and on 2026-09-16 thepitchbydeel's
+ * `07j` answered `payload: "weak"` with `fixTargets: ["declaredStructure"]` and
+ * an instruction that reads *"the declared structure is 'ranking'; either build
+ * a clear ranking... or declare a structure that accurately reflects the
+ * content"*. That is a correct, actionable judgement about the whole post. It
+ * matched nothing, the fix was dropped at the `continue` below, rule 2 then
+ * found the axis had no fix and reverted it to `pass`, and the run shipped.
+ *
+ * The rubric's own text is what put that word in the model's mouth: the payload
+ * question says *"when declaredStructure is present... the fix says either build
+ * the structure declared or declare the one built"*. So the judge was obeying
+ * the prompt and the regex was refusing it.
+ *
+ * The four new names are the locations the rubric itself talks about and
+ * nothing else — `declaredStructure` from the payload question, `closer`,
+ * `hook` and `cta` from the shapes a carousel actually has, and `post` for a
+ * whole-post fix. Nothing here is open-ended: an unrecognised target is still
+ * discarded, and what changed is what HAPPENS when it is.
+ */
+const FIX_TARGET = /^(cover|caption|closer|hook|cta|declaredStructure|post|slide:[1-8])$/;
+
+/** The target recorded when the judge refused an axis and could not name a place to fix it. */
+export const UNSPECIFIED_FIX_TARGET = "unspecified";
 
 // ─────────────────────────────────────────────────────────────────────────
 // The rubric
@@ -323,7 +357,7 @@ export function buildValueSystemPrompt(): string {
     "- fail: nothing in the post answers the question.",
     "",
     "Every quote must be copied from the post EXACTLY, character for character. Do not tidy it, do not translate it, do not shorten it. A quote that is not in the post is treated as no quote at all.",
-    "Every weak and every fail must carry a fix: which axis, which target (cover, caption, or slide:N), and one imperative sentence naming what to write instead. A weak or a fail with no fix is discarded and the axis is treated as a pass, so do not raise a problem you cannot say the remedy for.",
+    "Every weak and every fail must carry a fix: which axis, which target (cover, caption, closer, hook, cta, declaredStructure, post, or slide:N), and one imperative sentence naming what to write instead. A weak or a fail with no remedy sentence is discarded and the axis is treated as a pass, so do not raise a problem you cannot say the remedy for.",
     "Judge only these four questions. Not grammar, not fluency, not whether the post is on-brief, not whether the facts are true, not whether you like it. Those have their own checks and their own remedies.",
     "The post may be written in Hebrew, Arabic or another language. Judge it in the language it is written, and quote in that language.",
     "Write your fixes in plain characters: no em dash, no en dash, no double hyphen. The writer is held to that rule and reads your fixes verbatim.",
@@ -484,7 +518,11 @@ function isAxisName(value: string): value is ValueAxis {
  *
  * - **Rule 2 (the fix rule)** applies only to axes the MODEL reported as
  *   `weak`/`fail`. One with no surviving fix is set back to `pass`. "Report
- *   without proposing" is structurally unrepresentable.
+ *   without proposing" is structurally unrepresentable. Since 2026-09-16 a fix
+ *   survives on its INSTRUCTION, not on its target: an unrecognised target is
+ *   recorded as `UNSPECIFIED_FIX_TARGET` and the axis stays non-pass, because
+ *   discarding a named remedy over a malformed pointer is the wrong direction
+ *   and is how deel's `weak` payload shipped as a pass.
  * - **Rule 1 (the span rule)** applies only to axes the MODEL reported as
  *   `pass`. A quote that does not occur in the draft downgrades the axis to
  *   `weak` — not to `fail`: one paraphrased quote is a model tidying
@@ -523,12 +561,31 @@ export function normaliseValueVerdict(raw: RawValueVerdict, draftText: string, o
     // second opinion nobody asked for, and applying it would send back a
     // draft on an axis that already met the test.
     if (claimed[axis] === "pass") continue;
-    if (!FIX_TARGET.test(target)) continue;
+    // THE INSTRUCTION IS THE FIX; THE TARGET IS ONLY WHERE TO PUT IT.
+    //
+    // An empty instruction is still discarded — that is "report without
+    // proposing", the hold-generator shape rule 2 exists to forbid, and it has
+    // not changed. But a fix whose TARGET is unrecognised keeps its
+    // instruction and is recorded against `UNSPECIFIED_FIX_TARGET`, because a
+    // judge that named the remedy and could not name the location has still
+    // made a judgement, and throwing it away laundered deel's `weak` payload
+    // into a `pass` on 2026-09-16 (see `FIX_TARGET`'s own note).
     if (instruction.length === 0) continue;
-    fixes.push({ axis, target, instruction: instruction.slice(0, VALUE_FIX_MAX_CHARS) });
+    const recognised = FIX_TARGET.test(target);
+    if (!recognised) {
+      notes.push(
+        `${AXIS_LABEL[axis]} was refused with a fix aimed at "${target.slice(0, 40) || "nothing"}", which is not a place in this post; ` +
+          `the fix was kept and the axis stays ${claimed[axis]}`,
+      );
+    }
+    fixes.push({ axis, target: recognised ? target : UNSPECIFIED_FIX_TARGET, instruction: instruction.slice(0, VALUE_FIX_MAX_CHARS) });
   }
 
-  // Rule 2 — a model-claimed non-pass with no surviving fix reverts to pass.
+  // Rule 2 — a model-claimed non-pass with NO fix at all reverts to pass.
+  //
+  // "No fix at all" now means what it says: no instruction the writer could
+  // act on. It no longer means "no fix whose target matched a regex", which is
+  // how a malformed pointer used to revert a real refusal.
   for (const axis of VALUE_AXES) {
     if (claimed[axis] === "pass") continue;
     if (!fixes.some((f) => f.axis === axis)) axes[axis] = "pass";
@@ -636,7 +693,10 @@ function elide(quote: string): string {
 export function valueSteerFor(verdict: BelowBarVerdict, verifiedQuotes: Partial<Record<ValueAxis, string>> = verdict.verifiedQuotes): string {
   const lines: string[] = [];
   const items = verdict.fixes.length > 0
-    ? verdict.fixes.map((f) => `[${f.axis}] ${f.target}: ${f.instruction}`)
+    // A fix the judge could not place reads "the post", which is the same
+    // wording the no-fix fallback below uses — the writer is told what to do
+    // and not told a location that does not exist.
+    ? verdict.fixes.map((f) => `[${f.axis}] ${f.target === UNSPECIFIED_FIX_TARGET ? "the post" : f.target}: ${f.instruction}`)
     : VALUE_AXES.filter((a) => verdict.axes[a] !== "pass" && !verdict.advisoryAxes.includes(a)).map((a) => `[${a}] the post: ${VALUE_AXIS_ASKS[a]}`);
 
   const count = items.length === 1 ? "this one thing" : `these ${COUNT_WORD[items.length] ?? String(items.length)} things`;

@@ -183,9 +183,17 @@ describe("the setup meter is the run meter with two different numbers", () => {
     setup.add("00c-inflated", 2.0, 0);
     expect(setup.crossedTarget).toBe(true);
     expect(setup.crossedMax).toBe(false);
-    // A $1.95 setup is over ITS target and nowhere near a run's hard max —
-    // the exact confusion an unparameterised meter would have produced.
-    expect(setup.totalUsd).toBeGreaterThan(MAX_RUN_SPEND_USD);
+    // A $2.05 setup is over ITS target while a RUN's target is a different
+    // number entirely — the exact confusion an unparameterised meter would
+    // have produced.
+    //
+    // PHASE 5.5 (spec §2 A1): the run's hard max moved $1.60 -> $2.60 and this
+    // fixture's $2.051 no longer clears it, so the comparison is restated
+    // against the run TARGET ($1.80). The assertion's intent is unchanged and
+    // is not about which of the four numbers is larger: it is that a setup
+    // figure must never be read against a run's limits at all.
+    expect(setup.totalUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
+    expect(setup.totalUsd).toBeLessThan(MAX_SETUP_SPEND_USD);
     expect(setup.posture).toBe("essential-only");
     expect(targetCrossedNote(setup, "00c4-design-template-closer")).toContain("over the $2.00 target");
     expect(setup.canAfford(1.5).ok).toBe(false);
@@ -202,10 +210,12 @@ describe("the setup meter is the run meter with two different numbers", () => {
     expect(run.targetUsd).toBe(TARGET_RUN_SPEND_USD);
     expect(run.maxUsd).toBe(MAX_RUN_SPEND_USD);
     expect(run.scope).toBe("run");
-    run.add("05-write-copy-attempt-1", undefined, 1.01);
+    // PHASE 5.5 (spec §2 A1): $1.01 was over the old $1.00 target and is under
+    // the new $1.80 one, so the spend that crosses moved with the constant.
+    run.add("05-write-copy-attempt-1", undefined, 1.81);
     expect(run.crossedTarget).toBe(true);
-    expect(targetCrossedNote(run, "05")).toContain("over the $1.00 target");
-    expect(run.canAfford(0.6)).toMatchObject({ reason: expect.stringContaining("over the $1.60 per-run ceiling") });
+    expect(targetCrossedNote(run, "05")).toContain("over the $1.80 target");
+    expect(run.canAfford(0.9)).toMatchObject({ reason: expect.stringContaining("over the $2.60 per-run ceiling") });
   });
 
   it("falls back to the run numbers for a limit computed badly, rather than throwing", () => {

@@ -143,12 +143,42 @@ describe("SCRUM-296: TOOL_VERSION drift check", { timeout: 120_000 }, () => {
     expect(exitCode).toBe(0);
   });
 
+  it("still checks, against a WIDER base, when the explicit base ref was orphaned by a force-push", () => {
+    // 2026-09-17, PR #132: `quality.yml` passes `--base ${{ github.event.before }}`,
+    // which is the branch's previous tip. A rebase onto main followed by
+    // `git push --force-with-lease` — which this repo's own rules require
+    // before merge — orphans that SHA, so every `git diff` against it died
+    // with `fatal: bad object` and the whole quality job failed on a push
+    // whose tool versions were all correctly bumped.
+    //
+    // The fallback must be a real check, not an excuse: the drift below is
+    // planted AFTER the commit `origin/main` points at, so a script that
+    // quietly checked nothing would report `problems: []` and exit 0, and this
+    // assertion would fail. The merge-base is at or behind the orphaned tip,
+    // so the fallback can only ever widen the diff.
+    const dir = fixtureRepo();
+    git(dir, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    writeFileSync(path.join(dir, TOOL_REL_PATH), toolSource("2", "1.0.0"));
+
+    const orphaned = "0".repeat(39) + "1";
+    const { result, exitCode } = runCheck(dir, orphaned);
+
+    expect(result.problems.map((p) => p.toolName)).toContain("fixture.thing");
+    expect(exitCode).toBe(1);
+  });
+
   it("throws instead of silently passing when no base ref can be resolved", () => {
     // A single-commit repo with no origin/main and an explicit bad --base:
     // this is what a fetch-depth:1 checkout with no BASE_SHA looks like if
     // the origin/main fallback also fails. The check must error, not report
     // zero problems — the exact "structurally incapable of failing" shape
     // this repo has hit before.
+    //
+    // This is the OTHER half of the force-push case above, and the pair is the
+    // point: an unresolvable base falls back to something stricter WHEN there
+    // is something to fall back to, and dies loudly when there is not. No
+    // `origin/main` ref is created here, and HEAD has no parent, so the ladder
+    // runs out.
     const dir = fixtureRepo();
     let stdout = "";
     let exitCode = 0;

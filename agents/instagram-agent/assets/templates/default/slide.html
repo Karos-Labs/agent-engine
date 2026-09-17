@@ -59,7 +59,6 @@
     --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
     --f-body: 'Inter', system-ui, -apple-system, sans-serif;
     --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
-    --mx: 64px;
     --ts: 1;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -71,6 +70,41 @@
      font-size on an older checkpointed slides-data re-rendered post-deploy. */
   body.ts-s { --ts: 0.85; }
   body.ts-l { --ts: 1.18; }
+  /* ── PHASE 5.5: THE ONE TYPE SCALE (`visual-system.ts`, `TYPE_SCALE_PX`). ──
+     Six steps for the whole archetype set, against the 45 distinct `font-size`
+     values the eight bundled templates declared between them. A plate picks a
+     step by ROLE rather than by which file the writer's layout landed on.
+     `visualSystemCssBlock` overrides these per run with the resolved system's
+     type flavour; these are the self-contained defaults a brandless render
+     uses.
+
+     ── ON `body`, NOT ON `:root`, AND THAT IS NOT A STYLE CHOICE. ──
+     A custom property's `var()` references are substituted AT THE ELEMENT THAT
+     DECLARES IT. `--ts` is `1` on `:root` and is overridden on `body.ts-s` /
+     `body.ts-l`, so a `--t-*` declared on `:root` resolves `var(--ts, 1)`
+     against the ROOT's value — always 1 — and then inherits down already
+     substituted. Declared there, the reviewer's whole type-scale control
+     silently stopped reaching every size that reads a step: measured, the stat
+     plate rendered its 300px figure at 300px at `ts-s`, where the literal it
+     replaced rendered 255px, and the calibration's own s-vs-l control pair
+     reported the two plates painting identical ink (0.4175 both). Declared
+     HERE the substitution happens on `body`, where `body.ts-s` is in force. */
+  body {
+    /* ── PHASE 5.5: THE PAGE MARGIN IS THE VISUAL SYSTEM'S `gutter` AXIS. ──
+       `--gutter` is emitted per run by `visualSystemCssBlock` (`wide` 64px,
+       `tight` 48px) and was read by nothing: every template hard-coded its own
+       margin, so two catalog entries that differ ONLY in gutter rendered the
+       same plate and the twelve-entry catalog was a variety claim a reader
+       could not see. The literal stays as the fallback, so a document composed
+       without the run sheet is byte-identical. */
+    --mx: var(--gutter, 64px);
+    --t-micro: calc(22px * var(--ts, 1));
+    --t-label: calc(32px * var(--ts, 1));
+    --t-lead: calc(46px * var(--ts, 1));
+    --t-statement: calc(84px * var(--ts, 1));
+    --t-display: calc(124px * var(--ts, 1));
+    --t-figure: calc(220px * var(--ts, 1));
+  }
   body.ta-center { text-align: center; }
   body.ta-end { text-align: end; }
   html, body { width: 1080px; height: 1440px; }
@@ -98,7 +132,7 @@
      bleed band is what `clippedEdgeShare` reads as clipped type. */
   .ground {
     position: absolute; inset: 0; z-index: 0;
-    background-image: linear-gradient(188deg, transparent 46%, color-mix(in srgb, var(--wash) 8%, transparent) 100%);
+    background-image: linear-gradient(188deg, transparent 46%, color-mix(in srgb, var(--wash) var(--ground-texture-alpha, 8%), transparent) 100%);
   }
   .bg { position: absolute; inset: 0; z-index: 1; }
   /* NO HERO, NO SCRIM OVER THE GROUND. `onerror` removes the <img>, which
@@ -231,6 +265,23 @@
      matching inline padding cancel, so no glyph moves. */
   body:has(.bg:empty) .sl-field {
     flex: 1 1 auto; min-block-size: 0;
+    /* ── THE CLIENT'S `compositionGrammar` DOES **NOT** REACH THIS PLATE. ──
+       The axis moves the lockup off centre, and off-centre in an elastic field
+       is a band of bare ground wherever the content is not. `headline-focus.html`
+       can afford it and this archetype cannot, and the difference is measured
+       rather than asserted — the same copy, the same bounded object, the same
+       ground, one grammar apart:
+
+         largestEmptyRectShare      slide.html   headline-focus.html
+           centre-measure (center)    0.2917          0.2081
+           split-band (space-between) 0.2707          0.2389
+           top-column (flex-start)    0.3655          0.2417
+           bottom-column (flex-end)   0.4278          0.2689
+
+       Against a 0.28 interior ceiling, `headline-focus` clears every anchor and
+       this plate clears none of the two extremes. It is also the ONE archetype
+       a carousel may repeat, so a band it opens is a band the reader sees two
+       or three times. `center` is this file's own composition and it stays. */
     display: flex; flex-direction: column; justify-content: center;
     margin-block: 128px 96px;
     margin-inline: calc(16px - var(--mx)); padding-inline: calc(var(--mx) - 16px);
@@ -408,15 +459,32 @@
      measurement that made it short, and it is the same 240px measure the
      whole directory now uses. A full-measure bar across this field cut its
      empty rectangle in two and took clause C off the plate. */
+  /* ── PHASE 5.5: THE CAP IS HIDDEN UNLESS THE SYSTEM SWITCHES IT ON. ──
+     `var(--fx-accent-ink, transparent)` instead of `var(--accent)`. The
+     gradient, the tile and the position are unchanged, so the composition's
+     geometry is identical and only the INK is conditional — which is what
+     keeps the interest floor's pixel shares comparable across the change.
+     `visualSystemCssBlock` sets `--fx-accent-ink` on at most three slides of a
+     carousel (the cover, the turn, the closer). On the rest the cap paints
+     nothing. An accent mark on three of eight slides is emphasis; on eight of
+     eight it is wallpaper, and wallpaper is the owner's *"יש קווים כאלה כתומים
+     שזה הכי סימן לפוסט שנעשה עם AI"*. */
   body {
-    --gr-mark: linear-gradient(to bottom, var(--accent) 0 calc(12px * var(--ts, 1)), transparent 0);
-    --gr-tile: calc(240px * var(--ts, 1)) 100%;
+  /* THE CAP IS THE RUN'S RULE, AT THE RUN'S LENGTH AND ITS THICKNESS. It was a
+     240x10 literal, so a run whose `accentForm` publishes a 560px band or a
+     96px bracket still capped this field at 240 — the same mark in two sizes
+     inside one carousel, which is the length discipline `headline-focus.html`'s
+     `headline-focus.html`'s note describes. The literals stay as the var()
+     fallbacks, so a
+     document composed without the run sheet is byte-identical. */
+    --gr-mark: linear-gradient(to bottom, var(--fx-accent-ink, transparent) 0 var(--fx-accent-h, calc(12px * var(--ts, 1))), transparent 0);
+    --gr-tile: var(--fx-accent-w, calc(240px * var(--ts, 1))) 100%;
     --gr-repeat: no-repeat;
     --gr-pos: var(--cap-x, 0) 0;
   }
   body[data-n$="0"], body[data-n$="2"], body[data-n$="4"], body[data-n$="6"], body[data-n$="8"] {
-    --gr-mark: linear-gradient(to top, var(--accent) 0 calc(12px * var(--ts, 1)), transparent 0);
-    --gr-tile: calc(240px * var(--ts, 1)) 100%;
+    --gr-mark: linear-gradient(to top, var(--fx-accent-ink, transparent) 0 var(--fx-accent-h, calc(12px * var(--ts, 1))), transparent 0);
+    --gr-tile: var(--fx-accent-w, calc(240px * var(--ts, 1))) 100%;
     --gr-repeat: no-repeat;
     --gr-pos: var(--cap-x, 0) 100%;
   }
@@ -472,25 +540,68 @@
      The steps are declared under this branch ONLY, so the same class on the
      photograph path (where `.headline` is a 76px caption on a scrim, not the
      composition) matches no rule and changes nothing. */
-  body:has(.bg:empty) .headline { font-size: calc(96px * var(--ts, 1)); line-height: 1.14; }
-  body:has(.bg:empty) .headline.small { font-size: calc(84px * var(--ts, 1)); line-height: 1.16; }
-  body:has(.bg:empty) .headline.tiny { font-size: calc(74px * var(--ts, 1)); line-height: 1.2; }
+  /* ── PHASE 5.5: THE TOP TWO RUNGS TAKE THE DISPLAY STEP, AND THE BOTTOM ONE
+        DOES NOT MOVE AT ALL. ──
+     Read on `.local/owner-out/geektime-en-m-07-slide.png`: the top ~350px of
+     the plate carries nothing but the logo, the bottom ~290px is bare and the
+     right ~35% of the measure is bare — a tall grey plate with a left column
+     of type on it, which is the owner's *"מסך אפור ברובו"* on a new palette.
+     The statement was the one thing on the plate that could have carried the
+     frame and it was set at a hair over `--t-statement` while
+     `headline-focus.html` — the archetype this file is modelled on — sets its
+     statement at `--t-display`.
+     THE TWO TOP RUNGS ONLY, and that is the whole care in this change. The
+     block above records why the ladder exists: at a flat 96px this plate's
+     TYPOGRAPHY alone measured 11.7% of `imageryOrDeviceShare` at `l` with LONG
+     copy, against the 0.10 this archetype must stay UNDER, and the ladder
+     brought it to 7.4%. LONG copy at `l` takes `tiny`, so `tiny` is the rung
+     that number belongs to and `tiny` is untouched — the worst corner the
+     measurement names renders byte-identically. `small` and the base rung are
+     the SHORT and MEDIUM cases, which CI's own gate-zero sweep puts at 1.5%
+     and 2.4% imagery+device: five points of headroom for a 30% type step.
+     THE MULTIPLIERS ARE `headline-focus.html`'s OWN, not new ones — `display *
+     1` and `display * 0.8387` are already in the set, so the type-multiplier
+     ratchet in `template-furniture.test.ts` does not move and the two shapeless
+     archetypes now share one display ladder instead of two. */
+  body:has(.bg:empty) .headline { font-size: calc(var(--t-display) * 1); line-height: 1.1; }
+  body:has(.bg:empty) .headline.small { font-size: calc(var(--t-display) * 0.8387); line-height: 1.14; }
+  body:has(.bg:empty) .headline.tiny { font-size: calc(var(--t-statement) * 0.881); line-height: 1.2; }
   .headline {
-    font-family: var(--f-display); font-weight: 600; font-size: calc(76px * var(--ts, 1));
+    font-family: var(--f-display); font-weight: 600; font-size: calc(var(--t-statement) * 0.9048);
     line-height: 1.3; letter-spacing: -0.012em; text-wrap: balance;
     /* A glyph box taller than its line box makes the block report
        `scrollHeight > clientHeight`, which the renderer's DOM probe reports as
        an overflowing element and clause B of the interest floor fails on. */
-    padding-block-end: 0.1em;
+    padding-block-end: max(0.1em, var(--mk-face-bleed, 0em));
   }
   .body-text {
-    font-family: var(--f-body); font-weight: 400; font-size: calc(31px * var(--ts, 1));
+    font-family: var(--f-body); font-weight: 400; font-size: var(--t-label);
     line-height: 1.55; color: color-mix(in srgb, var(--fg) 92%, transparent);
     margin-top: 28px; max-width: 900px; text-wrap: pretty;
   }
   /* The accent mark under the copy (legacy `.stat-band`), sized to the plate
-     rather than to the legacy 96x10 detail. */
-  .stat-band { width: 200px; height: 14px; background: var(--accent); margin-top: 30px; }
+     rather than to the legacy 96x10 detail.
+
+     ── PHASE 5.5: HIDDEN UNLESS SWITCHED ON. ──
+     `display: var(--fx-accent, none)` is the inversion this phase applies to
+     every standing mark in the set: today a template that forgets to guard a
+     mark paints it forever, and this bar painted on every slide of every post
+     of every client. `visualSystemCssBlock` sets `--fx-accent: block` on the
+     at most three slides `CarouselVisualSystem.accentSlides` names. Unlike the
+     field cap above this one COLLAPSES rather than going transparent, because
+     it is a standalone bar with a 30px margin and an invisible bar still
+     spends 44px of the composition on nothing. */
+  /* ── PHASE 5.5, ITEM C: THE ACCENT MARK IS ONE GEOMETRY, NOT SIX. ──
+     The run's `accentForm` decides the mark's shape ONCE and publishes it as
+     `--fx-accent-w` / `--fx-accent-h`. Before this the length was a property of
+     whichever template the writer's layout landed on — 64px on a quote card,
+     200px on a stat plate, 240px on a closer, full measure on a panel — so the
+     three slides the accent switch allows a mark on carried three different
+     shapes, which is the owner's *"sometimes a long purple marker and
+     sometimes a short one"* read as geometry rather than as colour. Each file
+     keeps its own literal as the var() fallback, so a document composed
+     without the run sheet is byte-identical. */
+  .stat-band { display: var(--fx-accent, none); inline-size: var(--fx-accent-w, 200px); block-size: var(--fx-accent-h, 14px); background: var(--accent); margin-top: 30px; }
   /* ── ONE ACCENT MARK PER PLATE, AND THE DEVICE'S OWN IS THE BETTER ONE. ──
 
      A figure device paints its own accent rule (`.dv-rule`, 132x12) directly
@@ -535,6 +646,14 @@
      in this file is: `#headline` is a twin-slot pair and can never match
      `:empty` again, so the plain form would be permanently silent. */
   body:not(:has(#headline > span:not(:empty))) .stat-band { display: none; }
+  /* ── ONE FREE-STANDING ACCENT MARK PER PLATE. ──
+     On the heroless path the field caps itself with the run's mark
+     (`--gr-mark`, above), under exactly these two conditions — so a bare
+     `text_only` plate painted the identical bar twice, once at the field's
+     head and once under the copy. `headline-focus.html` carries the argument.
+     A plate WITH a photograph paints no cap, so there the band is the mark and
+     nothing changes. */
+  body:has(.bg:empty):has(.headline > span:not(:empty)) .stat-band { display: none; }
 
   /* ── THE BOUNDED OBJECT'S SLOT (RFC-20 §11.4). ──
 
@@ -566,9 +685,17 @@
   /* The device library's own margin is for a plate where the device leads.
      Here it follows the body, and the slot above already spaces it. */
   .sl-device .dv { margin-block-start: 0; }
-  .sl-device .dv-figure { font-size: calc(128px * var(--ts, 1)); }
-  .sl-device .dv-figure--mid { font-size: calc(104px * var(--ts, 1)); }
-  .sl-device .dv-figure--small { font-size: calc(80px * var(--ts, 1)); }
+  /* The figure's descender allowance is NOT set here — see `cover.html`'s note
+     at the same slot: `clientVisualSystemCss` emits it for a covered script
+     only, so `script-fonts.ts` keeps the last word on the scripts it has
+     measured. */
+  /* `--dv-fit` is the continuous shrink the script applies when the field
+     cannot hold both the object and the copy — `headline-focus.html` carries
+     the note. It defaults to 1, so a plate that fits is unchanged. */
+  .sl-device .dv-figure { font-size: calc(var(--t-figure) * 0.5818 * var(--dv-fit, 1)); }
+  .sl-device .dv-figure--mid { font-size: calc(var(--t-figure) * 0.4727 * var(--dv-fit, 1)); }
+  .sl-device .dv-figure--small { font-size: calc(var(--t-figure) * 0.3636 * var(--dv-fit, 1)); }
+  .sl-device .dv-label { font-size: calc(var(--t-label) * 0.9375 * max(var(--dv-fit, 1), 0.78)); }
   .sl-device .dv-label { max-inline-size: calc(620px * var(--ts, 1)); }
 
   /* ── TWIN SLOTS: THE MARKED COPY AND ITS PLAIN FALLBACK (RFC-17 §5.4). ──
@@ -596,7 +723,7 @@
      (`__tests__/template-mark-slots.test.ts`) is what holds them together. */
   /* The twin host's block-start bleed — see `cover.html` for the measurement
      and why it is here rather than only in the shared mark sheet. */
-  :has(> span.mk-plain) { padding-block-start: var(--mk-twin-bleed, .22em); }
+  :has(> span.mk-plain) { padding-block-start: max(var(--mk-twin-bleed, .22em), var(--mk-face-bleed, 0em)); }
   .headline:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
   .body-text:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
 
@@ -606,13 +733,43 @@
      otherwise lays the handle out in normal flow, over the photograph. */
   .brand-handle {
     position: absolute; bottom: 34px; inset-inline-start: 44px; z-index: 6;
-    font-family: var(--f-mono); font-size: calc(19px * var(--ts, 1)); letter-spacing: 0.08em;
+    font-family: var(--f-mono); font-size: var(--t-micro); letter-spacing: 0.08em;
     color: color-mix(in srgb, var(--fg) 60%, transparent);
   }
+  /* ── THE BADGE RULE OUTLIVES THE BADGE SLOT, DELIBERATELY. ──
+     The `seriesBadge` slot is deleted from this file's markup (see the body), so
+     nothing in the bundled set renders a `.brand-badge` any more. The RULE
+     stays because a CLIENT's own template may still carry the slot — the slot
+     name is still in `KNOWN_SLOT_NAMES` and still a `LAYOUT_FIELD_KEY` for
+     exactly that reason — and a badge that lost its placement rule would lay
+     itself out in normal flow over the photograph. */
   .brand-badge {
     position: absolute; top: 36px; inset-inline-start: var(--mx); z-index: 6;
-    font-family: var(--f-mono); font-weight: 600; font-size: calc(19px * var(--ts, 1));
+    font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro);
     letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);
+  }
+  /* ── PHASE 5.5: THE PAGINATION INDEX, AND WHAT IT REPLACED. ──
+
+     The 460px outlined `.ground-glyph` existed in TWO of the eight bundled
+     templates (`closer.html`, `headline-focus.html`), so a carousel showed a
+     giant numeral on two plates and nothing on the other six. The owner's
+     complaint was the inconsistency — *"על חלק מהשקופיות כתוב מספר ועל חלק
+     לא"* — and the brief blamed `GROUND_VARIATION_MIX = 0.5`, which has been
+     a constant since 2026-09-14. The seed was never the cause; the template
+     set was.
+
+     This is the answer: ONE index, the same size in the same corner in all
+     eight files, painted on every interior slide or on none
+     (`ClientVisualSystem.pagination`, frozen per client, which is where the
+     variety belongs). The cover never carries one — a role rule, not a
+     subset. A designed 460px figure is still available where the CONTENT has
+     a number: that is `device: { kind: "figure" }`, which the copy model
+     authors and `slide-devices.ts` paints. */
+  .pg-index {
+    display: var(--fx-pagination, none);
+    position: absolute; inset-block-end: 40px; inset-inline-end: 44px; z-index: 6;
+    font-family: var(--f-mono); font-size: var(--t-micro); letter-spacing: 0.14em;
+    color: color-mix(in srgb, var(--fg) 45%, transparent);
   }
   /* An @handle, a URL and a #hashtag are LTR strings, and a Hebrew or Arabic
      slide lays them out inside an RTL paragraph: the leading `@` is a bidi
@@ -625,10 +782,19 @@
   .brand-badge:empty, .brand-handle:empty, .brand-handle:has(> bdi:empty) { display: none; }
 </style>
 </head>
-<body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}">
+<body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-hero-scrim="{{heroScrimStrength}}">
   <div class="ground" aria-hidden="true"></div>
-  <div class="brand-badge">{{seriesBadge}}</div>
+  <!-- The `seriesBadge` slot was here and is deleted. It printed an
+       INTERNAL label ("BY THE NUMBERS", "{ FIELD NOTES }") in the same corner
+       on every slide of every post — a name for the pipeline's own format that
+       a reader cannot use, repeated eight times, which is the repetition a
+       reader reads as machine-made. On geektime it also collided with the
+       brand logo disc in that same corner and clipped to `{ FIELD` on all
+       eight plates. What replaces it is the slide's OWN topical line
+       (`kicker` / `eyebrow`, in the composition where a label
+       belongs), on the slides this run's visual system allows one. -->
   <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
+  <span class="pg-index" aria-hidden="true">{{slideIndex}}</span>
   <!-- No fallback image when {{image:hero}} is unset. `onerror` REMOVES the
        node rather than hiding it (a removed node can leave no broken-image
        glyph and no alt-text box behind), and the element is written on one
@@ -685,11 +851,83 @@
         return text.trim().length;
       }
       var h = document.getElementById("headline");
-      var len = mkLen(h);
+      var field = document.querySelector(".sl-field");
+      var device = document.querySelector(".sl-device");
       var big = document.body.classList.contains("ts-l");
-      if (len > (big ? 56 : 66)) h.className = "headline tiny";
-      else if (len > (big ? 30 : 36)) h.className = "headline small";
-      window.__CAROUSEL_READY__ = true;
+      var RUNGS = ["headline", "headline small", "headline tiny"];
+
+      // ── THE FIELD AND THE PLATE BOTH HAVE TO HOLD IT. ──
+      // `headline-focus.html`'s script carries the full note: this field is a
+      // CENTRED flex column, and a centred column whose content is taller than
+      // its box spills equally at BOTH ends — the copy prints over whatever is
+      // above it and over the `@handle` watermark below. The block-start half
+      // of that is not a scrollable region, so `scrollHeight` cannot see it and
+      // the second limb asks where the first child begins. This archetype is
+      // also the one a carousel may REPEAT, so a defect here is one the reader
+      // meets two or three times.
+      // The first child WITH A BOX, never `firstElementChild` — `cover.html`'s
+      // note carries the measurement: an empty slot is `display: none` and
+      // reports a rect of all zeros, which reads as "the content starts above
+      // the field" and steps the type down on a plate that fits perfectly.
+      var firstPainted = function (el) {
+        for (var c = el.firstElementChild; c !== null; c = c.nextElementSibling) {
+          var r = c.getBoundingClientRect();
+          if (r.width > 0.5 && r.height > 0.5) return c;
+        }
+        return null;
+      };
+      var fits = function () {
+        if (field === null) return true;
+        if (field.scrollHeight > field.clientHeight + 1) return false;
+        var first = firstPainted(field);
+        if (first === null) return true;
+        var style = getComputedStyle(field);
+        return first.getBoundingClientRect().top >= field.getBoundingClientRect().top + (parseFloat(style.paddingTop) || 0) - 1;
+      };
+      var over = function () {
+        var root = document.documentElement;
+        return !fits() || root.scrollHeight > root.clientHeight + 1 || document.body.scrollHeight > document.body.clientHeight + 1;
+      };
+
+      var layout = function () {
+        h.className = "headline";
+        if (device !== null) device.style.setProperty("--dv-fit", "1");
+        var len = mkLen(h);
+        if (len > (big ? 56 : 66)) h.className = "headline tiny";
+        else if (len > (big ? 30 : 36)) h.className = "headline small";
+        if (!over()) return;
+        // The object gives first, then the type — both only while the plate is
+        // actually over, so a slide that fits renders byte-identically.
+        if (device !== null && device.querySelector(".dv") !== null) {
+          var FIT_STEPS = [1, 0.92, 0.84, 0.76, 0.68, 0.6, 0.52, 0.45];
+          for (var d = 0; d < FIT_STEPS.length; d++) {
+            device.style.setProperty("--dv-fit", String(FIT_STEPS[d]));
+            if (!over()) return;
+          }
+        }
+        for (var k = Math.max(0, RUNGS.indexOf(h.className)); k < RUNGS.length; k++) {
+          h.className = RUNGS[k];
+          if (!over()) return;
+        }
+      };
+
+      // Run once now and again once the real faces have arrived — every read
+      // above is otherwise taken against the fallback face, and
+      // `renderCarousel` screenshots the plate set in the real one.
+      layout();
+      var settled = false;
+      var settle = function () {
+        if (settled) return;
+        settled = true;
+        layout();
+        window.__CAROUSEL_READY__ = true;
+      };
+      if (document.fonts && document.fonts.ready && typeof document.fonts.ready.then === "function") {
+        document.fonts.ready.then(settle, settle);
+        setTimeout(settle, 4000);
+      } else {
+        settle();
+      }
     })();
   </script>
 </body>

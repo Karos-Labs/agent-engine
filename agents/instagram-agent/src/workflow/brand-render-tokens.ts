@@ -6,6 +6,16 @@ import {
   type BrandLogoPlacement,
 } from "@agent-engine/tool-karos-media";
 import type { BrandTokens, StyleOverrides } from "./types.js";
+import {
+  BRAND_MARK_MAX_WIDTH_PX,
+  BRAND_MARK_QUIET_OPACITY,
+  BRAND_MARK_ZONE,
+  clientVisualSystemCss,
+  CONDENSED_DISPLAY_FONT_FAMILY,
+  displayFaceForScript,
+  resolveDisplayRegisterForScript,
+  type ClientVisualSystem,
+} from "./visual-system.js";
 
 /**
  * The Brand Kit's render half: turns a client's `client/brand.json` (portal-
@@ -753,10 +763,56 @@ const BADGE_VARIANT_CSS: Record<BadgeStyle, string> = {
  * own `<style>` and would silently override the per-slide `{{accentColor}}`
  * channel — the accent has exactly one channel, and it is that one.
  */
-export function buildBrandHeadHtml(tokens: BrandRenderTokens, options: { logo?: BrandLogoPlacement } = {}): string {
+export function buildBrandHeadHtml(
+  tokens: BrandRenderTokens,
+  options: {
+    logo?: BrandLogoPlacement;
+    system?: ClientVisualSystem;
+    /**
+     * The run's target SCRIPT (`"Hebrew"`, `"Arabic"`, … — the names in
+     * `language-gate.ts`'s `SCRIPT_TABLE`), or absent for every Latin run.
+     *
+     * Passed down to `clientVisualSystemCss`, which withholds the display
+     * register's Latin face, tracking and face bleed on a script that face
+     * cannot set. See `DISPLAY_REGISTER_SCRIPTS`: without it, a Hebrew geektime
+     * carousel took Oswald's `-0.004em` tracking over the `normal` that
+     * `script-fonts.ts` measured for Hebrew, and — in any composition where the
+     * script sheet is absent — Oswald itself, for the Latin words only.
+     */
+    script?: string | undefined;
+  } = {},
+): string {
   const parts: string[] = [];
 
-  for (const family of tokens.fontFamilies) {
+  const families = [...tokens.fontFamilies];
+  // Phase 5.5, item D — the client's display register, when it needs a family
+  // the bundled templates do not already load. One `<link>` of its own and
+  // never appended to the templates' existing three-family request: css2 fails
+  // the WHOLE request when any family in a batch is unknown, which is the same
+  // reason this loop emits one link per family rather than one batched link.
+  //
+  // And only when the register is actually going to be USED: on a script
+  // Oswald cannot set, `clientVisualSystemCss` withholds the face, so fetching
+  // it would be one more css2 round trip in the render sandbox for a family no
+  // selector names.
+  if (
+    options.system?.displayRegister === "condensed" &&
+    resolveDisplayRegisterForScript("condensed", options.script).covers &&
+    !families.includes(CONDENSED_DISPLAY_FONT_FAMILY)
+  ) {
+    families.push(CONDENSED_DISPLAY_FONT_FAMILY);
+  }
+  // ── AND THE FACE THE REGISTER SETS WHEN ITS OWN CANNOT SET THE SCRIPT. ──
+  // The other side of the same rule: on a script the register's Latin family
+  // has no glyph for, `displayFaceForScript` names ONE face that carries both
+  // scripts (see `DISPLAY_REGISTER_SCRIPT_FACES`) and the sheet below sets it,
+  // so the family has to be fetched. `undefined` on every Latin run, so no
+  // English document gains a link.
+  const substitutedDisplay = options.system !== undefined ? displayFaceForScript(options.system.displayRegister, options.script) : undefined;
+  if (substitutedDisplay !== undefined && !families.includes(substitutedDisplay.family)) {
+    families.push(substitutedDisplay.family);
+  }
+  for (const family of families) {
     const encoded = family.replace(/ /g, "+");
     parts.push(`<link href="${GOOGLE_FONTS_CSS2}?family=${encoded}&display=swap" rel="stylesheet">`);
   }
@@ -781,16 +837,36 @@ export function buildBrandHeadHtml(tokens: BrandRenderTokens, options: { logo?: 
   // div is never `:empty` again, and without this second selector a client
   // with no handle would ship an empty — but `pill`-painted — watermark box.
   css.push(".eyebrow:empty, .kicker:empty, .brand-badge:empty, .brand-handle:empty, .brand-handle:has(> bdi:empty) { display: none; }");
+  // ── AND THE TWO SIZES BELOW ARE STEPS, NOT LITERALS, FOR THE SAME REASON
+  //    THE INK IS THE TEMPLATE'S TO NAME. ──
+  //
+  // This block lands after the template's own <style>, so a `font-size: 19px`
+  // here won against every template's `font-size: var(--t-micro)` in every
+  // BRANDED run — which is every run that reaches this function. The result is
+  // a guard that cannot fail: `template-furniture.test.ts` asserts that the
+  // handle, the badge and the index are a step of the scale in all eight
+  // files, all eight files comply, and the document a client actually receives
+  // set two of the three at a hard 19px anyway. Measured through the
+  // production composition on this tree: `bdi` (the handle's isolate) reports
+  // 19px on every plate at every `fontScale`, while the index beside it —
+  // which this sheet does not override — reports 22 / 18.7 / 26 as the
+  // reviewer's control moves. One piece of standing furniture, two sizes, and
+  // the smaller one deaf to the type scale.
+  //
+  // `var(--t-micro, 22px)` keeps the kit in charge of everything a kit should
+  // own and takes the scale step where the scale has one; the literal stays as
+  // the fallback, so a document composed without a run sheet still resolves to
+  // exactly what this line used to say.
   css.push(
     [
       ".brand-handle {",
       "  position: absolute; bottom: 44px; inset-inline-start: 44px; z-index: 6;",
-      "  font-family: var(--f-mono); font-size: 19px; letter-spacing: 0.08em;",
+      "  font-family: var(--f-mono); font-size: var(--t-micro, 19px); letter-spacing: 0.08em;",
       "  color: color-mix(in srgb, var(--fg) 55%, transparent);",
       "}",
       ".brand-badge {",
       "  position: absolute; top: 56px; inset-inline-start: var(--mx, 64px); z-index: 6;",
-      "  font-family: var(--f-mono); font-weight: 600; font-size: 19px;",
+      "  font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro, 19px);",
       // THE INK IS THE TEMPLATE'S TO NAME, AND THIS LINE IS WHY.
       //
       // This block lands AFTER the template's own <style> (`composeDocument`
@@ -818,11 +894,160 @@ export function buildBrandHeadHtml(tokens: BrandRenderTokens, options: { logo?: 
   );
   const variant = BADGE_VARIANT_CSS[tokens.badgeStyle];
   if (variant.length > 0) css.push(variant);
-  const logoCss = brandLogoCss(options.logo);
+  // Phase 5.5 — the per-CLIENT half of the visual system (the display face and
+  // its weight/tracking, the composition grammar, the ground texture's alpha).
+  // Here rather than in `visualSystemCssBlock` because a display face IS a
+  // brand decision and because this fragment already owns the Google Fonts
+  // `<link>` a non-default family needs. A client with no kit reaches none of
+  // this and keeps the templates' own `--f-display`, which is the correct
+  // degradation: the fleet default is a real face, just a shared one.
+  if (options.system !== undefined) css.push(clientVisualSystemCss(options.system, { script: options.script }));
+  // ── ONE HEADLINE, ONE TYPEFACE, ON A SCRIPT THE REGISTER CANNOT SET. ──
+  //
+  // `clientVisualSystemCss` withholds the register's Latin face on such a run
+  // and leaves `script-fonts.ts`'s stack standing. That stack leads with the
+  // CLIENT's own family, on purpose, so a Latin loanword keeps the brand face —
+  // and on a headline that is two typefaces in one line, which the round-1
+  // review names as a Major defect and which the owner's probe measures on
+  // every display host of a Hebrew carousel.
+  //
+  // So the register names one face that carries both scripts and it is set
+  // HERE rather than in that function, for two reasons that both matter:
+  //
+  //   * ON `body`, NOT `:root`. The script sheet declares `--f-display` on
+  //     `body`, and a `:root` declaration loses to it on every element inside
+  //     the body however late it is composed. The register's own note records
+  //     that as the reason its axis was inert on Hebrew; this is the selector
+  //     that is not.
+  //   * IN THIS FRAGMENT. `clientVisualSystemCss` is pinned by
+  //     `visual-system-axes-render.test.ts` to emit NO `--f-display` on a
+  //     non-covering script, and that pin is right: what it must not emit is
+  //     the register's LATIN face. This is a different declaration making the
+  //     opposite claim — one face, for the script — and it belongs with the
+  //     `<link>` that fetches it, which this fragment owns.
+  //
+  // Only the DISPLAY role moves. `--f-body` and `--f-mono` keep the script
+  // pack's client-first order: a paragraph is read, not seen, and the brand's
+  // face on its Latin runs there costs a reader nothing.
+  if (substitutedDisplay !== undefined) {
+    css.push(`body {\n  /* ${options.system?.displayRegister} set aside for ${options.script}: one face for the whole line. */\n  --f-display: ${substitutedDisplay.stack};\n}`);
+  }
+  // THE BRAND MARK'S RESERVED ZONE, from ONE partial, so the eight templates
+  // cannot drift apart on it. Emitted even when the mark itself is omitted:
+  // the zone rules are all `var(--logo-zone-*, 0px)` arithmetic, so with no
+  // mark every one of them resolves to the layout the templates already had.
+  css.push(brandMarkZoneCss(options.logo));
+  // The headline's own measured contrast against the ground the mark also
+  // lands on — the comparison `brandLogoCss` quiets an over-loud mark against.
+  // Falls back to the templates' own `:root` pair, because that is what a
+  // client with no derived tokens actually renders on; checking against a
+  // guessed white would be the check quietly not happening.
+  const headlineContrast = contrastRatio(tokens.cssVars["--fg"] ?? DEFAULT_TEMPLATE_FOREGROUND, tokens.cssVars["--bg"] ?? DEFAULT_TEMPLATE_GROUND);
+  const logoCss = brandLogoCss(options.logo, Number.isFinite(headlineContrast) ? headlineContrast : undefined);
   if (logoCss !== undefined) css.push(logoCss);
   if (css.length > 0) parts.push(`<style>\n${css.join("\n")}\n</style>`);
 
   return parts.join("\n");
+}
+
+/**
+ * ── ITEM F: THE MARK OWNS A ZONE, NOT A CORNER PREFERENCE. ──
+ *
+ * The owner: *"יש למעלה לוגו שלהם שזה מעולה, זה מבחינתי ממש טוב לכולם, אבל הוא
+ * דורס כותרת"* — the mark is wanted on every client's slides, and it must stop
+ * landing on top of things.
+ *
+ * `planBrandLogoPlacement` has only ever expressed a corner PREFERENCE, and it
+ * computed that preference from the client's STANDING badge
+ * (`hasSeriesBadge: frozen.brandTokens.seriesBadge !== undefined`) while the
+ * SERIES badge was written later in the same run. For geektime the standing
+ * badge was absent, so the mark chose `top-start` — the corner the series
+ * badge then took. Two pieces of furniture, one corner, and nothing in the
+ * system knew.
+ *
+ * Three things fix it, and this function is the third. The series badge is
+ * deleted outright from all eight templates (the cause). The integrator passes
+ * the EFFECTIVE badge rather than the frozen one (the belt). And the mark now
+ * declares a zone in CSS that the top-band furniture is laid out AROUND
+ * (the braces) — so a client template that grows a new top-corner element
+ * inherits the clearance instead of rediscovering the collision.
+ *
+ * `--logo-zone-start` / `--logo-zone-end`: exactly one of them is the zone's
+ * width and the other is zero, which is what lets the rules below be
+ * corner-agnostic arithmetic rather than a pair of mirrored branches.
+ * `--logo-zone-inset` is the zone's own offset from the frame, which an
+ * IN-FLOW consumer needs in order to work out how far past the zone's inline
+ * edge it has to start.
+ */
+function brandMarkZoneCss(placement: BrandLogoPlacement | undefined): string {
+  const occupied = placement !== undefined && placement.decision !== "omit";
+  const width = occupied ? BRAND_MARK_ZONE.size : 0;
+  const start = occupied && placement.corner === "top-start" ? width : 0;
+  const end = occupied && placement.corner === "top-end" ? width : 0;
+  return [
+    ":root {",
+    `  --logo-zone-start: ${start}px;`,
+    `  --logo-zone-end: ${end}px;`,
+    `  --logo-zone-block: ${occupied ? BRAND_MARK_ZONE.size : 0}px;`,
+    `  --logo-zone-inset: ${occupied ? BRAND_MARK_ZONE.inset : 0}px;`,
+    "}",
+    // ── THE ZONE'S CONSUMERS, AND THE PREMISE THAT WAS WRONG ABOUT THEM. ──
+    //
+    // This selector used to be `.brand-badge, .brand-zone-avoid` alone, on the
+    // stated premise that *"`.eyebrow` and `.kicker` … sit IN FLOW inside the
+    // composition, well below the top band"*. The render refutes it. Measured
+    // through the production composition (`planBrandLogoPlacement` returning
+    // `top-start`, the mark capped at `BRAND_MARK_MAX_WIDTH_PX` so its box is
+    // 44,44 65x65, the zone x28 y28 132x132):
+    //
+    //   stat-callout / comparison-card / list-takeaway  .eyebrow  64,96
+    //   quote-card                                      .eyebrow  80,96
+    //   headline-focus (.kicker) / closer                         64,104
+    //
+    // Every one of those is INSIDE the zone — by 45x13px of direct overlap
+    // with the mark itself on four plates and 45x5px on two, i.e. six of the
+    // eight plates of every carousel, at every `fontScale`, in both scripts.
+    // The premise was also self-sealing: `.brand-badge` and `.brand-zone-avoid`
+    // match NO element in any of the eight bundled templates (the badge slot is
+    // deleted by this phase and the opt-in was never taken up), so the
+    // clearance this function exists to apply was applied to nothing.
+    //
+    // Two rules, because the two kinds of consumer move differently:
+    //
+    //   * `.brand-badge` is ABSOLUTELY POSITIONED, so its clearance is an
+    //     inset. Unchanged.
+    //   * `.eyebrow` / `.kicker` / `.brand-zone-avoid` are IN FLOW, so their
+    //     clearance is a margin — and it is the SMALLEST margin that takes the
+    //     box clear of the zone's inline edge, not the zone's whole width:
+    //     `inset + size - --mx`, which is 28 + 132 - 64 = 96px on the bundled
+    //     set. The `max(0px, …)` is what makes it self-cancelling: with no mark
+    //     both zone tokens are 0 and the expression is negative, so every
+    //     document without a brand mark is byte-identical to before.
+    //
+    // The margin narrows the line's measure by the same 96px, which is the
+    // correct trade for a one-line uppercase label and is why the rule is
+    // scoped to the two label classes rather than to the head container.
+    ".brand-badge {",
+    "  inset-inline-start: calc(var(--mx, 64px) + var(--logo-zone-start, 0px));",
+    "  max-inline-size: calc(100% - (var(--mx, 64px) * 2) - var(--logo-zone-start, 0px) - var(--logo-zone-end, 0px));",
+    "}",
+    ".eyebrow, .kicker, .brand-zone-avoid {",
+    "  margin-inline-start: max(0px, calc(var(--logo-zone-inset, 0px) + var(--logo-zone-start, 0px) - var(--mx, 64px)));",
+    "  margin-inline-end: max(0px, calc(var(--logo-zone-inset, 0px) + var(--logo-zone-end, 0px) - var(--mx, 64px)));",
+    "}",
+    // ── AND THE ONE PLATE WHERE THE LABEL IS NOT IN THE TOP BAND. ──
+    // `cover.html` carries its eyebrow inside `.cov-field`, the masthead band,
+    // measured at y=527 — 367px below the zone's lower edge. Indenting it there
+    // would be the *"fix applied to the wrong element"* the note above was
+    // right to warn about, so the cover opts out by the same mechanism a client
+    // template would: one class, named for what it asserts.
+    ".brand-zone-clear { margin-inline-start: 0; margin-inline-end: 0; }",
+    // The pagination index sits in the FOOT, opposite the `@handle`, so it can
+    // never enter a top-corner zone at all. The rule is here rather than only
+    // in the templates so that a client's own template gets the same clearance
+    // for free.
+    ".pg-index { inset-block-end: 40px; inset-inline-end: 44px; }",
+  ].join("\n");
 }
 
 /**
@@ -839,13 +1064,29 @@ export function buildBrandHeadHtml(tokens: BrandRenderTokens, options: { logo?: 
  * `undefined` for an omitted plan: no rules, and the caller emits no `<img>`
  * either, so an illegible mark renders as nothing rather than as a smudge.
  */
-function brandLogoCss(placement: BrandLogoPlacement | undefined): string | undefined {
+function brandLogoCss(placement: BrandLogoPlacement | undefined, headlineContrast?: number): string | undefined {
   if (placement === undefined || placement.decision === "omit") return undefined;
   const side = placement.corner === "top-end" ? "inset-inline-end" : "inset-inline-start";
+  /**
+   * ── ITEM F3: PRESENT, NOT DOMINANT. ──
+   *
+   * `planBrandLogoPlacement` asks for 150px — 13.9% of the 1080px canvas —
+   * and on geektime's 2026-09-16 post the white disc was the brightest and
+   * largest non-type object on every one of the eight plates. Capped here at
+   * `BRAND_MARK_MAX_WIDTH_PX` (6% of canvas width, 65px).
+   *
+   * Clamped at the EMITTER rather than in `planBrandLogoPlacement`, and that
+   * is deliberate: `brand-logo.ts` is shared with `tiktok-agent`'s video
+   * cover surface, where the 150px is correct for a 1080x1920 frame with a
+   * top bar; narrowing the planner would silently shrink another product's
+   * mark. `Math.min` rather than an override, so a planner that ever returns
+   * something SMALLER (a mark that needed a scrim, say) keeps its own number.
+   */
+  const widthPx = Math.min(placement.widthPx, BRAND_MARK_MAX_WIDTH_PX);
   const rules = [
     ".brand-logo {",
     `  position: absolute; top: ${placement.insetBlockPx}px; ${side}: ${placement.insetInlinePx}px; z-index: 6;`,
-    `  width: ${placement.widthPx}px; height: auto; display: block;`,
+    `  width: ${widthPx}px; height: auto; display: block;`,
   ];
   if (placement.scrim !== undefined) {
     // The plate goes on the <img> itself: `background` shows through the
@@ -855,6 +1096,29 @@ function brandLogoCss(placement: BrandLogoPlacement | undefined): string | undef
       `  box-sizing: content-box; background: ${placement.scrim.color};`,
       `  padding: ${placement.scrim.padPx}px; border-radius: ${placement.scrim.radiusPx}px;`,
     );
+  }
+  /**
+   * ── ITEM F3, THE SECOND HALF: READING ORDER, NOT GEOMETRY. ──
+   *
+   * When the mark out-contrasts the HEADLINE against the same ground, the eye
+   * lands on the logo before it lands on the sentence — which is the owner's
+   * *"הוא דורס כותרת"* read as an art-direction problem rather than as an
+   * overlap. geektime's mark is a white disc measuring 16.8:1 against their
+   * ground while the headline's own foreground measures 13.9:1, so the
+   * brightest thing on the plate was the logo on all eight slides and nothing
+   * had overlapped anything.
+   *
+   * 0.9, not lower: the mark must stay legible brand furniture. This is a
+   * nudge in the reading order, and it only fires on the marks that earned it
+   * — a logo that is already quieter than the type is untouched.
+   *
+   * `groundContrast` is `undefined` when the mark's ink could not be read from
+   * its bytes (a JPEG/WebP logo). No measurement, no rule: inventing a
+   * contrast number for an asset nobody decoded is the mocked "passes" the
+   * whole of `brand-logo.ts` exists to avoid.
+   */
+  if (headlineContrast !== undefined && placement.groundContrast !== undefined && placement.groundContrast > headlineContrast) {
+    rules.push(`  opacity: ${BRAND_MARK_QUIET_OPACITY};`);
   }
   rules.push("}");
   return rules.join("\n");
@@ -867,6 +1131,9 @@ function brandLogoCss(placement: BrandLogoPlacement | undefined): string | undef
  * guessed white, would be the check quietly not happening.
  */
 export const DEFAULT_TEMPLATE_GROUND = "#17181C";
+
+/** The templates' own `:root { --fg }`, the other half of the pair a headline's contrast is measured across. Same argument as `DEFAULT_TEMPLATE_GROUND`: a client with no derived tokens renders on THIS. */
+export const DEFAULT_TEMPLATE_FOREGROUND = "#F4F2EC";
 
 /**
  * The one place the render path decides where this run's logo goes and

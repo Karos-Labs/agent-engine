@@ -166,16 +166,27 @@ describe("00c-check-template-studio: three answers, one of which costs money", (
    *
    * The setup history under `SETUP_BUDGET_BELIEF_KEY` already records
    * `templatesStored: 0`, so the fix is to read it.
+   *
+   * Phase 5.5 narrowed this to the case it was always about: a setup that RAN
+   * and stored nothing. `templatesStored: 0` is also what a `tooling_error`
+   * writes, and reading the two as one number cost three clients a month on
+   * the bundled archetypes (`setup-cooldown.test.ts` has that evidence in
+   * full). So the fixtures below carry the outcome that makes them the case
+   * they describe.
    */
   const attempt = (daysAgo: number, templatesStored: number): StudioSetupAttempt => ({
     at: new Date(now.getTime() - daysAgo * 24 * 60 * 60 * 1000).toISOString(),
     templatesStored,
+    outcome:
+      templatesStored > 0
+        ? { kind: "stored", templatesStored }
+        : { kind: "empty", reason: "every candidate was authored and every one was dropped by the eight gates" },
   });
 
   it("does NOT re-pay the setup bill when a recent setup stored nothing — it reuses the bundled set and says when the next attempt is", () => {
     const check = checkTemplateStudio({ rows: [], now, setupHistory: [attempt(3, 0)] });
     expect(check.action).toBe("reuse");
-    expect(check.reason).toContain("a setup 3 day(s) ago stored no templates");
+    expect(check.reason).toContain("a setup 3 day(s) ago ran and stored no templates");
     expect(check.reason).toContain("bundled archetypes");
     expect(check.reason).toContain(`${STUDIO_EMPTY_SETUP_COOLDOWN_DAYS - 3} day(s) away`);
     expect(check.reason).toContain("refreshTemplates");
@@ -195,7 +206,9 @@ describe("00c-check-template-studio: three answers, one of which costs money", (
     expect(checkTemplateStudio({ rows: [], now, setupHistory: [attempt(60, 0), attempt(3, 5)] }).action).toBe("generate");
     // An unparseable timestamp is ignored rather than trusted, so a hand-edited
     // beliefs document cannot suppress a setup forever.
-    expect(checkTemplateStudio({ rows: [], now, setupHistory: [{ at: "not a date", templatesStored: 0 }] }).action).toBe("generate");
+    expect(
+      checkTemplateStudio({ rows: [], now, setupHistory: [{ at: "not a date", templatesStored: 0, outcome: { kind: "empty", reason: "nothing survived" } }] }).action,
+    ).toBe("generate");
   });
 
   it("refreshTemplates overrides the cooldown, which is the operator's escape hatch after a fix", () => {

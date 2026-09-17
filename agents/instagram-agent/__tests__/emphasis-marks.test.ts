@@ -1588,7 +1588,16 @@ describe("markCssBlock — the source contract", () => {
     expect(body).not.toMatch(/border-inline\s*:/);
     // The block axis is a different question and is answered differently:
     // the twin host's bleed is the one box-model value in this sheet.
-    expect(body).toMatch(/:has\(> span\.mk-plain\) \{ padding-block-start: var\(--mk-twin-bleed, \.22em\); \}/);
+    // TWO CONTRIBUTORS, COMBINED AT THE CONSUMPTION SITE. The SCRIPT's share
+    // is `--mk-twin-bleed` (Latin .14em, Hebrew .22em); the FACE's is
+    // `--mk-face-bleed`, published per display register by
+    // `clientVisualSystemCss`. They are independent reasons for the same
+    // padding — Oswald overshoots 0.22em where Fraunces overshoots 0.10em —
+    // so the rule takes whichever is LARGER rather than whichever sheet
+    // happened to land last. Before that, a `condensed` client's cover,
+    // statement plate and closer all reported `probe.overflow` and clause B
+    // refused them as `clipped` on every attempt.
+    expect(body).toMatch(/:has\(> span\.mk-plain\) \{ padding-block-start: max\(var\(--mk-twin-bleed, \.22em\), var\(--mk-face-bleed, 0em\)\); \}/);
     // Latin and Hebrew carry DIFFERENT bleeds, because Heebo and Assistant
     // overshoot 0.1926em where Fraunces overshoots 0.0865em. A property, not
     // a second selector, so the sheet never has to out-specify the identical
@@ -1602,7 +1611,7 @@ describe("markCssBlock — the source contract", () => {
     const templates = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "assets", "templates", "default");
     for (const file of ["cover.html", "slide.html", "closer.html", "headline-focus.html", "list-takeaway.html", "quote-card.html"]) {
       const template = readFileSync(path.join(templates, file), "utf8");
-      expect(template, `${file}'s own twin-bleed rule`).toContain(":has(> span.mk-plain) { padding-block-start: var(--mk-twin-bleed, .22em); }");
+      expect(template, `${file}'s own twin-bleed rule`).toContain(":has(> span.mk-plain) { padding-block-start: max(var(--mk-twin-bleed, .22em), var(--mk-face-bleed, 0em)); }");
     }
     // And `clone` — the reason the inline pair could never be made safe — is
     // still here, because losing it is what the pair was protecting against.

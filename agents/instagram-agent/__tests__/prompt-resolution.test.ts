@@ -7,6 +7,10 @@ import { InstagramResearchAgent } from "../src/agent/instagram-research-agent.js
 import { InstagramCopyAgent } from "../src/agent/instagram-copy-agent.js";
 import { InstagramPostPackagerAgent } from "../src/agent/instagram-post-packager-agent.js";
 import { InstagramImageVettingAgent } from "../src/agent/instagram-image-vetting-agent.js";
+// Phase 5.5, item A2. Imported by PATH: the `src/agent/index.ts` export belongs
+// to the hunk that wires `04b3-extract-entities`, and this suite has to see the
+// class the moment it exists.
+import { InstagramEntityAgent } from "../src/agent/instagram-entity-agent.js";
 import { InstagramAngleAgent } from "../src/agent/instagram-angle-agent.js";
 import { InstagramVisualQaAgent } from "../src/agent/instagram-visual-qa-agent.js";
 import { InstagramArtDirectorAgent } from "../src/agent/instagram-art-director-agent.js";
@@ -14,7 +18,7 @@ import { InstagramConceptAgent } from "../src/agent/instagram-concept-agent.js";
 import { SKELETON_RULE_SENTENCE } from "../src/workflow/skeleton-memory.js";
 import { fakeRouterSequence, finalTurn, goodCopyOutput, goodImageVettingOutput, goodResearchOutput, makePromptStore, PROMPTS_ROOT } from "./test-helpers.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
-import { TURN_ORDER, standardTurns } from "./turns.js";
+import { DEFAULT_ENTITIES_TURN, TURN_ORDER, standardTurns } from "./turns.js";
 
 const ctx: AgentContext = { runId: "run_1", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring", metadata: {} };
 
@@ -346,38 +350,75 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect(added.replace(/var\(--[a-z-]+\)/g, "")).not.toMatch(/--/);
   });
 
-  it("instagram-visual-qa@4 resolves, latest.md is byte-identical to 4.md, and v4 is v3 plus the rhythm section", async () => {
+  /**
+   * ── @5: THE JUDGE IS ASKED WHAT THE OWNER ASKED (Phase 5.5 §4.8). ──
+   *
+   * On 2026-09-16 the Flash judge returned `pass: false` on geektime with
+   * three correct findings, while the post it was judging carried a badge that
+   * rendered as `{ FIELD` on all eight plates and three plates that said
+   * nothing but words — and the owner found both in seconds, because he was
+   * looking at all eight plates at once. @5 re-centres the rubric on five
+   * POST-LEVEL questions, takes a CONTACT SHEET as its primary evidence, and
+   * emits `publishable`: the CMO verdict `pass` could never carry, because
+   * `pass` is compliance and this is judgement.
+   */
+  it("instagram-visual-qa@5 resolves, latest.md is byte-identical to 5.md, and v5 asks the five post-level questions", async () => {
     const promptStore = makePromptStore();
-    const v3 = await promptStore.getPrompt("instagram-visual-qa", "3");
     const v4 = await promptStore.getPrompt("instagram-visual-qa", "4");
-    expect(v4).toBe(await promptStore.getPrompt("instagram-visual-qa"));
-    expect(readFileSync(path.join(PROMPTS_ROOT, "instagram-visual-qa", "4.md"), "utf8")).toBe(
+    const v5 = await promptStore.getPrompt("instagram-visual-qa", "5");
+    expect(v5).toBe(await promptStore.getPrompt("instagram-visual-qa"));
+    expect(readFileSync(path.join(PROMPTS_ROOT, "instagram-visual-qa", "5.md"), "utf8")).toBe(
       readFileSync(path.join(PROMPTS_ROOT, "instagram-visual-qa", "latest.md"), "utf8"),
     );
-    // Not @2: v2 already shipped, and v3 is the `renderedInspections`
-    // version this builds on.
+    expect(v5.split(/\r?\n/)[0]).toBe("# Instagram Visual QA Craft Guide — v5");
+    // @4 stays frozen and resolvable: a version bump replaces nothing.
     expect(v4.split(/\r?\n/)[0]).toBe("# Instagram Visual QA Craft Guide — v4");
 
-    // v3's five sections survive byte for byte; §6 is the only addition.
-    expect(v4.slice(v4.indexOf("## 1. "), v4.indexOf("## 6. ")).trimEnd()).toBe(v3.slice(v3.indexOf("## 1. ")).trimEnd());
-    for (let n = 1; n <= 6; n++) expect(v4).toMatch(new RegExp(`^## ${n}\\. `, "m"));
-    expect(v3).not.toMatch(/^## 6\. /m);
+    // The five questions, each with the reserved `ruleId` the judge reports it
+    // under — a question with no id is a finding nothing downstream can group.
+    const s6 = v5.slice(v5.indexOf("## 6. "), v5.indexOf("## 7. "));
+    for (const id of [
+      "cmo:stop-and-swipe",
+      "cmo:pulls-forward",
+      "cmo:one-system",
+      "cmo:every-slide-earns-its-place",
+      "cmo:would-you-publish",
+    ]) {
+      expect(s6).toContain(`\`${id}\``);
+    }
+    // Whitespace-flattened: the prompt is hard-wrapped, so a question can
+    // straddle a line break, and a literal substring would be asserting the
+    // wrapping rather than the words.
+    const flat = (text: string): string => text.replace(/\s+/gu, " ");
+    for (const question of [
+      "would a reader stop on slide 1 and swipe?",
+      "furniture sprinkled on eight plates?",
+      "does any slide carry nothing but words?",
+      "would you publish this for a paying client?",
+    ]) {
+      expect(flat(s6)).toContain(question);
+    }
+    // The two standing rules that keep it from becoming taste: be specific,
+    // and judge the post you were given.
+    expect(flat(s6)).toContain("Be specific");
+    expect(flat(s6)).toContain("not the post you would have made");
 
-    // The judgment half only: the pixel facts arrive as input and must not be
-    // re-derived, and the two questions are rhythm and difference from the
-    // previous post.
-    const s6 = v4.slice(v4.indexOf("## 6. "));
-    expect(s6).toContain("Does this set have rhythm?");
-    expect(s6).toContain("a quiet cover,");
-    expect(s6).toContain("N variations of one slide");
-    expect(s6).toContain("Does it read as a different post from the previous one?");
-    expect(s6).toContain("never re-derive or dispute them");
-    expect(s6).toContain("`thisSkeleton` and `previousSkeleton`");
-    expect(s6).toContain('`ruleId: "composition-richness"`');
-    // Absent inputs make the section inert rather than speculative.
-    expect(s6).toContain("With `interest` and both skeletons absent this section is inert.");
-    // The header tells the reader the two new inputs exist at all.
-    expect(v4).toContain("Since v4 you are also");
+    // `publishable` is separate from `pass`, and the prompt says why.
+    const s3 = v5.slice(v5.indexOf("## 3. "), v5.indexOf("## 4. "));
+    expect(s3).toContain("`publishable`");
+    expect(flat(s3)).toContain("a post can satisfy every rule and still be one nobody would publish");
+
+    // The contact sheet is read FIRST and is the evidence for the two
+    // questions that are properties of the sequence.
+    const s7 = v5.slice(v5.indexOf("## 7. "), v5.indexOf("## 8. "));
+    expect(s7).toContain("Read it FIRST");
+    expect(flat(s7)).toContain("rhythm and repetition are properties of the sequence");
+
+    // @4's per-slide rule sections survive: they catch real defects, and the
+    // workflow still routes `renderRules` findings by their own ids.
+    for (const heading of ["## 1. ", "## 2. ", "## 5. "]) expect(v5).toContain(heading);
+    expect(v5).toContain("`thisSkeleton` and `previousSkeleton`");
+    expect(flat(v5)).toContain("never re-derive or dispute them");
   });
 
   it("the three Template Studio prompts resolve, each latest.md is byte-identical to its 1.md, and each H1 carries v1", async () => {
@@ -460,23 +501,32 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // this asserts is that the rows exist at all, which is the step a prompt
     // bump most often forgets.
     const registry = readFileSync(path.join(PROMPTS_ROOT, "..", "..", "..", "scripts", "prompt-registry.ts"), "utf8");
-    expect(registry).toContain(`"14", "15", "16", "17", "18", "19", "20"`);
-    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,600}latestVersion: "20"/);
+    expect(registry).toContain(`"14", "15", "16", "17", "18", "19", "20", "21", "22"`);
+    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,600}latestVersion: "22"/);
     // Phase 5 (RFC-18 §6.1). The packager's prompt is the one THIS phase added,
     // and the WIP commit this branch inherited had shipped both prompt files
     // with no registry row at all — which `check:prompts` fails on and which
     // this line is the cheap local copy of.
-    expect(registry).toContain(`{ promptId: "instagram-post-package", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
+    // Phase 5.5 (spec §6 G2) bumped it to @2: `ALT_TEXT_MAX_CHARS = 125` was
+    // enforced on the wire and stated nowhere the model could read it, and one
+    // over-long `alt` cost two of three live runs their whole package.
+    expect(registry).toContain(`{ promptId: "instagram-post-package", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" }`);
     // Phase 4 (RFC-15 §6). The native editor's prompt is the one this phase
     // added; a row that never lands is exactly what this test exists to catch.
     // Phase 5 bumped it to @2 (RFC-18 §6.5): `@1` documented only the CAROUSEL round's
     // `"caption"`/`"slide:N"` targets, so on `08c2-package-native-round` the judge had no legal target to
     // write and every correction it returned was dropped as cross-context by `resolveField`'s guard.
     expect(registry).toContain(`{ promptId: "instagram-native-editor", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" }`);
-    // Phase 3 (items Q and R).
-    expect(registry).toContain(`{ promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5"], latestVersion: "5" }`);
-    expect(registry).toContain(`{ promptId: "instagram-art-director", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
-    expect(registry).toContain(`{ promptId: "instagram-visual-qa", agent: "instagram-agent", versions: ["1", "2", "3", "4"], latestVersion: "4" }`);
+    // Phase 3 (items Q and R). Phase 5.5 item A3 bumps the vet to @6: the
+    // SUBJECT is separated from the scene, and `scene` is declared decorative.
+    expect(registry).toContain(`{ promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5", "6"], latestVersion: "6" }`);
+    // Phase 5.5 item A2: `04b3-extract-entities`, the prompt this package added.
+    expect(registry).toContain(`{ promptId: "instagram-entities", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
+    // Phase 5.5 items C/D bump the director to @2: it now also derives the six
+    // frozen axes of `ClientVisualSystem` — the per-client half of the visual
+    // system, and the reason two clients' posts stop looking like one machine's.
+    expect(registry).toContain(`{ promptId: "instagram-art-director", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" }`);
+    expect(registry).toContain(`{ promptId: "instagram-visual-qa", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5"], latestVersion: "5" }`);
     expect(registry).toContain(`{ promptId: "instagram-design-brief", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
     expect(registry).toContain(`{ promptId: "instagram-template-designer", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
     expect(registry).toContain(`{ promptId: "instagram-template-set-review", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
@@ -484,36 +534,39 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect(registry).toContain(`{ promptId: "instagram-concept", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
   });
 
-  it("every agent reads the version this phase shipped: copy @20, post package @1, visual QA @4, image vet @5, art director @1, concept @1", async () => {
+  it("every agent reads the version this phase shipped: copy @21, post package @2, visual QA @5, image vet @6, entities @1, art director @2, concept @1", async () => {
     // The last line of a prompt bump, and the one most often forgotten: a new
     // prompt file that no `skillRef` points at exists, resolves, and is read
     // by nothing.
     const promptStore = makePromptStore();
     const copy = new InstagramCopyAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@20");
+    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@22");
     const packager = new InstagramPostPackagerAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((packager as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-post-package@1");
+    expect((packager as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-post-package@2");
     const qa = new InstagramVisualQaAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((qa as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-visual-qa@4");
+    expect((qa as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-visual-qa@5");
     const vet = new InstagramImageVettingAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((vet as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-image-vet@5");
+    expect((vet as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-image-vet@6");
+    const entities = new InstagramEntityAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
+    expect((entities as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-entities@1");
     const director = new InstagramArtDirectorAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((director as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-art-director@1");
+    expect((director as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-art-director@2");
     const concept = new InstagramConceptAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((concept as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-concept@1");
   });
 
-  it("instagram-copy@20, instagram-post-package@1, instagram-image-vet@5, instagram-art-director@1 and instagram-concept@1 resolve, each byte-identical to its own latest.md", async () => {
+  it("instagram-copy@22, instagram-post-package@2, instagram-image-vet@6, instagram-entities@1, instagram-art-director@2 and instagram-concept@1 resolve, each byte-identical to its own latest.md", async () => {
     // Phase 3 (items Q and R). The byte comparison is the one `check:prompts`
     // makes too, and it is here as well because a drifted `latest.md` is the
     // failure mode where a run silently reads a DIFFERENT prompt from the one
     // its version pin names.
     const promptStore = makePromptStore();
     for (const [promptId, version, h1] of [
-      ["instagram-copy", "20", "# Instagram Copy Craft Guide, v20"],
-      ["instagram-post-package", "1", "# Instagram Post Package Guide, v1"],
-      ["instagram-image-vet", "5", "# Instagram Image Vetting Craft Guide — v5"],
-      ["instagram-art-director", "1", "# Instagram Art Direction Guide — v1"],
+      ["instagram-copy", "22", "# Instagram Copy Craft Guide, v22"],
+      ["instagram-post-package", "2", "# Instagram Post Package Guide, v2"],
+      ["instagram-image-vet", "6", "# Instagram Image Vetting Craft Guide — v6"],
+      ["instagram-entities", "1", "# Instagram Entity Extraction — v1"],
+      ["instagram-art-director", "2", "# Instagram Art Direction Guide — v2"],
       ["instagram-concept", "1", "# Instagram Concept Direction Guide — v1"],
     ] as const) {
       const pinned = await promptStore.getPrompt(promptId, version);
@@ -525,7 +578,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     }
   });
 
-  it("instagram-copy/latest.md is BYTE-identical to 19.md, and 19.md is exactly 18.md plus §29", () => {
+  it("instagram-copy/latest.md is BYTE-identical to 22.md, and 19.md is still exactly 18.md plus §29", () => {
     // The design system (RFC-17 §5.7), step 2 of the five-step checklist.
     //
     // The title and the section numbers below were `17.md`/`§24` until the
@@ -557,17 +610,56 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // version is for.
     const v19 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "19.md"));
     const v20 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "20.md"));
+    const v21 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "21.md"));
+    // Phase 5.5 (spec §2 A2/A3). @22 is the live file: §22 gains the scene
+    // brief's SUBJECT (`noun`, `entityRef`, `mustShow`), §6 gains the
+    // `namedEntities` input and §16 gains `sceneSteer`. @21 is published and is
+    // therefore frozen, and the two assertions below are what prove it — the
+    // rule that a published version never changes is the reason a revision
+    // lands as a new number rather than as an edit.
+    const v22 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "22.md"));
     const latest = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "latest.md"));
-    expect(latest.equals(v20), "latest.md must be byte-identical to 20.md, not merely equivalent").toBe(true);
-    expect(v19.equals(v20), "@19 and @20 are the same file, so the bump changed nothing").toBe(false);
-    const v20Text = v20.toString("utf8");
-    expect((v20Text.split(String.fromCharCode(10))[0] ?? "").replace(String.fromCharCode(13), "")).toBe("# Instagram Copy Craft Guide, v20");
-    for (const heading of ["## 24. Value:", "## 25. Take a position", "## 26. Rhythm", "## 27. The source's prose is not yours", "## 28. Marking", "## 29."]) {
-      expect(v20Text, `@20 must inherit ${heading}`).toContain(heading);
+    expect(latest.equals(v22), "latest.md must be byte-identical to 22.md, not merely equivalent").toBe(true);
+    expect(v21.equals(v22), "@21 and @22 are the same file, so the bump changed nothing").toBe(false);
+    expect(v20.equals(v21), "@20 and @21 are the same file, so the bump changed nothing").toBe(false);
+    expect(v19.equals(v20), "@19 and @20 are the same file, so that bump changed nothing").toBe(false);
+    const v21Text = v21.toString("utf8");
+    const v22Text = v22.toString("utf8");
+    expect((v21Text.split(String.fromCharCode(10))[0] ?? "").replace(String.fromCharCode(13), "")).toBe("# Instagram Copy Craft Guide, v21");
+    expect((v22Text.split(String.fromCharCode(10))[0] ?? "").replace(String.fromCharCode(13), "")).toBe("# Instagram Copy Craft Guide, v22");
+    // What @22 itself adds, asserted against the LIVE file so a later revision
+    // that dropped any of them fails here rather than in a prep run.
+    expect(v22Text, "@22 must document the scene brief's subject").toContain("WHAT IS ACTUALLY IN FRONT OF THE CAMERA");
+    expect(v22Text, "@22 must document the entity list the run corroborated").toContain("`namedEntities`: the things this run can actually prove it is about");
+    expect(v22Text, "@22 must document the non-blocking scene steer").toContain("`sceneSteer` is a FOURTH separate field");
+    expect(v22Text, "@22 must refuse an abstract subject noun").toContain("Never an abstract");
+    expect(v22Text, "@22 must keep technique words out of the search terms").toContain("No technique words");
+    // @21's own additions are INHERITED by @22, which is the other half of the
+    // immutability claim: a bump that quietly dropped a shipped rule would pass
+    // every assertion about @21 and ship a worse prompt.
+    for (const inherited of ["customArchetypeBrief", "`unfillable`", "Where the hard wall is", "The cover has one subject and no furniture"]) {
+      expect(v22Text, `@22 must inherit ${inherited}`).toContain(inherited);
     }
-    // And what it ADDS, which is the whole point of the bump.
-    expect(v20Text, "@20 must carry the rule that unblocked interesting imagery").toContain("Name the actual subject");
-    expect(v20Text, "@20 must split the identity rule by sourcing path").toContain("The identity rule depends on where the picture comes from");
+    for (const heading of ["## 24. Value:", "## 25. Take a position", "## 26. Rhythm", "## 27. The source's prose is not yours", "## 28. Marking", "## 29."]) {
+      expect(v21Text, `@21 must inherit ${heading}`).toContain(heading);
+    }
+    // @20 revised �6 and @21 inherits every byte of it, so its two markers are
+    // asserted against the LIVE file rather than against the frozen one: a
+    // revision that dropped them would otherwise pass.
+    expect(v21Text, "@21 must inherit the rule that unblocked interesting imagery").toContain("Name the actual subject");
+    expect(v21Text, "@21 must inherit the identity rule split by sourcing path").toContain("The identity rule depends on where the picture comes from");
+    // And what @21 itself ADDS (Phase 5.5, brief item B): the markup hoist, the
+    // field for an object an archetype cannot fill, the schema length wall and
+    // the one-subject cover.
+    expect(v21Text, "@21 must hand the markup to 05f rather than asking the writer for it").toContain("customArchetypeBrief");
+    expect(v21Text, "@21 must give the writer somewhere other than the copy to report an unfillable object").toContain("`unfillable`");
+    expect(v21Text, "@21 must state where the schema length wall is").toContain("Where the hard wall is");
+    expect(v21Text, "@21 must carry the one-subject cover rule").toContain("The cover has one subject and no furniture");
+    // Published versions are immutable, and this is the half that proves the
+    // hoist really moved: @20 asked the writer for markup and still does.
+    const v20Text = v20.toString("utf8");
+    expect(v20Text, "@20 is frozen and it is the version that asked for bodyHtml").toContain("**`bodyHtml`**");
+    expect(v21Text, "@21 must not ask the writer for markup any more").not.toContain("**`bodyHtml`**");
 
     // Published versions are IMMUTABLE: @18 shipped on main and is what every
     // in-flight run and every pinned fixture still resolves, so the bump must
@@ -712,7 +804,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
 
   it("the angle agent actually sends the resolved prompt as its system prompt", async () => {
     const promptStore = makePromptStore();
-    const router = fakeRouterSequence([finalTurn(goodAngleProposal())]);
+    const router = fakeRouterSequence([finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN)]);
     const agent = new InstagramAngleAgent({ router, tools: {}, promptStore });
 
     const result = await agent.run(ctx, { topicDecision: { topic: "x", source: "trend" }, mode: "deep-value", facts: [], targetLanguage: "English" });
@@ -748,9 +840,36 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
       "scout",
       "research",
       "angle",
+      // Phase 5.5 (spec A2). `04b3-extract-entities` sits immediately after
+      // `04j-select-angle` — it reads the chosen angle's own words as half its
+      // grounding evidence — and before `04i2-select-series`. UNCONDITIONAL:
+      // the workflow buys it on EVERY revision, which is why it is DEFAULTED in
+      // `standardTurns` rather than opt-in like `concept` and
+      // `customArchetype`. An absent key means `{ entities: [] }`, which is the
+      // answer a story naming nothing picturable actually has.
+      "entities",
       "concept",
       "copy",
+      // Phase 5.5 (spec §3 B3). `05f-author-custom-archetype` sits between the
+      // copy step and anything that asks for a picture, because it is the
+      // second half of the DRAFT: the markup for a layout the writer chose and
+      // no longer authors itself. CONDITIONAL, like `concept` — the workflow
+      // buys it only when a draft emits a `customArchetypeBrief`, and none of
+      // the six 2026-09-16 prep runs did — so it is absent from `happyTurns`
+      // and a fixture must opt in.
+      "customArchetype",
       "vet",
+      // Phase 5.5 (spec §2 A1b). `06h2-vet-floor-images` is the SECOND
+      // vetting turn, and it exists because `06h-imagery-floor-check` reads
+      // what actually LANDED rather than what was planned: a post short of
+      // both `MIN_PICTURE_SLIDES` and `MIN_GENERATED_IMAGES_PER_RUN`
+      // re-enters generation REGARDLESS OF THE BUDGET PLAN, and those
+      // pictures are vetted like any others. `06h` itself is `wf.step.code`
+      // at $0 and buys no turn, which is why only the vet appears here.
+      // CONDITIONAL and rare — a fixture whose ordinary vetting turn fills
+      // three slides never reaches it — so it is absent from `happyTurns`
+      // and a fixture must opt in.
+      "imageryFloorVet",
       "relevance",
       // Phase 5 (RFC-18 §2 and §12). `07j-value-judge` sits HERE, between
       // relevance and the native editor, and nowhere else. AFTER relevance
@@ -791,10 +910,13 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
       copy: "copy",
       brief: "brief",
       angle: "angle",
+      entities: "entities",
       concept: "concept",
+      customArchetype: "customArchetype",
       research: "research",
       scout: "scout",
       vet: "vet",
+      imageryFloorVet: "imageryFloorVet",
       relevance: "relevance",
       nativeEditor: ["nativeEditor"],
       designBrief: "designBrief",
@@ -815,9 +937,12 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
       "scout",
       "research",
       "angle",
+      "entities",
       "concept",
       "copy",
+      "customArchetype",
       "vet",
+      "imageryFloorVet",
       "relevance",
       "valueJudge",
       "nativeEditor",
@@ -832,7 +957,15 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // existing fixture is in, since `04l` declines the canonical story. If it
     // ever defaulted, every workflow fixture in the package would consume its
     // turns one out of step.
-    expect(standardTurns({ angle: "angle", copy: "copy" }).map((t) => (t().output as { output: unknown }).output)).toEqual(["angle", "copy"]);
+    // `entities` is DEFAULTED and rides the angle, so a block that carries an
+    // angle queues an empty entity set behind it. That is the whole point of
+    // defaulting it: `04b3` runs on every revision, so an absent key cannot
+    // honestly mean "no turn" the way it does for `concept`.
+    expect(standardTurns({ angle: "angle", copy: "copy" }).map((t) => (t().output as { output: unknown }).output)).toEqual([
+      "angle",
+      { entities: [] },
+      "copy",
+    ]);
   });
 
   it("produces tooling_error, not a crash, when skillRef names a prompt the store doesn't have", async () => {

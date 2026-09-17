@@ -57,7 +57,13 @@ function recordingFindImages(seen: { needs?: Array<{ n: number }> }): AgentTool 
     version: "1.0.0",
     inputSchema: { parse: (v: unknown) => v } as never,
     async execute(args: unknown) {
-      seen.needs = (args as { needs: Array<{ n: number }> }).needs;
+      // The FIRST call, not the last. These cases are about what tier 0 leaves
+      // for `05b` to ask for on ATTEMPT 1; a stubbed harvester that finds
+      // nothing sends every slide to the typographic downgrade, and the
+      // imagery floor then promotes the demoted plates back and asks again on
+      // a later attempt. Recording the last call would make these assertions
+      // about the recovery path rather than about tier 0.
+      seen.needs ??= (args as { needs: Array<{ n: number }> }).needs;
       return { status: "content_fail", reason: "nothing found" };
     },
   } as unknown as AgentTool;

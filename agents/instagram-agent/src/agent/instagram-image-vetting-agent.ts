@@ -45,10 +45,28 @@ import { ImageVettingOutputSchema, type ImageVettingOutput } from "../workflow/t
 export class InstagramImageVettingAgent extends BaseAgent<ImageVettingOutput> {
   protected readonly config: AgentStepConfig<ImageVettingOutput> = {
     id: "instagram-image-vet",
-    description: "Judge, per slide, whether any candidate in the supplied image pool actually shows what the slide's headline and body CLAIM (claimMatch 1-5, selection needs 3+) AND is rights-usable, watermark-free, and not already used in a prior post — report null, never a placeholder, when none does.",
+    description:
+      "Judge, per slide, whether any candidate in the supplied image pool actually shows the slide's briefed SUBJECT (subjectMatch 1-5) and what its headline and body CLAIM (claimMatch 1-5) AND is rights-usable, watermark-free, and not already used in a prior post — report null, never a placeholder, when none does.",
     allowedTools: [],
     outputSchema: ImageVettingOutputSchema,
-    modelPolicy: resolveModelPolicy("instagram-image-vet", { policy: "pinned", model: "gemini-2.5-flash", vendor: "gemini" }),
+    // ## Model tier, Phase 5.5 (2026-09-16): Flash -> Pro
+    //
+    // `gemini-2.5-pro`, still `pinned`, still on Vertex, still `costTier:
+    // "standard"` (so `no-premium-models.test.ts` is unaffected). ~$0.006 ->
+    // ~$0.015 a call; at up to three calls per attempt across the rescue tiers
+    // that is about +$0.027 on a three-attempt run.
+    //
+    // The tier rises because the question got harder, not because the budget
+    // got looser. @5 asked one question about a written description; @6 asks
+    // two, has to hold a declared subject apart from a declared decoration,
+    // and has to reason about a licence class. The step that has to be right
+    // for the owner's loudest complaint to be fixed is this one — and on
+    // 2026-09-16 Flash got it wrong in the most expensive possible way, with a
+    // fluent, confident `reason` explaining that four correct photographs of
+    // server racks were unusable because none of them had been taken with a
+    // long exposure. Retargetable per deployment
+    // (`MODEL_STEP_INSTAGRAM_IMAGE_VET_VENDOR/_MODEL`) and per run in Studio.
+    modelPolicy: resolveModelPolicy("instagram-image-vet", { policy: "pinned", model: "gemini-2.5-pro", vendor: "gemini" }),
     // Pinned to "2": v1 judged every clause of `visualNeed` as an equal hard
     // gate, so a candidate genuinely on-subject was rejected outright over a
     // single decorative mismatch (shot outdoors instead of the requested
@@ -105,6 +123,33 @@ export class InstagramImageVettingAgent extends BaseAgent<ImageVettingOutput> {
     // and its doc comment carries the measurement and the reason — moving it
     // fires the attempt lever on cold Hebrew runs and produces a budget-caused
     // HOLD, which the owner's rule forbids. v4 frozen.
-    skillRef: "instagram-image-vet@5",
+    //
+    // v6 (Phase 5.5, item A3, 2026-09-16): the slide arrives with a SUBJECT —
+    // `subject` (the noun phrase a photo library indexes), `mustShow` (at most
+    // three central clauses) and, when the run recognised one, `entityRef` —
+    // and `scene` is re-declared as DECORATIVE. The rubric gains §1a
+    // (`subjectMatch` 1-5, its own reason) and the selection floor moves off
+    // the bare `claimMatch >= 3` onto `selectionPasses` in `types.ts`.
+    //
+    // The defect: prep run pubsub-21868183257380937 (karoslabs, 2026-09-16)
+    // briefed its cover as "A server infrastructure corridor photographed with
+    // long exposure, near-black tones, warm shadows…" with a `why` that said
+    // the long exposure "signals precision and permanence". Retrieval returned
+    // six candidates, four of them real photographs of real server racks. @5
+    // returned `imagePath: null`, `claimMatch 1`, and wrote its own epitaph:
+    // "The other candidates are server infrastructure, but none feature the
+    // 'long exposure' effect that the `why` section states is necessary." The
+    // rubric could not distinguish the subject from the grade, so the grade
+    // was read as central and a correct pool was thrown away. The post shipped
+    // with no photographs at all, and that is the complaint this phase exists
+    // for.
+    //
+    // §1a also carries a warn-only `stockCliche` field that gates NOTHING this
+    // phase (`ImageSelectionSchema`'s own comment says why), and a licence
+    // class including `editorial-only`, which is CARRIED rather than refused
+    // so a commentary post may use a press photograph of the public figure it
+    // is about. ≈ +400 input tokens and ≈ +60 output tokens per call. v5
+    // frozen.
+    skillRef: "instagram-image-vet@6",
   };
 }

@@ -19,7 +19,7 @@ import {
   setupTestEnvironment,
   type TestEnvironment,
 } from "./test-helpers.js";
-import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
+import { DEFAULT_ENTITIES_TURN, DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 
 /** A 1x1 PNG's bytes, enough for a fake logo download. */
@@ -51,7 +51,7 @@ const GEEKTIME_BRAND = {
 
 function happyRouter() {
   return fakeRouterSequence([
-    finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+    finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
     finalTurn(goodCopyOutput()),
     finalTurn(goodImageVettingOutput()),
     finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
@@ -151,7 +151,7 @@ describe("brand kit: the client's brand reaches the rendered templates", () => {
 
     const first = goodCopyOutput();
     // The angle proposal (04i) leads each ROUND, so a two-round fixture spends two.
-    const draftTurns = () => [finalTurn(goodAngleProposal()), finalTurn(first), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)];
+    const draftTurns = () => [finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN), finalTurn(first), finalTurn(goodImageVettingOutput()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN)];
     const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(), ...draftTurns()]);
     const workflowFn = createInstagramAgentWorkflow({
       tools: { ...env.tools, "publish.renderCarousel": fakeRenderCarousel(env.tools["publish.renderCarousel"]!) },
@@ -238,7 +238,18 @@ describe("brand kit: the client's brand reaches the rendered templates", () => {
     expect(result.status).toBe("completed");
 
     const composed = await fsp.readFile(pathMod.join(env.repoRoot, ".template-cache", "branded_logo_down", "slide.html"), "utf8");
-    expect(composed).not.toContain("brand-logo");
+    // The MARK and its PLACEMENT RULE, named exactly — not the bare substring.
+    // Phase 5.5 (item A4) made `explainImageTreatment` reach `none` only
+    // through an explicit client `forbid`, so `imageTreatmentCssBlock` now
+    // emits a sheet for every client, and that sheet carries
+    // `img[src^="file://"]:not(.brand-logo)` — the rule that keeps the grade
+    // off the brand mark. A substring test could not tell that rule from the
+    // mark itself, and would have passed only for as long as the whole fleet
+    // graded nothing. These two assertions are what the case is actually
+    // about: no `<img class="brand-logo">` in the body, and no placement rule
+    // positioning one.
+    expect(composed).not.toContain('class="brand-logo"');
+    expect(composed).not.toContain(".brand-logo {");
     expect(composed).toContain("--bg: #272A35;");
   }, 30000);
 

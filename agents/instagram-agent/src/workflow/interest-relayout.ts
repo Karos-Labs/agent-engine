@@ -1,7 +1,9 @@
-import { MIN_CLAIM_MATCH, type ImageSelection, type InstagramCopyOutput, type InstagramSlideCopy, type InstagramSlideLayout } from "./types.js";
+import { MIN_CLAIM_MATCH, selectionPasses, type ImageSelection, type InstagramCopyOutput, type InstagramSlideCopy, type InstagramSlideLayout } from "./types.js";
 import { fallbackArchetypePreferences, type SlideStyleOverride } from "./slides-data.js";
 import type { InterestFailureKind, InterestFinding } from "./interest-floor.js";
 import { clampWords, deviceFromText, figuresInText, MAX_DEVICE_LABEL_LENGTH, sentencesOf, type RelayoutFigureDevice } from "./bounded-object.js";
+import { isCompleteClause } from "./slide-devices.js";
+import type { ImageryShortfall } from "./imagery-floor.js";
 
 /**
  * The free re-layout — RFC-14 item L, stage 1 of the interest floor's remedy.
@@ -77,6 +79,21 @@ export type RelayoutArchetype = InstagramSlideLayout | "cover" | "closer";
 
 /** The reviewer's three per-slide type sizes (`SlideStyleOverride`). */
 export type FontScale = "s" | "m" | "l";
+
+/**
+ * The change kinds that work by REASSIGNING a slide's archetype.
+ *
+ * Named as a set rather than tested inline because one caller has to know the
+ * difference: a slide carrying a run-authored `custom` archetype may take any
+ * remedy that leaves its layout alone, and none of these. See
+ * `planInterestRelayout`.
+ */
+export const RELAYOUT_KINDS_THAT_REASSIGN_LAYOUT: ReadonlySet<InterestRelayoutChange["kind"]> = new Set([
+  "promote-image-to-cover",
+  "build-recap",
+  "switch-archetype",
+  "merge-into-neighbour",
+]);
 
 /** The order the two `fontScale` remedies step through. */
 const FONT_SCALE_LADDER: readonly FontScale[] = ["s", "m", "l"];
@@ -194,6 +211,15 @@ export type InterestRelayoutChange =
       archetype?: RelayoutArchetype;
       reason: string;
     }
+  | {
+      kind: "merge-into-neighbour";
+      slide: number;
+      /** The slide this one is folded into — always the one before it, so the reading order is preserved. */
+      into: number;
+      /** The text the merge carries across, so the workflow applies a merge this module described rather than one it invents. */
+      carry: { headline: string; body: string };
+      reason: string;
+    }
   | { kind: "switch-archetype"; slide: number; from: RelayoutArchetype; to: RelayoutArchetype; reason: string }
   | { kind: "build-recap"; slide: number; rows: RelayoutRecapRow[]; archetype: RelayoutArchetype; reason: string }
   | { kind: "add-question-block"; slide: number; question: string; from: "headline" | "body" | "caption"; reason: string }
@@ -236,6 +262,58 @@ export interface RelayoutFactCard {
 export interface InterestRelayoutOptions {
   /** The per-slide typography in force this attempt, as `assembleSlidesData` receives it. Absent slides are at the default `"m"`. */
   styleOverrides?: ReadonlyMap<number, SlideStyleOverride> | undefined;
+  /**
+   * Whether the CALLER can actually apply a `merge-into-neighbour`.
+   *
+   * ## Why a rung of the ladder is opt-in
+   *
+   * A merge drops a slide and renumbers everything after it: the copy, the
+   * image selection rows, the per-slide type overrides and the
+   * downgraded-for-images set are all keyed by `n`. That is a workflow change,
+   * and until the workflow has it, planning a merge would produce a change
+   * whose `switch` case does not exist — a byte-identical re-render that
+   * spends the attempt's one free chance and looks like a remedy in the trace.
+   * This module's own rule is that **a remedy must be able to take effect**,
+   * and the rule does not get an exception for the rung it would most like to
+   * have.
+   *
+   * DEFAULT FALSE, so the honest behaviour is the one a caller gets for free:
+   * the merge is named in `unremedied` and reaches the writer as the interest
+   * floor's own steer ("merge slide N into slide N-1 and let the carousel be
+   * one slide shorter"), which is where a merge belongs anyway — it is a
+   * writing act. Flip it on in the same commit that adds the apply case.
+   */
+  mergeSupported?: boolean | undefined;
+  /**
+   * The fewest slides this client's canvas accepts
+   * (`styleConfig.canvas.slides_min`). A merge may never take a post below it.
+   *
+   * Absent means unknown, and a merge is then refused: a remedy that could
+   * push a post outside its own client's declared range is not a free fix, and
+   * `checkSlidesData` would reject the assembly that followed.
+   */
+  slideCountFloor?: number | undefined;
+  /**
+   * ── THE IMAGERY SHORTFALLS FOR THIS ATTEMPT (spec §2 A5). ──
+   *
+   * `imageryShortfallsFor` already chooses a remedy per slide that lost its
+   * photograph, and it chooses it with facts the interest floor's finding kind
+   * does not carry: whether the run holds a spare vetted image, whether the
+   * slide's own copy states a figure with a complete label, whether the plate
+   * already renders a designed object, and whether the picture was the
+   * WRITER's idea or the imagery band's. The record was built, written to the
+   * gate payload, and then never handed to the planner — so two of its five
+   * remedies (`attach-device`, `none`) were unreachable in production and the
+   * two comments that said the record "travels into 08a1b-relayout-for-interest"
+   * described a wire that did not exist.
+   *
+   * Consulted BEFORE the kind ladder and only for a slide that actually has a
+   * record. The remedies it names are the same ones the ladder can already
+   * build, so nothing new can be planned here — what changes is WHICH of them a
+   * slide that lost a picture gets, and that it is chosen from the reason the
+   * picture was lost rather than from the pixel symptom.
+   */
+  imageryShortfalls?: readonly ImageryShortfall[] | undefined;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -249,13 +327,19 @@ function sourceForSlide(slide: InstagramSlideCopy, factCards: readonly RelayoutF
 }
 
 /**
- * A selection whose image passed every gate. The same four conditions
+ * A selection whose image passed every gate. The same conditions
  * `isUnfillable` applies in the workflow, stated positively — never a
- * rights-encumbered, watermarked, or off-claim picture, regardless of how
+ * rights-encumbered, watermarked, or off-SUBJECT picture, regardless of how
  * badly a cover needs something in frame.
+ *
+ * Phase 5.5 item A3 moved the floor itself into `selectionPasses` so this
+ * function and `isUnfillable` cannot drift apart: promoting a picture onto the
+ * COVER on a floor one step looser than the one that admitted it to an
+ * interior slide is how the weakest picture in the post ends up being the
+ * first thing a reader sees.
  */
 function isUsableSelection(sel: ImageSelection): sel is ImageSelection & { imagePath: string } {
-  return sel.imagePath !== null && sel.rightsUsable && sel.watermarkFree && sel.claimMatch >= MIN_CLAIM_MATCH;
+  return sel.imagePath !== null && selectionPasses(sel).passes;
 }
 
 /** Which archetypes other slides have already claimed. `resolveLayout` allows each structured archetype ONCE per carousel, so a switch into one already in use would degrade straight back — a no-op dressed as a remedy. */
@@ -458,7 +542,28 @@ function recapRowsBefore(copy: InstagramCopyOutput, slideN: number): RelayoutRec
 // element will usually also report a hole; remedying the hole first would
 // spend the attempt's one free chance moving type around a plate that has
 // nothing on it.
-const KIND_PRIORITY: readonly InterestFailureKind[] = ["render-integrity", "marks-missing", "clipped", "one-element", "no-device", "dead-space", "empty", "text-wall"];
+// `cover-subject` sits beside `one-element` and ahead of every pixel kind for
+// the same reason: it is a statement about what the plate CARRIES, and a cover
+// with no subject usually also reports a hole. Remedying the hole first would
+// spend the attempt's one free chance moving type around a cover that has
+// nothing on it.
+const KIND_PRIORITY: readonly InterestFailureKind[] = [
+  "render-integrity",
+  "marks-missing",
+  "clipped",
+  "one-element",
+  "cover-subject",
+  "no-device",
+  "dead-space",
+  "empty",
+  "text-wall",
+  // LAST, and unreachable while the three `*_ARMED` flags are false. When one
+  // is thrown, a type-discipline finding is the least urgent thing on a plate
+  // that also reports a hole or a wall: it is about how many sizes the
+  // ARCHETYPE sets, so it is the one kind on this list that no copy change and
+  // no free remedy can move.
+  "type-discipline",
+];
 
 /**
  * At most one free change per failing slide, or `undefined` when the table
@@ -497,10 +602,68 @@ export function planInterestRelayout(
     }
 
     let change: InterestRelayoutChange | undefined;
+    // The shortfall's own remedy first — see `InterestRelayoutOptions.imageryShortfalls`.
+    const shortfall = opts.imageryShortfalls?.find((s) => s.slide === slideN);
+    if (shortfall !== undefined) {
+      const role = slideFindings[0]?.role ?? "interior";
+      change =
+        shortfall.remedy === "promote"
+          ? promoteImageRemedy(slide, copy, selections, role)
+          : shortfall.remedy === "merge"
+            ? mergeRemedy(slide, copy, role, opts)
+            : shortfall.remedy === "attach-device"
+              ? // The device the SLIDE'S OWN COPY states, and nothing else.
+                // `verbatimDeviceFor` is the same builder the kind ladder's last
+                // rung uses, with the same two guards: the figure must appear
+                // verbatim in this slide's words with a whole clause for a label
+                // (which is what refuses the `2` pulled out of `B2B`), and the
+                // archetype must have a slot that paints one. Called directly
+                // rather than through `remedyFor`, because a KIND runs its own
+                // ladder and would answer with whatever that ladder reaches
+                // first — a font-scale step, or `no-device`'s colour-block
+                // ground — and the shortfall asked for the object.
+                deviceShortfallRemedy(slide, factCards)
+              : shortfall.remedy === "font-scale"
+                ? remedyFor("dead-space", slide, copy, selections, factCards, slideFindings, opts)
+                : // `none` — the plate already carries a designed object, so losing the
+                  // photograph cost it nothing the re-layout has to fix. Falls through
+                  // to the kind ladder, which still answers whatever the floor found.
+                  undefined;
+    }
     const ordered = KIND_PRIORITY.filter((kind) => slideFindings.some((f) => f.kind === kind));
-    for (const kind of ordered) {
-      change = remedyFor(kind, slide, copy, selections, factCards, slideFindings, opts);
-      if (change !== undefined) break;
+    if (change === undefined) {
+      for (const kind of ordered) {
+        change = remedyFor(kind, slide, copy, selections, factCards, slideFindings, opts);
+        if (change !== undefined) break;
+      }
+    }
+
+    // ── A RUN-AUTHORED CUSTOM ARCHETYPE KEEPS ITS DESIGN. ──
+    //
+    // `05f-author-custom-archetype` is a PAID step whose entire output is a
+    // layout for THIS slide, validated against its slot contract and
+    // `assertSafeMarkup`. Four of the remedies below work by REASSIGNING
+    // `layout`, and applying one of those to a custom slide throws that design
+    // away and lands the plate on an archetype nobody designed for it. It also
+    // stops the auto-promotion flywheel silently: `09f-auto-promote-templates`
+    // reads `slide.layout === "custom"` off the SHIPPED copy, so a design the
+    // re-layout switched away can never earn a clean ship, however good it was.
+    //
+    // The remedies that do NOT touch the layout — a device the plate can paint,
+    // a font-scale step, a sentence moved to the caption — still apply, because
+    // none of them discards anything `05f` authored. This is a guard on the
+    // KIND of change, not a blanket exemption for custom plates: a custom plate
+    // that measures empty is a real finding and is reported as unremedied,
+    // where it reaches the writer's steer and the reviewer.
+    if (change !== undefined && slide.layout === "custom" && slide.customArchetype !== undefined && RELAYOUT_KINDS_THAT_REASSIGN_LAYOUT.has(change.kind)) {
+      unremedied.push({
+        slide: slideN,
+        kind: slideFindings[0]!.kind,
+        reason:
+          `no free remedy: slide ${slideN} carries the run-authored archetype "${slide.customArchetype.archetypeId}", and the only remedy available ` +
+          `("${change.kind}") works by reassigning the layout — applying it would discard a design 05f was paid to author`,
+      });
+      continue;
     }
 
     if (change === undefined) {
@@ -509,6 +672,33 @@ export function planInterestRelayout(
         slide: slideN,
         kind,
         reason: `no free remedy: slide ${slideN}'s ${kind} needs content this attempt does not have (${UNREMEDIED_DETAIL[kind]})`,
+      });
+      continue;
+    }
+
+    // ── ONE MERGE PER PLAN, AND IT IS A CORRECTNESS BOUND, NOT A POLICY. ──
+    //
+    // The apply case in `create-instagram-agent-workflow.ts` renumbers the copy,
+    // the selections, the style overrides and the downgraded-for-images set from
+    // ONE table built out of the surviving order. Every change in a plan is
+    // expressed in PRE-merge slide numbers, so a second merge applied after the
+    // first would name a `slide`/`into` pair that no longer means what the
+    // planner meant — slide 5's picture on slide 4, which is the exact
+    // copy-and-pixels-coming-apart failure the `promote-image-to-cover` branch's
+    // own comment exists about.
+    //
+    // Latent until Phase 5.5 (only a band-promoted shortfall could ask for one,
+    // and the band rarely promotes two), and reachable now that any shortfall
+    // slide a neighbour can absorb may. Capped here rather than in
+    // `imageryShortfallsFor` as well as there, because the kind ladder's own
+    // rung 1 can reach `mergeRemedy` without going through a shortfall at all.
+    if (change.kind === "merge-into-neighbour" && changes.some((c) => c.kind === "merge-into-neighbour")) {
+      unremedied.push({
+        slide: slideN,
+        kind: slideFindings[0]!.kind,
+        reason:
+          `no free remedy this attempt: slide ${slideN} would be merged into its neighbour, and this plan already merges one slide away — ` +
+          `two merges are planned against the same pre-merge numbering and cannot both be applied. It returns to the writer with the floor's own steer.`,
       });
       continue;
     }
@@ -528,18 +718,202 @@ const UNREMEDIED_DETAIL: Readonly<Record<InterestFailureKind, string>> = {
   // `undefined` in an operator's trace.
   "marks-missing": "a re-render was already spent on it, and no copy change can make a stylesheet load",
   clipped: "its type is already at the smallest scale",
-  // The honest one. A plate with one element needs a SECOND ELEMENT, and the
-  // only second element this module can produce for free is a device built
-  // from a figure the slide already states. With no figure, or on an archetype
-  // that paints no device, there is nothing free left — and that is exactly
-  // what the paid redraft is for. Inventing the element here is the
+  // The honest one. A plate below the content-weight floor needs SOMETHING A
+  // READER LOOKS AT, and the only ones this module can produce for free are a
+  // vetted picture nothing is using, the archetype the slide's own filled
+  // blocks call for, and a device built from a figure the slide already
+  // states. With none of those there is nothing free left — and that is
+  // exactly what the paid redraft is for, where the steer's own first remedy
+  // is to merge the slide away. Inventing the element here is the
   // `pubsub-21839432908803804` failure mode by another route.
-  "one-element": "its own copy carries no figure to set as a device, and nothing else can be added without writing it",
-  "no-device": "no unused vetted image, no sourced figure, and no colour-block ground left to try",
+  "one-element": "no unused vetted picture, no unclaimed content-shaped archetype, and no figure in its own copy to set as a device",
+  // The cover limb that built a device from an arbitrary fact card is DELETED
+  // (see `coverRemedy`), so a cover with nothing on it has exactly one free
+  // remedy left — a real picture — and otherwise goes back to the writer.
+  "cover-subject": "no unused vetted picture to promote, and a cover's subject is not something this module may invent",
+  "no-device": "no unused vetted image and no colour-block ground left to try",
   "dead-space": "no figure in its own text, no unclaimed content-shaped archetype, and its type is already at the largest scale",
   empty: "no figure in its own text, no unclaimed content-shaped archetype, and its type is already at the largest scale",
   "text-wall": "its type is already at the smallest scale and its body is one sentence",
+  // The honest answer, and the reason this kind has no branch in `remedyFor`:
+  // the number of type steps on a plate is a property of the TEMPLATE, not of
+  // the copy or of any of the five free changes this module can make. Switching
+  // archetype would change it by accident rather than on purpose. So an armed
+  // limb goes back to the writer with the clause's own steer, and the operator
+  // sees why nothing was tried.
+  "type-discipline": "the type steps a plate sets are a property of its archetype's stylesheet, which no free remedy here can edit",
 };
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase 5.5 — the ladder that stops manufacturing furniture
+//
+// The order is: MERGE the slide away, PROMOTE a picture onto it, RENDER the
+// content it already has through the archetype that shows it, RAISE the type
+// step, and only then ATTACH A DEVICE — and only a device whose figure is
+// verbatim in this slide's own copy with a label that is a whole clause.
+//
+// The reordering is the remedy for a defect this file already records in its
+// own comments: on run `pubsub-21839432908803804` the `attach-device` remedy
+// FABRICATED the digit `2` out of the middle of the word `B2B`, labelled it
+// with the claim minus that digit, and sourced it to a real company. On
+// 2026-09-16 the cover limb of the same remedy shipped `7.2%` under "Only of
+// organizations respond to inbound leads within five minutes, meaning" — on
+// two posts about different subjects. **A gate that cannot be satisfied
+// honestly will be satisfied dishonestly**, and the answer is not a better
+// gate, it is to put the honest remedies first and to make the last one prove
+// it is not inventing anything.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Rung 1 — fold this slide into the one before it and let the carousel be one
+ * slide shorter.
+ *
+ * The owner's complaint was that some slides are empty, and the cheapest true
+ * answer to an empty slide is that the post did not need it. A merge adds
+ * nothing, invents nothing and removes a plate a reader would have swiped
+ * past.
+ *
+ * Refused on the cover and the closer (both are structural positions, not
+ * spare plates), refused when the post is already at its client's
+ * `slides_min`, and refused outright unless the caller says it can apply one —
+ * see `InterestRelayoutOptions.mergeSupported` for why an opt-in rung is the
+ * honest shape rather than a cowardly one.
+ */
+function mergeRemedy(
+  slide: InstagramSlideCopy,
+  copy: InstagramCopyOutput,
+  role: "cover" | "interior" | "closer",
+  opts: InterestRelayoutOptions,
+): InterestRelayoutChange | undefined {
+  if (opts.mergeSupported !== true) return undefined;
+  if (role !== "interior") return undefined;
+  const floor = opts.slideCountFloor;
+  if (floor === undefined || copy.slides.length - 1 < floor) return undefined;
+  const position = positionOf(copy, slide.n);
+  if (position === undefined || position.index <= 0) return undefined;
+  const into = copy.slides[position.index - 1]!;
+  return {
+    kind: "merge-into-neighbour",
+    slide: slide.n,
+    into: into.n,
+    carry: { headline: slide.headline, body: slide.body },
+    reason:
+      `slide ${slide.n} carries too little to be its own plate; folding it into slide ${into.n} and letting the carousel run ` +
+      `${copy.slides.length - 1} slides instead of ${copy.slides.length}`,
+  };
+}
+
+/**
+ * Rung 2 — put a picture on the plate.
+ *
+ * Generalised from the cover-only version this file shipped with: an interior
+ * slide that measured empty and a vetted photograph that no slide is rendering
+ * are the same waste on any position. The COVER keeps its own archetype
+ * (`cover.html` has the hero branch built into its ground); an interior slide
+ * takes `photo`, which is the archetype `assembleSlidesData` attaches a hero
+ * to.
+ *
+ * The kind stays `promote-image-to-cover` — the name is historical and the
+ * workflow's apply case is keyed on it. Renaming it would silently do nothing,
+ * which is the one failure this module refuses to ship.
+ */
+function promoteImageRemedy(
+  slide: InstagramSlideCopy,
+  copy: InstagramCopyOutput,
+  selections: readonly ImageSelection[],
+  role: "cover" | "interior" | "closer",
+): InterestRelayoutChange | undefined {
+  const slideN = slide.n;
+  const layoutByN = new Map(copy.slides.map((s) => [s.n, s.layout ?? "photo"]));
+  // A picture that passed every gate and that no slide is rendering:
+  // `assembleSlidesData` attaches a hero only to a `photo` slide, so a vetted
+  // image on a slide that ended up typographic is going nowhere. Best claim
+  // match first.
+  const unused = selections
+    .filter(isUsableSelection)
+    .filter((sel) => sel.n !== slideN && layoutByN.get(sel.n) !== "photo")
+    .sort((a, b) => b.claimMatch - a.claimMatch || a.n - b.n)[0];
+  if (unused === undefined) return undefined;
+  const archetype: RelayoutArchetype = role === "cover" ? "cover" : "photo";
+  const capped = Math.min(unused.claimMatch, PROMOTED_CLAIM_MATCH_CEILING);
+  return {
+    kind: "promote-image-to-cover",
+    slide: slideN,
+    imagePath: unused.imagePath,
+    fromSlide: unused.n,
+    archetype,
+    // The verdict travels with the path. See `record` on the change type.
+    record: {
+      license: unused.license,
+      rightsUsable: unused.rightsUsable,
+      watermarkFree: unused.watermarkFree,
+      claimMatch: capped,
+      claimMatchReason:
+        `vetted for slide ${unused.n}'s claim at ${unused.claimMatch}/5 (${unused.claimMatchReason}), then promoted to slide ${slideN} by the interest re-layout ` +
+        `without a re-vet — capped at ${PROMOTED_CLAIM_MATCH_CEILING}/5, so this picture is compatible with that slide's claim but is not recorded as evidence for it`,
+      reason: `promoted from slide ${unused.n} to slide ${slideN} because that plate carried no subject; the picture's own vetting reason was: ${unused.reason}`,
+    },
+    reason:
+      `slide ${slideN} carried no subject; promoting slide ${unused.n}'s vetted-but-unrendered image ` +
+      `(claimMatch ${unused.claimMatch}/5, recorded at ${capped}/5 pending a re-vet) onto it as a ${archetype}`,
+  };
+}
+
+/**
+ * Rung 5 — a device, and ONLY one this slide's own copy can prove.
+ *
+ * `deviceFromText` reads a figure out of the slide's own words and cuts the
+ * label out of the sentence around it by position, which is how a label can
+ * come back as "Only of organizations respond… meaning". Two guards, both from
+ * `slide-devices.ts` so the writer-declared path and this one are judged by
+ * one rule:
+ *
+ *   * the figure must appear VERBATIM in this slide's own headline or body —
+ *     the `B2B` case, where the `2` was real in the sense that the characters
+ *     were on the plate and false in every sense that matters;
+ *   * the label must read as a whole clause.
+ *
+ * A device that fails either is not offered at all. The slide then goes back
+ * to the writer, which is the step whose job authoring is.
+ */
+/**
+ * The `attach-device` change an imagery shortfall asks for, or nothing.
+ *
+ * Both guards the kind ladder's own device rung applies, and for the same two
+ * reasons: `verbatimDeviceFor` refuses a figure that is not in this slide's own
+ * words with a complete label, and `DEVICE_SLOT_ARCHETYPES` refuses an
+ * archetype `contentFor` would drop the fragment from — an unpaintable device
+ * is a byte-identical re-render dressed as a remedy.
+ */
+function deviceShortfallRemedy(slide: InstagramSlideCopy, factCards: readonly RelayoutFactCard[]): InterestRelayoutChange | undefined {
+  const device = verbatimDeviceFor(slide, factCards);
+  const current = (slide.layout ?? "photo") as RelayoutArchetype;
+  if (device === undefined || !DEVICE_SLOT_ARCHETYPES.has(current) || slide.device !== undefined) return undefined;
+  return {
+    kind: "attach-device",
+    slide: slide.n,
+    device,
+    reason: `slide ${slide.n} lost its photograph and already states the figure ${device.value}; setting it as a device instead of prose`,
+  };
+}
+
+function verbatimDeviceFor(slide: InstagramSlideCopy, factCards: readonly RelayoutFactCard[]): RelayoutFigureDevice | undefined {
+  const source = sourceForSlide(slide, factCards);
+  if (source === undefined) return undefined;
+  const text = `${slide.headline} ${slide.body}`;
+  const device = deviceFromText(text, source);
+  if (device === undefined) return undefined;
+  // VERBATIM, with the boundaries the text itself declares. `figuresInText`
+  // already applies the word-boundary guard the `B2B` incident bought, and
+  // this is the second, independent reading of the same property: the token
+  // the device will PAINT has to be findable in the copy as its own word.
+  const painted = device.value.trim();
+  const appears = figuresInText(text).some((figure) => figure.value === painted);
+  if (!appears) return undefined;
+  const complete = isCompleteClause(device.label);
+  if (!complete.ok) return undefined;
+  return device;
+}
 
 /** The fixed table, one branch per failure kind. */
 function remedyFor(
@@ -585,38 +959,36 @@ function remedyFor(
     case "no-device":
       return role === "closer"
         ? closerRemedy(slide, copy)
-        : coverRemedy(slide, copy, selections, factCards);
+        : coverRemedy(slide, copy, selections);
 
-    // ── `one-element` GETS THE DEVICE LIMB AND NOTHING ELSE. ──
+    // ── `cover-subject` (Phase 5.5, clause I). ONE FREE REMEDY: A PICTURE. ──
     //
-    // It shares the branch below because the device limb is identical, but it
-    // must not fall through to the two after it: a `switch-archetype` moves a
-    // plate's one element into a different template and a `font-scale` step
-    // makes it bigger. **Neither adds an element**, so both would re-render
-    // byte-identically in the way that matters and burn the attempt's one free
-    // chance — the exact defect the device limb's own guard is written to
-    // prevent, one kind over. The early return is what keeps that true.
-    case "one-element": {
-      const source = sourceForSlide(slide, factCards);
-      const device = source !== undefined ? deviceFromText(`${slide.headline} ${slide.body}`, source) : undefined;
-      const current = (slide.layout ?? "photo") as RelayoutArchetype;
-      if (device !== undefined && DEVICE_SLOT_ARCHETYPES.has(current) && slide.device === undefined) {
-        return {
-          kind: "attach-device",
-          slide: slideN,
-          device,
-          reason: `slide ${slideN} carries one element and already states the figure ${device.value}; setting it as a device gives the plate a second thing to look at`,
-        };
-      }
-      return undefined;
-    }
+    // The cover's `attach-device` limb is deleted, so there is no second rung
+    // here and that is deliberate. A cover's subject is the one thing this
+    // module may not invent: the two live attempts at inventing it produced a
+    // digit cut out of the word `B2B` and a figure from another post's
+    // argument. A cover with no picture to promote goes back to `05` with
+    // clause I's steer, which costs at most one more copy attempt.
+    case "cover-subject":
+      return promoteImageRemedy(slide, copy, selections, role);
+
+    // ── `one-element` TAKES THE CONTENT RUNGS AND SKIPS THE TYPE STEP. ──
+    //
+    // It shares the ladder below because four of its five rungs are identical,
+    // and it must not take the `font-scale` one: bigger type does not add an
+    // element, so the plate would re-render, weigh exactly the same and burn
+    // the attempt's one free chance. `remedyLadder` takes `allowFontScale` for
+    // that one difference rather than duplicating the ladder.
+    case "one-element":
 
     case "dead-space":
     case "empty": {
       const current = (slide.layout ?? "photo") as RelayoutArchetype;
       const inUse = archetypesInUse(copy, slideN);
-      const source = sourceForSlide(slide, factCards);
-      const device = source !== undefined ? deviceFromText(`${slide.headline} ${slide.body}`, source) : undefined;
+      // Bigger type fills a hole; it cannot add an element. So the `font-scale`
+      // rung belongs to the two PIXEL kinds and never to `one-element`.
+      const allowFontScale = kind !== "one-element";
+      const device = verbatimDeviceFor(slide, factCards);
 
       // ── 0. THE COVER LIMB (RFC-20 §5.5), AHEAD OF THE LADDER. ──
       //
@@ -647,14 +1019,73 @@ function remedyFor(
       // clause C and that is the correct answer: the floor is now able to tell
       // a cover that has something to say from one that does not.
       if (kind === "dead-space" && role === "cover" && deadSpaceIsInCoverField(slideFindings.find((f) => f.kind === "dead-space"))) {
-        const remedy = coverRemedy(slide, copy, selections, factCards, { groundFallback: false });
+        const remedy = coverRemedy(slide, copy, selections, { groundFallback: false });
         if (remedy !== undefined) return remedy;
       }
 
-      // 1. A device from a figure the slide ALREADY carries — the cheapest
-      //    real fix there is, and the one item M's `device` field exists for.
+      // 1. MERGE IT AWAY. The cheapest true answer to a plate with too little
+      //    on it is that the post did not need the plate — it adds nothing,
+      //    invents nothing, and removes a slide a reader would have swiped
+      //    past. Opt-in; see `mergeRemedy` and `mergeSupported`.
+      const merge = mergeRemedy(slide, copy, role, opts);
+      if (merge !== undefined) return merge;
+
+      // 2. A PICTURE. A vetted photograph nothing is rendering is the
+      //    strongest subject this module can move onto a plate for $0, and it
+      //    is the remedy the owner asked for by name.
+      const promoted = promoteImageRemedy(slide, copy, selections, role);
+      if (promoted !== undefined) return promoted;
+
+      // 3. RENDER THE CONTENT IT ALREADY HAS. The archetype the slide's own
+      //    filled blocks call for — a slide whose copy carries `items` but
+      //    renders as `text_only` is a list nobody drew. Only from the two
+      //    shapeless archetypes (switching a quote card or a stat callout away
+      //    would throw a designed plate out to fix its empty half), and only
+      //    into an archetype no other slide has claimed.
       //
-      //    ONLY where it paints. `contentFor` emits `htmlFragments.device`
+      //    AHEAD of the device rung since Phase 5.5: it shows the reader
+      //    something the writer actually wrote, where a device re-sets a
+      //    number that is already on the plate.
+      if (current === "headline_focus" || current === "text_only") {
+        const target = contentShapedArchetypeFor(slide, copy, current, inUse, selections);
+        if (target !== undefined) {
+          // When the target CAN paint a device and this slide has one to
+          // paint, the switch and the device are ONE change: the archetype
+          // that makes a fragment render and the fragment itself are the same
+          // remedy, and splitting them across two attempts wastes the second.
+          if (device !== undefined && DEVICE_SLOT_ARCHETYPES.has(target) && slide.device === undefined) {
+            return {
+              kind: "attach-device",
+              slide: slideN,
+              device,
+              archetype: target,
+              reason: `slide ${slideN} already states the figure ${device.value} but renders as ${current}, which paints no device; switching it to ${target} and setting the figure as a device`,
+            };
+          }
+          return { kind: "switch-archetype", slide: slideN, from: current, to: target, reason: `slide ${slideN} carries ${target.replace("_", " ")} content but renders as ${current}; switching the archetype` };
+        }
+      }
+
+      // 4. RAISE THE TYPE STEP. A two-group plate set at statement size
+      //    becomes a two-group plate set at display size — a composition, not
+      //    an addition — which is why it is available to a hole and never to a
+      //    plate that is under the content-weight floor (`allowFontScale`).
+      if (allowFontScale) {
+        const from = scaleOf(slideN, opts);
+        const to = stepScale(from, 1);
+        if (to !== undefined) {
+          return { kind: "font-scale", slide: slideN, from, to, reason: `slide ${slideN} left too much of the plate empty; raising its fontScale from ${from} to ${to}` };
+        }
+      }
+
+      // 5. A DEVICE, LAST, and only one `verbatimDeviceFor` could prove out of
+      //    this slide's own copy — the figure verbatim in its own words, the
+      //    label a whole clause. This rung is where the `B2B` digit and the
+      //    `7.2% / "Only of organizations respond… meaning"` cover came from,
+      //    and it is now both the last thing tried and the only one that has
+      //    to prove it is not inventing anything.
+      //
+      //    ONLY WHERE IT PAINTS. `contentFor` emits `htmlFragments.device`
       //    for `cover`/`headline_focus` (and a `closer` with no recap) and
       //    silently drops it everywhere else, so an unguarded `attach-device`
       //    on a `text_only`, `photo`, `stat_callout`, `quote_card`,
@@ -679,38 +1110,7 @@ function remedyFor(
       if (device !== undefined && DEVICE_SLOT_ARCHETYPES.has(current) && slide.device === undefined) {
         return { kind: "attach-device", slide: slideN, device, reason: `slide ${slideN} already states the figure ${device.value}; setting it as a device instead of prose` };
       }
-
-      // 2. The archetype the slide's own filled content blocks call for. Only
-      //    from the two shapeless archetypes — switching a quote card or a
-      //    stat callout away would throw a designed plate out to fix its
-      //    empty half — and only into an archetype no other slide has
-      //    claimed.
-      if (current === "headline_focus" || current === "text_only") {
-        const target = contentShapedArchetypeFor(slide, copy, current, inUse, selections);
-        if (target !== undefined) {
-          // When the target CAN paint a device and this slide has one to
-          // paint, the switch and the device are ONE change: the archetype
-          // that makes a fragment render and the fragment itself are the same
-          // remedy, and splitting them across two attempts wastes the second.
-          if (device !== undefined && DEVICE_SLOT_ARCHETYPES.has(target)) {
-            return {
-              kind: "attach-device",
-              slide: slideN,
-              device,
-              archetype: target,
-              reason: `slide ${slideN} already states the figure ${device.value} but renders as ${current}, which paints no device; switching it to ${target} and setting the figure as a device`,
-            };
-          }
-          return { kind: "switch-archetype", slide: slideN, from: current, to: target, reason: `slide ${slideN} carries ${target.replace("_", " ")} content but renders as ${current}; switching the archetype` };
-        }
-      }
-      // 3. Bigger type fills more of the frame. Last, because it treats the
-      //    symptom rather than the cause.
-      const from = scaleOf(slideN, opts);
-      const to = stepScale(from, 1);
-      return to === undefined
-        ? undefined
-        : { kind: "font-scale", slide: slideN, from, to, reason: `slide ${slideN} left too much of the plate empty; raising its fontScale from ${from} to ${to}` };
+      return undefined;
     }
 
     case "text-wall": {
@@ -728,16 +1128,46 @@ function remedyFor(
         ? undefined
         : { kind: "move-sentence-to-caption", slide: slideN, sentence: last, reason: `slide ${slideN} is already at the smallest type; moving its last sentence to the caption` };
     }
+
+    // ── NO FREE REMEDY, DELIBERATELY. ──
+    // How many type sizes a plate sets is decided by its archetype's
+    // stylesheet. None of the five changes this module can make edits a
+    // stylesheet, and `switch-archetype` would change the count by accident
+    // rather than on purpose — a remedy that moves a number without being
+    // about it is the "looks like one in the trace" failure this file refuses
+    // elsewhere. `UNREMEDIED_DETAIL` carries that sentence for the operator.
+    case "type-discipline":
+      return undefined;
   }
 }
 
 /**
- * `no-device` on the cover: an image, then a figure, then a graphic ground.
+ * `no-device` on the cover: an image, then a graphic ground.
  *
- * `groundFallback` is what the last of those three is worth to the CALLER.
- * A `no-device` finding means the cover measured no imagery and no drawn
- * device at all, and moving it onto the `cover` archetype genuinely changes
- * what paints — that is the case step 3 was written for, and it keeps it. The
+ * ## THE MIDDLE RUNG IS DELETED (Phase 5.5, §4.7)
+ *
+ * It read: *build a figure device from the strongest sourced `kind: "stat"`
+ * fact card in the post.* On 2026-09-16 that shipped
+ *
+ * ```
+ *   7.2%   Only of organizations respond to inbound leads within five minutes, meaning
+ * ```
+ *
+ * on the cover of a post about generative-engine optimisation — a figure from
+ * a card the post's own angle does not rest on, labelled with the middle of
+ * that card's sentence, **and the same figure appeared on a second post about
+ * a different subject**, because "the strongest stat card" is a property of
+ * the research and not of the argument.
+ *
+ * A cover's subject is the one thing this module may not invent. What is left
+ * is a real picture (rung 1) and the archetype's own ground (rung 3); a cover
+ * that has neither goes back to `05` with clause I's steer, which costs at
+ * most one more copy attempt. `slide-devices.ts`'s `checkCoverFigureDevice`
+ * is the belt-and-braces half for a device the WRITER declares.
+ *
+ * `groundFallback` is what rung 3 is worth to the CALLER. A `no-device`
+ * finding means the cover measured no imagery and no drawn device at all, and
+ * moving it onto the `cover` archetype genuinely changes what paints. The
  * `dead-space` cover limb passes `false`, because there the slide is already
  * on `cover` and the change would re-render it byte-identically; see the limb
  * for the full audit against RFC-20's Ground Rule.
@@ -746,69 +1176,17 @@ function coverRemedy(
   slide: InstagramSlideCopy,
   copy: InstagramCopyOutput,
   selections: readonly ImageSelection[],
-  factCards: readonly RelayoutFactCard[],
   opts: { groundFallback?: boolean } = {},
 ): InterestRelayoutChange | undefined {
   const slideN = slide.n;
-  const layoutByN = new Map(copy.slides.map((s) => [s.n, s.layout ?? "photo"]));
 
-  // 1. An image that passed every gate and that no slide is rendering —
-  //    `assembleSlidesData` attaches a hero only to a `photo` slide, so a
-  //    vetted image on a slide that ended up typographic is going nowhere.
-  //    Best claim match first: a cover is the slide the whole audience sees.
-  const unused = selections
-    .filter(isUsableSelection)
-    .filter((sel) => sel.n !== slideN && layoutByN.get(sel.n) !== "photo")
-    .sort((a, b) => b.claimMatch - a.claimMatch || a.n - b.n)[0];
-  if (unused !== undefined) {
-    return {
-      kind: "promote-image-to-cover",
-      slide: slideN,
-      imagePath: unused.imagePath,
-      fromSlide: unused.n,
-      archetype: "cover",
-      // The verdict travels with the path. See `record` on the change type.
-      record: {
-        license: unused.license,
-        rightsUsable: unused.rightsUsable,
-        watermarkFree: unused.watermarkFree,
-        claimMatch: Math.min(unused.claimMatch, PROMOTED_CLAIM_MATCH_CEILING),
-        claimMatchReason:
-          `vetted for slide ${unused.n}'s claim at ${unused.claimMatch}/5 (${unused.claimMatchReason}), then promoted to the cover by the interest re-layout ` +
-          `without a re-vet — capped at ${PROMOTED_CLAIM_MATCH_CEILING}/5, so this picture is compatible with the cover's headline but is not recorded as evidence for it`,
-        reason: `promoted from slide ${unused.n} to the cover because slide ${slideN} measured no imagery; the picture's own vetting reason was: ${unused.reason}`,
-      },
-      reason: `slide ${slideN} had no imagery; promoting slide ${unused.n}'s vetted-but-unrendered image (claimMatch ${unused.claimMatch}/5, recorded on the cover at ${Math.min(unused.claimMatch, PROMOTED_CLAIM_MATCH_CEILING)}/5 pending a re-vet) to the cover`,
-    };
-  }
+  // 1. A picture that passed every gate and that no slide is rendering — see
+  //    `promoteImageRemedy`. Best claim match first: a cover is the slide the
+  //    whole audience sees.
+  const promoted = promoteImageRemedy(slide, copy, selections, "cover");
+  if (promoted !== undefined) return promoted;
 
-  // 2. A device from the strongest sourced statistic in the post. Fact cards
-  //    arrive strongest-first (`factCardsForPrompt`'s primary-first order), so
-  //    the first stat card carrying a figure is the strongest one.
-  const current = (slide.layout ?? "photo") as RelayoutArchetype;
-  for (const card of factCards) {
-    if ((card.kind ?? "stat") !== "stat") continue;
-    const device = deviceFromText(card.claim, card.source);
-    if (device === undefined) continue;
-    // The same guard as the `dead-space`/`empty` branch: a device is only
-    // offered where it paints. A cover already on `cover`/`headline_focus`
-    // takes it as it stands; anything else (a `photo` whose hero measured
-    // empty, a `text_only`, a structured plate that landed on slide 1) is
-    // moved onto `cover`, whose ground layer is the one built for the
-    // no-photograph case — and which then satisfies
-    // `default:cover-carries-device` by template as well as by fragment.
-    return DEVICE_SLOT_ARCHETYPES.has(current)
-      ? { kind: "attach-device", slide: slideN, device, reason: `slide ${slideN} had no imagery; building a figure device from the post's strongest sourced number (${device.value})` }
-      : {
-          kind: "attach-device",
-          slide: slideN,
-          device,
-          archetype: "cover",
-          reason: `slide ${slideN} had no imagery and renders as ${current}, which paints no device; moving it onto the cover archetype and building a figure device from the post's strongest sourced number (${device.value})`,
-        };
-  }
-
-  // 3. The `cover` archetype's own colour-block ground plus keyline, which is
+  // 2. The `cover` archetype's own colour-block ground plus keyline, which is
   //    structurally incapable of being a headline on flat ground (item M).
   //
   //    AUDITED AGAINST RFC-20 §5.0'S GROUND RULE, because "a full-bleed

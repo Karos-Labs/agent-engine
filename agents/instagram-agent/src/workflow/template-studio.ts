@@ -4,6 +4,12 @@ import type { ClientBrief } from "@agent-engine/tools";
 import { isolateForeignRuns, stripIsolates } from "./bidi-isolate.js";
 import { buildMarkedRuns, resolveSlideMarks, ringIndexesFor, slideMarkKinds, slideMarkSeed, type MarkRing } from "./emphasis-marks.js";
 import { resolveExpectedScript } from "./language-gate.js";
+// The one word-boundary truncation in this package, imported rather than
+// re-implemented: `post-package.ts` owns it because that is where the defect
+// it exists for was measured, and two copies of a truncation rule is how a
+// stored label and the prompt block that quotes it come to disagree by one
+// character.
+import { truncateOnWordBoundary } from "./post-package.js";
 import { scriptTypographyFor } from "./script-fonts.js";
 import { assessContrastFacts, checkPaletteWithinKit, LAYOUT_FIELD_KEYS, LEADS_WITH_FIGURE, type ContrastFact } from "./visual-qa-pre-checks.js";
 
@@ -218,14 +224,91 @@ export const PRIVILEGED_HTML_SLOTS: readonly string[] = ["device", "recap", "ite
 export const STUDIO_TTL_DAYS = 120;
 
 /**
+ * WHAT A PAST SETUP ACTUALLY DID — the discrimination the cooldown was
+ * missing, and the reason three clients were locked out of the Template
+ * Studio for a month by a bug we had already fixed.
+ *
+ * On 2026-09-16 `00b2`, `00c3` and `00d2` all returned `tooling_error` for
+ * karoslabs, thepitchbydeel and geektime: their ceilings were too small for
+ * their own schemas (see the four setup agents' `maxTokens`). Every one of
+ * those runs then wrote a setup record with `templatesStored: 0`, and
+ * `checkTemplateStudio` read that single number as *"a setup ran, was judged,
+ * and produced nothing worth storing"* — the one thing it certainly did not
+ * mean. The clients were held on the bundled archetypes for
+ * `STUDIO_EMPTY_SETUP_COOLDOWN_DAYS`, which is why all three 2026-09-16 posts
+ * shared one look.
+ *
+ * Three outcomes, not one number:
+ *
+ * - **`stored`** — templates were written. The TTL governs from here.
+ * - **`empty`** — the studio RAN, the design brief came back, candidates were
+ *   authored and every one of them was judged and dropped. Nothing about
+ *   retrying tomorrow would change that, so this is the outcome — and the
+ *   ONLY outcome — the cooldown exists for.
+ * - **`failed`** — a step did not produce an answer at all: a tooling error, a
+ *   budget lever, a schema refusal. The marker is still written, because it is
+ *   the diagnostic record, but it never gates the next run beyond
+ *   `SETUP_FAILURE_BACKOFF_RUNS`.
+ *
+ * A cooldown is a statement about the ANSWER. A failure is a statement about
+ * the MACHINE, and a broken machine that gets fixed must be allowed to run
+ * again the moment it is.
+ */
+export const SETUP_FAILURE_STATUSES = ["tooling_error", "budget_exceeded", "content_fail"] as const;
+export type SetupFailureStatus = (typeof SETUP_FAILURE_STATUSES)[number];
+
+export type SetupAttemptOutcome =
+  | { kind: "stored"; templatesStored: number }
+  | { kind: "empty"; reason: string }
+  | { kind: "failed"; reason: string; status: SetupFailureStatus };
+
+/**
+ * The persisted form, for the writer in `run-budget.ts`'s `SetupBudgetRecord`
+ * and for `readSetupBudgetHistory`, which must carry this field through
+ * untouched or the discrimination is lost on the read back.
+ *
+ * `reason` is capped rather than free: it lands in a beliefs document that a
+ * `safeParse` refuses whole if any field overruns, and this repo has already
+ * paid for that lesson once (`GAP_MAX_CHARS`).
+ */
+export const SetupAttemptOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("stored"), templatesStored: z.number().int().nonnegative() }),
+  z.object({ kind: z.literal("empty"), reason: z.string().min(1).max(300) }),
+  z.object({ kind: z.literal("failed"), reason: z.string().min(1).max(300), status: z.enum(SETUP_FAILURE_STATUSES) }),
+]);
+
+/**
+ * How long a client whose setup keeps FAILING waits, by consecutive failure,
+ * measured in runs.
+ *
+ * `[1, 1, 8]`: the first two failures cost nothing — a transient router blip,
+ * a schema miss we have just fixed, a deploy mid-run — and the very next run
+ * tries again, which is the whole point of separating `failed` from `empty`.
+ * From the third consecutive failure the client is probably broken in a way
+ * this pipeline cannot fix by retrying (an unreachable site, a permanently
+ * missing consent), and eight runs is roughly a month at a weekly cadence:
+ * long enough that a permanently broken client is not re-billing the setup
+ * meter every run, short enough that a fix lands within one billing cycle.
+ * `refreshTemplates` overrides it immediately, as it overrides the cooldown.
+ *
+ * A gap of **1 means "no calendar wait at all"** — the next run, whenever it
+ * comes. That matters today: the three clients' failures are hours old, and a
+ * backoff that read "1" as "wait a day" would block the very re-runs this
+ * change exists to make possible.
+ */
+export const SETUP_FAILURE_BACKOFF_RUNS: readonly number[] = [1, 1, 8];
+
+/**
  * How long a setup that stored NOTHING stands before another one is paid for.
  *
  * The store rows are the studio's only durable record (spec finding 11
  * deleted the manifest), so a setup that stored zero templates leaves the
  * store exactly as it found it — and "no rows" then reads as "never tried".
- * Both zero-store paths are reachable and both are handled as warns that fall
- * through: the design-brief turn can fail its schema, and every candidate can
- * be dropped by the eight gates. Without a cooldown the next weekly run
+ *
+ * **This applies to `SetupAttemptOutcome.kind === "empty"` and to nothing
+ * else.** It used to apply to `templatesStored === 0`, which is also what a
+ * tooling error writes — see `SETUP_FAILURE_STATUSES` for what that cost.
+ * Without a cooldown on the genuinely-empty case the next weekly run
  * re-resolves `generate` and re-pays `00c3` plus N x `00c4` plus repairs, on
  * its own meter, unbounded — against an item that is documented, twice, as
  * running "at most once per client per 120 days".
@@ -302,6 +385,35 @@ export type StudioAction = "reuse" | "generate" | "awaiting-approval";
 export interface StudioSetupAttempt {
   at: string;
   templatesStored: number;
+  /**
+   * What that setup actually did (`SetupAttemptOutcome`).
+   *
+   * OPTIONAL, and its absence is read as `"unknown"` — never as `"empty"`.
+   * Every record written before 2026-09-16 carries only `templatesStored`,
+   * and the ones sitting in prep's beliefs documents right now are precisely
+   * the three tooling-error runs this discrimination exists to stop treating
+   * as judgements. Reading a legacy zero as a cooldown would preserve the
+   * defect for another 30 days for exactly the clients that are already
+   * locked out. The cost of the other direction is bounded and one-off: at
+   * most one extra setup per client, after which a real outcome is on file.
+   */
+  outcome?: SetupAttemptOutcome | undefined;
+}
+
+/** What a past attempt tells us, with `unknown` for a legacy record that predates `SetupAttemptOutcome`. */
+export type StudioAttemptClass = SetupAttemptOutcome["kind"] | "unknown";
+
+/**
+ * A past attempt's class, from its outcome when it has one and from the only
+ * thing a legacy record carries when it does not.
+ *
+ * A legacy record with templates stored is unambiguous — something was
+ * written — so it still reads as `stored`. A legacy zero is genuinely
+ * ambiguous and says so.
+ */
+export function classifySetupAttempt(attempt: StudioSetupAttempt): StudioAttemptClass {
+  if (attempt.outcome !== undefined) return attempt.outcome.kind;
+  return attempt.templatesStored > 0 ? "stored" : "unknown";
 }
 
 export interface StudioRowSummary {
@@ -346,6 +458,23 @@ export interface StudioCheck {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * How many setups in a row, counting back from the most recent, ended in
+ * `failed`.
+ *
+ * `unknown` (a legacy record) stops the count rather than extending it: a
+ * record that cannot say what it did must not be able to push a client into
+ * the eight-run backoff.
+ */
+function countTrailingFailures(newestFirst: readonly StudioSetupAttempt[]): number {
+  let n = 0;
+  for (const attempt of newestFirst) {
+    if (classifySetupAttempt(attempt) !== "failed") break;
+    n++;
+  }
+  return n;
+}
+
 function ageDaysOf(row: StudioStoredRow, now: number): number {
   const at = row.updatedAt ?? row.createdAt;
   if (typeof at !== "number" || !Number.isFinite(at)) return Number.NaN;
@@ -362,8 +491,14 @@ function ageDaysOf(row: StudioStoredRow, now: number): number {
  * - **`awaiting-approval`** — rows exist and are fresh, but none is enabled.
  *   Regenerating here would be the worst of both: it spends the setup budget
  *   again AND overwrites the exact rows a human has been asked to look at.
- * - **`reuse`** — at least one fresh enabled row, or a setup inside
- *   `STUDIO_EMPTY_SETUP_COOLDOWN_DAYS` that stored nothing. Nothing is spent.
+ * - **`reuse`** — at least one fresh enabled row; or an `empty` setup inside
+ *   `STUDIO_EMPTY_SETUP_COOLDOWN_DAYS`; or a run of `failed` setups still
+ *   inside `SETUP_FAILURE_BACKOFF_RUNS`. Nothing is spent.
+ *
+ * The two suppressions are DIFFERENT ANSWERS to different facts and are kept
+ * apart deliberately: a month for a studio that ran and judged its own output
+ * worthless, nothing at all for the first two technical failures. A record
+ * that cannot say which it was suppresses neither.
  *
  * An undatable row (no `createdAt`/`updatedAt`) counts as STALE, the same way
  * `resolveBriefFreshness` treats an unreadable `generatedAt` as a refresh
@@ -376,6 +511,18 @@ export function checkTemplateStudio(input: {
   refreshRequested?: boolean;
   /** Past setups from `SETUP_BUDGET_BELIEF_KEY`, oldest first. Omit and a zero-store setup is invisible again. */
   setupHistory?: readonly StudioSetupAttempt[];
+  /**
+   * Runs COMPLETED since the last setup attempt's own run: the run
+   * immediately after it reports 1, and only a re-entry inside that same run
+   * reports 0.
+   *
+   * `SETUP_FAILURE_BACKOFF_RUNS` is denominated in runs and nothing at `00c`
+   * knows the run count, so the caller supplies it or this falls back to
+   * `gap - 1` DAYS. The fallback is never the tighter reading of the two for
+   * any client that runs less often than daily, which is the safe direction
+   * for a marker that must never become a lockout.
+   */
+  runsSinceLastAttempt?: number;
 }): StudioCheck {
   const now = (input.now ?? new Date()).getTime();
   const studioRows = input.rows.filter((r) => isStudioTemplateId(r.id));
@@ -404,26 +551,62 @@ export function checkTemplateStudio(input: {
     // is only right for one of them. A setup that ran and stored nothing
     // leaves the store untouched, so the beliefs history is the only place
     // that remembers it happened — see `STUDIO_EMPTY_SETUP_COOLDOWN_DAYS`.
-    const lastAttempt = [...(input.setupHistory ?? [])]
+    const dated = [...(input.setupHistory ?? [])]
       .map((attempt) => ({ attempt, at: Date.parse(attempt.at) }))
       .filter((entry) => Number.isFinite(entry.at))
-      .sort((a, b) => b.at - a.at)[0];
-    // Only a ZERO-store attempt earns the cooldown. A past setup that stored
-    // rows and has none now is a deletion, not a failure, and regenerating is
-    // the right answer there.
-    if (lastAttempt !== undefined && lastAttempt.attempt.templatesStored === 0) {
+      .sort((a, b) => b.at - a.at);
+    const lastAttempt = dated[0];
+    if (lastAttempt !== undefined) {
       const ageDays = Math.floor((now - lastAttempt.at) / DAY_MS);
-      if (ageDays >= 0 && ageDays < STUDIO_EMPTY_SETUP_COOLDOWN_DAYS) {
+      const lastClass = classifySetupAttempt(lastAttempt.attempt);
+
+      // A setup that RAN, was judged, and produced nothing is the one case a
+      // cooldown is an honest answer to: nothing about tomorrow changes the
+      // judgement, and the alternative is re-paying `00c3` plus N x `00c4`
+      // plus repairs every week, on its own meter, forever.
+      if (lastClass === "empty" && ageDays >= 0 && ageDays < STUDIO_EMPTY_SETUP_COOLDOWN_DAYS) {
         return {
           action: "reuse",
           reason:
-            `a setup ${ageDays} day(s) ago stored no templates, so this run uses the bundled archetypes rather than re-paying the setup bill — ` +
+            `a setup ${ageDays} day(s) ago ran and stored no templates (${lastAttempt.attempt.outcome?.kind === "empty" ? lastAttempt.attempt.outcome.reason : "nothing survived validation"}), ` +
+            `so this run uses the bundled archetypes rather than re-paying the setup bill — ` +
             `the next attempt is ${STUDIO_EMPTY_SETUP_COOLDOWN_DAYS - ageDays} day(s) away, or immediately with refreshTemplates`,
           rows,
           archetypeIds,
           staleArchetypeIds,
           freshArchetypeIds,
         };
+      }
+
+      // A setup that FAILED gets the next run, and the one after that, for
+      // free — a failure is a statement about the machine, and the machine
+      // gets fixed. Only a client that has failed three times running is
+      // throttled, and even then it is throttled rather than locked out.
+      if (lastClass === "failed") {
+        const consecutive = countTrailingFailures(dated.map((entry) => entry.attempt));
+        const gapRuns = SETUP_FAILURE_BACKOFF_RUNS[Math.min(consecutive, SETUP_FAILURE_BACKOFF_RUNS.length) - 1] ?? 1;
+        const held =
+          input.runsSinceLastAttempt !== undefined
+            ? input.runsSinceLastAttempt < gapRuns
+            : // No run counter: one run reads as "no wait", and each further
+              // run of the gap reads as a day. For any client running less
+              // often than daily this retries SOONER than the run-denominated
+              // rule would, which is the safe direction for a marker that
+              // must never become a lockout.
+              ageDays >= 0 && ageDays < gapRuns - 1;
+        if (held) {
+          return {
+            action: "reuse",
+            reason:
+              `the last ${consecutive} setup(s) for this client failed outright (most recently ${ageDays} day(s) ago: ` +
+              `${lastAttempt.attempt.outcome?.kind === "failed" ? `${lastAttempt.attempt.outcome.status} — ${lastAttempt.attempt.outcome.reason}` : "reason not recorded"}), ` +
+              `so the setup bill is held for ${gapRuns} run(s) — this is a backoff, not a cooldown, and refreshTemplates overrides it`,
+            rows,
+            archetypeIds,
+            staleArchetypeIds,
+            freshArchetypeIds,
+          };
+        }
       }
     }
     return { action: "generate", reason: "no studio templates for this client yet — generating the first set", rows, archetypeIds, staleArchetypeIds, freshArchetypeIds };
@@ -768,9 +951,40 @@ export type StudioGround = z.infer<typeof StudioGroundSchema>;
 
 export const StudioRoleSchema = z.enum(["cover", "interior", "closer"]);
 
+/**
+ * The ceilings the STORED row and the prompt blocks are built around, and —
+ * separately — what the WIRE accepts before code brings a long answer back to
+ * them.
+ *
+ * `00c3-write-design-brief` returned `tooling_error` on every client on
+ * 2026-09-16, and the ceiling was only half of why: `formatLabel` was
+ * `.max(80)` for a field whose own instruction asks the model to name a
+ * measured format ("carousel opening on a single large figure with a
+ * two-line caption" is 62 and a Hebrew one is longer), `setRules[]` was 300
+ * and `gaps[]` 200 for sentences code itself routinely writes past.
+ *
+ * **A schema max on a model output is a coin flip that loses the whole
+ * step** — the same defect, and the same fix, as `ALT_TEXT_MAX_CHARS` in
+ * `post-package.ts`: accept wide, truncate in code at a word boundary. The
+ * downstream invariants are unchanged because the clamp restores them
+ * exactly; what changes is that overshooting costs a few words instead of a
+ * client's whole template set. The clamp is deterministic, so a label that is
+ * compared against the planned one (`promoteTemplate`, the duplicate guard)
+ * still matches itself.
+ */
+export const FORMAT_LABEL_MAX_CHARS = 80;
+export const FORMAT_LABEL_WIRE_MAX_CHARS = 120;
+export const SET_RULE_MAX_CHARS = 300;
+export const SET_RULE_WIRE_MAX_CHARS = 500;
+export const STUDIO_GAP_MAX_CHARS = 200;
+export const STUDIO_GAP_WIRE_MAX_CHARS = 400;
+
+/** The one clamped `formatLabel` both the design brief and the designer's own `derivedFrom` go through, so the two can never disagree about a label. */
+const clampedFormatLabel = z.string().min(1).max(FORMAT_LABEL_WIRE_MAX_CHARS).overwrite((s) => truncateOnWordBoundary(s, FORMAT_LABEL_MAX_CHARS));
+
 /** The evidence a designer must attach to its own template. Mirrors `TemplateDerivedFromSchema` in `karos-templates`, which is the authority for the stored row. */
 export const StudioDerivedFromSchema = z.object({
-  formatLabel: z.string().min(1).max(80),
+  formatLabel: clampedFormatLabel,
   accounts: z.array(z.string().min(1)).max(8).default([]),
   postCount: z.number().int().nonnegative().default(0),
   normalisedScore: z.number().optional(),
@@ -817,8 +1031,8 @@ export const StudioDesignBriefOutputSchema = z.object({
       z.object({
         archetypeId: z.string().min(1).max(40),
         role: StudioRoleSchema,
-        /** The measured format this template implements, by the label the evidence block used. */
-        formatLabel: z.string().min(1).max(80),
+        /** The measured format this template implements, by the label the evidence block used. Clamped, not refused — see `FORMAT_LABEL_MAX_CHARS`. */
+        formatLabel: clampedFormatLabel,
         ground: StudioGroundSchema,
         /** Why this client should run this archetype. Checked by `assertNoInventedMetrics`. */
         why: z.string().min(1).max(400),
@@ -826,12 +1040,18 @@ export const StudioDesignBriefOutputSchema = z.object({
     )
     .min(2)
     .max(8),
-  /** The rules that make the set read as ONE system: type roles, accent discipline, ground policy. */
-  setRules: z.array(z.string().min(1).max(300)).min(1).max(10),
+  /** The rules that make the set read as ONE system: type roles, accent discipline, ground policy. Clamped, not refused. */
+  setRules: z
+    .array(z.string().min(1).max(SET_RULE_WIRE_MAX_CHARS).overwrite((s) => truncateOnWordBoundary(s, SET_RULE_MAX_CHARS)))
+    .min(1)
+    .max(10),
   signalsAvailable: z.array(z.string().min(1)).max(3).default([]),
   /** What the evidence did NOT have. Required by the schema so it cannot be quietly omitted. */
   signalsAbsent: z.array(z.string().min(1)).max(8),
-  gaps: z.array(z.string().min(1).max(200)).max(8).default([]),
+  gaps: z
+    .array(z.string().min(1).max(STUDIO_GAP_WIRE_MAX_CHARS).overwrite((s) => truncateOnWordBoundary(s, STUDIO_GAP_MAX_CHARS)))
+    .max(8)
+    .default([]),
 });
 export type StudioDesignBriefOutput = z.infer<typeof StudioDesignBriefOutputSchema>;
 

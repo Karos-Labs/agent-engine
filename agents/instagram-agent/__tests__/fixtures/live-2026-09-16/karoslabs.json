@@ -1,0 +1,170 @@
+{
+  "client": "karoslabs",
+  "runId": "pubsub-21868183257380937",
+  "stepId": "07c-emit-slides-data-attempt-3",
+  "slides": [
+    {
+      "n": 1,
+      "template": "cover.html",
+      "fields": {
+        "accentColor": "#ff6b2c",
+        "dir": "ltr",
+        "lang": "en",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "glyph",
+        "slideIndex": "01",
+        "kicker": "by the numbers",
+        "brandHandle": "@karoslabs",
+        "seriesBadge": "by the numbers",
+        "eyebrow": "by the numbers",
+        "title": "GEO is not a future strategy",
+        "subtitle": "Your buyers are already inside AI-generated answers. Whether your brand is there with them is the question."
+      },
+      "images": {},
+      "htmlFragments": {}
+    },
+    {
+      "n": 2,
+      "template": "stat-callout.html",
+      "fields": {
+        "accentColor": "#ff6b2c",
+        "dir": "ltr",
+        "lang": "en",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "glyph",
+        "slideIndex": "02",
+        "brandHandle": "@karoslabs",
+        "seriesBadge": "by the numbers",
+        "figure": "90%",
+        "subLabel": "of CMOs say buyer discovery now happens inside AI-generated answers",
+        "body": "Buyers form purchase opinions in AI-generated answers today. Not next quarter.",
+        "sourceLine": "Mind the Marketing Gap, BCG, June 2026"
+      },
+      "images": {},
+      "htmlFragments": {}
+    },
+    {
+      "n": 3,
+      "template": "headline-focus.html",
+      "fields": {
+        "accentColor": "#ff6b2c",
+        "dir": "ltr",
+        "lang": "en",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "glyph",
+        "slideIndex": "03",
+        "brandHandle": "@karoslabs",
+        "seriesBadge": "by the numbers",
+        "headline": "The conversation your buyer has before reaching out",
+        "body": "AI answer engines surface brands optimized for their queries. Most have not done this work."
+      },
+      "images": {},
+      "htmlFragments": {}
+    },
+    {
+      "n": 4,
+      "template": "slide.html",
+      "fields": {
+        "accentColor": "#ff6b2c",
+        "dir": "ltr",
+        "lang": "en",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "glyph",
+        "slideIndex": "04",
+        "brandHandle": "@karoslabs",
+        "seriesBadge": "by the numbers",
+        "headline": "Eight percent execute. The rest plan.",
+        "body": "Most marketing leaders say AI is transforming their function. Almost none have infrastructure to run it."
+      },
+      "images": {},
+      "htmlFragments": {}
+    },
+    {
+      "n": 5,
+      "template": "slide.html",
+      "fields": {
+        "accentColor": "#ff6b2c",
+        "dir": "ltr",
+        "lang": "en",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "glyph",
+        "slideIndex": "05",
+        "brandHandle": "@karoslabs",
+        "seriesBadge": "by the numbers",
+        "headline": "Awareness is not optimization",
+        "body": "Knowing the environment shifted is not the same as being present. Citation history compounds. You cannot buy it back later.",
+        "deviceFigures": "",
+        "deviceKind": "versus"
+      },
+      "images": {},
+      "htmlFragments": {
+        "device": "<div class=\"dv dv-versus-block\"><div class=\"dv-versus\"><div class=\"dv-vs-cell\"><div class=\"dv-vs-label\">Common assumptio…[truncated for the fixture: only the PRESENCE of a fragment is read]"
+      }
+    },
+    {
+      "n": 6,
+      "template": "slide.html",
+      "fields": {
+        "accentColor": "#ff6b2c",
+        "dir": "ltr",
+        "lang": "en",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "glyph",
+        "slideIndex": "06",
+        "brandHandle": "@karoslabs",
+        "seriesBadge": "by the numbers",
+        "headline": "Exploration ended. Execution is the gap.",
+        "body": "Most of that 81% are building or piloting. Only 20% have moved into production."
+      },
+      "images": {},
+      "htmlFragments": {}
+    },
+    {
+      "n": 7,
+      "template": "list-takeaway.html",
+      "fields": {
+        "accentColor": "#ff6b2c",
+        "dir": "ltr",
+        "lang": "en",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "glyph",
+        "slideIndex": "07",
+        "brandHandle": "@karoslabs",
+        "seriesBadge": "by the numbers",
+        "headline": "Three things GEO readiness requires now"
+      },
+      "images": {},
+      "htmlFragments": {
+        "itemRows": "<div class=\"me-row\"><span class=\"diamond\"></span><div><div class=\"me-title\">Citable authority</div><div class=\"me-note\">…[truncated for the fixture: only the PRESENCE of a fragment is read]"
+      }
+    },
+    {
+      "n": 8,
+      "template": "closer.html",
+      "fields": {
+        "accentColor": "#ff6b2c",
+        "dir": "ltr",
+        "lang": "en",
+        "fontScale": "m",
+        "textAlign": "start",
+        "groundStyle": "glyph",
+        "slideIndex": "08",
+        "brandHandle": "@karoslabs",
+        "seriesBadge": "by the numbers",
+        "takeaway": "Optimizing later means losing to whoever moved first",
+        "cta": "Open ChatGPT. Type the question your buyer asks when evaluating options in your category. Screenshot the answer. Book the 15-minute intro at karoslabs.com and bring it. We will show you exactly what keeps your brand out of that response."
+      },
+      "images": {},
+      "htmlFragments": {
+        "recap": "<div class=\"rc-strip\"><div class=\"rc-plate\"><div class=\"rc-n\">01</div><div class=\"item-title\">GEO is not a future strate…[truncated for the fixture: only the PRESENCE of a fragment is read]"
+      }
+    }
+  ]
+}

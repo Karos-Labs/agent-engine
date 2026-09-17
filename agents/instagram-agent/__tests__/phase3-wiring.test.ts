@@ -192,18 +192,32 @@ describe("00d* — a client with no visual direction derives one, once", () => {
     expect(Date.parse(attempt?.attemptedAt ?? "")).not.toBeNaN();
   }, 120_000);
 
-  it("does not re-pay for a derivation that failed this week: no 00d1, no 00d2, no art-director turn", async () => {
+  it("does not re-pay for a derivation that ran and produced nothing this week: no 00d1, no 00d2, no art-director turn", async () => {
     const marked = await setupTestEnvironment({ seedVisualDirection: false });
     try {
       // Exactly what the run above left behind, seeded so this run stands on
       // its own rather than on the previous test's ordering.
+      //
+      // ── PHASE 5.5 (spec §5 D1): `outcome: "empty"` IS NOW LOAD-BEARING ──
+      //
+      // The 7-day window used to fire on the mere PRESENCE of an attempt
+      // marker, so a `00d2` that ran out of its 3,000-token ceiling locked the
+      // client out of ever deriving a visual direction — which is what
+      // happened to all three clients on 2026-09-16. It now fires only on
+      // `"empty"`: the art director ANSWERED and the answer was unusable,
+      // which is a judgement about this client and is the one thing the window
+      // was written for. A `"failed"` marker (and a legacy marker with no
+      // `outcome` at all) suppresses nothing and retries next run. The seed
+      // therefore says which of the two this was, and the sibling case below
+      // pins the retry half.
       const beliefs = (await marked.store.readJson<Record<string, unknown>>("acme", ["memory", "beliefs"])) ?? {};
       await marked.store.writeJson("acme", ["memory", "beliefs"], {
         ...beliefs,
         [VISUAL_DIRECTION_ATTEMPT_BELIEF_KEY]: {
           version: 1,
           attemptedAt: new Date(Date.now() - 2 * 86_400_000).toISOString(),
-          failedWith: '00d2-derive-visual-direction resolved to "content_fail"',
+          failedWith: "00d2-derive-visual-direction returned a direction that could not be stored (too few grounded lines, or a document the schema refuses)",
+          outcome: "empty",
         },
       });
 
@@ -437,7 +451,14 @@ describe("item S's treatment sheet reaches every document this run renders", () 
    * someone adding a fifth call site.
    */
   it("every run-path document is built with headExtras(), never the device sheet alone", () => {
-    const source = readFileSync(WORKFLOW_SOURCE, "utf8");
+    // COMMENTS STRIPPED FIRST. This counts CALL SITES, and the literal it
+    // counts is also the name a comment uses to talk about them — so a
+    // paragraph explaining the staleness probe was arithmetic in this
+    // assertion, and the number it expects moved without a call site moving.
+    // A source scan whose count includes prose is measuring the prose.
+    const source = readFileSync(WORKFLOW_SOURCE, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/(^|[^:])\/\/.*$/gm, "$1");
     // Exactly ONE `extraHeadHtml:` on the run path is not `headExtras()`, and
     // on purpose: the Template Studio's validation render at `00c5`, which
     // runs BEFORE `04k` freezes the style and which judges a template as a
@@ -468,8 +489,15 @@ describe("item S's treatment sheet reaches every document this run renders", () 
     expect(source.slice(enclosing, studioCallSite)).not.toContain("extraHeadHtml:");
     // …and no OTHER site may pass the device sheet alone.
     expect(source.split("extraHeadHtml: deviceCssBlock()")).toHaveLength(1);
-    // And the four that matter: `materializeTemplates` twice, the branded
-    // no-store copy, and the custom-archetype writer.
+    // And the five that matter: `materializeTemplates` twice, the branded
+    // no-store copy, the custom-archetype writer, and (Phase 5.5, item C)
+    // `ensureTemplatesOnDisk`'s STALENESS PROBE — the head sheet is now a third
+    // re-materialisation trigger beside "a file went missing" and "the kit
+    // changed", because `04p` resolves the visual system AFTER `04c` has
+    // already materialised and a re-layout that changed the slide count changes
+    // the per-slide accent and pagination switches inside the sheet. Without
+    // that probe the system would be resolved, recorded on the gate payload,
+    // and visible in no pixel.
     expect(source.split("headExtras()")).toHaveLength(6);
   });
 });

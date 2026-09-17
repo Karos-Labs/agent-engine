@@ -23,7 +23,7 @@ import {
   pendingStudioRow,
   SIX_RESEARCH_FACTS,
 } from "./test-helpers.js";
-import { DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
+import { DEFAULT_ENTITIES_TURN, DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS } from "./turns.js";
 import {
   assembleSlidesData,
   buildListRows,
@@ -808,7 +808,7 @@ describe("template registry integration (Approach a)", () => {
     const pool = goodImageCandidatePool();
     const photoNs = base.slides.filter((s) => s.n !== 2).map((s) => s.n);
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(copy),
       finalTurn({
         selections: photoNs.map((n) => ({
@@ -889,7 +889,7 @@ describe("template registry integration (Approach a)", () => {
     };
 
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(goodCopyOutput()),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
@@ -937,12 +937,12 @@ describe("template registry integration (Approach a)", () => {
     const store = new MemoryTemplateStore([pendingStudioRow()]);
     const first = goodCopyOutput();
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(first),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
       // Round 1 proposes its own angle (04i runs once per REVISION).
-      finalTurn(goodAngleProposal()),
+      finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(first),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
@@ -2119,7 +2119,7 @@ describe("repairSourceRefs, wired into step 07 (RFC-19 §3 + §4 item 2)", () =>
     const copy = goodCopyOutput();
     const quoted = { ...copy, slides: copy.slides.map((s) => ({ ...s, sourceRef: `“${s.sourceRef}”` })) };
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(quoted),
       finalTurn(goodImageVettingOutput()),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
@@ -2137,7 +2137,8 @@ describe("repairSourceRefs, wired into step 07 (RFC-19 §3 + §4 item 2)", () =>
     // packager = 9 — so a second drafting attempt would exhaust it and fail
     // loudly. That is the assertion that "it saved the attempt" actually rests
     // on; `completed` alone would be true of a run that redrafted twice.
-    expect(router.complete).toHaveBeenCalledTimes(9);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(10);
     expect(await durableStore.getStep(runId, "05-write-copy-attempt-2")).toBeUndefined();
 
     // And it shipped CLEAN: a repaired citation is not a degrade. The marker is
@@ -2163,7 +2164,7 @@ describe("repairSourceRefs, wired into step 07 (RFC-19 §3 + §4 item 2)", () =>
       ),
     };
     const router = fakeRouterSequence([
-      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()),
+      finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(fabricated),
       finalTurn(goodImageVettingOutput()),
       finalTurn(fabricated),
@@ -2196,6 +2197,7 @@ describe("repairSourceRefs, wired into step 07 (RFC-19 §3 + §4 item 2)", () =>
     // The note says WHY the repair was refused — not "a repair was attempted".
     expect(String(finding!["remedyNote"])).toMatch(/fabricate a source/);
 
-    expect(router.complete).toHaveBeenCalledTimes(13);
+    // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
+    expect(router.complete).toHaveBeenCalledTimes(14);
   }, 60000);
 });

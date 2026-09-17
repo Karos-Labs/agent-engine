@@ -27,3 +27,12 @@ export * from "./instagram-visual-qa-agent.js";
 // every run. Exported now so the roster that suite derives really is every
 // agent this package ships.
 export * from "./instagram-concept-agent.js";
+// Phase 5.5 (spec §3 B3) — the markup half of a custom archetype, hoisted out
+// of the copy schema. `05f-author-custom-archetype`, at most once per carousel,
+// and only when a draft asks for a layout none of the standard archetypes has.
+export * from "./instagram-custom-archetype-agent.js";
+// Phase 5.5 (spec §2 A2) — `04b3-extract-entities`. Reads this run's fact
+// cards, topic and angle and names the real-world things a picture could be OF,
+// so the sourcing queue can look for THAT product/company/person rather than a
+// mood. Once per revision, on `gemini-2.5-flash`, ~$0.0023.
+export * from "./instagram-entity-agent.js";

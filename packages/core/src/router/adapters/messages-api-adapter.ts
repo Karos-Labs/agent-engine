@@ -6,6 +6,15 @@ import { withRetry, type RetryOptions } from "./retry.js";
 
 const STRUCTURED_OUTPUT_TOOL_NAME = "emit_output";
 
+// A turn the provider cut off at the output ceiling is `OutputLimitExceededError`
+// (`./structured-output.js`), which carries the provider's own usage resolved
+// BEFORE the throw. Phase 5.5 reached the same defect from the Instagram side —
+// across the six prep runs of 2026-09-16, seventeen truncated calls booked
+// `costUsd: 0` for turns that had spent their entire output budget, ≈$0.57 a run
+// the meter could not see — and proposed a second error type for it. One type
+// that both carries the spend and lets `BaseAgent` re-ask with a raised ceiling
+// is strictly better than two that each do half, so there is only the one.
+
 /**
  * Output-token ceiling when a step doesn't set its own `maxTokens`.
  *
@@ -145,6 +154,9 @@ export class MessagesApiAdapter implements ModelAdapter {
     // and $0 — the one number that would have shown these turns are neither
     // free nor cheap. A turn that hit its ceiling burned every output token of
     // that ceiling, so it is the most expensive failure of the lot.
+    //
+    // Every branch that can throw sits BELOW this line; adding a new one above
+    // it would put the hole straight back.
     const reportedUsage = {
       // Normalized back to canonical form — `computeStepCostUsd` looks this
       // up in `MODEL_PRICING`, and a provider-spelled miss now throws rather
@@ -163,7 +175,9 @@ export class MessagesApiAdapter implements ModelAdapter {
     // downstream schema error, which points nowhere near the real problem, and
     // say it in a type `BaseAgent` can act on: this is the one failure whose
     // fix is knowable from the failure itself, so it is re-asked with a raised
-    // ceiling rather than reported to a human who will read it next week.
+    // ceiling rather than reported to a human who will read it next week. The
+    // error carries `reportedUsage`, so the step books the ~$0.32 an exhausted
+    // 16k ceiling on Sonnet actually costs instead of $0.
     if (response.stop_reason === "max_tokens") {
       throw new OutputLimitExceededError(
         `${this.providerId}: model "${req.model}" hit the ${maxTokens}-token output limit before completing its structured output` +

@@ -154,7 +154,10 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   // `languageDirective` marker would be unsatisfiable — its output is an
   // English generation brief for an image model, never client-facing copy),
   // and it names no `gate.*`.
-  { promptId: "instagram-art-director", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
+  // Phase 5.5, item D. @2 adds the six frozen per-client axes (`ClientVisualSystem`) — the
+  // display register, composition grammar, ground texture and the rest — so two clients stop
+  // resolving to the same visual system. Runs once per client per 90 days on the setup meter.
+  { promptId: "instagram-art-director", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
   // Phase 4 (RFC-16 §2.2), the concept direction. No `requires` flags for the
   // same reason `instagram-art-director` has none: it receives the resolved
   // `targetLanguage` and never `clientVoiceContext` (so the `languageDirective`
@@ -166,8 +169,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "instagram-copy",
     agent: "instagram-agent",
-    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20"],
-    latestVersion: "20",
+    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22"],
+    latestVersion: "22",
     // `requires` is UNCHANGED at @16. §23 makes `languageBrief` binding when it is present, but §1 is
     // demoted rather than deleted, so the `languageDirective` marker — which looks for the literal
     // `clientVoiceContext` — is still satisfied, and an English run reads identically to @15.
@@ -193,8 +196,43 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
     // it adds no REQUIRED output field: `emphasis` is OPTIONAL on every slide (a slide with nothing worth
     // marking correctly carries none), so a `structuredOutput` flag would assert a field the schema does
     // not require. Claiming any new flag here would be dishonest about what §28 is.
+    //
+    // Phase 5.5 (spec §3 B3), @21: the custom-archetype MARKUP authoring is removed from the copy step and
+    // hoisted into `05f-author-custom-archetype` (`instagram-custom-archetype@1`); the writer now emits a
+    // `customArchetypeBrief` instead, at most ONE per carousel. §7 gains the `unfillable` field (spec §6 G3 —
+    // an object the cards cannot fill is named there, never narrated to the reader in `headline`/`body`), and
+    // §7's kicker bullet no longer advertises a kicker as the cheapest way to clear the interest floor. Every
+    // string in the copy contract is now bounded, and those maxes are stated in the prompt.
+    //
+    // `requires` is UNCHANGED a fourth time, and for the reason @17-@20 already record: @21 edits neither §1
+    // nor §15, both of which still carry the literal `clientVoiceContext`, so `languageDirective` stays
+    // satisfied by two independent sections. It names no NEW `gate.*` — `gate.nativeLanguage` is still
+    // inherited verbatim from @16 and is already on `KNOWN_GATES` — so **`KNOWN_GATES` is untouched**.
+    //
+    // Phase 5.5 (spec §2 A2/A3), @22: the scene brief gains a SUBJECT. §22 documents `visualNeed.subject`
+    // (`noun`, optional `entityRef`, optional `mustShow`), §6 documents the `namedEntities` input — the
+    // entities `04b3-extract-entities` found and `groundEntities` corroborated verbatim against this run's
+    // own fact cards — and §16 documents `sceneSteer`, which is the one steer in this prompt that never
+    // causes a redraft. It answers two measured defects: the owner's "the pictures are generic" verdict on
+    // the 2026-09-16 posts, and one slide whose six candidates were all refused because its brief named a
+    // mood ("signalling precision and permanence") that a road tunnel satisfied.
+    //
+    // `requires` is UNCHANGED a fifth time, for the reason @17-@21 already record: @22 edits neither §1 nor
+    // §15, both of which still carry the literal `clientVoiceContext`, so `languageDirective` stays
+    // satisfied by two independent sections. It names no NEW `gate.*`, so **`KNOWN_GATES` is untouched**.
     requires: { languageDirective: true },
   },
+  // Phase 5.5 (spec §3 B3). The markup half of a custom archetype, hoisted out of the copy schema: the writer
+  // chooses the design and justifies it in a `customArchetypeBrief`, and THIS prompt authors the `bodyHtml`,
+  // `css` and `fields` that realise it, at most once per carousel, behind the same `assertSafeMarkup` contract
+  // the copy step used to run. The split exists because the markup was ~6k of a 16,384-token ceiling that the
+  // drafting loop kept hitting; see `agents/instagram-agent/__tests__/copy-schema-length.test.ts`.
+  //
+  // No `requires` flags, for the reason `instagram-concept` and `instagram-post-package` already record: it
+  // receives the resolved `targetLanguage` and never `clientVoiceContext`, so the `languageDirective` marker —
+  // which looks for that literal — would be unsatisfiable. It names no `gate.*` (what guards its output is
+  // `assertSafeMarkup` plus `validateCustomArchetypeSlots`, in code), and it emits no statistic.
+  { promptId: "instagram-custom-archetype", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
   // Phase 5 (RFC-18 §6.1). The post packager: hashtags, per-slide alt text and the first comment's prose,
   // written ONCE per revision after the drafting loop breaks, on a pinned `gemini-2.5-flash`.
   //
@@ -208,7 +246,14 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   // `structuredOutput` is not set either. The prompt names all three output fields (`hashtags`, `altText`,
   // `firstCommentText`) in its own section headings, so the flag would pass today — but it would pass
   // vacuously, since a prompt organised one section per field cannot fail a "mentions its fields" check.
-  { promptId: "instagram-post-package", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
+  //
+  // Phase 5.5 (spec §6 G2), @2: `ALT_TEXT_MAX_CHARS = 125` was enforced on the wire and stated nowhere the
+  // model could read it, so two of three live runs lost their hashtags AND their alt text to one over-long
+  // `alt`. @2 states that the count is CHARACTERS not words, that a Hebrew character counts the same as a
+  // Latin one, carries a worked 118-character example, and states the new semantics: an over-long `alt` is
+  // cut at a word boundary in code rather than refusing the whole package. Hashtags are deliberately still
+  // refused rather than clamped — a truncated tag is a different tag, pointing at a different search.
+  { promptId: "instagram-post-package", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
   // Phase 4 (RFC-15 §6). The native judge: six axes, worked examples, and a correction contract that makes
   // "report without correcting" structurally unrepresentable. No `requires` flags, for the reason
   // `instagram-angle` already records — the judge receives `languageBrief`, never `clientVoiceContext`, so
@@ -235,11 +280,24 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   { promptId: "instagram-design-brief", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
   // Phase 4 (RFC-16 §6.1): @5 adds §1c, reachable only on a slide the pipeline
   // declared `conceptual`. @4 stays frozen and is what every other slide reads.
-  { promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5"], latestVersion: "5" },
+  // Phase 5.5 (item A3): @6 separates the SUBJECT from the scene and declares
+  // `scene` decorative — on 2026-09-16 @5 refused five correct photographs of
+  // server infrastructure for not having been shot with a long exposure, and
+  // the post shipped with no pictures in it.
+  { promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5", "6"], latestVersion: "6" },
+  // Phase 5.5 (item A2): `04b3-extract-entities`. No `requires` flags — the
+  // step writes nothing a reader sees and carries no statistics; its output is
+  // re-checked against the evidence by `groundEntities` in code, which is a
+  // stronger guarantee than a prompt sentence and is why none is declared.
+  { promptId: "instagram-entities", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
   { promptId: "instagram-research", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
   { promptId: "instagram-template-designer", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
   { promptId: "instagram-template-set-review", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
-  { promptId: "instagram-visual-qa", agent: "instagram-agent", versions: ["1", "2", "3", "4"], latestVersion: "4" },
+  // Phase 5.5 (@5): the rubric is re-centred on five POST-LEVEL questions, the
+  // judge is fed a CONTACT SHEET of every plate at once — which is how the
+  // owner judged the three posts he rejected on 2026-09-16 — and the output
+  // gains `publishable`, the CMO verdict `pass` could never carry.
+  { promptId: "instagram-visual-qa", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5"], latestVersion: "5" },
   {
     promptId: "intel-report-grounding",
     agent: "intel-report-agent",

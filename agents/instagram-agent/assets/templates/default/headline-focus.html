@@ -160,7 +160,6 @@
     --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
     --f-body: 'Inter', system-ui, -apple-system, sans-serif;
     --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
-    --mx: 64px;
     --ts: 1;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -172,6 +171,41 @@
      font-size on an older checkpointed slides-data re-rendered post-deploy. */
   body.ts-s { --ts: 0.85; }
   body.ts-l { --ts: 1.18; }
+  /* ── PHASE 5.5: THE ONE TYPE SCALE (`visual-system.ts`, `TYPE_SCALE_PX`). ──
+     Six steps for the whole archetype set, against the 45 distinct `font-size`
+     values the eight bundled templates declared between them. A plate picks a
+     step by ROLE rather than by which file the writer's layout landed on.
+     `visualSystemCssBlock` overrides these per run with the resolved system's
+     type flavour; these are the self-contained defaults a brandless render
+     uses.
+
+     ── ON `body`, NOT ON `:root`, AND THAT IS NOT A STYLE CHOICE. ──
+     A custom property's `var()` references are substituted AT THE ELEMENT THAT
+     DECLARES IT. `--ts` is `1` on `:root` and is overridden on `body.ts-s` /
+     `body.ts-l`, so a `--t-*` declared on `:root` resolves `var(--ts, 1)`
+     against the ROOT's value — always 1 — and then inherits down already
+     substituted. Declared there, the reviewer's whole type-scale control
+     silently stopped reaching every size that reads a step: measured, this
+     plate rendered its 300px figure at 300px at `ts-s`, where the literal it
+     replaced rendered 255px, and the calibration's own s-vs-l control pair
+     reported the two plates painting identical ink (0.4175 both). Declared
+     HERE the substitution happens on `body`, where `body.ts-s` is in force. */
+  body {
+    /* ── PHASE 5.5: THE PAGE MARGIN IS THE VISUAL SYSTEM'S `gutter` AXIS. ──
+       `--gutter` is emitted per run by `visualSystemCssBlock` (`wide` 64px,
+       `tight` 48px) and was read by nothing: every template hard-coded its own
+       margin, so two catalog entries that differ ONLY in gutter rendered the
+       same plate and the twelve-entry catalog was a variety claim a reader
+       could not see. The literal stays as the fallback, so a document composed
+       without the run sheet is byte-identical. */
+    --mx: var(--gutter, 64px);
+    --t-micro: calc(22px * var(--ts, 1));
+    --t-label: calc(32px * var(--ts, 1));
+    --t-lead: calc(46px * var(--ts, 1));
+    --t-statement: calc(84px * var(--ts, 1));
+    --t-display: calc(124px * var(--ts, 1));
+    --t-figure: calc(220px * var(--ts, 1));
+  }
   body.ta-center { text-align: center; }
   body.ta-end { text-align: end; }
   html, body { width: 1080px; height: 1440px; }
@@ -202,7 +236,7 @@
     position: absolute; inset: 0; z-index: 0;
     background-image:
       radial-gradient(104% 62% at 2% 0%, color-mix(in srgb, var(--fg) 7%, transparent) 0%, transparent 80%),
-      linear-gradient(196deg, transparent 40%, color-mix(in srgb, var(--wash) 8%, transparent) 100%);
+      linear-gradient(196deg, transparent 40%, color-mix(in srgb, var(--wash) var(--ground-texture-alpha, 8%), transparent) 100%);
   }
 
   /* ── L2: the texture and the accent geometry, ON THE STATEMENT FIELD. ──
@@ -349,16 +383,24 @@
      **And it was not punctuation.** The restraint reference's rule 4 is
      *colour is information or punctuation, never a surface*; `@semrush` spends
      its whole colour budget on one diagram and one arrow. Every other accent
-     mark in this directory is already short — `.stat-band` 200px, `.cl-rule`
-     240px, the device library's own `.dv-rule` 132px — and a 1080px bar was
-     the only wall among them.
+     mark in this directory is already short, and since this phase every one of
+     them takes the SAME length from the run's `accentForm`
+     (`--fx-accent-w`/`--fx-accent-h`) rather than a per-file literal — the
+     200px `.stat-band`, the 240px closer cap, the device library's own
+     `.dv-rule` — and a 1080px bar was the only wall among them.
 
-     240px, which is `.cl-rule`'s width, so the set has one accent measure. */
+     So the fallback literal is 240px and the live value is the run's, which is
+     how the set has one accent measure rather than six. */
+  /* ── PHASE 5.5: the caps' INK is conditional, their geometry is not. ──
+     `var(--fx-accent-ink, transparent)`, set by `visualSystemCssBlock` on at
+     most three slides of a carousel. Ink rather than `display`, so the field's
+     own box and every share the interest floor measures on it are unchanged;
+     only the orange disappears on the plates that did not earn it. */
   .hf-field {
     background-image:
-      linear-gradient(to bottom, var(--accent) 0 calc(14px * var(--ts, 1)), transparent 0),
-      linear-gradient(to top, var(--accent) 0 calc(14px * var(--ts, 1)), transparent 0);
-    background-size: calc(240px * var(--ts, 1)) 100%, calc(240px * var(--ts, 1)) 100%;
+      linear-gradient(to bottom, var(--fx-accent-ink, transparent) 0 var(--fx-accent-h, calc(14px * var(--ts, 1))), transparent 0),
+      linear-gradient(to top, var(--fx-accent-ink, transparent) 0 var(--fx-accent-h, calc(14px * var(--ts, 1))), transparent 0);
+    background-size: var(--fx-accent-w, calc(240px * var(--ts, 1))) 100%, var(--fx-accent-w, calc(240px * var(--ts, 1))) 100%;
     background-repeat: no-repeat, no-repeat;
     /* `inset-inline` rather than `0`, so the caps range with the copy in both
        directions instead of hanging off the wrong edge in Hebrew. */
@@ -480,74 +522,37 @@
      their accent GEOMETRY, which the block above says is the point of having
      two — and they no longer differ by wearing two different wallpapers. */
   body.gr-glyph .hf-field {
-    background-image: linear-gradient(to bottom, var(--accent) 0 calc(10px * var(--ts, 1)), transparent 0);
+    background-image: linear-gradient(to bottom, var(--fx-accent-ink, transparent) 0 var(--fx-accent-h, calc(10px * var(--ts, 1))), transparent 0);
     background-size: 100% 100%;
     background-repeat: no-repeat;
     background-position: 0 0;
   }
-  .ground-glyph { display: none; }
-  /* Furniture, but furniture that paints ink, so it answers to the same rule:
-     a plate with no statement on it paints no numeral either. */
-  body:not(:has(#headline > span:not(:empty))) .ground-glyph { display: none !important; }
-  /* THE NUMERAL STILL SCALES WITH `--ts`, and that is deliberate even though
-     the dash tile beside it no longer does. The two are different kinds of
-     thing: the tile is a screen whose duty cycle has to stay put against a
-     fixed 4px measurement cell, while this is a GLYPH — it is set in the
-     display face, it is the one mark on the plate a reader reads as a
-     character, and `default-template-render.test.ts` pins the rule that every
-     `font-size` in this directory scales off `var(--ts)` so the reviewer's
-     type control never leaves one size behind. It was briefly fixed in px
-     during this pass on the theory that `l` cropped it into unreadable
-     curves; re-rendered with the dash screen at its new density the `l` plate
-     reads the numeral perfectly well, so the crop was never the cause — the
-     screen's density was. Measured, the numeral costs 0.7 points of
-     imagery-or-device at `l`, well inside the floor's headroom. */
-  body.gr-glyph .ground-glyph {
-    display: block; position: absolute; z-index: 0;
-    inset-block-start: calc(-90px * var(--ts, 1)); inset-inline-start: calc(-8px * var(--ts, 1));
-    font-family: var(--f-display); font-weight: 600; font-size: calc(460px * var(--ts, 1));
-    /* `line-height: 1.3`, not 1. At 720px the display face's glyph box fit
-       inside a line box of its own size; at 460px in HEBREW it does not, and
-       the probe reported `span.ground-glyph` overflowing its own box on a
-       real render (CI 34935984088, closer.html rtl). The element is
-       absolutely positioned and aria-hidden, so growing its line box moves
-       nothing and hides nothing -- it just stops the numeral's descender
-       escaping a box sized for a different script's metrics. */
-    line-height: 1.3; letter-spacing: -0.04em; padding-block-end: 0.2em;
-    /* OUTLINE ONLY, and that is the whole trick. A filled numeral is a filled
-       SHAPE: at 9% of the foreground its interior sits 19 units off the
-       ground, past the ink line, so every cell inside the glyph counts as a
-       covered low-colour cell — a drawn device — and this plate measured
-       12.7% of device share from a decoration. Dropping the fill entirely and
-       spending the budget on stroke CONTRAST instead (4px at 52%, against the
-       previous 3px at 26%) gives a numeral a reader can actually see while
-       the pixels inside it stay ground. */
-    color: transparent;
-    /* ── QUIETED 2026-09-14, after a real render ──
+  /* ── PHASE 5.5: THE 460px GROUND NUMERAL IS RETIRED. ──
 
-       The stroke was taken to 4px at 52% when the FILL was dropped (the fill
+     It lived in TWO of the eight bundled templates — this one and
+     `closer.html` — so a carousel showed a giant outlined numeral on two
+     plates and nothing on the other six. The owner, judging the 2026-09-16
+     posts: *"על חלק מהשקופיות כתוב מספר ועל חלק לא"*. The brief blamed
+     `GROUND_VARIATION_MIX = 0.5`; that has been a constant since 2026-09-14
+     (`slides-data.ts` reads `isVariationSlot(1, ...)`, one ground per post)
+     and was never the cause. The template set was.
 
-       was inflating `graphicShare`; see the note below). That traded a metric
+     Within-carousel randomness is the wrong axis: a carousel is ONE system.
+     The axis moves up to `ClientVisualSystem.pagination` — all or none,
+     frozen per client, so the variety lands across clients and across runs —
+     and down to a uniform 22px index in all eight files, below. A designed
+     large figure is still available where the CONTENT has a number: this
+     archetype's own `.hf-device` slot, at 150/118/88, which is a bounded and
+     labelled object rather than a decoration wearing a numeral's clothes.
 
-       problem for a reading problem: at 720px, cropped by the frame, a 52%
-
-       outline is the second loudest thing on the plate and it fights the
-
-       statement it is supposed to sit behind. On run
-
-       `pubsub-21839432908803804` the owner's words were "too many effects,
-
-       hard to look at".
-
-       Back to a watermark: smaller, inside the frame, and faint. The floor is
-
-       unaffected by construction -- the pixels INSIDE the outline are ground
-
-       either way, which is the whole point of the fill being gone, so this
-
-       moves contrast and not occupancy. */
-
-    -webkit-text-stroke: 2px color-mix(in srgb, var(--fg) 16%, transparent);
+     `gr-glyph` survives as the ground's ACCENT GEOMETRY (the cap at the
+     field's head rather than the two caps of the grid variant), which is what
+     the class was always worth. */
+  .pg-index {
+    display: var(--fx-pagination, none);
+    position: absolute; inset-block-end: 40px; inset-inline-end: 44px; z-index: 6;
+    font-family: var(--f-mono); font-size: var(--t-micro); letter-spacing: 0.14em;
+    color: color-mix(in srgb, var(--fg) 45%, transparent);
   }
 
   /* ── The composition. Three parts down the plate, not one block at the
@@ -571,7 +576,13 @@
      `largestEmptyRectShare` is supposed to be measuring the complement of. */
   .hf-field {
     position: relative; z-index: 4; flex: 1 1 auto; min-block-size: 0;
-    display: flex; flex-direction: column; justify-content: center;
+    /* ── PHASE 5.5: THE BLOCK ANCHOR IS THE CLIENT'S `compositionGrammar`. ──
+       The axis is *"where the type lockup sits on the plate"* and it shipped as
+       a CSS string no template read, so two clients whose only declared
+       difference was their grammar rendered identical geometry. `center` is
+       the fallback, which is the value this file carried, so a document
+       composed without the client sheet is byte-identical. */
+    display: flex; flex-direction: column; justify-content: var(--lockup-anchor, center);
     margin-inline: calc(16px - var(--mx)); padding-inline: calc(var(--mx) - 16px);
     margin-block-start: calc(30px * var(--ts, 1));
     padding-block: calc(44px * var(--ts, 1));
@@ -627,22 +638,96 @@
      a figure here is the same object at a smaller size and not a different
      one. `slide.html` makes the same reduction for the same reason and its
      slot says so. */
-  .hf-device .dv-figure { font-size: calc(150px * var(--ts, 1)); }
-  .hf-device .dv-figure--mid { font-size: calc(118px * var(--ts, 1)); }
-  .hf-device .dv-figure--small { font-size: calc(88px * var(--ts, 1)); }
+  /* The figure's descender allowance is NOT set here — see `cover.html`'s note
+     at the same slot: a rule scoped to this file's device slot also beats
+     `script-fonts.ts`'s Hebrew-measured `0.30em`, so the allowance is emitted
+     by `clientVisualSystemCss` for a covered script only. */
+  /* `--dv-fit` is the continuous shrink the script applies when the field
+     cannot hold both the object and the statement — see its note there. It
+     defaults to 1, so a plate that fits is unchanged. */
+  .hf-device .dv-figure { font-size: calc(var(--t-figure) * 0.6818 * var(--dv-fit, 1)); }
+  .hf-device .dv-figure--mid { font-size: calc(var(--t-figure) * 0.5364 * var(--dv-fit, 1)); }
+  .hf-device .dv-figure--small { font-size: calc(var(--t-figure) * 0.4 * var(--dv-fit, 1)); }
+  .hf-device .dv-label { font-size: calc(var(--t-label) * 0.9375 * max(var(--dv-fit, 1), 0.78)); }
   .hf-device .dv { margin-block-start: 0; }
 
   .kicker {
-    font-family: var(--f-mono); font-weight: 600; font-size: calc(24px * var(--ts, 1));
+    /* ── THE LABEL'S BOX IS ITS LABEL. ──
+       A block-level eyebrow spans the whole measure whatever it says, so its
+       BOX reaches the opposite corner of the plate even when its ink stops
+       after two words. `renderCarousel`'s reserved-zone probe reads boxes, so
+       a full-width label was reported as entering the brand mark's corner from
+       the other side of the frame — a finding about nothing, on the instrument
+       §7 F2 exists to make trustworthy. `fit-content` makes the two agree.
+       `stat-callout.html` has always been `inline-block` for the same reason. */
+    inline-size: fit-content; max-inline-size: 100%;
+    font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro);
     letter-spacing: 0.24em; text-transform: uppercase;
     color: color-mix(in srgb, var(--fg) 88%, transparent);
   }
   .kicker:empty { display: none; }
-  /* The rail under the kicker runs the full measure — it is what tells the
-     reader the plate has a top edge, and it is the element that stops the
-     upper third reading as a hole. A 3px rule covers no cell, so it is
-     geometry the reader sees and the device floor does not. */
-  .hf-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(26px * var(--ts, 1)); }
+  /* ── ONE ACCENT COLOUR, ONE ACCENT LENGTH, ONE MARK PER PLATE — AND ON THIS
+        ARCHETYPE THE MARK IS THE FIELD'S OWN CAP, SO `.hf-rail` IS GONE. ──
+
+     Putting the hairline under the accent switch was half a fix and it left
+     the visible half undone. On a slide the switch was ON for, the plate then
+     carried a 240px `--accent` rule AND a 952px rule at 46-48% of the
+     foreground — measured on this tree through the production composition:
+     two colours and two lengths of the same object inside one carousel, which
+     is the owner's *"sometimes a long marker, sometimes a short one"*
+     exactly. Re-colouring the hairline was not enough either: the field below
+     already caps itself with a 240px accent bar (`--fx-accent-ink`, the block
+     above), so an eyebrowed plate painted two identical bars 30px apart —
+     rendered and looked at, not reasoned about.
+
+     THE RULE THE WHOLE SET NOW FOLLOWS:
+       * one rule COLOUR per carousel: `var(--accent)`;
+       * one rule GEOMETRY per carousel: `--fx-accent-w` / `--fx-accent-h`,
+         from the system's `accentForm` — which the field's caps read too;
+       * one free-standing rule per PLATE. Where a plate's composition already
+         carries the run's mark, the standing detail yields rather than
+         repeating it.
+     What stays NEUTRAL is the EDGE of an object — a panel border, a row
+     separator, a picture's frame. Those are not rules; they are the outline of
+     the thing they belong to, and a reader reads them as its shape.
+
+     This plate's mark is the cap, so the label's rule goes. The element goes
+     with it: a plate whose composition already says the thing does not need a
+     switched-off div in the markup to say it again.
+
+     ── WHAT THE SIX DELETED RAILS WERE WORTH, MEASURED PER ARCHETYPE. ──
+     Only `cover.html` shipped a measurement for its own removal, and a
+     full-measure rule is exactly the object a cell-based share is most
+     sensitive to — `cover.html`'s own surviving note says a full-width rule
+     *"CUT THE EMPTY RECTANGLE IN THREE"*. So all six were A/B'd on this tree
+     through real Chromium, one object apart (`.local/rail-ab.mjs` restores the
+     rail as a `::after` on the head it sat in, with its geometry verbatim —
+     2px, 48% of `--fg`, its own top margin), at `m`, English, every content
+     slot and code-built fragment filled:
+
+                        POPULATED (without -> with)          EMPTY (without -> with)
+       stat-callout     LER 0.2389 -> 0.2345  ink .0472/.0484  1.0000 -> 0.9139
+       quote-card       LER 0.3205 -> 0.2627  ink .0379/.0391  1.0000 -> 0.9139
+       list-takeaway    LER 0.2250 -> 0.2109  ink .0357/.0370  1.0000 -> 0.8778
+       closer           LER 0.1055 -> 0.0944  ink .3996/.3833  1.0000 -> 0.9083
+       cover            LER 0.0974 -> 0.0974  ink .4028/.4028  1.0000 -> 0.6028
+       headline-focus   LER 0.2581 -> 0.2098  ink .0466/.0478  1.0000 -> 0.9083
+
+     READ HONESTLY, BOTH WAYS. On the EMPTY side the deletion is strictly an
+     improvement and it is the Ground Rule's own claim, asserted rather than
+     argued: every blank plate now reports `occupiedShare` 0.0000 and
+     `largestEmptyRectShare` 1.0000, where the rail alone bought a blank cover
+     39.7 points of "composition" it had not earned. On the POPULATED side the
+     rails were worth between 0.4 and 5.8 points of empty rectangle — `ink`
+     barely moves, which is the point: a 2px hairline is not ink, it is a
+     SPLITTER. Two archetypes give up most of it (quote-card 5.8,
+     headline-focus 4.8), and on quote-card that takes the populated plate from
+     0.2627 to 0.3205, over the 0.28 interior ceiling.
+     That is not a reason to keep a rule painting on six of eight plates of
+     every carousel; it is the interior dead-band finding arriving with a
+     number on it. The rectangle is a fact about the COMPOSITION above the
+     field, and clause C does not gate interiors — so it is recorded here, in
+     the diff that opened it, for the composition pass that answers it. */
 
   .hf-headline {
     /* Weight 500, not 600. A 118px Fraunces at 600 has stems thick enough to
@@ -653,7 +738,7 @@
        floor exactly like a cover carrying a figure. At 500 it measures well
        under, and Fraunces at 500/118px is not a quieter headline; it is a
        better-drawn one. */
-    font-family: var(--f-display); font-weight: 500; font-size: calc(124px * var(--ts, 1));
+    font-family: var(--f-display); font-weight: 500; font-size: calc(var(--t-display) * 1);
     line-height: 1.06; letter-spacing: -0.02em; text-wrap: balance;
     /* Not cosmetic. A display face's glyph box is taller than a sub-1.15
        line box, so the block reports `scrollHeight > clientHeight` and the
@@ -661,7 +746,7 @@
        clause B of the interest floor on a slide that fits perfectly. The
        padding is in `em` so it tracks every size step and every per-script
        type scale. */
-    padding-block-end: 0.22em;
+    padding-block-end: max(0.22em, var(--mk-face-bleed, 0em));
   }
   /* The ladder steps UP from the previous revision (112/92/76). A statement
      slide is the one plate in the set with nothing on it but the statement,
@@ -670,71 +755,75 @@
      It also gained a FOURTH step, `micro`: three steps bottomed out at 86px
      and there was nothing under it, so past ~100 characters the block simply
      grew until it left the plate. */
-  .hf-headline.small { font-size: calc(104px * var(--ts, 1)); line-height: 1.08; }
-  .hf-headline.tiny { font-size: calc(86px * var(--ts, 1)); line-height: 1.12; }
-  .hf-headline.micro { font-size: calc(68px * var(--ts, 1)); line-height: 1.16; }
+  .hf-headline.small { font-size: calc(var(--t-display) * 0.8387); line-height: 1.08; }
+  .hf-headline.tiny { font-size: calc(var(--t-statement) * 1.0238); line-height: 1.12; }
+  .hf-headline.micro { font-size: calc(var(--t-statement) * 0.8095); line-height: 1.16; }
 
   /* The accent band under the statement. 200x14 rather than the set's
      standing 132x12: on a 1080px plate the smaller bar reads as a detail
      rather than as punctuation, and 14px is still a rule — it covers three
      and a half of the measurement's 4px cell rows, which is under the
      coverage a drawn device needs. */
-  .stat-band {
-    inline-size: calc(200px * var(--ts, 1)); block-size: calc(14px * var(--ts, 1));
-    background: var(--accent); margin-block-start: calc(36px * var(--ts, 1));
-  }
-  /* ── ONE ACCENT MARK PER PLATE, AND THE DEVICE'S OWN IS THE BETTER ONE. ──
-
-     A figure device paints its own accent rule (`.dv-rule`, 132x12) directly
-     under its numeral. With `.stat-band` also painting, a plate carrying a
-     bounded object shows TWO accent bars in the same column, 36px apart,
-     saying the same thing at two sizes.
-
-     `docs/instagram-restraint-reference.md` rule 4: *colour is information
-     or punctuation, never a surface.* Punctuation repeated is not
-     punctuation. The count is the other half of it — the reference plates
-     carry three or four element groups and the prep render the owner
-     rejected carried NINE, *"three of which said the same sentence"*. Two
-     accent bars is that sentence at the mark level.
-
-     THE DEVICE'S RULE WINS because it belongs to something: it sits under a
-     figure and above that figure's label. `.stat-band` is a standing detail
-     with nothing either side of it, so it is the one that yields. On a plate
-     with no device nothing changes and the band paints exactly as before.
-
-     `:has()` on the slot rather than on the fragment, because `.hf-device`
-     is present and empty on every render that carries no device — see its own
-     `:empty` rule. */
-  body:has(.hf-device .dv) .stat-band { display: none; }
-  /* ── THE GROUND RULE, WHICH THIS BAR HAS BEEN OUTSIDE OF THE WHOLE TIME. ──
-
-     RFC-20 §5.0: *tone may paint anywhere, ink only inside a region the
-     composition occupies, and only when the content that justifies it is
-     present.* A 200x14 solid accent bar is ink, and until now it painted on a
-     plate with no statement on it — the only thing in frame, sitting on the
-     centre line, which is the worst place for it: `largestEmptyRectangle`
-     finds ONE contiguous rectangle, so a mark at the centroid roughly halves
-     the number G2 reads.
-
-     `cover.html` and `stat-callout.html` already guard their own `.stat-band`
-     on the slot it decorates (`#title`, `#figure`); these two were the
-     exception rather than the rule, and the exception is not deliberate —
-     RFC-20 §11.3 CUT both files from the phase that added the other guards,
-     so the bar was never reached. It is reached now that they are back in
-     scope, and it comes into line rather than acquiring a special case.
-
-     Asked of the statement's CHILDREN for the same reason every other guard
-     in this file is: `#headline` is a twin-slot pair and can never match
-     `:empty` again, so the plain form would be permanently silent. */
-  body:not(:has(#headline > span:not(:empty))) .stat-band { display: none; }
+  /* ── `.stat-band` IS DELETED FROM THIS ARCHETYPE — RULE AND ELEMENT — AND
+        THIS DELETION CHANGES PIXELS ON ONE REACHABLE STATE. ──
+     This was the bar the owner saw under every headline of every plate
+     (*"יש קווים כאלה כתומים שזה הכי סימן לפוסט שנעשה עם AI"*), and the fix it
+     got was two more guards rather than a decision.
+     ITS TWO GUARDS, QUOTED FROM THE FILE THEY WERE DELETED FROM
+     (`git show HEAD~:…/headline-focus.html`, lines 749 and 770). An earlier
+     revision of this block claimed they were COMPLEMENTS of each other and
+     that the bar therefore could not paint at all. They are not, and it
+     could:
+       `body:has(.hf-device .dv)                    .stat-band { display: none }`
+       `body:not(:has(#headline > span:not(:empty))) .stat-band { display: none }`
+     Two different conditions. The state they leave open — a headline_focus
+     WITH a headline and WITHOUT a device — is reachable and ordinary:
+     `composeBoundedObjects` has an explicit `refused` outcome whenever the
+     slide carries no standalone figure or cites no source
+     (`bounded-object.ts`), and nothing invents one to cover the gap. On those
+     plates the bar painted, and deleting it takes it away.
+     THAT IS THE DECISION, STATED RATHER THAN SMUGGLED IN AS A NO-OP. The
+     rule block above this one is the reason: one free-standing rule per
+     plate, and on this archetype the mark is `.hf-field`'s cap
+     (`--fx-accent-ink` at `--fx-accent-w`/`--fx-accent-h`, the ground block
+     above). A deviceless plate carried the cap AND the bar — two marks — so
+     the bar is the one that yields. A deviced plate never saw it.
+     The declaration had also been kept alive on purpose, with a comment
+     saying so: it was what `template-furniture.test.ts`'s switched-mark
+     registry read. That made the row unfalsifiable — a green assertion about
+     the text of a rule with no reachable pixel on the deviced path. The
+     second reason given was also false: the hiding rules are in THIS sheet,
+     so a Template Studio plate inheriting it inherits the `display: none`
+     too. The registry names the cap now, and carries a rendered limb (`the
+     registry's marks paint a box`) that measures a rect. The source-level
+     complementary-guard case beside it would NOT have caught this one — run
+     its regex over the pre-deletion file and the two conditions do not
+     intersect — which is why both limbs exist and why neither is described as
+     the control for the other.
+     `cover.html`, `slide.html` and `stat-callout.html` keep their own
+     `.stat-band`: each of those is guarded on ONE condition and paints. */
 
   .body-text {
-    font-family: var(--f-body); font-weight: 400; font-size: calc(33px * var(--ts, 1)); line-height: 1.55;
+    font-family: var(--f-body); font-weight: 400; font-size: var(--t-label); line-height: 1.55;
     color: color-mix(in srgb, var(--fg) 92%, transparent); max-inline-size: 900px; text-wrap: pretty;
-    border-inline-start: calc(4px * var(--ts, 1)) solid color-mix(in srgb, var(--accent) 80%, transparent);
+    /* Under the switch and in the accent's own colour — `stat-callout.html`'s
+       `.num-body` carries the measurement and the argument; this is the same
+       reading edge one archetype over (`4x106` at `m` in a third hue, on a
+       slide the system had not accented). */
+    border-inline-start: calc(4px * var(--ts, 1)) solid var(--fx-accent-ink, color-mix(in srgb, var(--fg) 26%, transparent));
     padding-inline-start: calc(30px * var(--ts, 1));
   }
   .body-text:not(:has(> span:not(:empty))) { display: none; }
+  /* ── THE FOOT'S ONE SMALLER RUNG, AND IT IS A STEP RATHER THAN A FACTOR. ──
+     The body had no rung at all, so on the one shape where the plate is still
+     over with the object at its floor and the statement at `micro` — measured:
+     `mono-display` at `l` with a 90-character statement, the field 48px over —
+     there was nothing left to give and the copy printed over the `@handle`
+     watermark. `--t-micro` is the scale's next step down from `--t-label`, so
+     this rung buys ~30% of the block's height without inventing a size: the
+     step below label IS micro, and the reviewer's own control still scales it.
+     Applied by the script only while the plate is over. */
+  .body-text.small { font-size: var(--t-micro); line-height: 1.5; }
 
   /* ── TWIN SLOTS: THE MARKED COPY AND ITS PLAIN FALLBACK (RFC-17 §5.4). ──
      `cover.html`'s twin-slot block is the canonical note — why a pair rather
@@ -760,7 +849,7 @@
      would print, one under the other. */
   /* The twin host's block-start bleed — see `cover.html` for the measurement
      and why it is here rather than only in the shared mark sheet. */
-  :has(> span.mk-plain) { padding-block-start: var(--mk-twin-bleed, .22em); }
+  :has(> span.mk-plain) { padding-block-start: max(var(--mk-twin-bleed, .22em), var(--mk-face-bleed, 0em)); }
   .hf-headline:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
   .body-text:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
 
@@ -771,12 +860,12 @@
      of the copy. */
   .brand-handle {
     position: absolute; bottom: 44px; inset-inline-start: 44px; z-index: 6;
-    font-family: var(--f-mono); font-size: calc(19px * var(--ts, 1)); letter-spacing: 0.08em;
+    font-family: var(--f-mono); font-size: var(--t-micro); letter-spacing: 0.08em;
     color: color-mix(in srgb, var(--fg) 55%, transparent);
   }
   .brand-badge {
     position: absolute; top: 56px; inset-inline-start: var(--mx); z-index: 6;
-    font-family: var(--f-mono); font-weight: 600; font-size: calc(19px * var(--ts, 1));
+    font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro);
     letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);
   }
   /* An @handle, a URL and a #hashtag are LTR strings, and a Hebrew or Arabic
@@ -790,20 +879,19 @@
   .brand-badge:empty, .brand-handle:empty, .brand-handle:has(> bdi:empty) { display: none; }
 </style>
 </head>
-<body class="ts-{{fontScale}} ta-{{textAlign}} gr-{{groundStyle}}">
+<body class="ts-{{fontScale}} ta-{{textAlign}} gr-{{groundStyle}}" data-n="{{slideIndex}}">
   <div class="ground" aria-hidden="true"></div>
-  <span class="ground-glyph" aria-hidden="true">{{slideIndex}}</span>
-  <div class="brand-badge">{{seriesBadge}}</div>
+  <!-- The 460px `.ground-glyph` and the `seriesBadge` slot were both here
+       and are both deleted — see their own notes in the sheet above. -->
   <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
+  <span class="pg-index" aria-hidden="true">{{slideIndex}}</span>
   <div class="hf-top">
     <div class="kicker">{{kicker}}</div>
-    <div class="hf-rail"></div>
   </div>
   <div class="hf-field">
     <div class="copy">
       <div class="hf-device">{{html:device}}</div>
       <div class="hf-headline" id="headline"><span class="mk-runs">{{html:headlineRuns}}</span><span class="mk-plain">{{headline}}</span></div>
-      <div class="stat-band"></div>
     </div>
     <div class="hf-foot">
       <div class="body-text"><span class="mk-runs">{{html:bodyRuns}}</span><span class="mk-plain">{{body}}</span></div>
@@ -851,12 +939,103 @@
         return text.trim().length;
       }
       var h = document.getElementById("headline");
-      var len = mkLen(h);
+      var field = document.querySelector(".hf-field");
+      var copy = document.querySelector(".copy");
+      var device = document.querySelector(".hf-device");
+      var RUNGS = ["hf-headline", "hf-headline small", "hf-headline tiny", "hf-headline micro"];
+      var body = document.querySelector(".body-text");
       var big = document.body.classList.contains("ts-l");
-      if (len > (big ? 78 : 100)) h.className = "hf-headline micro";
-      else if (len > (big ? 50 : 60)) h.className = "hf-headline tiny";
-      else if (len > (big ? 27 : 32)) h.className = "hf-headline small";
-      window.__CAROUSEL_READY__ = true;
+
+      // ── DOES THE FIELD HOLD WHAT IS IN IT? BOTH LIMBS, BECAUSE THE FIELD
+      //    SPILLS IN BOTH DIRECTIONS. ──
+      //
+      // `.hf-field` is `justify-content: center` (or whatever the client's
+      // composition grammar set), and a centred flex column whose content is
+      // taller than its box does not clip at one end — it spills EQUALLY at
+      // both. Measured on this tree through the production composition, on the
+      // plate the round-1 report named: `div.hf-field [h 1208>1165]` with
+      // `div.copy [above parent]`, the kicker printed over the device's own
+      // numeral at the top and the body over the `@handle` watermark at the
+      // foot. That is the defect the owner's probe reported as "the kicker
+      // overprints the headline", and it is real on a plate carrying a bounded
+      // object — which is every `headline_focus` the workflow composes.
+      //
+      // `scrollHeight` alone cannot see it: the block-START overflow of a
+      // centred box is not a scrollable region (`probePage`'s own block-start
+      // limb exists for the same reason), so the second limb asks where the
+      // first child actually begins.
+      var fits = function () {
+        if (field === null) return true;
+        if (field.scrollHeight > field.clientHeight + 1) return false;
+        // A `.copy` with no box at all is an EMPTY plate, not a plate whose
+        // content starts above the field — `cover.html`'s note carries the
+        // measurement for the same read taken naively.
+        if (copy === null || copy.getBoundingClientRect().height < 0.5) return true;
+        var style = getComputedStyle(field);
+        return copy.getBoundingClientRect().top >= field.getBoundingClientRect().top + (parseFloat(style.paddingTop) || 0) - 1;
+      };
+      var over = function () {
+        var root = document.documentElement;
+        return !fits() || root.scrollHeight > root.clientHeight + 1 || document.body.scrollHeight > document.body.clientHeight + 1;
+      };
+
+      var layout = function () {
+        // Reset, so the pass is idempotent and the second one (after the web
+        // fonts arrive) can choose a LARGER step than the first did.
+        h.className = "hf-headline";
+        if (body !== null) body.className = "body-text";
+        if (device !== null) device.style.setProperty("--dv-fit", "1");
+        var len = mkLen(h);
+        if (len > (big ? 78 : 100)) h.className = "hf-headline micro";
+        else if (len > (big ? 50 : 60)) h.className = "hf-headline tiny";
+        else if (len > (big ? 27 : 32)) h.className = "hf-headline small";
+        if (!over()) return;
+        // ── THE OBJECT GIVES FIRST, THEN THE STATEMENT. ──
+        // On this archetype the statement IS the plate — it is the one slide in
+        // the set with nothing else on it — so the bounded object yields first,
+        // down to 45% of its designed size, which is where a numeral stops
+        // being a numeral. Only then does the type step down its own ladder.
+        // Both loops run ONLY while the plate is over, so a slide that fits
+        // renders byte-identically to before.
+        if (device !== null && device.querySelector(".dv") !== null) {
+          var FIT_STEPS = [1, 0.92, 0.84, 0.76, 0.68, 0.6, 0.52, 0.45];
+          for (var d = 0; d < FIT_STEPS.length; d++) {
+            device.style.setProperty("--dv-fit", String(FIT_STEPS[d]));
+            if (!over()) return;
+          }
+        }
+        // THE ORDER THE PLATE GIVES IN: the object, then the foot, then the
+        // statement. The statement is what this archetype IS — it is the one
+        // slide in the set with nothing else on it — so it gives last.
+        if (body !== null) {
+          body.className = "body-text small";
+          if (!over()) return;
+        }
+        for (var k = Math.max(0, RUNGS.indexOf(h.className)); k < RUNGS.length; k++) {
+          h.className = RUNGS[k];
+          if (!over()) return;
+        }
+      };
+
+      // Run once now and again once the real faces have arrived —
+      // `closer.html`'s script carries the full note. Every measurement above
+      // is taken against the FALLBACK face until `document.fonts.ready`
+      // resolves, and `renderCarousel` screenshots the plate set in the real
+      // one.
+      layout();
+      var settled = false;
+      var settle = function () {
+        if (settled) return;
+        settled = true;
+        layout();
+        window.__CAROUSEL_READY__ = true;
+      };
+      if (document.fonts && document.fonts.ready && typeof document.fonts.ready.then === "function") {
+        document.fonts.ready.then(settle, settle);
+        setTimeout(settle, 4000);
+      } else {
+        settle();
+      }
     })();
   </script>
 </body>
