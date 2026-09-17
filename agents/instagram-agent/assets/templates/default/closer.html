@@ -614,7 +614,11 @@ body[data-accent="none"] .acc { display: none; }
      Hebrew cover it opened 130px between the accent and the headline it is
      supposed to sit on. A line box tall enough to contain the ink fixes the
      geometry where the geometry is wrong, and costs the composition nothing. */
-  line-height: 1.06;
+  /* 1.12, not 1.06. An emphasis swatch is painted behind its run and a line
+     box tighter than the face's own content area leaves the swatch outside it —
+     `span.mk` and `span.mk-t` were both reported as overflowing their own box
+     on every marked plate. The extra leading is what contains them. */
+  line-height: 1.12;
   text-wrap: balance;
   /* The ink a display face paints OUTSIDE its line box is closed by the fit
      ladder, which measures it on the rendered plate rather than carrying a
@@ -815,9 +819,26 @@ body.ta-center .acc { margin-inline: auto; }
    ceiling, which is the owner's *"חלק מהשקפים ריקים"* with a number on it.
    The recap strip sits on a band of its own: a declared extent, `no-repeat`,
    one ramp, and it stands down when there is no recap to hold. */
-.cl-recap {
-  margin-block-start: var(--sp-2);
+/* The object is on the WRAPPER, not on the recap strip. On the recap it
+   collapsed with it — and a closer whose recap is empty was the emptiest plate
+   in the set: nothing reached past x=704 and a 376px dead column ran the full
+   height, 35% of the plate in one rectangle. The wrapper is always there, it
+   spans the measure, and it stands down only when the takeaway itself is
+   empty, which is the case the emptiness clause already refuses. */
+/* ── ONE PANEL HOLDS THE PAYOFF. ──
+   The takeaway and the ask used to be two blocks of the field with the free
+   space between them, and that space measured as a single empty rectangle
+   covering 31-37% of the plate against a 22% ceiling — a hole whichever block
+   it sat under. One panel carrying both closes it: the object spans the
+   measure, the two blocks sit on it a rhythm apart, and the air becomes a
+   margin around a composition rather than a gap inside one. */
+.cl-panel {
   inline-size: 100%;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--sp-2);
   padding: var(--sp-2);
   border-radius: 4px;
   background-image: linear-gradient(146deg,
@@ -825,6 +846,11 @@ body.ta-center .acc { margin-inline: auto; }
     color-mix(in srgb, var(--accent) 12%, transparent) 56%,
     color-mix(in srgb, var(--fg) 8%, transparent) 100%);
   background-repeat: no-repeat;
+}
+body:not(:has(#takeaway > span:not(:empty))) .cl-panel { background-image: none; }
+.cl-recap {
+  margin-block-start: var(--sp-2);
+  inline-size: 100%;
 }
 .cl-recap:empty { display: none; }
 .rc-strip {
@@ -875,6 +901,7 @@ body.ta-center .acc { margin-inline: auto; }
   </div>
 
   <div class="plate closer">
+    <div class="cl-panel">
     <div class="cl-wrap">
       <div class="acc" aria-hidden="true"></div>
       <div class="headline r-display" id="takeaway" data-fitted="primary"><span class="mk-runs">{{html:takeawayRuns}}</span><span class="mk-plain">{{takeaway}}</span></div>
@@ -883,6 +910,7 @@ body.ta-center .acc { margin-inline: auto; }
     <div class="cl-ask">
       <div class="cl-question body-text r-lead" data-fitted="secondary"><span class="mk-runs">{{html:questionRuns}}</span><span class="mk-plain">{{question}}</span></div>
       <div class="cl-cta body-text r-label"><span class="mk-runs">{{html:ctaRuns}}</span><span class="mk-plain">{{cta}}</span></div>
+    </div>
     </div>
   </div>
 

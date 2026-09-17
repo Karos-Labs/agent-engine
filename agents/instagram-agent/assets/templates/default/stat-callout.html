@@ -610,7 +610,11 @@ body[data-accent="none"] .acc { display: none; }
      Hebrew cover it opened 130px between the accent and the headline it is
      supposed to sit on. A line box tall enough to contain the ink fixes the
      geometry where the geometry is wrong, and costs the composition nothing. */
-  line-height: 1.06;
+  /* 1.12, not 1.06. An emphasis swatch is painted behind its run and a line
+     box tighter than the face's own content area leaves the swatch outside it —
+     `span.mk` and `span.mk-t` were both reported as overflowing their own box
+     on every marked plate. The extra leading is what contains them. */
+  line-height: 1.12;
   text-wrap: balance;
   /* The ink a display face paints OUTSIDE its line box is closed by the fit
      ladder, which measures it on the rendered plate rather than carrying a
