@@ -3,7 +3,7 @@ import { WorkflowToolingFailure } from "@agent-engine/workflow";
 import { resolveExpectedScript } from "./language-gate.js";
 import { isEnglishTarget } from "./target-language.js";
 import type { InstagramCopyOutput, SlidesDataSelfCheck } from "./types.js";
-import { checkCaptionRegister, checkNoCompetitorNames, hookOf, namesTopic } from "./caption-craft.js";
+import { checkCaptionRegister, checkNoCompetitorNames, checkTopicPlacement, hookOf } from "./caption-craft.js";
 
 /**
  * P0 parity-audit Fix 3: carousel-agent-v2 SKILL.md's "core rules, baked in"
@@ -777,18 +777,14 @@ export async function checkCraftHygiene(
         "without it this post cannot be grouped with the others when hooks are ranked by what they did",
     );
   }
-  if (topicPhrase !== undefined && topicPhrase.trim().length > 0) {
+  if (topicPhrase !== undefined) {
     const cover = copy.slides[0];
-    const coverText = cover === undefined ? "" : `${cover.headline} ${cover.body}`;
-    const missing: string[] = [];
-    if (!namesTopic(coverText, topicPhrase)) missing.push("slide 1");
-    if (!namesTopic(hookOf(copy.caption), topicPhrase)) missing.push("the caption's first line");
-    if (missing.length > 0) {
-      notes.push(
-        `the topic phrase "${topicPhrase}" is not carried by ${missing.join(" or ")} — ` +
-          "Instagram's search and Google both read those two, so naming the subject there is what makes the post findable",
-      );
-    }
+    const placement = checkTopicPlacement({
+      phrase: topicPhrase,
+      coverText: cover === undefined ? "" : `${cover.headline} ${cover.body}`,
+      caption: copy.caption,
+    });
+    if (!placement.ok) notes.push(placement.reason!);
   }
 
   for (const [i, slide] of copy.slides.entries()) {

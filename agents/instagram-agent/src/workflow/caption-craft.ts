@@ -278,21 +278,27 @@ export interface TopicPlacementInput {
   coverText: string;
   /** The whole caption; only its FIRST line is checked, which is what the feed shows. */
   caption: string;
-  /** Every slide's alt text. The phrase need appear in only one of them. */
-  altTexts: readonly string[];
 }
 
 /**
- * Item B8: the topic phrase belongs in slide 1, in the caption's first line,
- * and in the alt text.
+ * Item B8: the topic phrase belongs in slide 1 and in the caption's first
+ * line.
  *
  * Instagram has been indexed by Google since July 2025 and the platform's own
- * search reads captions and alt text, so this is not a style preference —
- * it is the difference between a post that can be found and one that cannot.
+ * search reads captions, so this is not a style preference — it is the
+ * difference between a post that can be found and one that cannot.
+ *
+ * **The caller REPORTS this; it does not refuse on it.** `namesTopic`'s own
+ * comment records the two heuristics that were falsified before the current
+ * one, and why a phrase match cannot be trusted to prove absence. The alt
+ * text, which the specification names alongside these two, is not checked at
+ * all: it is written by the packager several steps later, from a slide whose
+ * words the copy step already chose, so the same divergence applies with no
+ * step able to act on it.
  *
  * Reported as ONE finding naming every place the phrase is missing, unlike
- * `checkCaptionRegister` above, because these three are the same instruction
- * applied in three places and a writer fixing one will fix all three.
+ * `checkCaptionRegister` above, because these are the same instruction
+ * applied twice and a writer fixing one will fix both.
  */
 export function checkTopicPlacement(input: TopicPlacementInput): CraftFinding {
   if (input.phrase.trim().length === 0) return CLEAN;
@@ -300,13 +306,12 @@ export function checkTopicPlacement(input: TopicPlacementInput): CraftFinding {
   const missing: string[] = [];
   if (!namesTopic(input.coverText, input.phrase)) missing.push("slide 1");
   if (!namesTopic(hookOf(input.caption), input.phrase)) missing.push("the caption's first line");
-  if (!input.altTexts.some((alt) => namesTopic(alt, input.phrase))) missing.push("any alt text");
 
   if (missing.length === 0) return CLEAN;
   return {
     ok: false,
     reason:
-      `the topic phrase "${input.phrase}" does not appear in ${missing.join(", ")} — ` +
-      "Instagram's own search and Google both read those three, and a post that never names its subject in them is not findable",
+      `the topic phrase "${input.phrase}" is not carried by ${missing.join(" or ")} — ` +
+      "Instagram's search and Google both read those two, so naming the subject there is what makes the post findable",
   };
 }

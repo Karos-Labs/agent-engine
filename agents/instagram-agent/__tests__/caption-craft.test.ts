@@ -148,23 +148,22 @@ describe("significantWords / namesTopic (item B8)", () => {
   });
 });
 
-describe("checkTopicPlacement (item B8)", () => {
+describe("checkTopicPlacement (item B8) — the finding the craft gate REPORTS", () => {
   const ok = {
     phrase: "onboarding time",
     coverText: "We cut onboarding time in half",
     caption: "Onboarding time was our worst number.\nHere is what moved it.",
-    altTexts: ["A chart of onboarding time falling from 14 days to 3"],
   };
 
-  it("passes when the phrase is in all three places", () => {
+  it("passes when the phrase is in both places", () => {
     expect(checkTopicPlacement(ok)).toEqual({ ok: true });
   });
 
-  it("names EVERY place it is missing, not just the first", () => {
-    const finding = checkTopicPlacement({ ...ok, coverText: "We fixed it", altTexts: ["A chart falling"] });
+  it("names BOTH places when both miss it, not just the first", () => {
+    const finding = checkTopicPlacement({ phrase: "onboarding time", coverText: "We fixed it", caption: "A better quarter.\nHere is how." });
     expect(finding.ok).toBe(false);
     expect(finding.reason).toContain("slide 1");
-    expect(finding.reason).toContain("any alt text");
+    expect(finding.reason).toContain("first line");
   });
 
   it("reads the caption's FIRST LINE only — that is the part the feed shows", () => {
@@ -172,10 +171,14 @@ describe("checkTopicPlacement (item B8)", () => {
     const finding = checkTopicPlacement(buried);
     expect(finding.ok).toBe(false);
     expect(finding.reason).toContain("first line");
+    expect(finding.reason).not.toContain("slide 1");
   });
 
-  it("passes when ANY alt text names the topic, not all of them", () => {
-    expect(checkTopicPlacement({ ...ok, altTexts: ["A photograph of a desk", "A chart of onboarding time"] })).toEqual({ ok: true });
+  it("does NOT look at alt text, which the packager writes from words the copy step already chose", () => {
+    // The specification names alt text alongside these two. It is left out
+    // because no step can act on a finding about it: by the time alt text is
+    // written the caption and the cover are final.
+    expect(Object.keys(ok)).toEqual(["phrase", "coverText", "caption"]);
   });
 
   it("has no opinion when no topic was passed — a missing topic is a fact about the caller", () => {
