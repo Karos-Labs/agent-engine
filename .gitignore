@@ -21,6 +21,13 @@ _to_delete/
 # `.tmp-calibration-*` came within a `git add -A` of being committed.
 .tmp-calibration-*/
 .tmp-mark-slots-*/
+# And the third, which the sentence above did not save anybody from:
+# style-lock.test.ts writes a `.tmp-style-lock-*` per treatment, and on
+# 2026-09-18 a `git add -A` run while that suite was mid-render committed
+# eighteen of its rendered templates. The lesson the comment above records
+# is right and was not enough, because the pattern list is a denylist: a new
+# render suite with a new scratch prefix is invisible until it happens.
+.tmp-style-lock-*/
 # Per-run scratch that MUST live under repoRoot, because publish.renderCarousel's
 # assertInside only accepts repo-relative paths. Both are written by a real run
 # (not only by tests), and in local development repoRoot IS this repo, so without
