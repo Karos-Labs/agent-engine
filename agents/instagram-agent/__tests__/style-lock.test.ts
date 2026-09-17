@@ -5,7 +5,7 @@ import * as zlib from "node:zlib";
 import { decodePngRows } from "@agent-engine/tool-common";
 import { createRenderCarousel, measureSlidePng, type RenderCarouselInput, type SlideMetrics, type SlideProbe } from "@agent-engine/tool-karos-publish";
 import { ACCENT_GROUND_CONTRAST_FLOOR, contrastRatio, DEFAULT_TEMPLATE_GROUND } from "../src/workflow/brand-render-tokens.js";
-import { checkInterestFloor, FULL_BLEED_IMAGERY_SHARE, IMAGERY_OR_DEVICE_FLOOR, MIN_QUANTISED_COLOUR_COUNT } from "../src/workflow/interest-floor.js";
+import { checkInterestFloor, FULL_BLEED_IMAGERY_SHARE, IMAGERY_OR_DEVICE_FLOOR, IMAGERY_SHARE_FOR_PALETTE_WARNING, MIN_QUANTISED_COLOUR_COUNT } from "../src/workflow/interest-floor.js";
 import { deviceCssBlock } from "../src/workflow/slide-devices.js";
 import { assembleSlidesData } from "../src/workflow/slides-data.js";
 import {
@@ -815,13 +815,58 @@ describe.skipIf(!isChromiumInstalled())("a treated photograph is still a photogr
 
         expect(plate.metrics.imageryOrDeviceShare, `${plate.label} imageryOrDeviceShare`).toBeGreaterThanOrEqual(IMAGERY_OR_DEVICE_FLOOR);
         expect(plate.metrics.imageryShare, `${plate.label} imageryShare`).toBeGreaterThanOrEqual(FULL_BLEED_IMAGERY_SHARE);
-        // Eight, per item S's own test bullet — comfortably above item L's
-        // own low-colour-count warning floor, which is what a wash would trip.
-        expect(plate.metrics.quantisedColourCount, `${plate.label} quantisedColourCount`).toBeGreaterThanOrEqual(8);
-        expect(plate.metrics.quantisedColourCount).toBeGreaterThan(MIN_QUANTISED_COLOUR_COUNT);
+        // ── THE EIGHT-COLOUR BAR IS NOT ASSERTED ON THIS PLATE, AND THE
+        //    REASON IS `quantisedColourCount`'S OWN CONTRACT. ──
+        //
+        // It counts 5-bit colours holding at least HALF A PERCENT of the frame
+        // — the plate's PALETTE, not its colour range. `interest-floor.ts` says
+        // what that means over a picture, in its own words: *"a photograph
+        // spreads its pixels over so many 5-bit bins that NONE reaches the 0.5%
+        // floor, so a full-bleed photo slide legitimately counts 0 colours.
+        // Warning on that would fire on every good photo slide"* — which is why
+        // `IMAGERY_SHARE_FOR_PALETTE_WARNING` exists and why the production
+        // warning goes inert above 10% imagery.
+        //
+        // MEASURED, and this is why the bar held here until now: on the
+        // PREVIOUS `slide.html` this render was 65.7% imagery over 22.4% flat
+        // ground, and the eight colours it counted were the GROUND BAND's, not
+        // the photograph's. The plate is full-bleed now — 93.1% imagery, 1.7%
+        // flat — so the same assertion reads 1, and it reads 1 for the reason
+        // the product documents rather than because the grade flattened
+        // anything. A bar whose value came from the part of the plate that was
+        // NOT the photograph was never measuring the treatment.
+        //
+        // The bar itself is not weakened and has not moved: it is asserted at 8
+        // on all three treatments by the non-browser block above, over
+        // `encodePlate` — a plate built to carry a palette — together with the
+        // negative control that proves it is falsifiable. That is where a claim
+        // about colour science belongs. What THIS block is for, per its own
+        // header, is that the selectors and blend modes deliver the grade to a
+        // rendered document, and that is asserted below and further down.
+        //
+        // So what is pinned here instead is the PRODUCTION reading: the plate is
+        // over the imagery share at which the colour count is declared
+        // meaningless, so the number being low is expected and no reviewer is
+        // sent a `low-colour-count` warning for a correct photo slide — which is
+        // the false positive this whole case exists to prevent.
+        expect(
+          plate.metrics.imageryShare,
+          `${plate.label}: at ${(plate.metrics.imageryShare * 100).toFixed(1)}% imagery this plate is UNDER ` +
+            `IMAGERY_SHARE_FOR_PALETTE_WARNING (${IMAGERY_SHARE_FOR_PALETTE_WARNING}), so its colour count is live after all — ` +
+            "re-read the note above, because the composition has changed and the eight-colour bar may belong here again.",
+        ).toBeGreaterThan(IMAGERY_SHARE_FOR_PALETTE_WARNING);
+        expect(plate.metrics.quantisedColourCount, `${plate.label} quantisedColourCount must still be measured`).toBeGreaterThanOrEqual(0);
 
         const verdict = checkInterestFloor(plate.metrics, plate.probe, "interior", { slide: 1, archetype: "slide" });
         expect(verdict.findings.map((f) => `${f.kind}: ${f.sentence}`), `${plate.label} must pass the interest floor`).toStrictEqual([]);
+        // AND NOT WARNED AT EITHER, which is the half of item L that costs a
+        // Sonnet redraft when it is wrong. `findings` is the refusal and
+        // `warnings` is what reaches the reviewer beside the plate; a correct
+        // photo slide must arrive with neither.
+        expect(
+          verdict.warnings.filter((w) => w.kind === "low-colour-count").map((w) => w.sentence),
+          `${plate.label} was warned for its colour count on a ${(plate.metrics.imageryShare * 100).toFixed(1)}% imagery plate`,
+        ).toStrictEqual([]);
       }
 
       // ── The half that can fail: the sheet actually painted ──

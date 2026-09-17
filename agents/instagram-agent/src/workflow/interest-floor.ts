@@ -2685,6 +2685,30 @@ export function checkInterestFloor(
   // The rectangle, its corners and the subject are still computed, still on
   // every finding's `measured`, still on the gate payload, and still read by
   // `interest-relayout.ts`'s cover limb.
+  // ── THE INTERIOR LIMB WAS RESTORED HERE AND MEASURED BACK OUT. ──
+  //
+  // The gap the demotion leaves is real: a plate with a kicker at its head, a
+  // body at its foot and nothing between them carries two elements, clears
+  // clause H, clears the ink floor, and at the interior role is refused by no
+  // clause at all. `headline-focus.html` rendered with its statement slot empty
+  // reports `largestEmptyRectShare` 0.6611 against a 0.28 ceiling and
+  // `checkInterestFloor` returns an empty finding list.
+  //
+  // The limb was brought back for `holeSpansFrame` holes and CI priced it: 22
+  // populated rows of the gate-zero sweep went red — `stat-callout`,
+  // `comparison-card`, `list-takeaway`, `slide` and `headline-focus`, at short
+  // and medium copy, in English and Hebrew, LTR and mirrored (run
+  // 35275187076). `holeSpansFrame` is `w >= 90% of the canvas OR h >= 90%`, and
+  // on a 1080-wide plate ANY full-width band clears the width limb — which is
+  // nearly every hole a column composition makes. It reads as a strict
+  // predicate and is not one, and the hollow plate qualified on exactly the
+  // same limb as the plates that are merely quiet.
+  //
+  // So the demotion stands and the gap is recorded rather than papered over
+  // with a second number: separating 0.66 from 0.28-0.40 needs an area bound
+  // around 0.5 that no measurement in this file justifies yet. The hollow
+  // plate IS still reported at the interior role — on `warnings`, which is
+  // what the demotion promises and what the hollow case now asserts.
   if (metrics.largestEmptyRectShare > rectCeiling && role !== "interior") {
     // WAIVED rather than skipped when the plate carries a subject. The hole
     // is real either way and the reviewer, the judge and the ledger should

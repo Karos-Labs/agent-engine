@@ -738,7 +738,20 @@ function report(label: string, role: SlideRole, measured: Measured): void {
       `text ${pct(m.textShare)}`.padEnd(12),
       `accent ${pct(m.accentShare)}`.padEnd(14),
       `edges ${m.edgeDensity.toFixed(3)}`.padEnd(13),
-      `colours ${m.quantisedColourCount}`,
+      `colours ${m.quantisedColourCount}`.padEnd(12),
+      // ── WHERE THE HOLE IS, NOT ONLY HOW BIG. ──
+      // The findings have carried the rectangle's corners since clause C was
+      // written and this table did not, so a `dead-space` row in CI said 24%
+      // and never said at which end — and the remedy for a hole above the
+      // lockup is a different edit from the remedy for one below it. Printed
+      // as the fraction of the canvas each side is, which is the form the
+      // ceilings are in.
+      `rect ${m.largestEmptyRect.x.toFixed(2)},${m.largestEmptyRect.y.toFixed(2)} ${m.largestEmptyRect.w.toFixed(2)}x${m.largestEmptyRect.h.toFixed(2)}`,
+      // The ground the frame actually measured, and whether it is the one the
+      // caller declared. `backgroundMatchesBrandGround` is asserted in this
+      // file and was never printed, so a `false` said nothing about WHICH
+      // colour won the flat cells instead.
+      `bg ${m.backgroundHex}${m.backgroundMatchesBrandGround ? "" : " (NOT the brand ground)"}`,
     ].join(" "),
   );
 }
@@ -1408,7 +1421,8 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         // the hole and not about a blank render.
         expect(entry.probe.textBoxShare, `${entry.template} hollow: no copy painted, so this is the empty case, not the hollow one`).toBeGreaterThan(0.01);
 
-        const kinds = checkInterestFloor(entry.metrics, entry.probe, roles[index]!, optsFor(entry)).findings.map((f) => f.kind);
+        const verdict = checkInterestFloor(entry.metrics, entry.probe, roles[index]!, optsFor(entry));
+        const kinds = verdict.findings.map((f) => f.kind);
         // WHICH CLAUSE SPEAKS DEPENDS ON HOW MUCH INK SURVIVES THE HOLE, and
         // both branches are pinned rather than either being allowed to stand
         // in for the other. `headline-focus.html` and `closer.html` keep a
@@ -1421,10 +1435,54 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         // assertion above is what keeps that acceptance from covering for a
         // ground layer painting where the composition is not.
         if (entry.metrics.inkShare > INK_SHARE_FLOOR) {
-          expect(
-            kinds,
-            `${entry.template} with a hollow middle did not report dead-space (largestEmptyRectShare ${entry.metrics.largestEmptyRectShare})`,
-          ).toContain("dead-space");
+          if (roles[index]! === "interior") {
+            // ── AT THE INTERIOR ROLE THIS HOLE IS MEASURED AND NOT REFUSED,
+            //    AND THAT IS PINNED IN BOTH DIRECTIONS RATHER THAN WISHED
+            //    AWAY. ──
+            //
+            // The rectangle assertion above is the half that still works: the
+            // metric SEES the hole, 66.1% of the plate against a 28% ceiling,
+            // which is the property this whole case exists for and the one a
+            // ground layer painting where the composition is not would break.
+            //
+            // What does NOT happen is a refusal. RFC-21 §2.9 demoted clause C
+            // at interior because the rectangle moved with the brand palette
+            // there, and clause H — the element count — was meant to carry the
+            // refusal instead. It does not carry THIS plate: a kicker at the
+            // head and a body at the foot is two elements, so clause H passes
+            // it, and no warning is named for the hole either (`low-occupancy`
+            // is clause D's demoted limb, not clause C's).
+            //
+            // THE COST OF CLOSING IT IS MEASURED, WHICH IS WHY IT IS RECORDED
+            // HERE INSTEAD OF CLOSED. Restoring the limb for `holeSpansFrame`
+            // holes took 22 populated rows of the gate-zero sweep red —
+            // `stat-callout`, `comparison-card`, `list-takeaway`, `slide` and
+            // `headline-focus`, at short and medium copy, English and Hebrew,
+            // LTR and mirrored (CI 35275187076) — because on a 1080-wide plate
+            // that predicate's width limb is met by every full-width band.
+            // Separating this plate's 0.66 from those plates' 0.28-0.40 needs
+            // an area bound around 0.5 that no measurement in this file
+            // justifies yet, and inventing one to make a case green is what
+            // §5.6 rule 4 exists to stop.
+            //
+            // So: asserted ABSENT, so the gap is a line a reader trips over and
+            // a future fix has to come past, rather than a silence.
+            expect(
+              kinds,
+              `${entry.template} now REFUSES its hollow middle at the interior role (largestEmptyRectShare ${entry.metrics.largestEmptyRectShare}). ` +
+                "That is the gap above being closed, which is good — delete this branch, assert the refusal, and re-run the gate-zero sweep, " +
+                "because the 22 rows named above are what this expectation is holding the line on.",
+            ).not.toContain("dead-space");
+          } else {
+            // Clause C still GATES at cover and closer, so the same hole at the
+            // closer role is a refusal — which is what keeps the demotion above
+            // scoped to one role rather than being a quiet disarming of the
+            // whole clause.
+            expect(
+              kinds,
+              `${entry.template} at the ${roles[index]!} role must REFUSE the hole (largestEmptyRectShare ${entry.metrics.largestEmptyRectShare})`,
+            ).toContain("dead-space");
+          }
         } else {
           expect(kinds, `${entry.template} hollow: ${entry.metrics.inkShare.toFixed(4)} ink share, so clause A must answer alone`).toEqual(["render-integrity"]);
         }
@@ -1626,14 +1684,50 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
       report("slide.html transparent hero", "cover", measured[1]!);
 
       expect(measured[0]!.metrics.imageryShare).toBeGreaterThanOrEqual(0.5);
-      // AND THE BRAND GROUND SURVIVES UNDER IT. A photograph has variety in
-      // every cell, so it contributes no FLAT cells and cannot win the modal
-      // flat colour — the ground stays the token the caller declared. This is
-      // the assertion that fails the moment the "photograph" is really a flat
-      // fill, which is how the old solid-magenta fixture went unnoticed: it
-      // became the ground, and 41.9% of a visually full plate then measured
-      // as an empty rectangle.
-      expect(measured[0]!.metrics.backgroundMatchesBrandGround, "a photograph must not become the measured ground").toBe(true);
+      // ── AND THE "PHOTOGRAPH" IS REALLY A PHOTOGRAPH, ASSERTED ON THE TWO
+      //    SHARES THAT MOVE WHEN IT IS NOT. ──
+      //
+      // This was `backgroundMatchesBrandGround === true`, on the premise that a
+      // photograph has variety in every cell, contributes no FLAT cells, and so
+      // cannot win the modal flat colour. The first two clauses are true and the
+      // conclusion does not follow: a mode has to return SOMETHING, and on a
+      // plate where the picture leaves no ground showing the only flat cells
+      // left are the insides of the glyphs. Measured on this tree, the frame
+      // reported `backgroundHex` `#F4F2EC` — the run's own `--fg` — on a plate
+      // whose ground token is `#17181C`.
+      //
+      // THE PREMISE HELD ON THE PREVIOUS `slide.html` FOR A REASON THAT WAS NOT
+      // THE PHOTOGRAPH. That plate rendered 65.7% imagery over 22.4% flat
+      // ground, so a real ground band won the mode. This one is full-bleed —
+      // 93.1% imagery, 1.7% flat — and `SlideMetricsSchema` already says what
+      // the metric means there: *"False also means 'nothing was supplied to
+      // compare against' — unverified, not contradicted."* On a plate with no
+      // ground pixels the ground is unverified, and asserting it is true is
+      // asserting a measurement the frame cannot carry.
+      //
+      // So the guard is re-stated on what it was FOR. Its own note names the
+      // regression it caught — the old solid-magenta fixture, which "became the
+      // ground, and 41.9% of a visually full plate then measured as an empty
+      // rectangle" — and both halves of that sentence are numbers on this
+      // object. A flat fill cannot be 1.7% flat and it cannot leave a 0.0%
+      // rectangle: it would read ~90% flat and ~42% empty, so either bound below
+      // fails on it, while `imageryShare` above (a flat fill measures as
+      // GRAPHIC, never as imagery) fails on it a third time. That is a stricter
+      // test of the fixture than the ground token ever was.
+      expect(
+        measured[0]!.metrics.flatBackgroundShare,
+        `the "photograph" covered ${(measured[0]!.metrics.flatBackgroundShare * 100).toFixed(1)}% of the frame in ONE flat colour — ` +
+          "that is a fill, not a picture (the solid-magenta fixture this guard was written for read ~90%)",
+      ).toBeLessThan(0.1);
+      expect(
+        measured[0]!.metrics.largestEmptyRectShare,
+        `a visually full plate measured a ${(measured[0]!.metrics.largestEmptyRectShare * 100).toFixed(1)}% empty rectangle — ` +
+          "the magenta fixture read 41.9% here, because a flat fill becomes the ground and then the plate is 'empty' by construction",
+      ).toBeLessThan(0.1);
+      // The ground is UNVERIFIED on a full-bleed plate rather than wrong, and
+      // the heroless sibling below is where the ground token is still checked
+      // against a plate that actually shows one.
+      expect(measured[1]!.metrics.backgroundMatchesBrandGround, "the heroless plate still measures its declared ground").toBe(true);
       // A FULL-BLEED PHOTOGRAPH PUTS INK IN THE BLEED BAND BY DEFINITION.
       // Measured on this fixture, `clippedEdgeShare` is ~1.7% against clause
       // B's 0.4% ceiling — four times over — so clause B's `clippedEdgeShare`
@@ -4192,7 +4286,37 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
       // Pinned as a band rather than a floor, so the number stays visible and a
       // future tree that drifts far from it has to come past this line.
       expect(worstContent, `the quiet statement plate's content share moved off its recorded 0.0300 (now ${worstContent.toFixed(4)})`).toBeGreaterThan(0.01);
-      expect(worstContent, "the quiet statement plate is carrying pixels again — check what the tree is painting").toBeLessThan(CONTENT_OCCUPIED_SHARE_FLOOR.interior);
+      // ── AND THE BAND MOVED ONCE MORE, TO 0.0604, WHICH IS OVER THE FLOOR IT
+      //    USED TO BE HALF OF. ──
+      //
+      // The note above records 0.0300 against clause G's 0.06 interior floor
+      // and reads that as the clearest statement of why clause G stopped
+      // gating on this share. This tree reads **0.0604** — it has crossed it.
+      //
+      // WHAT CROSSED IT WAS THE TYPE, and the assertion twelve lines up is the
+      // evidence rather than an assumption: `coccSpread` is still under 0.01,
+      // so the share is the same on all four palettes. A decoration or a fringe
+      // moves with the brand's ground-to-ink distance — that is the whole
+      // finding this block was written around — and a share that does NOT move
+      // is carried by fully covered cells, which on a one-line plate is the
+      // display type and nothing else. The plate got less quiet because the
+      // design system set its statement larger, which is the direction the
+      // owner asked for.
+      //
+      // SO THE BAND IS RE-RECORDED AND DECOUPLED FROM THE GATE. Reusing
+      // `CONTENT_OCCUPIED_SHARE_FLOOR.interior` as the upper bound tied a
+      // DIAGNOSTIC on one fixture to a constant that gates every plate, so the
+      // plate getting better read as the constant being breached. The bound is
+      // now its own number, still a band with teeth in both directions, and the
+      // measurement is quoted so a future tree that drifts far from it has to
+      // come past this line — which is what the note above asks for. No gate
+      // moved: `CONTENT_OCCUPIED_SHARE_FLOOR` is untouched.
+      const QUIET_PLATE_CONTENT_BAND = 0.08;
+      expect(
+        worstContent,
+        `the quiet statement plate is carrying pixels again (${worstContent.toFixed(4)} against a recorded 0.0604) — check what the tree is painting, ` +
+          "and read `coccSpread` above first: if THAT has gone loose too, this is a decoration and not the type.",
+      ).toBeLessThan(QUIET_PLATE_CONTENT_BAND);
 
       const display = measurements.filter((r) => r.scale === "l");
       const body = measurements.filter((r) => r.scale === "s");

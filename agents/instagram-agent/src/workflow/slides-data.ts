@@ -23,6 +23,7 @@ import {
 } from "./emphasis-marks.js";
 import { buildDeviceFragment, deviceFigureValues, validateDevice, type SlideDevice } from "./slide-devices.js";
 import { imageTreatmentFields, type ImageTreatment } from "./style-lock.js";
+import { COMPOSITION_ANCHOR } from "./visual-system.js";
 import type { CarouselVisualSystem } from "./visual-system.js";
 import type {
   BrandTokens,
@@ -2623,14 +2624,10 @@ export function assembleSlidesData(params: {
         // property cannot be used in a selector, so four grammars moved nothing:
         // measured on a real render, `headline-focus` put its lockup at the
         // same y under `top-column` and under `bottom-column`.
-        compositionAnchor:
-          params.visualSystem?.compositionGrammar === "top-column"
-            ? "top"
-            : params.visualSystem?.compositionGrammar === "centre-measure"
-              ? "centre"
-              : params.visualSystem?.compositionGrammar === "split-band"
-                ? "split"
-                : "bottom",
+        // `COMPOSITION_ANCHOR` rather than a ternary spelled out here: this
+        // mapping is the axis reaching the plate, and a copy of it in this
+        // file is a copy the render sweeps cannot reach. See its own note.
+        compositionAnchor: COMPOSITION_ANCHOR[params.visualSystem?.compositionGrammar ?? "bottom-column"],
         coverForm: params.visualSystem?.coverForm ?? "figure",
         accentForm: params.visualSystem?.accentForm ?? "rule",
         ...(eyebrowSlides !== undefined ? { eyebrowSlides } : {}),

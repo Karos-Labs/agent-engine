@@ -388,9 +388,29 @@ body:has(.hero) .plate::after { display: none; }
    that space instead: it is still bounded (a declared box, `no-repeat`, one
    ramp), it is still content by every mask `slide-metrics` keeps, and a reader
    sees a composed plate rather than a stack with a hole above it. */
-.plate:has(.cov-field:not([hidden])) > .plate-spacer,
-.plate:has(.quote-block),
-.plate:has(.cl-recap:not(:empty)) { }
+/* ── AND THE COVER'S LIMB IS THE ONE THAT WAS NEVER WRITTEN. ──
+   The comment above has been right since it was written and the cover was
+   not in it: `> .plate-spacer` selects a CLASS THAT DOES NOT EXIST — the
+   spacer is a pseudo-element, which is the whole point of the note above it —
+   and the rule body was empty, so the declaration landed nowhere. The two
+   siblings on the next line were implemented and the cover was not.
+
+   WHAT IT COST, measured on this tree at short copy: `.cov-field` and
+   `.plate::before` BOTH resolve to `flex: 1 1 0`, so they are two items with
+   equal grow and a zero basis and they SPLIT the free space half each. The
+   band came out at ~384px of the 768px it could have had, and the other half
+   was a full-width empty rectangle at the head of the plate —
+   `largestEmptyRect 0,76 1080x384`, 26.7% against a 22% cover ceiling. The
+   hole was never a missing number; it was the object and the spacer holding
+   one plate's worth of air between them.
+
+   Guarded on the two states that stand the band DOWN, because there the
+   spacer is the anchor and must keep growing: over a photograph
+   (`:has(.hero)`) the picture is the subject, and `typographic-poster` has no
+   subject but its sentence. `portrait` is deliberately absent — with no
+   photograph it puts its band back (see `cover.html`), and then it wants this
+   rule like any other form. */
+body:not(:has(.hero)):not([data-cover="typographic-poster"]) .plate:has(.cov-field)::before,
 .plate:has(.quote-block)::before,
 .plate:has(.cl-recap:not(:empty))::before { flex-grow: 0; }
 .quote-block { flex: 1 1 auto; justify-content: center; }
