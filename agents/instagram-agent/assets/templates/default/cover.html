@@ -493,7 +493,38 @@
     position: relative; z-index: 3; flex: 1 1 auto; min-block-size: 0;
     margin: 16px 16px 0;
     padding: calc(84px * var(--ts, 1)) calc(var(--mx) - 16px) calc(44px * var(--ts, 1));
-    display: flex; flex-direction: column; justify-content: flex-end;
+    display: flex; flex-direction: column;
+    /* ── AND THE GRAMMAR CANNOT ANCHOR THE BAND EITHER. SECOND MEASUREMENT,
+          SAME ANSWER. ──
+       `justify-content: var(--lockup-anchor, flex-end)` was the second attempt
+       at letting `compositionGrammar` reach this plate, on the reasoning that
+       the band is painted end to end so moving its contents costs no bare
+       ground. The dead-space half of that held — every grammar stayed at or
+       under 0.1694 — and the plate broke somewhere else instead. Measured,
+       karoslabs kit, production composition:
+
+         top-column  / split-band   en m  `div.cov-field [h 697>515]`
+                                    en l  `div.cov-field [h 822>645]`
+                                    he m  `div.cov-field [h 620>451]`
+                                    he l  `div.cov-field [h 732>516]`
+         and with it `div.eyebrow × span.mk-plain` 10-21px DEEP — the eyebrow
+         printing over the title.
+
+       This band is a FIXED height (`--cover-band`, 300-600px) with `overflow:
+       hidden`. Anchored at its head, the device and the eyebrow overflow its
+       foot, which is `scrollHeight > clientHeight` — clause B's hard `clipped`
+       — and the eyebrow lands on the lockup. `flex-end` is load-bearing: it
+       makes the residual overflow leave through the BLOCK-START edge, which is
+       the one direction this composition can absorb.
+       So both cover anchors are measured out, and this plate's per-client
+       geometry stays `--cover-band`'s height. What was actually collapsing the
+       three probe covers onto one poster was upstream and is fixed there:
+       `fallbackClientVisualSystem` resolved `displayRegister: grotesque` for
+       every kit with no `aesthetic`/`visualMood`, so three clients shared a
+       face; that branch is seeded off the slug now. Letting the grammar into
+       the cover needs `.cov-field` to stop being a fixed band, which is a
+       composition pass and not a token. */
+    justify-content: flex-end;
     overflow: hidden;
     /* ── ONE LAYER: THE BOUNDED MASTHEAD RAMP. ──
        The 2px/14px horizontal screen that used to sit over this ramp was
@@ -631,9 +662,6 @@
     margin-inline-start: calc(-20px * var(--ts, 1));
     background: color-mix(in srgb, var(--bg) 86%, transparent);
   }
-  body:has(.hero):has(.eyebrow:not(:empty)) .cov-rail {
-    box-shadow: 0 0 calc(16px * var(--ts, 1)) calc(4px * var(--ts, 1)) color-mix(in srgb, var(--bg) 82%, transparent);
-  }
 
   /* ── RFC-20 §11.5 ITEM 3: A SCRIM WITH NO PHOTOGRAPH UNDER IT. ──
 
@@ -711,8 +739,65 @@
      UNDERSTOOD rather than merely named: `.scrim` is `block-size: 52%`, its
      upper edge sits at y = 48%, and 51.67% is the 52% below it. */
 
+  /* ── NOTHING IN THE BAND IS CRUSHED TO MAKE ROOM. ──
+     `.cov-field` is a flex column, so its children are flex items and take
+     `flex-shrink: 1` by default: when the band is full, the browser does not
+     overflow it, it SQUEEZES whatever has no content of its own to resist.
+     Measured on this tree with a figure device at `m`, on the eyebrow's rule
+     before it was deleted: it rendered `240x0` — a rule painted at zero
+     height, on every cover carrying an object, silently, for as long as the
+     band has been fixed. The rule is gone; the shape that hid it is not, and
+     the eyebrow is still a flex item in that band.
+     It also makes `scrollHeight === clientHeight` on a field that is visibly
+     over, which is why the fit pass below asks where the first child STARTS
+     rather than asking the field whether it scrolls. */
+  .cov-field > * { flex: 0 0 auto; }
   .cov-device { inline-size: 100%; }
   .cov-device:empty { display: none; }
+  /* The figure's descender allowance is NOT set here, and the first attempt at
+     this fix is why. `slide-devices.ts` measured `.dv-figure`'s `0.16em` on
+     Fraunces, and `condensed` (Oswald) and `mono-display` (IBM Plex Mono) both
+     overshoot it — but a `.cov-device .dv-figure` rule in this file also beats
+     `script-fonts.ts`'s `.dv-figure { padding-block-end: 0.30em }`, which is
+     the allowance MEASURED FOR HEBREW, and the Hebrew plates then reported the
+     overflow the Latin ones had stopped reporting (measured on this tree:
+     `div.dv-figure [h 146>134]` on three plates of every Hebrew carousel). The
+     allowance belongs where the script is known: `clientVisualSystemCss` emits
+     it for a covered script only, so the script pack keeps the last word on
+     the scripts it measured. */
+  /* ── AND THE BAND HAS THE LAST WORD ON HOW BIG THE OBJECT IS. ──
+     `.cov-field` is a FIXED band — `--cover-band` is 300-600px, chosen per run
+     by the system's `coverForm` — with `justify-content: flex-end` and
+     `overflow: hidden`, so an object taller than the band is not squeezed, it
+     is CUT OFF AT THE TOP OF THE PLATE. Measured on this tree with a figure
+     device, before these rungs existed: `div.cov-device` at -188..284 at `m`
+     and -305..135 at `l`, in every display register and both scripts — i.e.
+     every cover carrying a bounded object shipped with the top of its own
+     number sliced off, and `probe.offscreen`/`probe.overflow` reported it as
+     `clipped` on the FIRST SLIDE.
+
+     The rungs shrink the object rather than the band, because the band is the
+     system's decision about this cover's form and the object is the thing that
+     has to live inside it. Nothing is dropped at any rung: the source credit a
+     number is quoted with is not slack. The script below steps down only while
+     the field actually overflows, so a cover whose object already fits renders
+     byte-identically to before. */
+  .cov-device .dv-figure { font-size: calc(var(--t-figure) * 0.9091 * var(--dv-fit, 1)); }
+  .cov-device .dv-figure--mid { font-size: calc(var(--t-figure) * 0.6818 * var(--dv-fit, 1)); }
+  .cov-device .dv-figure--small { font-size: calc(var(--t-figure) * 0.4909 * var(--dv-fit, 1)); }
+  /* The label follows, but not all the way down: it is read, so it stops at
+     78% where the numeral keeps going. */
+  .cov-device .dv-label { font-size: calc(var(--t-label) * 0.9375 * max(var(--dv-fit, 1), 0.78)); }
+  /* ── AND THE BAND GIVES WHAT IT CAN BEFORE THE OBJECT DOES. ──
+     `--cover-band` is the system's decision about this cover's FORM, and on a
+     plate with nothing in the band that is the whole story. With an object in
+     it the band is a MINIMUM instead: it grows to what the object needs, up to
+     58% of the plate, and only then does the object start giving. The cap is
+     what keeps the lockup's share — the title is the cover — and the lockup's
+     own ladder answers for the rest. */
+  body:not(:has(.hero)):has(.cov-device .dv) .cov-field {
+    block-size: auto; min-block-size: var(--cover-band, 600px); max-block-size: 58%;
+  }
 
   .lockup {
     position: relative; z-index: 4; flex: 0 0 auto;
@@ -756,6 +841,36 @@
        band can be shorter, a title cannot be cut. */
     flex: 1 0 auto;
     display: flex; flex-direction: column; justify-content: center;
+    /* ── THE CLIENT'S `compositionGrammar` DOES NOT ANCHOR THIS BLOCK, AND
+          THAT IS NOW A MEASUREMENT RATHER THAN AN ASSERTION. ──
+       `--lockup-anchor` reached exactly ONE of the eight templates
+       (`headline-focus.html`), which made it an axis that skipped the plate a
+       reader stops on first: three probe clients on three different grammars
+       rendered the same cover geometry three times. `visual-system.ts`'s note
+       excluded the cover by saying *"the cover and closer have roles of their
+       own"*, where `slide.html` was excluded by a table. So the table was
+       taken here too — `justify-content: var(--lockup-anchor, center)` on this
+       rule, karoslabs kit through the production composition, all four
+       grammars x {s, m, l} x {en, he}, `largestEmptyRectShare`:
+
+                          en s    en m    en l    he s    he m    he l
+         centre-measure   0.1169  0.1149  0.1216  0.1389  0.1694  0.1194
+         top-column       0.1238  0.1149  0.1216  0.1766  0.2195  0.1123
+         split-band       0.1278  0.1149  0.1217  0.1889  0.2444  0.1250
+         bottom-column    0.1361  0.1149  0.1250  0.2000  0.2611  0.1417
+
+       The cover ceiling is 0.22 (`LARGEST_EMPTY_RECT_CEILING`). Two of the
+       four anchors take a HEBREW cover past it — `split-band` 0.2444 and
+       `bottom-column` 0.2611 at `m` — and `compositionGrammar` is frozen per
+       client, so that is not one unlucky plate but every post those clients
+       ever ship. Clause C waives a hole on a plate with a subject, but not one
+       that `holeSpansFrame` calls a band across the frame, which is the shape
+       an off-centre anchor opens. An axis that refuses two of its own four
+       values on one script is a hold generator.
+       So the cover keeps `center`, for the reason `slide.html` keeps it, and
+       the grammar reaches this plate through `.cov-field` instead — the
+       masthead band's own anchor, where the ramp is painted and the same
+       four values cost nothing. See that rule. */
   }
   .eyebrow {
     /* ── THE LABEL'S BOX IS ITS LABEL. ──
@@ -818,26 +933,22 @@
      on a §4.5-compliant cover there is no eyebrow. Switching it as well would
      give the one plate that owns no furniture a piece of switchable furniture,
      which `template-furniture.test.ts`'s Chromium block refuses by name. */
-  .cov-rail { block-size: 2px; background: color-mix(in srgb, var(--fg) 46%, transparent); margin-block-start: calc(22px * var(--ts, 1)); }
-  /* ── THE FURNITURE ANSWERS TO THE GROUND RULE TOO (RFC-20 P2). ──
-     `.cov-rail` is a full-measure 2px rule at 46% of the foreground — 99
-     units off the ground, so every cell row it crosses is INK and OCCUPIED —
-     and it used to paint on every render, including one with no eyebrow to
-     underline. `.stat-band` is a 200x14 accent block and did the same.
+  /* ── THE COVER'S RAIL IS GONE, AND §4.5 IS WHY. ──
+     *The cover carries NO furniture at all* — `template-furniture.test.ts`
+     says so by name, and a keyline under the eyebrow is furniture. It was also
+     the widest instance of the defect the owner named: 952px at 46% of the
+     foreground on slide 1, beside a 240px `--accent` mark on slides 4 and 8,
+     one carousel, two colours, two lengths. Re-colouring it was worse, not
+     better — on the heroless path this rail sits INSIDE the accent ramp, so an
+     accent rule painted on it is a mark nobody can see, and on the photograph
+     path the eyebrow already has its own scrim chip.
 
-     Neither is large, and that is exactly why this was invisible: measured on
-     this tree through real Chromium, a cover with EVERY SLOT EMPTY reported
-     `occupiedShare` 0.45% (harmless) and `largestEmptyRectShare` 78.89% —
-     because a full-width rule across the plate's upper third and an accent
-     block below it CUT THE EMPTY RECTANGLE IN THREE. An empty plate measured
-     as though a fifth of it were composed. With both guarded it measures
-     `occupiedShare` 0.00% and `largestEmptyRectShare` 100.00%, which is what
-     RFC-20 guard G2 asserts for every archetype at every role.
-
-     A rule under an eyebrow that is not there is not a rule, it is ink an
-     empty plate acquired; the same sentence the `.cov-field` guards above
-     have always made, applied to the furniture that was exempt from it. */
-  body:not(:has(.eyebrow:not(:empty))) .cov-rail { display: none; }
+     It costs no measurement: the rail lives inside `.cov-field`, whose band is
+     either the ramp or the photograph, so its pixels were ink on ink and its
+     absence cannot open a rectangle the field was not already closing —
+     measured on this tree, a cover rendered with and without a bounded object
+     reports the same `inkShare`, `occupiedShare` and `largestEmptyRectShare`
+     to four decimal places for exactly that reason. */
 
   /* `.headline` rather than a cover-specific class name on purpose: it is one
      of `script-fonts.ts`'s DISPLAY_SELECTORS, so a Hebrew or Arabic cover
@@ -1138,8 +1249,12 @@
   <div class="scrim" aria-hidden="true"></div>
   <div class="cov-field">
     <div class="cov-device">{{html:device}}</div>
-    <div class="eyebrow">{{eyebrow}}</div>
-    <div class="cov-rail"></div>
+    <!-- `brand-zone-clear`: this is the ONE eyebrow in the set that is not in
+         the brand mark's corner. It lives inside `.cov-field`, the masthead
+         band, and renders at y=527 — 367px below the zone's lower edge — so the
+         in-flow clearance `brandMarkZoneCss` gives `.eyebrow` everywhere else
+         would indent a line that was never in danger. -->
+    <div class="eyebrow brand-zone-clear">{{eyebrow}}</div>
   </div>
   <div class="lockup">
     <div class="headline" id="title"><span class="mk-runs">{{html:titleRuns}}</span><span class="mk-plain">{{title}}</span></div>
@@ -1190,12 +1305,19 @@
         return text.trim().length;
       }
       var s = document.querySelector(".body-text");
+      var t = document.getElementById("title");
+      var layout = function () {
+      // Reset first, so the pass is IDEMPOTENT and the second one (below, once
+      // the web fonts have arrived) can choose a LARGER step than the first
+      // did. Both length ladders have `else` branches that leave the class
+      // alone, so without this a re-run could only ever ratchet downwards.
+      if (s !== null) s.className = "body-text";
+      t.className = "headline";
       if (s !== null) {
         var slen = mkLen(s);
         if (slen > 150) s.className = "body-text tiny";
         else if (slen > 80) s.className = "body-text small";
       }
-      var t = document.getElementById("title");
       var len = mkLen(t);
       // ── THE THRESHOLDS MOVE WITH THE REVIEWER'S TYPE SCALE. ──
       // Every other template in the set already does this; the cover did not
@@ -1235,9 +1357,135 @@
           if (el.scrollWidth <= el.clientWidth + 1) return;
         }
       };
-      fitToMeasure(t, ["headline huge", "headline", "headline small", "headline tiny", "headline micro"]);
+      var TITLE_RUNGS = ["headline huge", "headline", "headline small", "headline tiny", "headline micro"];
+      fitToMeasure(t, TITLE_RUNGS);
 
-      window.__CAROUSEL_READY__ = true;
+      // ── AND THEN THE PLATE HAS THE LAST WORD ON BOTH OF THEM. ──
+      //
+      // Two block-axis failures neither ladder above can see, both measured on
+      // this tree through real Chromium before this pass existed:
+      //
+      //   1. THE OBJECT IS CUT OFF AT THE TOP. `.cov-field` is a fixed band
+      //      with `overflow: hidden` and `justify-content: flex-end`, so an
+      //      object taller than the band spills upward and is clipped:
+      //      `div.cov-device` at -188..284 at `m` and -305..135 at `l`, in
+      //      every display register and both scripts.
+      //   2. THE WHOLE PAGE OVERFLOWS. The lockup is `flex: 1 0 auto` and
+      //      cannot shrink, so a title the width ladder accepted still took the
+      //      document past the frame: `html` 1808 against 1440 at `l` in
+      //      Hebrew, with the subtitle printed over the `@handle` watermark.
+      //
+      // Both loops STEP DOWN ONLY WHILE THE PLATE IS ACTUALLY OVER, so a cover
+      // that fits today renders byte-identically to before — the same property
+      // `fitToMeasure` has, on the other axis.
+      var field = document.querySelector(".cov-field");
+      var device = document.querySelector(".cov-device");
+      // WHERE THE FIRST CHILD STARTS, not whether the field scrolls. The band
+      // is bottom-aligned, so its overflow is on the BLOCK-START side, which
+      // is not a scrollable region at all — `scrollHeight === clientHeight` on
+      // a field whose object is half off the plate. `probePage`'s own
+      // block-start limb exists for the same reason and is what reports this
+      // as `clipped`, so the fit pass asks the same question it does.
+      // The first child WITH A BOX, never `firstElementChild`: the object slot
+      // is present and `display: none` on every plate that carries no object
+      // (`.cov-device:empty`), and a hidden element's rect is all zeros — so a
+      // naive read put the "object" at y=0, decided the band was over, and
+      // stepped the type down on every DEVICELESS cover. Measured when it did:
+      // the bare cover lost 3.3 points of ink and gained 6.4 of empty
+      // rectangle (LER 0.1139 -> 0.1778) for a fit nothing needed.
+      var firstPainted = function (el) {
+        for (var c = el.firstElementChild; c !== null; c = c.nextElementSibling) {
+          var r = c.getBoundingClientRect();
+          if (r.width > 0.5 && r.height > 0.5) return c;
+        }
+        return null;
+      };
+      var objectFits = function () {
+        if (field === null) return true;
+        var first = firstPainted(field);
+        if (first === null) return true;
+        var style = getComputedStyle(field);
+        return first.getBoundingClientRect().top >= field.getBoundingClientRect().top + (parseFloat(style.paddingTop) || 0) - 1;
+      };
+      if (field !== null && device !== null && device.querySelector(".dv") !== null) {
+        // A CONTINUOUS FIT, NOT A LADDER: the band is 300-600px depending on
+        // the run's `coverForm` and the object's height depends on the face,
+        // the script and the label's own wrapping, so the three or four rungs
+        // a ladder can carry either overshoot on one form or run out on
+        // another — measured, four rungs still left the object 26px over the
+        // frame at `l`. Eight steps of 8% reach 45% of the designed size,
+        // which is where a numeral stops being a numeral; the loop stops at
+        // the first one that fits, so a cover whose object already fits sets
+        // `--dv-fit: 1` and renders byte-identically to before.
+        var FIT_STEPS = [1, 0.92, 0.84, 0.76, 0.68, 0.6, 0.52, 0.45];
+        for (var d = 0; d < FIT_STEPS.length; d++) {
+          device.style.setProperty("--dv-fit", String(FIT_STEPS[d]));
+          if (objectFits()) break;
+        }
+      }
+      // THE BAND'S OWN FIT IS PART OF "OVER", and this is the half the first
+      // version of this pass missed. `.cov-field` is `flex: 0 1 auto` with the
+      // band as its MINIMUM, so when the lockup below wants more than the plate
+      // has, the field SHRINKS instead of the document overflowing — measured
+      // at `l`: the band gave up 310px of its 835, the object was cut 59px
+      // above the frame, and `document.scrollHeight` reported 1440, clean. The
+      // deficit is the TITLE's to pay, not the object's, so the title ladder
+      // has to be able to see it.
+      var over = function () {
+        var root = document.documentElement;
+        return !objectFits() || root.scrollHeight > root.clientHeight + 1 || document.body.scrollHeight > document.body.clientHeight + 1;
+      };
+      // ── AND THE ORDER IN WHICH THE PLATE GIVES IS AN EDITORIAL DECISION. ──
+      // The object first (above), then the SUBTITLE, and the title last: the
+      // title is what a cover is, the subtitle is the line under it, and the
+      // object is support for both. Measured at `l` with a long title: the
+      // plate is 32px over with the title already on its smallest rung, and one
+      // step of the subtitle's own ladder is what pays it — the alternative
+      // would be a cover whose statement is set smaller than its caption.
+      if (over() && s !== null) {
+        var SUB_RUNGS = ["body-text", "body-text small", "body-text tiny"];
+        for (var j = Math.max(0, SUB_RUNGS.indexOf(s.className)); j < SUB_RUNGS.length; j++) {
+          s.className = SUB_RUNGS[j];
+          if (!over()) break;
+        }
+      }
+      if (over()) {
+        for (var k = Math.max(0, TITLE_RUNGS.indexOf(t.className)); k < TITLE_RUNGS.length; k++) {
+          t.className = TITLE_RUNGS[k];
+          if (!over()) break;
+        }
+      }
+      };
+
+      // ── AND IT IS RUN AGAIN ONCE THE REAL FACES HAVE ARRIVED. ──
+      //
+      // `closer.html`'s script carries the full note; the mechanism is the same
+      // here and so is the consequence. This script is inline at the end of the
+      // body, so it runs BEFORE the Google Fonts links resolve: every read
+      // above — `scrollWidth`, `scrollHeight`, the field's own height — is
+      // taken against the FALLBACK face, and `renderCarousel` then awaits
+      // `document.fonts.ready` and screenshots a plate set in a face nobody
+      // measured. That is why a fit pass has to run twice, and it is why the
+      // ready flag moves behind the font wait: the renderer waits for the flag
+      // and then for `document.fonts.ready`, so deferring it costs nothing and
+      // guarantees the pixels it screenshots are the ones this pass measured.
+      // The timeout is the fail-open — a sandbox with no network must still
+      // finish, laid out in the fallback, rather than hang on a font that is
+      // never coming.
+      layout();
+      var settled = false;
+      var settle = function () {
+        if (settled) return;
+        settled = true;
+        layout();
+        window.__CAROUSEL_READY__ = true;
+      };
+      if (document.fonts && document.fonts.ready && typeof document.fonts.ready.then === "function") {
+        document.fonts.ready.then(settle, settle);
+        setTimeout(settle, 4000);
+      } else {
+        settle();
+      }
     })();
   </script>
 </body>

@@ -1290,6 +1290,15 @@ function findingFor(kind: InterestFinding["kind"], slide: number, role: SlideRol
     // `byKindProbe` below supplies. The real-Chromium cases are in
     // `cover-subject.test.ts`. The empty row is the honest entry.
     "cover-subject": {},
+    // Phase 5.5's type-discipline clause reads `probe.typeSteps` /
+    // `probe.alignmentColumns` and no metrics at all — and it can only ever
+    // produce a FINDING when one of the three `*_ARMED` flags in
+    // `interest-floor.ts` is `true`, which none of them is. So this helper
+    // cannot build a specimen of it today, by design, and the empty row is
+    // both the honest entry and the reason `typeDisciplineLimbs` is exported
+    // as a pure function: its own cases test the routing directly, with the
+    // flags passed in.
+    "type-discipline": {},
   };
   // The DOM side of the same table, and `empty` is the only row that needs
   // one: clause G's refusal is `probe.textBoxShare` below

@@ -270,6 +270,71 @@ export function resolveDisplayRegisterForScript(register: DisplayRegister, scrip
 }
 
 /**
+ * ── AND WHAT THE REGISTER SETS INSTEAD, WHEN ITS OWN FACE CANNOT SET THE
+ *    SCRIPT. WITHHOLDING THE FACE WAS HALF THE FIX. ──
+ *
+ * `DISPLAY_REGISTER_SCRIPTS` above stops a Latin face being named for a script
+ * it has no glyph for, and `clientVisualSystemCss` withholds `--f-display`
+ * accordingly. What stands in its place is `script-fonts.ts`'s stack, and that
+ * module orders it *client family first, script families next* — deliberately,
+ * so *"per-glyph fallback keeps the brand face for Latin loanwords"*.
+ *
+ * On a BODY paragraph that is a reasonable trade. On a HEADLINE it is the
+ * defect the round-1 review names, and it is visible in one glance: measured on
+ * this tree through the production composition, every display host of a Hebrew
+ * carousel for a kitted client reports its first family setting the Latin run
+ * and NOT the Hebrew one — *"הקונים מגבשים העדפה בתוך תשובות AI"* sets `AI` in
+ * the brand's Inter and the eleven Hebrew words beside it in Heebo. Two
+ * typefaces, different widths, different weights, inside one line of one
+ * headline, on every plate.
+ *
+ * So the register names a face for the script instead of standing down
+ * entirely — ONE face for the whole line, chosen to stay as close to the
+ * register's own voice as a real Hebrew face allows:
+ *
+ *   humanist-serif  Frank Ruhl Libre  a Hebrew serif with a full Latin set
+ *   grotesque       Heebo             Roboto's Latin, extended to Hebrew
+ *   condensed       Heebo             SEE BELOW
+ *   mono-display    Rubik             `SCRIPT_TYPOGRAPHY.Hebrew.mono`'s own pick
+ *
+ * `condensed` IS A SUBSTITUTION AND IT IS RECORDED AS ONE. No Hebrew face in
+ * the curated set carries the register's width claim, and inventing one would
+ * be a typographic assertion about a script on no evidence — the refusal this
+ * file's neighbours already practise. It takes the grotesque's face, and
+ * `DisplayRegisterResolution.substitutedFor` is what tells the reviewer the
+ * axis was set aside rather than silently applied.
+ *
+ * EVERY FAMILY HERE CARRIES BOTH SCRIPTS, which is the property that makes one
+ * face possible at all: Heebo and Rubik ship full Latin, and Frank Ruhl Libre's
+ * Latin is part of the same design. A script with no row is not guessed at —
+ * the entry is simply absent and today's behaviour (the script pack's stack,
+ * client family first) stands, which is the same posture `SCRIPT_TYPOGRAPHY`
+ * takes towards a tracking nobody has measured.
+ *
+ * The stacks are written out rather than imported from `script-fonts.ts` for
+ * the reason `resolveDisplayRegisterForScript`'s own note gives: that module
+ * imports this one, and a dependency the other way closes the cycle.
+ */
+export const DISPLAY_REGISTER_SCRIPT_FACES: Readonly<Record<DisplayRegister, Readonly<Record<string, { family: string; stack: string }>>>> = {
+  "humanist-serif": { Hebrew: { family: "Frank Ruhl Libre", stack: "'Frank Ruhl Libre', 'Heebo', Georgia, serif" } },
+  grotesque: { Hebrew: { family: "Heebo", stack: "'Heebo', 'Rubik', system-ui, sans-serif" } },
+  condensed: { Hebrew: { family: "Heebo", stack: "'Heebo', 'Rubik', system-ui, sans-serif" } },
+  "mono-display": { Hebrew: { family: "Rubik", stack: "'Rubik', 'Heebo', system-ui, sans-serif" } },
+};
+
+/**
+ * The ONE display face this run's headlines are set in, when the register's own
+ * cannot set the script. `undefined` on every Latin run and on any script with
+ * no row — both mean "change nothing", and a Latin run's sheet stays
+ * byte-identical.
+ */
+export function displayFaceForScript(register: DisplayRegister, script: string | undefined): { family: string; stack: string } | undefined {
+  const resolution = resolveDisplayRegisterForScript(register, script);
+  if (resolution.covers) return undefined;
+  return DISPLAY_REGISTER_SCRIPT_FACES[register][resolution.script];
+}
+
+/**
  * ## Why a display face carries a BLEED, and why a new face is a new set of metrics
  *
  * An INLINE box's border box is the FONT's content area (ascent + descent),
@@ -788,13 +853,37 @@ export function fallbackClientVisualSystem(tokens?: {
   const accentRole: AccentRole =
     paletteSize >= 3 ? "information" : /bold|editorial|magazine|statement/.test(`${aesthetic} ${mood}`) ? "mark" : paletteSize >= 2 ? "field" : "punctuation";
 
+  /**
+   * ── AND WITH NO EVIDENCE AT ALL IT IS SEEDED, NOT CONSTANT. ──
+   *
+   * The three-client probe on this tree resolved `grotesque` for ALL THREE —
+   * and it was right to, because every one of those kits has a one-colour
+   * palette and no `aesthetic`/`visualMood`, so all three fell off the end of
+   * the ladder onto a literal. Three clients then rendered the same face on
+   * every plate of every post, which is one third of *"you can see the same AI
+   * made both posts"* and it had nothing to do with the templates: the axis
+   * reaches the pixels (`clientVisualSystemCss` sets `--f-display`, the weight
+   * and the tracking off it), the DERIVATION was collapsing.
+   *
+   * So the no-evidence branch does what `compositionGrammar` and `pagination`
+   * already do one line down: it seeds off the slug, which is stable across
+   * runs and resumes and differs between clients. A different bit of the same
+   * hash, so two axes cannot move in lockstep.
+   *
+   * Safe on every script, because the script resolution is already
+   * downstream: `resolveDisplayRegisterForScript` sets a register aside when
+   * its first family carries no glyph for the run's script, and
+   * `script-fonts.ts`'s own stack stands. A Hebrew client seeded onto
+   * `humanist-serif` therefore gets Heebo and not two typefaces in one
+   * headline.
+   */
   const displayRegister: DisplayRegister = /mono|technical|engineer|terminal|code/.test(`${aesthetic} ${mood}`)
     ? "mono-display"
     : /bold|poster|loud|punch|news/.test(`${aesthetic} ${mood}`)
       ? "condensed"
       : /editorial|classic|warm|craft|serif/.test(`${aesthetic} ${mood}`)
         ? "humanist-serif"
-        : "grotesque";
+        : DISPLAY_REGISTERS[(h >>> 16) % DISPLAY_REGISTERS.length]!;
 
   const imageryRegister: ImageryRegister = /illustrat|drawn|graphic/.test(`${aesthetic} ${mood}`)
     ? "illustration"
@@ -815,7 +904,10 @@ export function fallbackClientVisualSystem(tokens?: {
     groundTexture,
     basis: {
       accentRole: paletteSize >= 3 ? `the kit declares ${paletteSize} palette colours, so colour can carry a category` : "the kit declares one accent or none, so colour is punctuation rather than information",
-      displayRegister: aesthetic.length > 0 || mood.length > 0 ? `brand kit: aesthetic/visualMood ("${`${aesthetic} ${mood}`.trim().slice(0, 60)}")` : "no photographic tokens on file — the neutral grotesque, which is the register that gets out of the way",
+      displayRegister:
+        aesthetic.length > 0 || mood.length > 0
+          ? `brand kit: aesthetic/visualMood ("${`${aesthetic} ${mood}`.trim().slice(0, 60)}")`
+          : "no typographic tokens on file; seeded from the client slug, which is stable per client and differs between clients — a literal default here made every kit-less client render one face",
       compositionGrammar: "no evidence for a lockup position on file; seeded from the client slug, which is stable and differs per client",
       imageryRegister: aesthetic.length > 0 || mood.length > 0 ? "brand kit: aesthetic/visualMood" : "no evidence on file — documentary, the register a stock library can actually fill",
       pagination: "no evidence for an index on file; seeded from the client slug, so the choice is stable per client and differs between clients",
@@ -1097,7 +1189,41 @@ export function clientVisualSystemCss(
      * neither extreme, and it is the one archetype a carousel may repeat, so a
      * band it opens is a band the reader sees two or three times. The panel
      * archetypes compose around a structure whose position is not a free
-     * choice, and the cover and closer have roles of their own (§4.5).
+     * choice.
+     *
+     * ── AND THE COVER IS MEASURED OUT NOW TOO, RATHER THAN ASSERTED OUT. ──
+     *
+     * This note used to end *"and the cover and closer have roles of their own
+     * (§4.5)"*, which is an assertion where `slide.html` got a table. Phase
+     * 5.5's review said so, and it was right: one template reading an axis is
+     * not an axis, and the plate it was skipping is the one most of the
+     * audience sees. Both of the cover's anchors were then wired up and
+     * measured on this tree (karoslabs kit, production composition, four
+     * grammars x {s,m,l} x {en,he}) and both are refused by the plate:
+     *
+     *   `.lockup` (the elastic type block)   `largestEmptyRectShare`
+     *     centre-measure  he m 0.1694   <- what ships
+     *     top-column      he m 0.2195
+     *     split-band      he m 0.2444   <- over the 0.22 cover ceiling
+     *     bottom-column   he m 0.2611   <- over, by 4 points
+     *
+     *   `.cov-field` (the masthead band)  a FIXED-height box with `overflow:
+     *     hidden`, so `top-column` and `split-band` overflow its foot —
+     *     `div.cov-field [h 697>515]` at en m, `[h 822>645]` at en l — which
+     *     is clause B's hard `clipped`, with the eyebrow printing 10-21px deep
+     *     into the title.
+     *
+     * `compositionGrammar` is frozen per client, so either wiring would refuse
+     * two of its own four values on every post those clients ship. Both
+     * measurements are in `cover.html`'s own rules, beside the code they are
+     * about.
+     *
+     * WHAT WAS ACTUALLY MAKING THREE CLIENTS' COVERS IDENTICAL was one line
+     * up: `displayRegister` fell to a literal `grotesque` for every kit with
+     * no `aesthetic`/`visualMood`, so three clients shared a face, a weight
+     * and a tracking on every plate. That branch is seeded off the slug now,
+     * which is where a per-client difference belongs — in the DERIVATION, not
+     * in a template's flexbox.
      */
     `  --lockup-anchor: ${LOCKUP_ANCHOR[client.compositionGrammar]};`,
     /**
@@ -1160,5 +1286,33 @@ export function clientVisualSystemCss(
     // TRACKING are, and they are the two this gate withholds.
     `  --mk-face-bleed: ${stack.twinBleed};`,
     "}",
+    // ── AND THE DEVICE'S FIGURE TAKES THE SAME ALLOWANCE, WHICH IS THE ONE
+    //    DISPLAY HOST THAT HAD NO CONSUMER FOR IT. ──
+    //
+    // `slide-devices.ts` gives `.dv-figure` `padding-block-end: 0.16em` at
+    // `line-height: 0.95`, measured on Fraunces — *"a 150px figure's line box
+    // is 143px against 163px of content"*. Two of the four registers set that
+    // figure in a face with a taller glyph box, and the slot then reports
+    // `scrollHeight > clientHeight`, which `probePage` calls an overflowing
+    // element and interest-floor clause B turns into a hard `clipped` finding
+    // whose steer ("shorten the headline") cannot fix a font metric. Measured
+    // on this tree through the production composition, at `m`: `condensed`
+    // 203 against 186 on `headline-focus`, 243 against 222 on the cover, and
+    // `mono-display` the same — on the cover, `headline-focus` and `slide`,
+    // i.e. every plate in the set that can carry a bounded object, at every
+    // copy length and type scale.
+    //
+    // WHY HERE AND NOT IN THE TEMPLATES, which is where the first version of
+    // this fix put it and where it was wrong: a `.hf-device .dv-figure` rule
+    // outranks `script-fonts.ts`'s `.dv-figure { padding-block-end: 0.30em }`
+    // — the allowance that module MEASURED for Hebrew (Heebo at 0.95 needs
+    // 0.26em) — so fixing the Latin registers broke every Hebrew plate that
+    // carries a figure. Measured: `div.dv-figure [h 146>134]` on three plates
+    // of every Hebrew carousel. Emitted HERE the script is known, so the rule
+    // is withheld on a script this register cannot set and the script pack
+    // keeps the last word on the scripts it has measured. One class, so
+    // `deviceCssBlock`'s own 0.16em is beaten (this fragment is composed after
+    // it) and nothing else in the set moves.
+    ...(resolution.covers ? [".dv-figure {", "  padding-block-end: max(0.16em, var(--mk-face-bleed, 0em));", "}"] : []),
   ].join("\n");
 }

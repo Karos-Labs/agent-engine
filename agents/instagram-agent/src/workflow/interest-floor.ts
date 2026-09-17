@@ -1267,6 +1267,35 @@ export const OCCUPIED_SHARE_FLOOR: Readonly<Record<SlideRole, number>> = { cover
  * accommodated: `rf-11`'s own cover is ten highlighter blocks and a rule,
  * about 6% of the frame, and **this clause at 0.10 would rightly refuse it.**
  * That composition is not adopted, and 0.10 is not lowered to admit it.
+ *
+ * ── 2026-09-17, OPEN AND NAMED: THIS FLOOR NO LONGER REFUSES A TYPE-ONLY
+ *    COVER, AND THE NUMBER THAT BROKE IT IS THIS PHASE'S OWN. ──
+ *
+ * Measured A/B through real Chromium with `cover.html` the only variable
+ * (`interest-floor-marks.test.ts`'s five-mark case carries the full table and
+ * the decision): a heroless, deviceless paper-kit cover reads
+ * `imageryOrDeviceShare` **43.17%** on this branch against 19.26% on
+ * `origin/main`. The cause is one line — `.headline.small` moved from an `84px`
+ * literal to `calc(var(--t-display) * 0.95)` = 117.8px when this phase put the
+ * cover on the one type scale — and `slide-metrics.ts` counts the flat,
+ * low-colour INTERIOR of a 118px display stroke as a GRAPHIC cell, so
+ * `graphicShare` went 18.54% -> 42.08%.
+ *
+ * 43.17% is 4.3x this floor on a plate carrying nothing but a title, so the
+ * clause whose steer reads *"a headline on flat ground is not a cover"* is
+ * satisfied by a headline on flat ground. **It is not lowered and it is not
+ * raised**: §5.6 rule 4 forbids moving a floor to suit a plate in either
+ * direction, and the fix is upstream of the number — either exclude a display
+ * stroke's interior from `graphicShare` (a `packages/tools` change with a
+ * TOOL_VERSION bump and a full clause-E re-sweep) or re-derive this floor from
+ * a fresh distribution taken on the new scale. Neither fits inside Phase 5.5.
+ *
+ * WHAT STILL REFUSES THAT PLATE, so the cover is not left unguarded: clause I
+ * reads the DOM (`COVER_HERO_BOX_SHARE` / `COVER_OBJECT_BOX_SHARE`) and a
+ * bounding box cannot be inflated by a font size — `cover-subject.test.ts`
+ * measures the owner's empty cover at hero 0.000 / device 0.000 / graphic
+ * 0.000 and asserts the refusal — and clause H refuses it again on content
+ * weight (a title alone is 1.0 against the cover's 4.0).
  */
 export const IMAGERY_OR_DEVICE_FLOOR = 0.1;
 
@@ -1494,7 +1523,19 @@ export type InterestFailureKind =
   | "text-wall"
   | "one-element"
   /** Phase 5.5, clause I — the cover carries no subject the DOM can name. See `COVER_HERO_BOX_SHARE`. */
-  | "cover-subject";
+  | "cover-subject"
+  /**
+   * Phase 5.5 — too many type steps, too little contrast between the first
+   * two, or too many alignment columns.
+   *
+   * REACHABLE ONLY WHEN THE MATCHING `*_ARMED` FLAG IS `true`, and all three
+   * ship `false`, so no run produces this kind today. It is in the union
+   * rather than added later on purpose: the union is what makes
+   * `UNREMEDIED_DETAIL`'s exhaustive record and `KIND_PRIORITY` a compile-time
+   * obligation, so arming a limb is a one-line diff into a complete machine
+   * instead of a one-line diff plus three things somebody has to remember.
+   */
+  | "type-discipline";
 
 /**
  * ── CLAUSE H: HOW MANY THINGS ARE ON THIS PLATE. THE SEMANTIC FLOOR. ──
@@ -1650,15 +1691,25 @@ export const CONTENT_ELEMENT_FLOOR = 2;
  *
  * ```
  *   takeaway 1.0 + ask 1.0 + device 1.5 [+ eyebrow 0.25]   = 3.50 / 3.75   pass
- *   takeaway 1.0 + ask 1.0 + recap  1.0 [+ eyebrow 0.25]   = 3.00 / 3.25   FAIL
- *   takeaway 1.0 + ask 1.0                                 = 2.00          FAIL
+ *   takeaway 1.0 + ask 1.0 + recap  1.0 [+ eyebrow 0.25]   = 3.00 / 3.25   pass
+ *   takeaway 1.0 + ask 1.0             [+ eyebrow 0.25]    = 2.00 / 2.25   FAIL
  * ```
  *
- * The floor therefore sits strictly BELOW what a closer can weigh (a reachable
- * 3.75 where `eyebrowFor` puts a topical eyebrow on the last slide, 3.5 where
- * it does not) and strictly ABOVE the shipping composition the owner
- * complained about — and `eyebrow`'s 0.25 cannot lift a 3.00 recap closer over
- * 3.5, which is the same un-gameability the weights exist for everywhere else.
+ * ── ROW 2 SAID `FAIL` FOR ONE REVISION, AND THAT WAS THE PRICE CHANGE
+ *    LEAKING INTO THE FLOOR. ──
+ *
+ * With the floor left at 3.5 while `recap` moved to 1.0, row 2 — the only
+ * closer this pipeline composes without a figure in the writer's own copy —
+ * was refused on every post. `CONTENT_WEIGHT_FLOOR` carries the measurement
+ * that settles it (the refused plate measures `inkShare` 0.3743, the second
+ * heaviest of its carousel) and the end-to-end render that caught it. The
+ * floor is 3.0.
+ *
+ * The floor therefore sits strictly BELOW what a closer actually composes
+ * (3.00 with a recap, 3.50 with its own object) and strictly ABOVE the
+ * shipping composition the owner complained about (2.00, a takeaway and an ask
+ * on bare ground) — and `eyebrow`'s 0.25 cannot lift that bare closer over it,
+ * which is the same un-gameability the weights exist for everywhere else.
  * `content-weight-floor.test.ts` asserts both ends rather than asserting the
  * floor equals the maximum.
  *
@@ -1759,8 +1810,118 @@ export const CONTENT_FIELD_WEIGHTS: Readonly<Record<string, number>> = {
   subLabel: CONTENT_WEIGHTS.furniture,
 };
 
-/** The weighted floor, per role. See `CONTENT_WEIGHTS` for the table that sets these three numbers. */
-export const CONTENT_WEIGHT_FLOOR: Readonly<Record<SlideRole, number>> = { cover: 4.0, interior: 3.0, closer: 3.5 };
+/**
+ * The weighted floor, per role. See `CONTENT_WEIGHTS` for the table that sets
+ * these three numbers.
+ *
+ * ── `closer` IS 3.0, AND 3.5 WAS A PRICE CHANGE THAT BECAME A REFUSAL. ──
+ *
+ * 3.5 was correct while `recap` was priced at `device` (1.5): the ordinary
+ * closer weighed 3.50 and cleared it. This phase repriced `recap` to `prose`
+ * (1.0) — correctly, for the reasons in `CONTENT_WEIGHTS` — and left the floor
+ * where it was, which turned a repricing into a refusal of EVERY closer this
+ * agent can compose:
+ *
+ * ```
+ *   takeaway 1.0 + ask 1.0                          = 2.00  the owner's complaint
+ *   takeaway 1.0 + ask 1.0 + recap 1.0              = 3.00  the ordinary closer
+ *   takeaway 1.0 + ask 1.0 + recap 1.0 + eyebrow .25= 3.25
+ *   takeaway 1.0 + ask 1.0 + device 1.5             = 3.50  needs a figure in the closer's own copy
+ * ```
+ *
+ * `contentFor`'s closer emits exactly two prose slots (`takeaway`, and
+ * whichever of `question`/`cta` the body is) and ONE code-built fragment in
+ * its single elastic middle. `composeBoundedObjects` does not reach the
+ * closer (`BOUNDED_OBJECT_LAYOUTS` is `headline_focus` and `text_only`), so
+ * the only route to that 1.5 device is the WRITER composing one — §19 tells
+ * it any archetype may, and `contentFor` renders it — and the writer does
+ * that only when the closer's own copy states a sourced figure. At 3.5 the
+ * floor therefore refused every closer the pipeline composes for itself, on
+ * every post, forever. Measured end to end: `workflow-e2e.test.ts`'s `(real
+ * Chromium) renders and delivers using the actual publish.renderCarousel
+ * tool` produces `interest:one-element (slide 6): the plate's content weighs
+ * 3.00 against a floor of 3.50 for a closer` — and that case asserts
+ * `result.output.visualInterest` is `undefined`, so the refusal is a failure
+ * either way.
+ *
+ * HOW IT PRESENTS ON CI, EXACTLY, because an earlier draft of this block said
+ * "ships DEGRADED" and the log says something more specific: run 35170562382
+ * reports that case as `Error: Test timed out in 60000ms` at 60049ms, not as
+ * the assertion. The refusal is still the cause — a refused plate spends the
+ * drafting attempts, and every attempt on that case is a full Chromium render
+ * of six slides — so the clock runs out before the assertion is reached. With
+ * the floor at 3.0 the same case delivers on the first attempt and finishes in
+ * 27.9s of test time against installed Chrome, which is the margin the timeout
+ * was missing.
+ *
+ * ── AND THE PLATE IT REFUSED IS NOT A THIN PLATE. ──
+ *
+ * Rendered and looked at, not argued: the recap closer on `karoslabs` at `m`
+ * measures `inkShare` 0.3743 and `occupiedShare` 0.3967 — the second heaviest
+ * plate of its carousel, behind only the cover — and carries a display
+ * takeaway, a three-cell recap strip, a question and a CTA inside a filled
+ * band. The finding's own sentence reads *"a headline and a body on bare
+ * ground is not a slide, whatever the ground is doing"*, which is false of
+ * that plate. A floor whose sentence is untrue of what it refuses is wrong,
+ * and `A floor that a correctly composed plate cannot clear is a false refusal
+ * that costs a drafting attempt` is this file's own rule two blocks up.
+ *
+ * 3.0 keeps every property 3.5 was chosen for. The bare closer — the
+ * composition the owner actually complained about — still weighs 2.00 and is
+ * still refused, and an eyebrow still cannot buy it a pass (2.25). What changes
+ * is that the plate the pipeline composes on purpose is no longer refused for
+ * being composed the only way it can be.
+ *
+ * ── AND HERE IS THE PLATE 3.0 REFUSES, NAMED, BECAUSE A FLOOR NOTHING CAN BE
+ *    BELOW IS THE SAME DEFECT AT THE OTHER END OF THE RANGE. ──
+ *
+ * The composition is a closer whose ELASTIC MIDDLE COMES THROUGH EMPTY:
+ * `takeaway` + one of `question`/`cta`, and no third thing. `contentFor` emits
+ * that exactly when `buildRecapFragment` returns `""` — fewer than
+ * `MIN_RECAP_PLATES` (2) earlier slides to recap — and the slide carries no
+ * device of its own. `fallbackArchetypePreferences` still routes the plate to
+ * the `closer` archetype in that state, on `closerContentAvailable`'s third
+ * branch (`hasCloserVoice` alone), so it renders as a closer and weighs 2.00.
+ *
+ * On the FIRST render `InstagramCopyOutputSchema`'s 6-to-8-slide minimum makes
+ * that state unreachable: the closer is last, so it always has five or more
+ * earlier slides. It is reachable downstream, and `interest-relayout.ts`
+ * already knows it by name — its closer remedy's second branch reads *"slide N
+ * closed on an empty plate and the post has too few earlier points to recap"*
+ * — which is the remedy for exactly this weight. `content-weight-floor.test.ts`
+ * builds the plate through the real `assembleSlidesData` and asserts the
+ * refusal, so the limb is falsifiable against the assembler rather than only
+ * against arithmetic written beside the constant.
+ *
+ * SAID PLAINLY, so nobody reads more into 3.0 than is there: on a well-formed
+ * 6-to-8-slide draft the closer limb passes every plate. Its job is to catch
+ * the closer that arrives with nothing in its middle, from a merge, a degrade
+ * or a client template that fills no recap — and that is the same job the
+ * interior limb does at the same number, which is why the two are equal.
+ */
+export const CONTENT_WEIGHT_FLOOR: Readonly<Record<SlideRole, number>> = { cover: 4.0, interior: 3.0, closer: 3.0 };
+
+/**
+ * The tariff, as the writer and the human reviewer read it — DERIVED FROM
+ * `CONTENT_WEIGHTS`, never typed out beside it.
+ *
+ * It shipped as a hand-written literal reading *"a device or a recap 1.5"*,
+ * and it went stale the moment this phase repriced `recap` from `device` (1.5)
+ * to `prose` (1.0) — the whole point of that change. The consequence is not
+ * cosmetic: this sentence is the finding string `08b`'s judge reads, the one
+ * `09a`'s human reads, and the one the redraft prompt carries back to the
+ * writer. A writer told a recap is worth 1.5 computes an ordinary closer at
+ * `takeaway 1.0 + cta 1.0 + recap 1.5` = 3.50, concludes it clears the 3.50
+ * closer floor, and changes nothing — while the plate actually measures 3.00
+ * and the attempt is spent. The steer was arguing for the old prices against
+ * the new floor.
+ *
+ * Derived, so the two can never disagree again: repricing a weight rewrites
+ * the sentence in the same commit, by construction.
+ */
+export const WEIGHT_TARIFF =
+  `a photograph or a list counts ${CONTENT_WEIGHTS.hero}, a quotation ${CONTENT_WEIGHTS.quote}, a device ${CONTENT_WEIGHTS.device}, ` +
+  `a recap ${CONTENT_WEIGHTS.recap}, a line of prose ${CONTENT_WEIGHTS.prose}, a kicker or a source line ${CONTENT_WEIGHTS.furniture}`;
 
 /**
  * ── CLAUSE I: WHAT THE COVER IS CARRYING, READ OFF THE DOM. ──
@@ -1820,6 +1981,22 @@ export const COVER_OBJECT_BOX_SHARE = 0.12;
  * DISTRIBUTION and never from an argument — so these ship behind `ARMED` flags
  * defaulting to false, the gate-zero sweep prints them on every row, and the
  * integrator arms them once W2-B's de-furnished tree has published the band.
+ *
+ * ## What the flags actually do, because for one revision they did nothing
+ *
+ * They shipped read in exactly one place — `armed: A || B || C ? 1 : 0` inside
+ * a `warnings.push(…)` — so flipping one changed a reported integer and
+ * nothing else, on a clause whose every path led to `warnings`. The comment
+ * beside them said flipping one was how the clause is armed, which made this a
+ * guard that cannot fail wearing an arming switch.
+ *
+ * Each flag is now read on ITS OWN limb, in `checkInterestFloor`'s clause list
+ * rather than in `interestWarningsFor` (whose contract is that nothing in it
+ * can fail an attempt). An out-of-band limb whose flag is `true` pushes a
+ * `type-discipline` FINDING; one whose flag is `false` pushes the warning it
+ * always did. With all three `false` the behaviour is byte-identical to
+ * before, and `interest-floor.test.ts` asserts both halves — that today
+ * nothing gates, and that a limb read as armed refuses.
  */
 export const TYPE_STEP_CEILING = 3;
 export const TYPE_CONTRAST_FLOOR = 1.8;
@@ -2689,6 +2866,40 @@ export function checkInterestFloor(
   // `probe` as optional and several call sites pass none, and a clause that
   // silently stops running for them would be worse than a palette-dependent
   // one. On that path the finding says which limb spoke.
+  //
+  // ── 2026-09-17: AND `occupiedShare` CANNOT BE ARMED AS AN INTERIOR LIMB
+  //    EITHER. THE SWEEP'S OWN DISTRIBUTION SAYS SO. ──
+  //
+  // Phase 5.5's review asked for an armed interior occupancy limb, *measured,
+  // not guessed*, so that a plate at 0.08 occupied cannot ship. The
+  // measurement was taken — off CI run 35170562382's gate-zero sweep, which
+  // prints `occupied` for every bundled archetype over 3 copy lengths x 3 type
+  // scales x {en, he} — and it refuses the clause:
+  //
+  //   comparison-card  interior  occupied 4.7% … 13.2%
+  //   list-takeaway    interior  occupied 3.7% … 12.7%
+  //   quote-card       interior  occupied 3.9% … 45.7%
+  //   headline-focus   interior  occupied 2.9% … 14.0%
+  //   slide (heroless) interior  occupied 3.4% … 14.0%
+  //
+  // A fully composed comparison card — two labelled columns, four bodies, a
+  // rail, a winner — bottoms out at 4.7%, and the near-empty statement plate
+  // the clause would exist to refuse sits at 5.2%. They are not separable on
+  // this metric at any floor, because `occupiedShare` counts INK CELLS and a
+  // structured panel drawn in hairlines has fewer of them than a big headline.
+  // A floor above 4.7 refuses correctly composed panels on every post; a floor
+  // below it refuses nothing. That is the same reason PR #124 demoted this
+  // clause in the first place, arriving a second time with a wider table.
+  //
+  // WHAT DOES REFUSE THE THIN PLATE IS CLAUSE H, AND IT IS ARMED. The plates
+  // the owner named on 2026-09-16 are refused on CONTENT WEIGHT — karoslabs
+  // slides 1, 3, 4 and 6 at 2.00-2.50 against floors of 4.00 and 3.00 — and
+  // `content-weight-floor.test.ts` reproduces his verdict plate by plate. A
+  // headline and a body on bare ground is caught by counting what is on the
+  // plate, not by measuring how much of it is dark. The composition half of
+  // that finding is answered where it belongs, in the templates: `slide.html`'s
+  // heroless statement now takes the display step (its own note carries the
+  // before/after and the `imageryOrDeviceShare` headroom that allows it).
   const contentFloor = CONTENT_OCCUPIED_SHARE_FLOOR[role];
   const typeShare = probe?.textBoxShare;
   const noType = typeShare !== undefined && typeShare < PROBE_TEXT_BOX_SHARE_FLOOR;
@@ -2760,12 +2971,39 @@ export function checkInterestFloor(
   // The finding is still REPORTED, on `waived`, so `08b`'s judge and the human
   // at `09a` both see that the plate is thin and why. What it no longer does
   // is spend an attempt.
-  const weightWaivedForLostPicture = opts.downgradedForImages?.has(slide) === true;
-  const pushWeightFinding = (finding: InterestFinding): void => {
-    if (weightWaivedForLostPicture) {
+  //
+  // ── AND IT IS WAIVED ONLY UP TO THE PICTURE'S WORTH, WHICH IS THE
+  //    ARITHMETIC THE PARAGRAPH ABOVE ALREADY STATES. ──
+  //
+  // The waiver used to be unconditional: `downgradedForImages.has(slide)` sent
+  // EVERY weight finding for that slide to `waived`, whatever the shortfall.
+  // That is a strictly bigger claim than the one it is justified by. The
+  // justification is *"short by exactly the picture nobody could find"* — a
+  // shortfall of at most `CONTENT_WEIGHTS.hero`. A cover at the 4.0 floor
+  // carrying only a title (prose 1.0) is short by 3.0, and 3.0 is not 2.0: the
+  // hero would not have saved it, so the plate is thin for a reason a redraft
+  // CAN fix and the waiver was hiding that.
+  //
+  // So the test is the arithmetic: waive when adding the missing hero would
+  // have cleared the floor, and keep the finding when it would not have. That
+  // preserves the whole of the zero-held guarantee for the case the waiver
+  // exists for — a plate that was composed around a photograph and lost it is
+  // by construction within a hero of its floor — and it stops the waiver from
+  // covering plates that were never composed at all.
+  // The unweighted limb counts ELEMENTS, and a photograph is exactly one of
+  // them, so the same test there is `elements + 1 >= CONTENT_ELEMENT_FLOOR`.
+  // Both are stated at the call site rather than inferred here, because the
+  // two limbs measure different quantities against different floors and a
+  // helper that guessed which one it had been handed is the class of bug this
+  // whole block is about.
+  const lostPicture = opts.downgradedForImages?.has(slide) === true;
+  const pushWeightFinding = (finding: InterestFinding, withinAPicture: boolean, shortfall: string): void => {
+    if (lostPicture && withinAPicture) {
       waived.push({
         ...finding,
-        waivedReason: `waived: slide ${slide} lost its photograph to image sourcing this attempt, and a hero is worth ${CONTENT_WEIGHTS.hero.toFixed(2)} of this floor — no redraft can find a picture, so this is never a hold`,
+        waivedReason:
+          `waived: slide ${slide} lost its photograph to image sourcing this attempt, and ${shortfall} — ` +
+          `the picture nobody could find is the whole of the shortfall, and no redraft can produce one`,
       });
       return;
     }
@@ -2780,7 +3018,7 @@ export function checkInterestFloor(
       threshold: weightFloor,
       sentence:
         `${where} — the plate's content weighs ${weight.toFixed(2)} against a floor of ${weightFloor.toFixed(2)} for ${roleNoun(role)} ` +
-        `(a photograph or a list counts 2, a device or a recap 1.5, a line of prose 1, a kicker or a source line 0.25): ` +
+        `(${WEIGHT_TARIFF}): ` +
         `${role === "cover" ? "a title over a gradient is not a cover" : "a headline and a body on bare ground is not a slide"}, whatever the ground is doing.`,
       steer:
         `Give slide ${slide} something a reader looks AT, from what the post already has: a photograph, ` +
@@ -2788,7 +3026,10 @@ export function checkInterestFloor(
         `A kicker, an eyebrow or a source line will not lift it — they are priced at a quarter of a sentence for exactly that reason. ` +
         `If there is nothing to add, merge slide ${slide} into ${slide > 1 ? `slide ${slide - 1}` : "the next slide"} and let the carousel be one slide shorter — ` +
         `the reference accounts carry three or four element groups per plate, never one.`,
-    });
+      },
+      weight + CONTENT_WEIGHTS.hero >= weightFloor,
+      `it weighs ${weight.toFixed(2)} against a floor of ${weightFloor.toFixed(2)}, inside the ${CONTENT_WEIGHTS.hero.toFixed(2)} a hero is worth`,
+    );
   } else if (weight === undefined && elements !== undefined && elements < CONTENT_ELEMENT_FLOOR) {
     pushWeightFinding({
       slide,
@@ -2803,7 +3044,10 @@ export function checkInterestFloor(
         `Give slide ${slide} a second thing to look at, from what the post already has: the body line it is missing, ` +
         `${deviceSteer("a device built from a figure in its own copy")}, a photograph, or the source it is citing. ` +
         `If there is nothing to add, merge it into ${slide > 1 ? `slide ${slide - 1}` : "the next slide"} — the reference accounts carry three or four element groups per plate, never one.`,
-    });
+      },
+      elements + 1 >= CONTENT_ELEMENT_FLOOR,
+      `it carries ${elements} element(s) against a floor of ${CONTENT_ELEMENT_FLOOR}, and a photograph is one of them`,
+    );
   }
 
   // ── I — the cover carries a SUBJECT, measured as boxes. (Phase 5.5) ──
@@ -2848,7 +3092,132 @@ export function checkInterestFloor(
     }
   }
 
-  return { slide, role, ok: findings.length === 0, findings, waived, warnings: interestWarningsFor(metrics, role, slide, probe, opts.markKinds), metrics };
+  // ── TYPE DISCIPLINE: three numbers, compared against thresholds that are
+  //    PRINTED and not applied. (Phase 5.5) ──
+  //
+  // See `TYPE_STEP_CEILING` for why they ship disarmed. The row is emitted
+  // whenever the probe measured them AND at least one limb is out of band.
+  //
+  // ── AND IT LIVES IN THE CLAUSE LIST, NOT IN `interestWarningsFor`. ──
+  // That function's whole contract is *"the facts that ride along and never
+  // fail an attempt … so 'this can hold a run' is answerable by reading which
+  // function a threshold appears in"*. A clause with an arming switch can hold
+  // a run by definition, so it cannot live there; it emits its unarmed rows
+  // into `typeWarnings`, which the return below merges.
+  //
+  // ── THE FLAGS ARE READ PER LIMB, AND THE READ IS WHAT ROUTES THE ROW. ──
+  //
+  // They used to be read as `TYPE_STEP_CEILING_ARMED || … ? 1 : 0` INSIDE a
+  // `warnings.push(…)`, on every path — so flipping one to `true` changed a
+  // reported integer and nothing else, while the doc block beside them told
+  // the next integrator that flipping one is how the clause is armed. An
+  // arming switch wired to a number is a guard that cannot fail wearing a
+  // safety catch.
+  //
+  // Now each limb routes itself: an out-of-band limb whose own flag is `true`
+  // becomes a FINDING, one whose flag is `false` becomes a warning, and a row
+  // can carry both (one finding for the armed limbs, one warning for the
+  // rest). With all three flags `false` — which is how they ship — every path
+  // still lands in `warnings`, so today's behaviour is byte-identical and the
+  // switch is real the moment a distribution justifies throwing it.
+  const typeWarnings: InterestWarning[] = [];
+  const steps = probe?.typeSteps;
+  const columns = probe?.alignmentColumns;
+  if (steps !== undefined || columns !== undefined) {
+    const distinct = steps === undefined ? 0 : new Set(steps).size;
+    const sorted = steps === undefined ? [] : [...new Set(steps)].sort((a, b) => b - a);
+    // 1 when there is no second step to compare against: a one-step plate has
+    // no type contrast to fail, which is a fact about it and not a defect.
+    const contrast = sorted.length >= 2 && sorted[1]! > 0 ? sorted[0]! / sorted[1]! : 1;
+    // The routing is a PURE FUNCTION taking the flags as an argument
+    // (`typeDisciplineLimbs`, below this function), so a test can hand it an
+    // armed set and watch the clause refuse. Read off the module constants
+    // here and only here.
+    const limbs = typeDisciplineLimbs(
+      { distinct, contrast, columns, measuredSteps: steps !== undefined, comparableSteps: sorted.length >= 2 },
+      { steps: TYPE_STEP_CEILING_ARMED, contrast: TYPE_CONTRAST_FLOOR_ARMED, columns: ALIGNMENT_COLUMN_CEILING_ARMED },
+    );
+    const measuredTypeDiscipline = {
+      typeSteps: distinct,
+      typeContrast: contrast,
+      ...(columns !== undefined ? { alignmentColumns: columns } : {}),
+      typeStepCeiling: TYPE_STEP_CEILING,
+      typeContrastFloor: TYPE_CONTRAST_FLOOR,
+      alignmentColumnCeiling: ALIGNMENT_COLUMN_CEILING,
+    };
+    const REFERENCE = "the reference plates set two or three steps with a real jump between the first two, ranged against one or two columns.";
+    const gating = limbs.filter((limb) => limb.out && limb.armed);
+    const reporting = limbs.filter((limb) => limb.out && !limb.armed);
+    if (gating.length > 0) {
+      findings.push({
+        slide,
+        role,
+        kind: "type-discipline",
+        measured: { ...measuredTypeDiscipline, armed: 1 },
+        threshold: TYPE_STEP_CEILING,
+        sentence: `${where} — type discipline: ${gating.map((limb) => limb.clause).join(", ")}; ${REFERENCE}`,
+        steer:
+          `Set slide ${slide} in fewer sizes with a real jump between them: one display step for the statement, one label step for everything around it, ` +
+          `and range them against one column. The sizes are a property of the archetype, so a redraft that does not change the layout will measure the same.`,
+      });
+    }
+    if (reporting.length > 0) {
+      typeWarnings.push({
+        slide,
+        role,
+        kind: "type-discipline",
+        measured: { ...measuredTypeDiscipline, armed: 0 },
+        sentence: `slide ${slide} — type discipline (gates nothing this phase): ${reporting.map((limb) => limb.clause).join(", ")}; ${REFERENCE}`,
+      });
+    }
+  }
+  return {
+    slide,
+    role,
+    ok: findings.length === 0,
+    findings,
+    waived,
+    warnings: [...interestWarningsFor(metrics, role, slide, probe, opts.markKinds), ...typeWarnings],
+    metrics,
+  };
+}
+
+/**
+ * ── THE TYPE-DISCIPLINE CLAUSE'S ROUTING, AS A PURE FUNCTION OF ITS FLAGS. ──
+ *
+ * Extracted for one reason: **so the arming switch can be falsified.** While
+ * the three `*_ARMED` constants are read inline, a test can assert that
+ * nothing gates today but cannot assert that anything WOULD gate if one were
+ * flipped — which is the property the constants' doc block promises and the
+ * property that was untrue for a revision. Taking `armed` as an argument makes
+ * both halves testable with no mocking and no dependency injection.
+ *
+ * Each limb answers two questions independently: is the measurement out of
+ * band, and is THIS limb's flag thrown. The caller turns the armed subset into
+ * a finding and the rest into a warning.
+ */
+export function typeDisciplineLimbs(
+  measured: { distinct: number; contrast: number; columns: number | undefined; measuredSteps: boolean; comparableSteps: boolean },
+  armed: { steps: boolean; contrast: boolean; columns: boolean },
+): { out: boolean; armed: boolean; clause: string }[] {
+  const { distinct, contrast, columns, measuredSteps, comparableSteps } = measured;
+  return [
+    {
+      out: measuredSteps && distinct > TYPE_STEP_CEILING,
+      armed: armed.steps,
+      clause: `${distinct} distinct type step(s) (ceiling ${TYPE_STEP_CEILING})`,
+    },
+    {
+      out: measuredSteps && comparableSteps && contrast < TYPE_CONTRAST_FLOOR,
+      armed: armed.contrast,
+      clause: `largest/second ${contrast.toFixed(2)}x (floor ${TYPE_CONTRAST_FLOOR}x)`,
+    },
+    {
+      out: columns !== undefined && columns > ALIGNMENT_COLUMN_CEILING,
+      armed: armed.columns,
+      clause: `${columns ?? 0} alignment column(s) (ceiling ${ALIGNMENT_COLUMN_CEILING})`,
+    },
+  ];
 }
 
 /**
@@ -3011,49 +3380,6 @@ export function interestWarningsFor(
   // `probe.elementCount` rides along because it is the "few elements placed
   // with intent" half, it has been measured on every slide since 1.1.0, and
   // until now it was read by nobody.
-  // ── TYPE DISCIPLINE: three numbers, compared against thresholds that are
-  //    PRINTED and not applied. (Phase 5.5) ──
-  //
-  // See `TYPE_STEP_CEILING` for why they are disarmed. The row is emitted
-  // whenever the probe measured them AND at least one is out of band, so the
-  // sweep's distribution is the union of the interesting rows rather than
-  // every row — and the three `*_ARMED` flags are read HERE so that arming one
-  // is a one-line diff with the distribution beside it. While they are false
-  // this can only ever add a warning, and a warning has never failed an
-  // attempt in this file.
-  const steps = probe?.typeSteps;
-  const columns = probe?.alignmentColumns;
-  if (steps !== undefined || columns !== undefined) {
-    const distinct = steps === undefined ? 0 : new Set(steps).size;
-    const sorted = steps === undefined ? [] : [...new Set(steps)].sort((a, b) => b - a);
-    // 1 when there is no second step to compare against: a one-step plate has
-    // no type contrast to fail, which is a fact about it and not a defect.
-    const contrast = sorted.length >= 2 && sorted[1]! > 0 ? sorted[0]! / sorted[1]! : 1;
-    const tooManySteps = steps !== undefined && distinct > TYPE_STEP_CEILING;
-    const tooFlat = steps !== undefined && sorted.length >= 2 && contrast < TYPE_CONTRAST_FLOOR;
-    const tooManyColumns = columns !== undefined && columns > ALIGNMENT_COLUMN_CEILING;
-    if (tooManySteps || tooFlat || tooManyColumns) {
-      warnings.push({
-        slide,
-        role,
-        kind: "type-discipline",
-        measured: {
-          typeSteps: distinct,
-          typeContrast: contrast,
-          ...(columns !== undefined ? { alignmentColumns: columns } : {}),
-          typeStepCeiling: TYPE_STEP_CEILING,
-          typeContrastFloor: TYPE_CONTRAST_FLOOR,
-          alignmentColumnCeiling: ALIGNMENT_COLUMN_CEILING,
-          armed: TYPE_STEP_CEILING_ARMED || TYPE_CONTRAST_FLOOR_ARMED || ALIGNMENT_COLUMN_CEILING_ARMED ? 1 : 0,
-        },
-        sentence:
-          `slide ${slide} — type discipline (gates nothing this phase): ${distinct} distinct type step(s) (ceiling ${TYPE_STEP_CEILING})` +
-          `, largest/second ${contrast.toFixed(2)}x (floor ${TYPE_CONTRAST_FLOOR}x)` +
-          `${columns !== undefined ? `, ${columns} alignment column(s) (ceiling ${ALIGNMENT_COLUMN_CEILING})` : ""}` +
-          `; the reference plates set two or three steps with a real jump between the first two, ranged against one or two columns.`,
-      });
-    }
-  }
   const centroid = metrics.contentCentroid ?? { x: 0.5, y: 0.5 };
   const bbox = metrics.contentBBox ?? { x: 0, y: 0, w: 0, h: 0 };
   const groundInkContrast = metrics.groundInkContrast ?? 0;

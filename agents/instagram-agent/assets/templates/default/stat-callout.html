@@ -181,69 +181,24 @@
     font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro);
     letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent);
   }
-  .sc-rail { display: var(--fx-accent, none); block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(24px * var(--ts, 1)); }
-  /* ── RFC-20 §5.0 (the Ground Rule) AND §11.5, WHICH PULL OPPOSITE WAYS,
-        RESOLVED BY ASKING THE GUARD A DIFFERENT QUESTION. ──
+  /* ── THE LABEL'S RULE IS GONE FROM THIS ARCHETYPE. ──
+     `headline-focus.html` carries the whole argument in one line: a carousel
+     gets ONE accent colour, ONE rule geometry and ONE free-standing mark per
+     plate. This file's mark is `.stat-band`, the bar beside the slab — the one
+     `template-furniture.test.ts`'s switched-mark registry names for it — so a
+     hairline under the label was a second rule, in a second colour, at a
+     second length, on the same plate; re-colouring it only made the repetition
+     louder (measured: two identical accent bars, 30px apart). It is deleted
+     rather than switched off, because a div that can never paint is not a
+     composition.
 
-     THE GROUND RULE says furniture may not paint on a plate with no content:
-     with every slot empty this file reported `largestEmptyRectShare` 64.99%
-     against G2's 90% bar, because a full-measure hairline across a blank
-     plate splits its empty rectangle in two. A plate that cannot report
-     itself blank cannot be told apart from a neglected one.
-
-     §11.5 says the OPPOSITE thing about the same rail. Guarded on
-     `.eyebrow`, a POPULATED plate whose writer supplied no kicker loses the
-     rail too — and then measures a 0.2750 rectangle at `(0,0 → 1080,340)`,
-     the band between the top of the plate and the first content. RFC-20
-     §11.5 recorded that as open with the note *"the guard is right; the
-     composition owes the top of the plate something"*, and left it unfixed
-     because there was no basis to pick a composition without a render.
-
-     **BOTH ARE RIGHT, AND THE EYEBROW WAS THE WRONG THING TO ASK ABOUT.**
-     The question the Ground Rule actually asks is *does this plate carry
-     content* — not *did this particular optional slot arrive*. Asked of the
-     plate's own subject, one selector answers both: an empty plate has no
-     subject, so nothing paints and G2 is satisfied; a populated plate has
-     one whether or not it has a kicker, so the rail paints, breaks the top
-     band, and §11.5's rectangle closes.
-
-     WHICH SLOT IS "THE SUBJECT" IS PER-FILE and is named at each guard: the
-     figure on a stat callout, the labels on a comparison card, the takeaway
-     on a closer. Never the eyebrow, and never the ground, which is the
-     distinction this whole part of RFC-20 is about.
-
-     THE USER'S OWN INSTRUCTION, 2026-09-15: *use the position of
-     `largestEmptyRect` to prevent the hole in the middle.* Position is
-     exactly what separates these two cases — same rail, same 2px, and the
-     difference between furniture on a blank plate and a rule that closes a
-     340px band is where it sits relative to content. */
-  /* THE SUBJECT OF A STAT CALLOUT IS ITS FIGURE. `#figure` rather than
-     `> span:not(:empty)` because this slot is not a mark host — the emphasis
-     system wraps only headline and body hosts in twin spans — so a bare
-     `:not(:empty)` is the right reader here and the same one `.stat-band`
-     below already uses. */
-  /* ── PHASE 5.5 §4.3: THE RAIL IS UNDER THE ACCENT SWITCH, AND IT IS THE
-        EYEBROW'S UNDERLINE. ──
-     Two changes, and the second is the one the owner named.
-
-     (1) `display: var(--fx-accent, none)`. Every standing mark in this set is
-     hidden unless the run's resolved system switches it on; the bands and the
-     bars landed under that switch and the hairlines did not, so a neutral 2px
-     full-measure rule kept painting on six of eight plates of every carousel
-     — *"יש קווים כאלה"* in a quieter colour.
-
-     (2) The guard asks the EYEBROW again, not only the plate's subject. The
-     subject-guard reading was written for RFC-20 §11.5, where a populated
-     plate that lost its rail measured a band at the top — but that
-     measurement was taken while this archetype's middle HUGGED its content.
-     The middle is `flex: 1 1 auto` now, so a collapsed head is absorbed by the
-     composition instead of leaving a hole, which is the remedy §11.5 itself
-     asked for (*"the composition owes the top of the plate something"*) rather
-     than the furniture standing in for it. The subject guard is KEPT beside
-     it: an empty plate still paints nothing, which is RFC-20 guard G2.
-     A rule over nothing is not a rule; it is ink a quiet plate acquired. */
-  body:not(:has(.eyebrow:not(:empty))) .sc-rail { display: none; }
-  body:not(:has(#figure:not(:empty))) .sc-rail { display: none; }
+     WHAT IT WAS WORTH, A/B'd on this tree one object apart — the whole table
+     and the argument are in `headline-focus.html`, and `cover.html` used to be
+     the only one of the six deletions carrying a measurement for itself:
+     populated `largestEmptyRectShare` 0.2389 without the rail against 0.2345
+     with it (`inkShare` .0472 / .0484 — a 2px hairline is a SPLITTER, not
+     ink), and the blank plate 1.0000 without against 0.9139 with, which is the
+     Ground Rule's own claim asserted rather than argued. */
 
   /* ── The stat slab. A FILLED, low-colour-count region is what the
         measurement calls a drawn device, and this one is about 40% of the
@@ -457,7 +412,7 @@
      keeps its own literal as the var() fallback, so a document composed
      without the run sheet is byte-identical. */
   .stat-band { display: var(--fx-accent, none); inline-size: var(--fx-accent-w, calc(200px * var(--ts, 1))); block-size: var(--fx-accent-h, calc(14px * var(--ts, 1))); background: var(--accent); margin-block-start: calc(8px * var(--ts, 1)); }
-  /* The Ground Rule again — see `.sc-rail` above for the whole argument.
+  /* The Ground Rule again — see `headline-focus.html` for the whole argument.
      This bar belongs to the figure: with no figure there is no slab for it
      to mark, and an unguarded 200x14 solid in the middle of a blank plate is
      half of what took G2's empty-plate rectangle to 64.99%.
@@ -636,7 +591,16 @@
   .num-body {
     font-family: var(--f-body); font-weight: 400; font-size: calc(var(--t-label) * 0.9688); line-height: 1.55;
     color: color-mix(in srgb, var(--fg) 90%, transparent); max-inline-size: 880px; text-wrap: pretty;
-    border-inline-start: calc(4px * var(--ts, 1)) solid color-mix(in srgb, var(--accent) 80%, transparent);
+    /* ── UNDER THE SWITCH, AND IN THE ACCENT'S OWN COLOUR RATHER THAN A THIRD
+          ONE. ──
+       It was `color-mix(… var(--accent) 80% …)`, unconditionally. Measured
+       through the production composition, that put `4x96` of a DIFFERENT
+       colour on the plate — `color(srgb 0.768 0.333 0.184 / 0.8)` beside
+       `rgb(196, 85, 47)` — so the carousel's inventory read three accent hues
+       where the system chose one, on a slide the system had not switched the
+       accent on for at all. The reading edge stays; its permission and its
+       colour now come from the run. */
+    border-inline-start: calc(4px * var(--ts, 1)) solid var(--fx-accent-ink, color-mix(in srgb, var(--fg) 26%, transparent));
     padding-inline-start: calc(28px * var(--ts, 1));
   }
   .source-line {
@@ -707,7 +671,6 @@
   <span class="pg-index" aria-hidden="true">{{slideIndex}}</span>
   <div class="sc-head">
     <div class="eyebrow">{{kicker}}</div>
-    <div class="sc-rail"></div>
   </div>
   <div class="sc-figure-band"><img src="{{image:hero}}" onerror="this.remove()" alt="" /></div>
   <div class="num-zone">
@@ -723,12 +686,59 @@
     // Legacy `_cf-core.js` sized the figure off its own string length rather
     // than measuring the rendered box: >6 characters drops to `small`, >3 to
     // `mid`. Cheap, deterministic, and it never reflows mid-screenshot.
+    //
+    // ── AND THEN THE ZONE HAS THE LAST WORD, BECAUSE A LENGTH LADDER CANNOT
+    //    SEE THE TYPE SCALE THE RUN CHOSE. ──
+    //
+    // The rungs were measured against the scale's own `--t-figure`, and this
+    // phase gave the run a type FLAVOUR that multiplies it: `condensed` is
+    // 1.12, so the same three-character figure that fits at 300px sets at 335.
+    // Measured on this tree through the production composition, `karoslabs` on
+    // the `bracketed-figure` system at `m`: `div.num-zone [h 681 > 652]` —
+    // `probe.overflow`, which clause B turns into a `clipped` finding on every
+    // stat plate of that run, with a steer that cannot fix a font metric.
+    // (Present on `origin/main`'s copy of this file too, byte for byte: the A/B
+    // renders the same 681>652.)
+    //
+    // The loop steps DOWN the ladder this file already has, and only while the
+    // zone is actually over — so a plate that fits renders byte-identically,
+    // and the figure can only ever get smaller than the length ladder asked
+    // for. It runs again once the real faces have arrived, for the reason
+    // `closer.html`'s script states: every read before that is taken against
+    // the fallback face, and the renderer screenshots the real one.
     (function () {
       var fig = document.getElementById("figure");
-      var len = (fig.textContent || "").trim().length;
-      if (len > 6) fig.className = "num-figure small";
-      else if (len > 3) fig.className = "num-figure mid";
-      window.__CAROUSEL_READY__ = true;
+      var zone = document.querySelector(".num-zone");
+      var RUNGS = ["num-figure", "num-figure mid", "num-figure small"];
+      var fits = function () {
+        if (zone === null) return true;
+        return zone.scrollHeight <= zone.clientHeight + 1 && fig.scrollWidth <= fig.clientWidth + 1;
+      };
+      var layout = function () {
+        fig.className = "num-figure";
+        var len = (fig.textContent || "").trim().length;
+        if (len > 6) fig.className = "num-figure small";
+        else if (len > 3) fig.className = "num-figure mid";
+        if (fits()) return;
+        for (var i = Math.max(0, RUNGS.indexOf(fig.className)); i < RUNGS.length; i++) {
+          fig.className = RUNGS[i];
+          if (fits()) return;
+        }
+      };
+      layout();
+      var settled = false;
+      var settle = function () {
+        if (settled) return;
+        settled = true;
+        layout();
+        window.__CAROUSEL_READY__ = true;
+      };
+      if (document.fonts && document.fonts.ready && typeof document.fonts.ready.then === "function") {
+        document.fonts.ready.then(settle, settle);
+        setTimeout(settle, 4000);
+      } else {
+        settle();
+      }
     })();
   </script>
 </body>

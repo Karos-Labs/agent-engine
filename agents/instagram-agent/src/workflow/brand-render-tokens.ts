@@ -12,6 +12,7 @@ import {
   BRAND_MARK_ZONE,
   clientVisualSystemCss,
   CONDENSED_DISPLAY_FONT_FAMILY,
+  displayFaceForScript,
   resolveDisplayRegisterForScript,
   type ClientVisualSystem,
 } from "./visual-system.js";
@@ -801,6 +802,16 @@ export function buildBrandHeadHtml(
   ) {
     families.push(CONDENSED_DISPLAY_FONT_FAMILY);
   }
+  // ── AND THE FACE THE REGISTER SETS WHEN ITS OWN CANNOT SET THE SCRIPT. ──
+  // The other side of the same rule: on a script the register's Latin family
+  // has no glyph for, `displayFaceForScript` names ONE face that carries both
+  // scripts (see `DISPLAY_REGISTER_SCRIPT_FACES`) and the sheet below sets it,
+  // so the family has to be fetched. `undefined` on every Latin run, so no
+  // English document gains a link.
+  const substitutedDisplay = options.system !== undefined ? displayFaceForScript(options.system.displayRegister, options.script) : undefined;
+  if (substitutedDisplay !== undefined && !families.includes(substitutedDisplay.family)) {
+    families.push(substitutedDisplay.family);
+  }
   for (const family of families) {
     const encoded = family.replace(/ /g, "+");
     parts.push(`<link href="${GOOGLE_FONTS_CSS2}?family=${encoded}&display=swap" rel="stylesheet">`);
@@ -826,16 +837,36 @@ export function buildBrandHeadHtml(
   // div is never `:empty` again, and without this second selector a client
   // with no handle would ship an empty — but `pill`-painted — watermark box.
   css.push(".eyebrow:empty, .kicker:empty, .brand-badge:empty, .brand-handle:empty, .brand-handle:has(> bdi:empty) { display: none; }");
+  // ── AND THE TWO SIZES BELOW ARE STEPS, NOT LITERALS, FOR THE SAME REASON
+  //    THE INK IS THE TEMPLATE'S TO NAME. ──
+  //
+  // This block lands after the template's own <style>, so a `font-size: 19px`
+  // here won against every template's `font-size: var(--t-micro)` in every
+  // BRANDED run — which is every run that reaches this function. The result is
+  // a guard that cannot fail: `template-furniture.test.ts` asserts that the
+  // handle, the badge and the index are a step of the scale in all eight
+  // files, all eight files comply, and the document a client actually receives
+  // set two of the three at a hard 19px anyway. Measured through the
+  // production composition on this tree: `bdi` (the handle's isolate) reports
+  // 19px on every plate at every `fontScale`, while the index beside it —
+  // which this sheet does not override — reports 22 / 18.7 / 26 as the
+  // reviewer's control moves. One piece of standing furniture, two sizes, and
+  // the smaller one deaf to the type scale.
+  //
+  // `var(--t-micro, 22px)` keeps the kit in charge of everything a kit should
+  // own and takes the scale step where the scale has one; the literal stays as
+  // the fallback, so a document composed without a run sheet still resolves to
+  // exactly what this line used to say.
   css.push(
     [
       ".brand-handle {",
       "  position: absolute; bottom: 44px; inset-inline-start: 44px; z-index: 6;",
-      "  font-family: var(--f-mono); font-size: 19px; letter-spacing: 0.08em;",
+      "  font-family: var(--f-mono); font-size: var(--t-micro, 19px); letter-spacing: 0.08em;",
       "  color: color-mix(in srgb, var(--fg) 55%, transparent);",
       "}",
       ".brand-badge {",
       "  position: absolute; top: 56px; inset-inline-start: var(--mx, 64px); z-index: 6;",
-      "  font-family: var(--f-mono); font-weight: 600; font-size: 19px;",
+      "  font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro, 19px);",
       // THE INK IS THE TEMPLATE'S TO NAME, AND THIS LINE IS WHY.
       //
       // This block lands AFTER the template's own <style> (`composeDocument`
@@ -871,6 +902,36 @@ export function buildBrandHeadHtml(
   // this and keeps the templates' own `--f-display`, which is the correct
   // degradation: the fleet default is a real face, just a shared one.
   if (options.system !== undefined) css.push(clientVisualSystemCss(options.system, { script: options.script }));
+  // ── ONE HEADLINE, ONE TYPEFACE, ON A SCRIPT THE REGISTER CANNOT SET. ──
+  //
+  // `clientVisualSystemCss` withholds the register's Latin face on such a run
+  // and leaves `script-fonts.ts`'s stack standing. That stack leads with the
+  // CLIENT's own family, on purpose, so a Latin loanword keeps the brand face —
+  // and on a headline that is two typefaces in one line, which the round-1
+  // review names as a Major defect and which the owner's probe measures on
+  // every display host of a Hebrew carousel.
+  //
+  // So the register names one face that carries both scripts and it is set
+  // HERE rather than in that function, for two reasons that both matter:
+  //
+  //   * ON `body`, NOT `:root`. The script sheet declares `--f-display` on
+  //     `body`, and a `:root` declaration loses to it on every element inside
+  //     the body however late it is composed. The register's own note records
+  //     that as the reason its axis was inert on Hebrew; this is the selector
+  //     that is not.
+  //   * IN THIS FRAGMENT. `clientVisualSystemCss` is pinned by
+  //     `visual-system-axes-render.test.ts` to emit NO `--f-display` on a
+  //     non-covering script, and that pin is right: what it must not emit is
+  //     the register's LATIN face. This is a different declaration making the
+  //     opposite claim — one face, for the script — and it belongs with the
+  //     `<link>` that fetches it, which this fragment owns.
+  //
+  // Only the DISPLAY role moves. `--f-body` and `--f-mono` keep the script
+  // pack's client-first order: a paragraph is read, not seen, and the brand's
+  // face on its Latin runs there costs a reader nothing.
+  if (substitutedDisplay !== undefined) {
+    css.push(`body {\n  /* ${options.system?.displayRegister} set aside for ${options.script}: one face for the whole line. */\n  --f-display: ${substitutedDisplay.stack};\n}`);
+  }
   // THE BRAND MARK'S RESERVED ZONE, from ONE partial, so the eight templates
   // cannot drift apart on it. Emitted even when the mark itself is omitted:
   // the zone rules are all `var(--logo-zone-*, 0px)` arithmetic, so with no
@@ -912,8 +973,11 @@ export function buildBrandHeadHtml(
  * inherits the clearance instead of rediscovering the collision.
  *
  * `--logo-zone-start` / `--logo-zone-end`: exactly one of them is the zone's
- * width and the other is zero, which is what lets the two rules below be
+ * width and the other is zero, which is what lets the rules below be
  * corner-agnostic arithmetic rather than a pair of mirrored branches.
+ * `--logo-zone-inset` is the zone's own offset from the frame, which an
+ * IN-FLOW consumer needs in order to work out how far past the zone's inline
+ * edge it has to start.
  */
 function brandMarkZoneCss(placement: BrandLogoPlacement | undefined): string {
   const occupied = placement !== undefined && placement.decision !== "omit";
@@ -925,22 +989,59 @@ function brandMarkZoneCss(placement: BrandLogoPlacement | undefined): string {
     `  --logo-zone-start: ${start}px;`,
     `  --logo-zone-end: ${end}px;`,
     `  --logo-zone-block: ${occupied ? BRAND_MARK_ZONE.size : 0}px;`,
+    `  --logo-zone-inset: ${occupied ? BRAND_MARK_ZONE.inset : 0}px;`,
     "}",
-    // THE ZONE'S CONSUMERS ARE THE ABSOLUTELY-POSITIONED TOP-BAND ELEMENTS,
-    // AND ONLY THOSE. `.eyebrow` and `.kicker` are deliberately NOT in this
-    // selector: in all eight bundled templates they sit IN FLOW inside the
-    // composition, well below the top band, and a `max-inline-size` on an
-    // in-flow eyebrow would narrow the measure of a line that was never in
-    // danger — a fix applied to the wrong element is a new defect.
+    // ── THE ZONE'S CONSUMERS, AND THE PREMISE THAT WAS WRONG ABOUT THEM. ──
     //
-    // `.brand-badge` is the historical occupant (its slot is deleted from all
-    // eight templates by this phase, but a CLIENT's own template may still
-    // carry one, and that is the template this rule now protects).
-    // `.brand-zone-avoid` is the opt-in for any future top-corner element.
-    ".brand-badge, .brand-zone-avoid {",
+    // This selector used to be `.brand-badge, .brand-zone-avoid` alone, on the
+    // stated premise that *"`.eyebrow` and `.kicker` … sit IN FLOW inside the
+    // composition, well below the top band"*. The render refutes it. Measured
+    // through the production composition (`planBrandLogoPlacement` returning
+    // `top-start`, the mark capped at `BRAND_MARK_MAX_WIDTH_PX` so its box is
+    // 44,44 65x65, the zone x28 y28 132x132):
+    //
+    //   stat-callout / comparison-card / list-takeaway  .eyebrow  64,96
+    //   quote-card                                      .eyebrow  80,96
+    //   headline-focus (.kicker) / closer                         64,104
+    //
+    // Every one of those is INSIDE the zone — by 45x13px of direct overlap
+    // with the mark itself on four plates and 45x5px on two, i.e. six of the
+    // eight plates of every carousel, at every `fontScale`, in both scripts.
+    // The premise was also self-sealing: `.brand-badge` and `.brand-zone-avoid`
+    // match NO element in any of the eight bundled templates (the badge slot is
+    // deleted by this phase and the opt-in was never taken up), so the
+    // clearance this function exists to apply was applied to nothing.
+    //
+    // Two rules, because the two kinds of consumer move differently:
+    //
+    //   * `.brand-badge` is ABSOLUTELY POSITIONED, so its clearance is an
+    //     inset. Unchanged.
+    //   * `.eyebrow` / `.kicker` / `.brand-zone-avoid` are IN FLOW, so their
+    //     clearance is a margin — and it is the SMALLEST margin that takes the
+    //     box clear of the zone's inline edge, not the zone's whole width:
+    //     `inset + size - --mx`, which is 28 + 132 - 64 = 96px on the bundled
+    //     set. The `max(0px, …)` is what makes it self-cancelling: with no mark
+    //     both zone tokens are 0 and the expression is negative, so every
+    //     document without a brand mark is byte-identical to before.
+    //
+    // The margin narrows the line's measure by the same 96px, which is the
+    // correct trade for a one-line uppercase label and is why the rule is
+    // scoped to the two label classes rather than to the head container.
+    ".brand-badge {",
     "  inset-inline-start: calc(var(--mx, 64px) + var(--logo-zone-start, 0px));",
     "  max-inline-size: calc(100% - (var(--mx, 64px) * 2) - var(--logo-zone-start, 0px) - var(--logo-zone-end, 0px));",
     "}",
+    ".eyebrow, .kicker, .brand-zone-avoid {",
+    "  margin-inline-start: max(0px, calc(var(--logo-zone-inset, 0px) + var(--logo-zone-start, 0px) - var(--mx, 64px)));",
+    "  margin-inline-end: max(0px, calc(var(--logo-zone-inset, 0px) + var(--logo-zone-end, 0px) - var(--mx, 64px)));",
+    "}",
+    // ── AND THE ONE PLATE WHERE THE LABEL IS NOT IN THE TOP BAND. ──
+    // `cover.html` carries its eyebrow inside `.cov-field`, the masthead band,
+    // measured at y=527 — 367px below the zone's lower edge. Indenting it there
+    // would be the *"fix applied to the wrong element"* the note above was
+    // right to warn about, so the cover opts out by the same mechanism a client
+    // template would: one class, named for what it asserts.
+    ".brand-zone-clear { margin-inline-start: 0; margin-inline-end: 0; }",
     // The pagination index sits in the FOOT, opposite the `@handle`, so it can
     // never enter a top-corner zone at all. The rule is here rather than only
     // in the templates so that a client's own template gets the same clearance

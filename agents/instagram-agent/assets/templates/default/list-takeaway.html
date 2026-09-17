@@ -374,18 +374,22 @@
     letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent);
   }
   .eyebrow:empty { display: none; }
-  /* ── PHASE 5.5 §4.3: UNDER THE ACCENT SWITCH, AND IT IS THE EYEBROW'S
-        UNDERLINE. ──
-     `stat-callout.html`'s `.sc-rail` carries the whole argument. The same 2px
-     full-measure hairline at 48% of the foreground appears in seven of the
-     eight files, so before this it painted on six of eight plates of every
-     carousel — the owner's *"יש קווים כאלה"* in a quieter colour — and on a
-     plate whose eyebrow slot came through empty it was a rule over nothing. */
-  .lt-rail {
-    display: var(--fx-accent, none); block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent);
-    margin-block: calc(24px * var(--ts, 1)) calc(40px * var(--ts, 1));
-  }
-  body:not(:has(.eyebrow:not(:empty))) .lt-rail { display: none; }
+  /* ── THE LABEL'S RULE IS GONE FROM THIS ARCHETYPE. ──
+     `headline-focus.html` carries the whole argument in one line: a carousel
+     gets ONE accent colour, ONE rule geometry and ONE free-standing mark per
+     plate. This file's mark is the accent cap on `.me-rows`, the panel that holds the list — the one
+     `template-furniture.test.ts`'s switched-mark registry names for it — so a
+     hairline under the label was a second rule, in a second colour, at a
+     second length, on the same plate; re-colouring it only made the repetition
+     louder (measured: two identical accent bars, 30px apart). It is deleted
+     rather than switched off, because a div that can never paint is not a
+     composition.
+
+     WHAT IT WAS WORTH, A/B'd on this tree one object apart — the whole table
+     and the argument are in `headline-focus.html`: populated
+     `largestEmptyRectShare` 0.2250 without the rail against 0.2109 with it
+     (`inkShare` .0357 / .0370, measured with the row fragment filled), and the
+     blank plate 1.0000 against 0.8778. */
 
   .me-head {
     z-index: 3;
@@ -684,7 +688,6 @@
   <div class="sc-figure-band"><img src="{{image:hero}}" onerror="this.remove()" alt="" /></div>
   <div class="lt-head">
     <div class="eyebrow">{{kicker}}</div>
-    <div class="lt-rail"></div>
     <div class="me-head" id="head"><span class="mk-runs">{{html:headlineRuns}}</span><span class="mk-plain">{{headline}}</span></div>
   </div>
   <div class="me-rows">{{html:itemRows}}</div>

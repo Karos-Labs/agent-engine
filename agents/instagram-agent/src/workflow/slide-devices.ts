@@ -532,7 +532,11 @@ export function buildDeviceFragment(device: SlideDevice, dir: "ltr" | "rtl", tar
       return (
         `<div class="dv dv-figure-block">` +
         `<div class="dv-figure ${figureSizeClass(device.value)}">${esc(device.value)}</div>` +
-        `<div class="dv-rule dv-accent"></div>` +
+        // `dv-accent` came off this element with the rule that read it (see
+        // `.dv-rule`'s note in the sheet below). A class name no selector uses
+        // is markup kept alive to satisfy a reader, which is the same defect
+        // one file over that kept `.cl-rule` declared for a test to find.
+        `<div class="dv-rule"></div>` +
         `<div class="dv-label">${esc(device.label)}</div>` +
         source(device.source) +
         `</div>`
@@ -697,9 +701,58 @@ export function deviceCssBlock(): string {
 /* The accented figure — the "after" half of a before/after pair. */
 .dv-figure.dv-accent { color: var(--dv-ink); }
 
+/* ── THE FIGURE'S RULE IS THE RUN'S MARK, AT THE RUN'S GEOMETRY AND UNDER THE
+      RUN'S SWITCH. ──
+   It was a 132x12 literal painted in \`var(--accent)\` on every plate carrying
+   a figure device, outside \`--fx-accent\` entirely. Measured through the
+   production composition (\`karoslabs\`, \`bracket\` on slides [1,4,8], \`m\`):
+   \`div.dv-rule 132x12\` in the full accent on the cover, on \`headline-focus\`
+   and on \`slide\` — two of which the run's own system did NOT switch the accent
+   on for — beside a 96x18 mark on the plates it did. Two lengths and two
+   permissions for one object inside one carousel, which is the owner's
+   *"sometimes a long marker and sometimes a short one"* measured rather than
+   argued.
+
+   So: the GEOMETRY comes from \`--fx-accent-w\`/\`--fx-accent-h\` (the literals
+   stay as the var() fallbacks, so a document composed without a run sheet is
+   byte-identical), and the INK comes from \`--fx-accent-ink\` with the quiet
+   tone as its fallback — so on a plate the system did not switch on the rule
+   is still there as composition, in the same 22% grey every other unaccented
+   part of a device uses, rather than disappearing and leaving a hole.
+
+   \`.dv-rule\` only, NOT \`.dv-accent\` itself: that marker also colours the
+   winning half of a \`figure_pair\`, a bar's fill and a \`vs\` cell, and those
+   are \`accentRole: "information"\` — they say WHICH SIDE WON, and an
+   accent-off slide that lost them would be unreadable as a comparison.
+
+   ── AND THEN THE INK CAME OFF IT TOO, BECAUSE ONE OBJECT MAY NOT HAVE TWO
+      COLOURS IN ONE CAROUSEL. ──
+   Taking the GEOMETRY from the run fixed the two lengths and left the two
+   colours. Measured across the 198 renders of this tree's probe sweep,
+   \`div.dv-rule\` came back in exactly two tones: the brand accent on 18 plates
+   (every cover, 6 per client over both scripts and three scales) and
+   \`color(srgb … / 0.22)\` — the neutral foreground tone — on 54. On
+   thepitchbydeel en m that is \`cover div.dv-rule 240x10 rgb(89, 56, 183)\`
+   beside \`headline-focus div.dv-rule 240x10 color(srgb 0.164706 0.121569
+   0.301961 / 0.22)\`: identical geometry, the same object, two colours, one
+   carousel. On geektime's slide 7 the neutral form is a grey bar on a grey
+   ground doing no work at all.
+   A reader reads the figure device as ONE object, and this rule is a PART of
+   that object — the line between the figure and its label, the same class of
+   thing \`headline-focus.html\`'s rule block calls *the EDGE of an object … not
+   a rule*. So it is structurally neutral on every plate, and the plate's
+   accent is spent where the set spends it: on the one free-standing mark the
+   archetype declares (\`.hf-field\`'s cap, \`.cl-art\`'s cap, \`.stat-band\`),
+   which is already under \`--fx-accent\`. One object, one colour; the accent
+   switch still decides whether the PLATE carries an accent at all. */
 .dv-rule {
-  inline-size: calc(132px * var(--ts, 1)); block-size: calc(12px * var(--ts, 1));
-  background: var(--dv-ink, var(--dv-quiet)); margin-block-start: calc(26px * var(--ts, 1));
+  inline-size: var(--fx-accent-w, calc(132px * var(--ts, 1)));
+  /* The one \`accentForm\` whose width is \`100%\` is \`field\`, and a rule that
+     fills the device's own box is still the run's decision about its mark. The
+     cap is on the SLOT's measure, not on the literal, so nothing overflows. */
+  max-inline-size: 100%;
+  block-size: var(--fx-accent-h, calc(12px * var(--ts, 1)));
+  background: var(--dv-quiet); margin-block-start: calc(26px * var(--ts, 1));
 }
 /* Labels wrap BENEATH the figure, in the text face — never the display or mono face. */
 .dv-label {

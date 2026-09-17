@@ -2514,8 +2514,19 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
    * `publish.renderCarousel`, the real `measureSlidePng`, the real
    * `checkInterestFloor` — is the production path.
    *
-   * BREAK IT: delete `body:not(:has(.eyebrow:not(:empty))) .sc-rail` from
-   * `stat-callout.html`. It returns to LER 64.99% and this goes red.
+   * BREAK IT: delete `body:not(:has(.cmp-label:not(:empty))) .cmp-col` from
+   * `comparison-card.html` — the rule that takes the two cards' 3px outlines
+   * to `transparent` on a plate with no comparison on it. The card borders
+   * then paint on a blank plate and cut its empty rectangle into three, which
+   * is the same shape as the 31.67% the row above records for this file
+   * before its guards existed, and this case goes red.
+   *
+   * It used to name `body:not(:has(.eyebrow:not(:empty))) .sc-rail` in
+   * `stat-callout.html`, and `.sc-rail` is deleted — element and rule — by
+   * this phase's *one free-standing mark per plate* pass. A control that names
+   * a selector which no longer exists is a control nobody can perform, so the
+   * premise it was standing in for was unasserted; the replacement names a
+   * guard that is live in the file and in this case's own variants list.
    */
   it(
     "G2 — every bundled archetype with every copy slot empty measures as EMPTY, on either ground and in both directions",
@@ -2943,6 +2954,22 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
       // gating nothing is not a consequence of re-admitting these rows; it is
       // the precondition that lets them be re-admitted honestly.** The bands
       // are printed and read; they no longer set a refusal.
+      //
+      // RE-READ 2026-09-17 on the CI-pinned renderer (Playwright 1.53.0,
+      // chromium-1178, 138.0.7204.15) with this phase's templates, because the
+      // two numbers above are from a tree that no longer exists:
+      //
+      //   interior   POPULATED n=114  min occ 0.0267  max LER 0.4222  min COCC 0.0259
+      //   cover      POPULATED n= 19  min occ 0.2965  max LER 0.1833  min COCC 0.2908
+      //   closer     POPULATED n= 19  min occ 0.4048  max LER 0.1447  min COCC 0.3989
+      //   NEGLECTED ceiling over 10 controls: occ 0.0422  COCC 0.0410
+      //
+      // The conclusion is unchanged — interior still lands on RULE 2 and the
+      // bands still overlap, by more than they did — and the numbers it was
+      // drawn from have moved, so both are recorded rather than one quietly
+      // standing in for the other. `cover` is the one role whose bands now
+      // SEPARATE (RULE 1, midpoint 0.16); it is not acted on here, because
+      // §5.6 rule 3 gives a separation one sweep and this is its first.
 
       /** One carousel measured, scored and recorded. `faces` is the regex a non-fallback render must match for this language. */
       const sweep = async (band: SweepRow["band"], label: string, input: RenderCarouselInput, faces: RegExp): Promise<Measured[]> => {

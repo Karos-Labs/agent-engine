@@ -87,7 +87,12 @@
        the accent's hue still in it. */
     --wash: color-mix(in srgb, var(--accent) 45%, var(--fg));
     --accent-ink: #141414;
-    --line: color-mix(in srgb, var(--fg) 28%, transparent);
+    /* 26%, which is what `comparison-card.html` and `list-takeaway.html` both
+       declare. This file said 28% — one structural tone in three files at two
+       values, so a carousel carrying a recap strip and a panel showed two
+       greys doing the same job. Nobody can see 2% of alpha; what a reader does
+       see is a set that agrees with itself. */
+    --line: color-mix(in srgb, var(--fg) 26%, transparent);
     --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
     --f-body: 'Inter', system-ui, -apple-system, sans-serif;
     --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
@@ -248,8 +253,11 @@
      whole of this file's field paint. A 10px bar is punctuation; a ruling
      over 1000x800px was a surface. */
   /* The cap is SHORT — `headline-focus.html`'s `.hf-field` carries the
-     measurement. Same 240px measure as `.cl-rule` below it, which is the
-     point: one accent width for the whole directory. */
+     measurement — and since this phase its measure is the RUN's
+     (`--fx-accent-w`/`--fx-accent-h`) rather than a per-file literal, which is
+     the point: one accent width for the whole carousel. It is also this
+     plate's ONLY free-standing mark now; `.cl-rule` used to repeat it 30px
+     below and is deleted (see its note further down). */
   /* ── PHASE 5.5: the cap's INK is conditional, its geometry is not. ──
      `var(--fx-accent-ink, transparent)` — `visualSystemCssBlock` sets it on at
      most three slides of a carousel, and the closer is always one of them
@@ -257,8 +265,15 @@
      paints exactly as before; what changed is that it can no longer paint on a
      plate the system did not choose. */
   .cl-art {
-    background-image: linear-gradient(to bottom, var(--fx-accent-ink, transparent) 0 calc(10px * var(--ts, 1)), transparent 0);
-    background-size: calc(240px * var(--ts, 1)) 100%;
+  /* THE CAP IS THE RUN'S RULE, AT THE RUN'S LENGTH AND ITS THICKNESS. It was a
+     240x10 literal, so a run whose `accentForm` publishes a 560px band or a
+     96px bracket still capped this field at 240 — the same mark in two sizes
+     inside one carousel, which is the length discipline `headline-focus.html`'s
+     `headline-focus.html`'s note describes. The literals stay as the var()
+     fallbacks, so a
+     document composed without the run sheet is byte-identical. */
+    background-image: linear-gradient(to bottom, var(--fx-accent-ink, transparent) 0 var(--fx-accent-h, calc(10px * var(--ts, 1))), transparent 0);
+    background-size: var(--fx-accent-w, calc(240px * var(--ts, 1))) 100%;
     background-repeat: no-repeat;
     background-position: var(--cap-x, 0) 0;
   }
@@ -283,7 +298,7 @@
      other way round. `slide.html` makes the same substitution, position for
      texture, between its odd and even plates. */
   body.gr-glyph .cl-art {
-    background-image: linear-gradient(to top, var(--fx-accent-ink, transparent) 0 calc(10px * var(--ts, 1)), transparent 0);
+    background-image: linear-gradient(to top, var(--fx-accent-ink, transparent) 0 var(--fx-accent-h, calc(10px * var(--ts, 1))), transparent 0);
     background-position: var(--cap-x, 0) 100%;
   }
   /* The guards. No takeaway, no field; and furniture that paints ink answers
@@ -327,38 +342,32 @@
 
   /* The top anchor, the elastic column, and the ask that sits on the band. */
   .cl-head { position: relative; z-index: 3; flex: 0 0 auto; }
-  .cl-rail { display: var(--fx-accent, none); block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(24px * var(--ts, 1)); }
-  /* ── The Ground Rule and §11.5 together — `stat-callout.html`'s `.sc-rail`
-        carries the full argument. ──
-     §11.5 item 2 is this file: `largestEmptyRectShare` 0.2278 (en) and
-     0.2306 (he) at `(0,0 → 1080,328/332)`, over the 0.22 closer ceiling, on
-     a populated plate whose eyebrow slot the fixture left empty. Same rail,
-     same corner, same one-word cause as the stat callout.
-     THE SUBJECT OF A CLOSER IS ITS TAKEAWAY, and the guard reads it the same
-     way the field paint above does — asked of the twin's CHILDREN, because
-     `#takeaway` is a twin-slot pair and can never match `:empty` again. */
-  /* ── PHASE 5.5 §4.3: THE RAIL IS UNDER THE ACCENT SWITCH, AND IT IS THE
-        EYEBROW'S UNDERLINE. ──
-     Two changes, and the second is the one the owner named.
+  /* ── THE LABEL'S RULE IS GONE, AND `.cl-art`'s CAP IS THIS PLATE'S MARK. ──
+     `headline-focus.html` carries the whole argument. In short: a neutral
+     952x2 hairline beside a 240px accent rule is two colours and two lengths
+     of one object inside one carousel, and re-colouring the hairline only
+     moved the defect — the field below already caps itself with the run's mark
+     (`--fx-accent-ink` on `.cl-art`), so an eyebrowed closer painted two
+     identical accent bars 30px apart. Rendered and looked at, not reasoned
+     about. One free-standing rule per plate, and on this archetype it is the
+     cap; the element goes with the rule, because a switched-off div in the
+     markup is not a composition.
 
-     (1) `display: var(--fx-accent, none)`. Every standing mark in this set is
-     hidden unless the run's resolved system switches it on; the bands and the
-     bars landed under that switch and the hairlines did not, so a neutral 2px
-     full-measure rule kept painting on six of eight plates of every carousel
-     — *"יש קווים כאלה"* in a quieter colour.
+     §11.5's finding about this file's head is answered by the composition it
+     asked for — the middle is `flex: 1 1 auto`, so a collapsed head is
+     absorbed rather than left as a hole for a rule to break up.
 
-     (2) The guard asks the EYEBROW again, not only the plate's subject. The
-     subject-guard reading was written for RFC-20 §11.5, where a populated
-     plate that lost its rail measured a band at the top — but that
-     measurement was taken while this archetype's middle HUGGED its content.
-     The middle is `flex: 1 1 auto` now, so a collapsed head is absorbed by the
-     composition instead of leaving a hole, which is the remedy §11.5 itself
-     asked for (*"the composition owes the top of the plate something"*) rather
-     than the furniture standing in for it. The subject guard is KEPT beside
-     it: an empty plate still paints nothing, which is RFC-20 guard G2.
-     A rule over nothing is not a rule; it is ink a quiet plate acquired. */
-  body:not(:has(.eyebrow:not(:empty))) .cl-rail { display: none; }
-  body:not(:has(#takeaway > span:not(:empty))) .cl-rail { display: none; }
+     WHAT `.cl-rail` WAS WORTH, A/B'd on this tree one object apart — the whole
+     table and the argument are in `headline-focus.html`: populated
+     `largestEmptyRectShare` 0.1055 without the rail against 0.0944 with it
+     (`inkShare` .3996 / .3833, measured with the recap fragment and the ask
+     filled), and the blank plate 1.0000 against 0.9083. The populated cost is
+     1.1 points against a 0.22 closer ceiling, so §11.5's own rectangle stays
+     closed without it.
+
+     ONE OF THE TWO PANEL EDGES CHANGED WITH IT: `.cl-recap`'s is now neutral
+     and `.cl-ask`'s keeps the accent — see `.cl-recap`'s own rule for the
+     three-bars-at-three-lengths measurement that decided which is which. */
   /* The field runs the full measure inside the 16px frame — wider than the
      body's own 64px margin, so it reads as a field rather than as a
      highlighted paragraph. The negative inline margin and the matching inline
@@ -509,12 +518,29 @@
      with no question and no CTA, and that band is this archetype's drawn
      device — an empty ask would have cleared clause E on its own decoration. */
   .cl-ask:has(.cl-question > span:not(:empty)), .cl-ask:has(.cl-cta > span:not(:empty)) {
-    /* The band's own top edge is under the accent switch with every other
-       standing mark in the set (§4.3) — `--fx-accent-ink` is the channel for an
-       accent-COLOURED border, and a quiet closer's band keeps its surface and
-       loses the line. The surface itself is not switched: it is this
-       archetype's drawn device and clause E rests on it. */
-    border-block-start: calc(6px * var(--ts, 1)) solid var(--fx-accent-ink, transparent);
+    /* ── THE BAND'S EDGE IS NEUTRAL, LIKE THE RECAP'S, AND FOR THE SAME
+          REASON. ──
+       This edge used to take `--fx-accent-ink`, on the argument in the
+       `.cl-recap` block below — *the ask's band is the payoff, so its edge
+       keeps the colour*. Rendered, that argument does not survive its own
+       plate. The closer is ALWAYS in `accentSlides`, so the ink is always
+       resolved here, and the plate therefore carried the accent at two
+       lengths at once: `div.cl-field::cap` at 77x14 … 283x12 (the run's own
+       `--fx-accent-w`) and `div.cl-ask::border-top` at 1048x4..7, in the same
+       hue, ~800px apart. Measured across all 36 closer renders of this tree's
+       probe sweep — 3 clients x {en, he} x {s, m, l} x {closer, closerLONG} —
+       it was 36 of 36, in every brand hue: rgb(89,56,183), rgb(196,85,47),
+       rgb(165,232,43). That is the owner's *"sometimes a long marker,
+       sometimes a short one"*, still measurable after the six rails came out.
+       `headline-focus.html`'s rule block is the set's own answer: *what stays
+       NEUTRAL is the EDGE of an object — a panel border, a row separator, a
+       picture's frame.* The ask's band IS an object; this line is its top
+       edge, not a mark. So it takes `--line`, exactly as `.cl-recap`'s edge
+       already does, and the plate is left with ONE accent length: the cap.
+       Nothing clause E reads moves — the clause rests on the band's painted
+       AREA, and `box-sizing: border-box` plus an unchanged border WIDTH means
+       that area is identical to the pixel. Only the line's hue changes. */
+    border-block-start: calc(6px * var(--ts, 1)) solid var(--line);
     /* The ask's band is ruled HORIZONTALLY, on the same axis as the field's
        band stack above it — this plate has one direction and everything on it
        obeys it. Fine here rather than architectural: the band is only 400px
@@ -561,7 +587,24 @@
         color-mix(in srgb, var(--accent) 8%, transparent) 100%);
     padding: calc(34px * var(--ts, 1)) calc(30px * var(--ts, 1)) calc(28px * var(--ts, 1));
     margin-block-end: calc(56px * var(--ts, 1));
-    border-block-start: calc(6px * var(--ts, 1)) solid var(--accent);
+    /* ── EVERY PANEL EDGE ON THIS PLATE IS NEUTRAL. THE ONE ACCENT MARK IS
+          THE CAP. ──
+       Measured through the production composition at `m`, this plate carried
+       THREE accent-hue bars at three lengths: `div.cl-field::cap 96x18` (the
+       run's own mark), `div.cl-recap::border-top 952x6` and
+       `div.cl-ask::border-top 1048x6` — the top two 35px apart, which is
+       exactly the shape of the owner's *"there are these lines"*.
+       The first revision of this block demoted the recap's edge and kept the
+       ask's, on the argument that the ask is the payoff. That left TWO accent
+       lengths (the 96px cap and the 1048px rule) on every closer of every
+       carousel, which is the same defect one bar smaller — see the `.cl-ask`
+       block above for the 36-of-36 measurement that closed it.
+       Both edges are `--line` now. A panel's border is the outline of the
+       thing it belongs to and a reader reads it as its shape; the accent is
+       spent on the ONE free-standing mark this plate has. The panels' accent
+       TINTS are untouched: a surface may carry the hue, a rule has to earn
+       it. */
+    border-block-start: calc(6px * var(--ts, 1)) solid var(--line);
   }
   .rc-strip { display: flex; gap: calc(20px * var(--ts, 1)); }
   .rc-plate {
@@ -584,7 +627,13 @@
      being a glance, which is the exact thing `MAX_RECAP_PLATES`'s comment says
      four plates must not do — and it took the strip to 345px of an 823px
      field at `l`, which is what pushed the takeaway off the top of its own
-     box. */
+     box.
+     Every clearance quoted in this block and the next was measured with
+     `.cl-rail` still in flow — 2px plus a 24px top margin inside `.cl-head`.
+     The rail is deleted, so the head is 26px shorter (30px at `l`) and each of
+     those clearances is now that much LARGER. The numbers are therefore
+     conservative rather than stale, and the script's `over()` loops are what
+     hold the plate either way. */
   .rc-strip:has(.rc-plate:nth-child(4)) .item-title {
     font-size: calc(var(--t-label) * 0.8125); line-height: 1.22;
   }
@@ -602,9 +651,23 @@
     padding: calc(24px * var(--ts, 1)) calc(26px * var(--ts, 1)) calc(20px * var(--ts, 1));
     margin-block-end: calc(32px * var(--ts, 1));
   }
+  /* ── THE RECAP'S COMPACT SETTING, AT ANY SCALE. ──
+     The `ts-l` block above is the same compaction applied for the same reason
+     — the strip takes 447-646px out of a middle that has to hold a display
+     takeaway as well — but `l` is not the only way to get there: a display
+     register with a wide advance (measured: `mono-display` at `m`) puts the
+     document 432px past the frame with the takeaway already on its smallest
+     rung. The script applies this class only after every type ladder has run
+     out, so a plate that fits never sees it. */
+  .cl-recap.rc-fit:not(:empty) {
+    padding: calc(24px * var(--ts, 1)) calc(26px * var(--ts, 1)) calc(20px * var(--ts, 1));
+    margin-block-end: calc(28px * var(--ts, 1));
+  }
+  .cl-recap.rc-fit .item-title { font-size: calc(var(--t-label) * 0.8125); line-height: 1.22; }
+  .cl-recap.rc-fit .rc-plate { padding-block-start: calc(16px * var(--ts, 1)); }
+  .cl-recap.rc-fit .rc-n { margin-block-end: calc(11px * var(--ts, 1)); }
   body.ts-l .rc-plate { padding-block-start: calc(16px * var(--ts, 1)); }
   body.ts-l .rc-n { margin-block-end: calc(11px * var(--ts, 1)); }
-  body.ts-l .cl-rule { margin-block-start: calc(30px * var(--ts, 1)); }
 
   /* `.headline`, not a closer-specific name — a DISPLAY_SELECTOR, so the
      takeaway picks up per-script leading. */
@@ -652,47 +715,40 @@
   body:has(.cl-recap:not(:empty)) .headline.small { font-size: calc(var(--t-display) * 0.85); line-height: 1.14; }
   body:has(.cl-recap:not(:empty)) .headline.tiny { font-size: calc(var(--t-statement) * 0.7619); line-height: 1.16; }
 
-  /* The one accent moment above the ask. */
-  /* ── PHASE 5.5: hidden unless the system switches it on. ──
-     A standalone 240x14 accent bar with a 40px margin, so it COLLAPSES rather
-     than going transparent: an invisible bar would still spend 54px of the
-     composition on nothing. The closer is always in `accentSlides`, so on this
-     archetype it paints exactly as it did — the change is that the same bar in
-     `slide.html`, `headline-focus.html` and `stat-callout.html` no longer
-     paints on every plate of every post. */
-  /* ── PHASE 5.5, ITEM C: THE ACCENT MARK IS ONE GEOMETRY, NOT SIX. ──
-     The run's `accentForm` decides the mark's shape ONCE and publishes it as
-     `--fx-accent-w` / `--fx-accent-h`. Before this the length was a property of
-     whichever template the writer's layout landed on — 64px on a quote card,
-     200px on a stat plate, 240px on a closer, full measure on a panel — so the
-     three slides the accent switch allows a mark on carried three different
-     shapes, which is the owner's *"sometimes a long purple marker and
-     sometimes a short one"* read as geometry rather than as colour. Each file
-     keeps its own literal as the var() fallback, so a document composed
-     without the run sheet is byte-identical. */
-  .cl-rule { display: var(--fx-accent, none); inline-size: var(--fx-accent-w, calc(240px * var(--ts, 1))); block-size: var(--fx-accent-h, calc(14px * var(--ts, 1))); background: var(--accent); margin-block: calc(40px * var(--ts, 1)) 0; }
-  /* ── THE GROUND RULE. ──
-     RFC-20 §5.0: ink only inside a region the composition occupies, and only
-     when the content that justifies it is present. A 240x14 solid accent bar
-     is ink, and on a plate with no takeaway it was the only thing in frame —
-     sitting near the centre line, which is the worst place for it, because
-     `largestEmptyRectangle` finds ONE contiguous rectangle and a mark at the
-     centroid roughly halves the number G2 reads.
-     This guard was written once and reverted with `a3bf8f7`, which cut this
-     file from the phase rather than judging the guard. The file is back in
-     scope with the bounded object (§11.4) and so is the guard, unchanged, on
-     the same slot the field paint above already reads. */
-  body:not(:has(#takeaway > span:not(:empty))) .cl-rule { display: none; }
-  /* ── AND ONE MARK, NOT TWO, WHERE THE BAND ALREADY ENDS THE STATEMENT. ──
-     Rendered on this tree, an accent closer carrying an ask showed the rule
-     (240x10) and the band's own 6px top edge 90px apart, one above the other:
-     two accent lines stacked in the same reading position, which is the shape
-     of *"there are these lines"* even when each one is defensible on its own.
-     The BAND wins — it is the plate's payoff surface and the edge is its own
-     boundary — so the rule stands down wherever the band paints, and a closer
-     with no ask keeps the rule as its one mark. */
-  body:has(.cl-ask .cl-question > span:not(:empty)) .cl-rule,
-  body:has(.cl-ask .cl-cta > span:not(:empty)) .cl-rule { display: none; }
+  /* ── `.cl-rule` IS DELETED — RULE AND ELEMENT — AND THIS IS WHY IT HAD TO
+        GO RATHER THAN ACQUIRE ANOTHER GUARD. ──
+     ITS TWO GUARDS, QUOTED FROM THE FILE THEY WERE DELETED FROM
+     (`git show HEAD~:…/closer.html`, lines 685 and 694-695) — an earlier
+     revision of this block quoted a complementary PAIR on `#takeaway` and no
+     such pair was ever here:
+       `body:not(:has(#takeaway > span:not(:empty))) .cl-rule { display: none }`
+       `body:has(.cl-ask .cl-question > span:not(:empty)) .cl-rule,`
+       `body:has(.cl-ask .cl-cta      > span:not(:empty)) .cl-rule { display: none }`
+     Two DIFFERENT conditions, so nothing about the CSS made the bar
+     unpaintable. What made it unpaintable is the pipeline: `contentFor`'s
+     closer branch always emits `takeaway`, and always routes `body` into
+     exactly one of `question`/`cta` (`slides-data.ts`), so the second guard
+     matched on every closer this agent has ever assembled and the first was
+     never reached. A mark whose hiding condition the assembler guarantees is
+     as dead as one hidden by a tautology — it is just dead one file away,
+     where a reader of the stylesheet cannot see it.
+     Measured rather than reasoned about: `.local/cap-debug.mjs` on a fully
+     populated closer with the switch ON (`data-n=08`, `--fx-accent: block`,
+     `--fx-accent-w: calc(96px * 1)`) reported `.cl-rule` `display: none`, box
+     `0x0`.
+     The declaration was kept alive on purpose, because
+     `template-furniture.test.ts`'s switched-mark registry named it — a guard
+     reading the text of a rule with no pixel effect, which is a guard that
+     cannot fail. The registry now names `.cl-art`'s cap instead, which is the
+     mark this archetype actually paints, and it carries a rendered limb
+     (`the registry's marks paint a box`) that measures a rect rather than a
+     substring — that limb is what would have caught this, and the
+     source-level complementary-guard case beside it would NOT have: run its
+     regex over the pre-deletion file and the two conditions do not intersect.
+     Both are named here so the next reader does not mistake one for the
+     other.
+     This plate's mark is therefore exactly one object: the field's cap
+     (`.cl-art`, `--fx-accent-ink` at `--fx-accent-w`/`--fx-accent-h`). */
 
   /* ── THE ASK HAS A LADDER NOW, and it is the piece that was missing. ──
      `.cl-ask` is `flex: 0 0 auto` with a 400px floor, so its height is its
@@ -817,13 +873,11 @@
   <span class="pg-index" aria-hidden="true">{{slideIndex}}</span>
   <div class="cl-head">
     <div class="eyebrow">{{eyebrow}}</div>
-    <div class="cl-rail"></div>
   </div>
   <div class="cl-field cl-art">
     <div class="cl-wrap">
       <div class="cl-recap">{{html:recap}}</div>
       <div class="headline" id="takeaway"><span class="mk-runs">{{html:takeawayRuns}}</span><span class="mk-plain">{{takeaway}}</span></div>
-      <div class="cl-rule"></div>
     </div>
   </div>
   <div class="cl-ask">
@@ -948,6 +1002,21 @@
         return total;
       };
       var askFits = function () { return askUsed() <= askRoom() + 1; };
+      // ── AND THE PLATE ITSELF, WHICH `askFits` CANNOT SEE. ──
+      //
+      // `askRoom()` measures the box the ask WAS GIVEN, and on this archetype
+      // that box is what is left after a `flex: 0 0 auto` field holding a
+      // recap strip and a display-sized takeaway. When the field takes more
+      // than the plate has, the ask's own box is already off the bottom of the
+      // frame and every rung "fits" a box nobody can see: measured on this
+      // tree, `mono-display` at `m` with a 68-character takeaway put `html` at
+      // 1872 against 1440 and printed BOTH the question and the CTA over the
+      // `@handle` watermark — the round-1 blocker, reproduced. So the loops
+      // below ask the document as well as the box.
+      var over = function () {
+        var root = document.documentElement;
+        return root.scrollHeight > root.clientHeight + 1 || document.body.scrollHeight > document.body.clientHeight + 1;
+      };
       var fitAsk = function (el, rungs) {
         if (el === null || ask === null) return;
         var from = rungs.indexOf(el.className);
@@ -983,9 +1052,24 @@
         t.className = "headline";
         if (q !== null) q.className = "cl-question";
         if (c !== null) c.className = "cl-cta";
+        if (recap !== null) recap.className = "cl-recap";
 
         // 90/44 and 46/30 are the measured pair this file already carried; only
         // the recap factor is new.
+        //
+        // ── AND THEY WERE DERIVED WITH `.cl-rail` IN FLOW, WHICH IS GONE. ──
+        // The rail was 2px plus a `margin-block-start: calc(24px * var(--ts,1))`
+        // inside `.cl-head`, so every clearance this file's comments record was
+        // measured against a head 26px (30px at `l`) TALLER than the one it has
+        // now. The deficit runs in the safe direction by construction: a
+        // shorter head hands those pixels to `.cl-field`, so a breakpoint that
+        // fitted with the rail in flow fits with more room without it, and none
+        // of them can now overflow for want of the 26px.
+        // They are also no longer the last line of defence. `over()` below asks
+        // the DOCUMENT, and the ask ladder and the `rc-fit` compaction run
+        // until it answers no — so these numbers are the first guess and the
+        // loops are the correction, which is why re-deriving them is a
+        // measurement worth taking and not a defect to hold the phase for.
         if (len(t) > at(90, 44)) t.className = "headline tiny";
         else if (len(t) > at(46, 30)) t.className = "headline small";
         // The rung a payoff plate was missing — see `.headline.huge`.
@@ -1010,7 +1094,19 @@
           if (c !== null) c.className = cBase;
           fitAsk(q, QUESTION_RUNGS);
           fitAsk(c, CTA_RUNGS);
-          if (askFits()) return;
+          if (askFits() && !over()) return;
+        }
+        // Every type ladder on the plate has run out and the document is still
+        // over the frame. The recap strip is the only thing left that can give
+        // room without cutting a word: it takes 447-646px of the middle and it
+        // is a REPEAT of copy the reader has already seen on earlier slides,
+        // while the question and the CTA are the only things on the plate that
+        // are new. So it compacts, and the ask is re-fitted in the room that
+        // frees. Nothing is dropped and no copy is cut at any point.
+        if (over() && recap !== null && recap.textContent.trim() !== "") {
+          recap.className = "cl-recap rc-fit";
+          fitAsk(q, QUESTION_RUNGS);
+          fitAsk(c, CTA_RUNGS);
         }
       };
 

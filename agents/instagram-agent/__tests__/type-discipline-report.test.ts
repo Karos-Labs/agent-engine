@@ -7,6 +7,7 @@ import {
   TYPE_CONTRAST_FLOOR_ARMED,
   TYPE_STEP_CEILING,
   TYPE_STEP_CEILING_ARMED,
+  typeDisciplineLimbs,
 } from "../src/workflow/interest-floor.js";
 import { passingSlideMetrics, passingSlideProbe } from "./test-helpers.js";
 
@@ -102,5 +103,47 @@ describe("type discipline: measured, printed, and armed by nobody yet", () => {
     expect(TYPE_CONTRAST_FLOOR_ARMED).toBe(false);
     expect(ALIGNMENT_COLUMN_CEILING_ARMED).toBe(false);
     expect(verdict({ typeSteps: [132, 124, 104, 96, 46, 22], alignmentColumns: 6 }).ok).toBe(true);
+  });
+
+  /**
+   * ── AND THE SWITCH IS REAL, WHICH FOR ONE REVISION IT WAS NOT. ──
+   *
+   * The three flags shipped read in exactly one place — `armed: A || B || C ?
+   * 1 : 0` inside a `warnings.push(...)`, on a clause whose every path led to
+   * `warnings` — so flipping one changed a reported integer and gated nothing,
+   * while the constants' own comment told the next integrator that flipping
+   * one is how the clause is armed.
+   *
+   * The cases above can assert that nothing gates TODAY. They cannot assert
+   * that anything WOULD gate if a flag were thrown, because the flags are
+   * module constants. That is why `typeDisciplineLimbs` takes `armed` as an
+   * argument: the routing is a pure function, so both halves of the promise
+   * are testable with no mocking — and this is the half that was untrue.
+   */
+  describe("the arming switch routes per limb, and each limb answers for itself", () => {
+    const measured = { distinct: 6, contrast: 1.1, columns: 4, measuredSteps: true, comparableSteps: true };
+    const none = { steps: false, contrast: false, columns: false };
+
+    it("disarmed: every out-of-band limb is out of band and none of them gates", () => {
+      const limbs = typeDisciplineLimbs(measured, none);
+      expect(limbs.map((l) => l.out)).toEqual([true, true, true]);
+      expect(limbs.filter((l) => l.out && l.armed)).toEqual([]);
+    });
+
+    it("arming ONE limb gates that limb and only that limb", () => {
+      const limbs = typeDisciplineLimbs(measured, { ...none, contrast: true });
+      expect(limbs.filter((l) => l.out && l.armed).map((l) => l.clause)).toEqual([`largest/second 1.10x (floor ${TYPE_CONTRAST_FLOOR}x)`]);
+      expect(limbs.filter((l) => l.out && !l.armed)).toHaveLength(2);
+    });
+
+    it("an armed limb that is IN band still gates nothing — the flag arms a clause, it does not assert one", () => {
+      const clean = { distinct: 2, contrast: 2.7, columns: 1, measuredSteps: true, comparableSteps: true };
+      expect(typeDisciplineLimbs(clean, { steps: true, contrast: true, columns: true }).filter((l) => l.out)).toEqual([]);
+    });
+
+    it("a limb the probe did not measure is never out of band, armed or not", () => {
+      const unmeasured = { distinct: 0, contrast: 1, columns: undefined, measuredSteps: false, comparableSteps: false };
+      expect(typeDisciplineLimbs(unmeasured, { steps: true, contrast: true, columns: true }).filter((l) => l.out)).toEqual([]);
+    });
   });
 });

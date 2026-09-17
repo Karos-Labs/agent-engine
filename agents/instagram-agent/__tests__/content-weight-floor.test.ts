@@ -11,6 +11,8 @@ import {
   type SlideRole,
 } from "../src/workflow/interest-floor.js";
 import { weighContentElements, countContentElements } from "../src/workflow/visual-qa-pre-checks.js";
+import { assembleSlidesData } from "../src/workflow/slides-data.js";
+import { InstagramSlideCopySchema, type InstagramCopyOutput } from "../src/workflow/types.js";
 import { passingSlideMetrics, passingSlideProbe } from "./test-helpers.js";
 
 /**
@@ -76,32 +78,37 @@ describe("the weighted content floor reproduces the owner's own verdicts (2026-0
    * photograph and lost it; slide 8 is a closer whose payoff is a recap strip
    * at ~11px and two lines.
    */
-  it("karoslabs: slides 1, 3, 4, 6 and the closer fail — and 2, 5 and 7 do not", async () => {
+  it("karoslabs: slides 1, 3, 4 and 6 fail — and 2, 5, 7 and the closer do not", async () => {
     const doc = await live("karoslabs");
     expect(doc.slides).toHaveLength(8);
     const rows = doc.slides.map((_, index) => verdictFor(doc, index));
     // The weights first, because they are what a reviewer argues with.
     expect(rows.map((r) => r.weight)).toEqual([2.5, 3.0, 2.0, 2.0, 3.5, 2.0, 3.0, 3.0]);
-    // ── THE CLOSER (slide 8) FAILS, AND WHAT MOVED TO MAKE THAT TRUE WAS THE
-    //    PRICE OF THE RECAP, NOT THE THRESHOLD. ──
+    // ── THE CLOSER (slide 8) PASSES AT 3.0, AND THAT IS THE CORRECTION. ──
     //
     // This package shipped `CONTENT_WEIGHT_FLOOR.closer` at 4.0, which is
     // unreachable for a closer (`closer` is not in `HERO_IMAGE_LAYOUTS`, so the
     // archetype declares no `{{image:hero}}` slot and can never carry the 2.0 a
-    // hero is worth), and wave-2 integration corrected it to 3.5. But with the
-    // recap priced at `device` (1.5), 3.5 was ALSO exactly what every closer
-    // this agent produces weighs — `buildRecapFragment` needs `MIN_RECAP_PLATES`
-    // earlier slides and every carousel has them — so the floor sat on the one
-    // value it could ever see and separated nothing. This plate, which the
-    // calibration table was written to refuse, passed it.
+    // hero is worth), and wave-2 integration corrected it to 3.5. With the
+    // recap priced at `device` (1.5) that 3.5 was ALSO exactly what every
+    // closer this agent produces weighs, so the floor sat on the one value it
+    // could ever see and separated nothing — which is what this case used to
+    // record, with the plate asserted as REFUSED.
     //
-    // `CONTENT_WEIGHTS.recap` is now `prose` (1.0), for the render it is priced
-    // against, and `contentFor`'s closer prefers its own designed object to the
-    // recap strip. So this plate reads 3.0 and is refused, a closer carrying a
-    // sourced figure reads 3.5 and passes, and the thin closer that has neither
-    // reads 2.0 and is refused for the reason it is thin. The threshold did not
-    // move.
-    expect(rows.map((r) => r.failed)).toEqual([true, false, true, true, false, true, false, true]);
+    // `CONTENT_WEIGHTS.recap` moved to `prose` (1.0) for the render it is
+    // priced against, and the floor did not move with it — so for one revision
+    // the same plate was refused on EVERY post instead of passing on every
+    // post. Neither is a bar. `CONTENT_WEIGHT_FLOOR.closer` carries the
+    // re-derivation and the measurement: this plate reads `inkShare` 0.3743
+    // and `occupiedShare` 0.3967 — the second heaviest of its own carousel —
+    // and the sentence it was refused with ("a headline and a body on bare
+    // ground is not a slide") is untrue of it.
+    //
+    // At 3.0 the bar is where the owner's complaint is: the BARE closer
+    // (takeaway + ask, 2.00) is refused and an eyebrow cannot buy it a pass
+    // (2.25), while the plate the pipeline composes on purpose is not refused
+    // for being composed the only way it can be.
+    expect(rows.map((r) => r.failed)).toEqual([true, false, true, true, false, true, false, false]);
     // And the two roles that are held higher are the two the reader actually
     // stops on.
     expect(rows[0]?.role).toBe("cover");
@@ -175,8 +182,9 @@ describe("the weighted content floor reproduces the owner's own verdicts (2026-0
     // s1 carries a device fragment, which takes the cover to exactly its
     // floor; s2 and s4 are headline-and-body plates.
     // s8 is the same closer karoslabs shipped — takeaway, ask and a recap strip
-    // — and it is refused for the reason the karoslabs case above spells out.
-    expect(rows.map((r) => r.failed)).toEqual([false, true, false, true, false, false, false, true]);
+    // — and it clears the closer floor for the reason the karoslabs case above
+    // spells out.
+    expect(rows.map((r) => r.failed)).toEqual([false, true, false, true, false, false, false, false]);
     expect(rows[0]?.weight).toBe(4);
     expect(rows[7]?.weight).toBe(3);
   });
@@ -239,7 +247,7 @@ describe("the weighted content floor reproduces the owner's own verdicts (2026-0
       prose: 1.0,
       furniture: 0.25,
     });
-    expect(CONTENT_WEIGHT_FLOOR).toEqual({ cover: 4, interior: 3, closer: 3.5 });
+    expect(CONTENT_WEIGHT_FLOOR).toEqual({ cover: 4, interior: 3, closer: 3 });
     // Only two classes are named; everything else is prose BY OMISSION, which
     // is the safe direction — a field added to a template later is a content
     // element until somebody argues otherwise, never furniture by accident.
@@ -290,8 +298,24 @@ describe("the weighted content floor reproduces the owner's own verdicts (2026-0
    * decoration). Both are built here out of `CONTENT_WEIGHTS` itself, so a
    * re-price that collapses the gap fails this case rather than silently
    * disarming the role.
+   *
+   * ── WHICH COMPOSITION IS "THE WORST SHIPPING ONE" IS THE BARE CLOSER, NOT
+   *    THE RECAP ONE, AND GETTING THAT WRONG COST A REVISION. ──
+   *
+   * This case used to assert `recapOnly < floor`. That reads as a policy — *a
+   * contents page is not a payoff* — but the pipeline composes NOTHING ELSE
+   * unless the writer's own closer copy states a figure: `contentFor`'s closer
+   * emits two prose slots and one code-built fragment, and
+   * `BOUNDED_OBJECT_LAYOUTS` excludes `closer`, so the 1.5 device is not
+   * something anything upstream can produce. Asserting it therefore asserted
+   * that every post ships with a finding on its last slide, which is what
+   * `workflow-e2e.test.ts` measured end to end (CI run 35170562382).
+   *
+   * The owner's complaint was a closer with NOTHING on it. That is `bare`
+   * (2.00), and that is what this now holds refused — with the eyebrow limb
+   * still beside it, so decoration still cannot buy the pass.
    */
-  it("the closer floor sits strictly between what a closer can weigh and what the recap-only closer weighs", () => {
+  it("the closer floor sits strictly between what a closer can weigh and what the BARE closer weighs", () => {
     // `contentFor`'s closer emits exactly two prose slots — `takeaway`, and
     // whichever of `question`/`cta` the body is — plus ONE code-built fragment
     // in its single elastic middle, plus a topical eyebrow on the clients whose
@@ -306,13 +330,109 @@ describe("the weighted content floor reproduces the owner's own verdicts (2026-0
     // Reachable WITHOUT furniture, which is the other half of the rule: a floor
     // that only an eyebrow can clear is a floor cleared by decoration.
     expect(withObject).toBeGreaterThanOrEqual(CONTENT_WEIGHT_FLOOR.closer);
-    // And the two compositions the owner's plates actually were, refused.
-    expect(recapOnly).toBeLessThan(CONTENT_WEIGHT_FLOOR.closer);
+    // ── AND REACHABLE BY THE COMPOSITION THE PIPELINE ACTUALLY BUILDS. ──
+    // Nothing upstream composes the 1.5 device onto a closer, so a floor above
+    // `recapOnly` is a floor no post can clear — which is the same "redraft tax
+    // wearing a bar's clothes" this case refuses one line up, one composition
+    // over.
+    expect(recapOnly).toBeGreaterThanOrEqual(CONTENT_WEIGHT_FLOOR.closer);
+    // And the composition the owner complained about, refused.
     expect(bare).toBeLessThan(CONTENT_WEIGHT_FLOOR.closer);
-    // An eyebrow cannot lift the recap closer over the floor. This is the same
+    // An eyebrow cannot lift the bare closer over the floor. This is the same
     // un-gameability the weights exist for on the interior, asserted on the one
     // role where the margin is thinnest.
-    expect(recapOnly + CONTENT_WEIGHTS.furniture).toBeLessThan(CONTENT_WEIGHT_FLOOR.closer);
+    expect(bare + CONTENT_WEIGHTS.furniture).toBeLessThan(CONTENT_WEIGHT_FLOOR.closer);
+  });
+
+  /**
+   * ── AND THE PLATE THE CLOSER FLOOR REFUSES, BUILT BY THE REAL ASSEMBLER. ──
+   *
+   * The case above is arithmetic over `CONTENT_WEIGHTS`. Arithmetic cannot
+   * answer the question a reviewer actually asks of a floor — *can anything
+   * this pipeline emits be below it?* — and answering that one wrong is how
+   * `closer` sat at 3.5 (refuses everything) and then at 3.0 with nothing
+   * written down about what 3.0 catches.
+   *
+   * So the sub-floor closer is COMPOSED here, through `assembleSlidesData`,
+   * and weighed by the same `weighContentElements` the workflow uses. The
+   * state is a closer whose elastic middle comes through empty:
+   * `buildRecapFragment` returns `""` below `MIN_RECAP_PLATES` (2) earlier
+   * slides, and the slide carries no device — `closerContentAvailable`'s
+   * `hasCloserVoice` branch still routes it to `closer.html`, so it renders as
+   * a closer with a takeaway, a question and nothing else.
+   *
+   * `InstagramCopyOutputSchema`'s six-slide minimum keeps a FIRST-render draft
+   * out of that state; a merge, a degrade or a client template that fills no
+   * recap does not, and `interest-relayout.ts`'s closer remedy already names
+   * it — *"closed on an empty plate and the post has too few earlier points to
+   * recap"*. That remedy is what this finding routes to.
+   */
+  it("a closer whose middle comes through empty weighs 2.00 through the real assembler, and the floor refuses it", () => {
+    const copySlide = (over: Record<string, unknown>) =>
+      InstagramSlideCopySchema.parse({ n: 1, headline: "A headline", body: "Some body copy.", visualNeed: "a need", sourceRef: "a claim", ...over });
+    const copy = {
+      format: "carousel",
+      caption: "c",
+      slides: [
+        copySlide({ n: 1, layout: "cover", headline: "GEO is not a future strategy", body: "Your buyers are already inside AI-generated answers." }),
+        copySlide({ n: 2, layout: "closer", headline: "Own week three", body: "Which one would you change first?" }),
+      ],
+    } as unknown as InstagramCopyOutput;
+    const data = assembleSlidesData({
+      clientSlug: "acme",
+      postId: "post_closer_floor",
+      repoRoot: "/repo",
+      brandTokens: { templateDir: "fixtures/templates", slideTemplate: "slide.html", accentColor: "#C4552F" },
+      copy,
+      selections: [],
+      canvas: { w: 1080, h: 1440, scale: 2, slides_min: 6, slides_max: 8 },
+    });
+    const last = data.slides[1]!;
+    // It really is the closer archetype, or this case is measuring something
+    // else entirely.
+    expect(last.template).toBe("closer.html");
+    // ONE earlier slide, so there is no recap strip to build and the middle is
+    // empty — that is the whole of the composition under test.
+    expect(last.htmlFragments?.["recap"]).toBeUndefined();
+
+    const { weight, parts } = weighContentElements(last, false);
+    expect(parts.map((p) => p.part).sort()).toEqual(["question", "takeaway"]);
+    expect(weight).toBe(2);
+    expect(weight).toBeLessThan(CONTENT_WEIGHT_FLOOR.closer);
+
+    const verdict = checkInterestFloor(passingSlideMetrics(), passingSlideProbe(last.n), "closer", { slide: last.n, contentWeight: weight });
+    expect(verdict.findings.map((f) => f.kind)).toEqual(["one-element"]);
+  });
+
+  /**
+   * ── THE LOST-PICTURE WAIVER IS BOUNDED BY WHAT A PICTURE IS WORTH. ──
+   *
+   * `downgradedForImages` used to waive EVERY weight finding on a downgraded
+   * slide, whatever the shortfall, while the comment justifying it said the
+   * plate is *"short by exactly the picture nobody could find"*. Those are two
+   * different claims and only the second one is defensible: a cover carrying
+   * nothing but a title is 3.0 short of the 4.0 cover floor, and a hero is
+   * worth 2.0, so the photograph would not have saved it. That plate is thin
+   * for a reason a redraft CAN fix.
+   */
+  it("waives a downgraded plate only when the missing hero would have cleared the floor", () => {
+    const downgraded = new Set([1]);
+    const verdictAt = (contentWeight: number) =>
+      checkInterestFloor(passingSlideMetrics(), passingSlideProbe(1), "cover", { slide: 1, contentWeight, downgradedForImages: downgraded });
+
+    // Title + sub-line on a cover: 2.0 against 4.0, and 2.0 + the hero's 2.0 is
+    // exactly the floor — the picture is the whole of the shortfall.
+    const waived = verdictAt(2);
+    expect(waived.ok).toBe(true);
+    expect(waived.findings).toEqual([]);
+    expect(waived.waived.map((f) => f.kind)).toEqual(["one-element"]);
+    expect(waived.waived[0]?.waivedReason).toContain("inside the 2.00 a hero is worth");
+
+    // A title and nothing else: 1.0 against 4.0. Even with the hero it would
+    // have been 3.0, so this is not a sourcing outage — it is a thin plate.
+    const held = verdictAt(1);
+    expect(held.findings.map((f) => f.kind)).toEqual(["one-element"]);
+    expect(held.waived).toEqual([]);
   });
 
   /**

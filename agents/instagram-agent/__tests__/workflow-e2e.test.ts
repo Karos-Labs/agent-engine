@@ -791,5 +791,30 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
       const stat = await fs.stat(path.join(outDir, `slide-${n}.png`));
       expect(stat.size).toBeGreaterThan(1000); // a real PNG screenshot, not the tiny 1x1 test fixture
     }
-  }, 60000);
+    // ── 600_000, AND THE 60_000 IT REPLACES WAS NEVER A BUDGET FOR THIS CASE. ──
+    //
+    // Every other `it` in this file is a fake-router run that finishes in under
+    // a second and shares one blanket `60000`. This one is the only case in the
+    // file that launches a real browser: it drives all nine steps and paints SIX
+    // 2160x2880 plates through `publish.renderCarousel`. Every other
+    // real-Chromium case in this package already carries an explicit
+    // 120_000-600_000 for exactly that reason (`cover-subject.test.ts`,
+    // `bidi-isolation.test.ts`, every render case in
+    // `interest-floor-calibration.test.ts`); this one was simply never given
+    // one, and inherited the number written for its neighbours.
+    //
+    // MEASURED on the CI-pinned renderer (Playwright 1.53.0, chromium-1178):
+    // **42,727 ms** run alone and **58,520 ms** run after its seven file-mates,
+    // against a 60,000 ms ceiling — on a developer box. CI run 35170562382 went
+    // over it. That red had a second cause which IS fixed here
+    // (`CONTENT_WEIGHT_FLOOR.closer` was refusing every closer the pipeline can
+    // compose, so `08a1` bought a redraft and a whole second render pass), but
+    // one pass at 43 s under a 60 s ceiling is a coin toss on a shared runner
+    // and would have gone red again on the next slow one.
+    //
+    // This is not the `vitest.config.ts` posture about contention timeouts
+    // being resource bugs: nothing here is being raised to absorb starvation.
+    // The work is real, it is measured, and the ceiling is being set from the
+    // measurement instead of inherited from a fake-router case.
+  }, 600_000);
 });

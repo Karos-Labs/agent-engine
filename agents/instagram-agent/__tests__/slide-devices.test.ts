@@ -105,13 +105,23 @@ describe("buildDeviceFragment — structure, escaping, and one accent each", () 
     expect(fragment).toContain("&quot;");
   });
 
-  it("figure: value, one accent rule, label beneath, source line", () => {
+  it("figure: value, one STRUCTURAL rule, label beneath, source line — and no accent marker at all", () => {
     const fragment = buildDeviceFragment(FIGURE, "ltr");
     expect(fragment).toContain(`<div class="dv-figure dv-figure--big">73%</div>`);
-    expect(fragment).toContain(`<div class="dv-rule dv-accent"></div>`);
+    // ── THE FIGURE'S RULE IS NOT AN ACCENT MARK. ──
+    // It used to carry `dv-accent`, and `.dv-rule.dv-accent` painted it in
+    // `--fx-accent-ink` with the quiet tone as the fallback — so the SAME
+    // object came out in the brand accent on a switched-on plate and in a 22%
+    // grey on every other plate of the same carousel (measured: 18 accent and
+    // 54 neutral across this tree's 198-render sweep). It is the line between
+    // a figure and its label — the edge of an object — so it is structurally
+    // neutral everywhere and the class came off with the rule.
+    expect(fragment).toContain(`<div class="dv-rule"></div>`);
     expect(fragment).toContain(`<div class="dv-label">of teams file by hand</div>`);
     expect(fragment).toContain(`<div class="dv-source">Acme, 2026</div>`);
-    expect(accentCount(fragment)).toBe(1);
+    // A single figure has no side to mark as the winner, so nothing on this
+    // shape is `accentRole: "information"` and the count is zero.
+    expect(accentCount(fragment)).toBe(0);
   });
 
   it("figure_pair: the accent lands on the AFTER value, and the arrow follows reading direction", () => {

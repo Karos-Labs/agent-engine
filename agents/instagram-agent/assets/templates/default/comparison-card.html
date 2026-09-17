@@ -163,8 +163,23 @@
     letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent);
   }
   .eyebrow:empty { display: none; }
-  .cmp-rail { display: var(--fx-accent, none); block-size: 2px; background: color-mix(in srgb, var(--fg) 48%, transparent); margin-block-start: calc(24px * var(--ts, 1)); }
-  /* ── The Ground Rule and §11.5 together — `stat-callout.html`'s `.sc-rail`
+  /* ── ONE RULE COLOUR, ONE RULE LENGTH, PER CAROUSEL. ──
+     `headline-focus.html` carries the argument: under the switch
+     this hairline still painted a 952px neutral rule on the same carousel as
+     the 240px accent one. It IS the accent mark now, and
+     `template-furniture.test.ts`'s switched-mark registry names it — it was
+     outside that registry for a revision, which is the one guard that exists
+     for exactly this.
+     The `.cmp-col` borders are NOT rules in that sense: they are the outline of
+     a panel and they keep their neutral tone. `.cmp-rule` is — a free-standing
+     bar under a label with nothing either side of it — so it takes the run's
+     geometry too; see its own note below. */
+  .cmp-rail {
+    display: var(--fx-accent, none);
+    inline-size: var(--fx-accent-w, calc(240px * var(--ts, 1))); block-size: var(--fx-accent-h, calc(10px * var(--ts, 1)));
+    background: var(--accent); margin-block-start: calc(24px * var(--ts, 1));
+  }
+  /* ── The Ground Rule and §11.5 together — `stat-callout.html`'s slab
         carries the full argument and this file is the same shape one
         archetype over. ──
      MEASURED-EDGE: every copy slot empty gave `occupiedShare` 1.94% and
@@ -197,7 +212,21 @@
      asked for (*"the composition owes the top of the plate something"*) rather
      than the furniture standing in for it. The subject guard is KEPT beside
      it: an empty plate still paints nothing, which is RFC-20 guard G2.
-     A rule over nothing is not a rule; it is ink a quiet plate acquired. */
+     A rule over nothing is not a rule; it is ink a quiet plate acquired.
+
+     THESE TWO GUARDS ARE NOT WHAT CI'S RED ROW IS ABOUT, and that was worth
+     checking before anything moved. The refused row is `he rtl short s ->
+     comparison-card @ interior`, a clause-A `render-integrity` finding
+     (`inkShare` 0.0145 against `INK_SHARE_FLOOR` 0.0150, run 35170562382). The
+     sweep renders with `accentSlides: [1..8]`, so the switch is ON for this
+     plate and the rail paints; and the fixture supplies both a kicker and two
+     `.cmp-label`s, so neither guard withholds it. The rail is also the wrong
+     size to matter either way: as a `rule`-form mark it is 204x9 at `s`
+     against the 952x2 hairline it replaced — 1,836 px² against 1,904, i.e.
+     0.004 of a percentage point, on a row that misses by 0.05. What was
+     actually thin is the plate's own composition, and the ink is answered
+     where it is spent: `.cmp-col`'s outline and `.cmp-rule`'s geometry, each
+     with its before/after beside it. */
   body:not(:has(.eyebrow:not(:empty))) .cmp-rail { display: none; }
   body:not(:has(.cmp-label:not(:empty))) .cmp-rail { display: none; }
 
@@ -353,7 +382,36 @@
        both extremes of copy length. */
     flex: 1 1 0; min-width: 0;
     display: flex; flex-direction: column; justify-content: center;
-    border: 2px solid var(--line); border-radius: 6px;
+    /* ── 3px, AND THE REASON IS THE DELIVERY SIZE. ──
+       A card's outline is the only part of this archetype's two main surfaces
+       that a reader — or `measureSlidePng` — can see at all: the fills are
+       `--card` (8% of the foreground, 17 units off the ground) and the file's
+       own note explains that they sit deliberately INSIDE the 12-18 band, so
+       they are neither ground nor ink. At 2px on a 1080px design canvas the
+       outline is 0.74 device px once Instagram has resampled the plate to a
+       phone, which is a hairline that disappears; the cards then read as two
+       tints with nothing holding them.
+       THE LADDER, and which instrument read each rung, because the two do not
+       agree and this row is decided by fractions of a point. The row is
+       `he rtl short s -> comparison-card @ interior`, clause A, floor 0.0150.
+
+       Read on a LOCAL CHROME CHANNEL (`KAROS_BROWSER_CHANNEL=chrome`) — an
+       A/B, useful for the sign and worth nothing as a verdict:
+         2px outline + 72x5 literal divider    inkShare 0.0168
+         2px outline + `--fx-accent-*` divider inkShare 0.0183
+         3px outline + `--fx-accent-*` divider inkShare 0.0209
+
+       Read on THE BUILD THAT DECIDES (Playwright 1.53.0, chromium-1178,
+       138.0.7204.15 — the same build CI launches):
+         2px outline + 72x5 literal divider    inkShare 0.0145  (CI 35170562382, REFUSED)
+         3px outline + `--fx-accent-*` divider inkShare 0.0191  (1.27x the floor)
+
+       So Chrome reads this plate about a sixth THICKER than Chromium does
+       (0.0168 against 0.0145 for the same document), which is why the fix had
+       to buy a margin and not just a sign: the local ladder's 0.0209 would
+       have been 0.0180 on the instrument that matters if the gap had held, and
+       it read 0.0191. Do not calibrate this file on a channel. */
+    border: 3px solid var(--line); border-radius: 6px;
     padding: 52px 40px;
   }
   /* THE CARDS PAINT ONLY WHEN THEY HAVE LABELS. `imageryOrDeviceShare` counts
@@ -421,7 +479,25 @@
        overflowing element and clause B of the interest floor fails on. */
     padding-block-end: 0.14em;
   }
-  .cmp-rule { width: 72px; height: 5px; background: var(--line); margin: 30px 0; }
+  /* ── THE DIVIDER INSIDE A CARD IS A RULE, AND IT TAKES THE RUN'S MEASURE. ──
+     It was `72px x 5px`, as two raw literals that the reviewer's `--ts` did
+     not even reach — a THIRD rule length inside a carousel that already
+     carried 96px (this file's own `.cmp-rail`), 132px (the device library's
+     `.dv-rule`) and 240px (the closer's cap). The comment above used to claim
+     these were "the divider of a panel" and therefore not rules; a free-standing
+     bar under a label, with nothing either side of it, is a rule by this set's
+     own definition, and it is the owner's *"sometimes a long marker and
+     sometimes a short one"* measured inside one plate.
+     So it takes `--fx-accent-w` / `--fx-accent-h` like every other mark in the
+     directory, clamped to the card's own measure so a `band` (560px) or a
+     `field` (100%) form cannot overflow a 381px column. Its COLOUR is
+     unchanged and stays information: `--line` on the quiet side, `--accent` on
+     the side that won. */
+  .cmp-rule {
+    inline-size: var(--fx-accent-w, calc(72px * var(--ts, 1))); max-inline-size: 100%;
+    block-size: var(--fx-accent-h, calc(5px * var(--ts, 1)));
+    background: var(--line); margin: 30px 0;
+  }
   .cmp-col.win .cmp-rule { background: var(--accent); }
   /* The Ground Rule — see `.cmp-rail` above. The border and the diamond go to
      `transparent` rather than `display: none` so the empty cards keep their
@@ -509,7 +585,13 @@
   <span class="pg-index" aria-hidden="true">{{slideIndex}}</span>
   <div class="cmp-top">
     <div class="eyebrow">{{kicker}}</div>
-    <div class="cmp-rail"></div>
+    <!-- `brand-zone-avoid`: this rail is the kicker's underline, so it has to
+         range with the kicker. The shared sheet indents `.eyebrow` clear of the
+         brand mark's corner (see `brandMarkZoneCss`); without the same opt-in
+         here the bar stayed at the page margin and the label sat 96px to its
+         reading side — measured and looked at: an orange bar hanging under the
+         logo with nothing above it. -->
+    <div class="cmp-rail brand-zone-avoid"></div>
     <div class="cmp-head" id="head">{{headline}}</div>
   </div>
   <div class="sc-figure-band"><img src="{{image:hero}}" onerror="this.remove()" alt="" /></div>

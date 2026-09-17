@@ -557,6 +557,12 @@ const KIND_PRIORITY: readonly InterestFailureKind[] = [
   "dead-space",
   "empty",
   "text-wall",
+  // LAST, and unreachable while the three `*_ARMED` flags are false. When one
+  // is thrown, a type-discipline finding is the least urgent thing on a plate
+  // that also reports a hole or a wall: it is about how many sizes the
+  // ARCHETYPE sets, so it is the one kind on this list that no copy change and
+  // no free remedy can move.
+  "type-discipline",
 ];
 
 /**
@@ -729,6 +735,13 @@ const UNREMEDIED_DETAIL: Readonly<Record<InterestFailureKind, string>> = {
   "dead-space": "no figure in its own text, no unclaimed content-shaped archetype, and its type is already at the largest scale",
   empty: "no figure in its own text, no unclaimed content-shaped archetype, and its type is already at the largest scale",
   "text-wall": "its type is already at the smallest scale and its body is one sentence",
+  // The honest answer, and the reason this kind has no branch in `remedyFor`:
+  // the number of type steps on a plate is a property of the TEMPLATE, not of
+  // the copy or of any of the five free changes this module can make. Switching
+  // archetype would change it by accident rather than on purpose. So an armed
+  // limb goes back to the writer with the clause's own steer, and the operator
+  // sees why nothing was tried.
+  "type-discipline": "the type steps a plate sets are a property of its archetype's stylesheet, which no free remedy here can edit",
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1115,6 +1128,16 @@ function remedyFor(
         ? undefined
         : { kind: "move-sentence-to-caption", slide: slideN, sentence: last, reason: `slide ${slideN} is already at the smallest type; moving its last sentence to the caption` };
     }
+
+    // ── NO FREE REMEDY, DELIBERATELY. ──
+    // How many type sizes a plate sets is decided by its archetype's
+    // stylesheet. None of the five changes this module can make edits a
+    // stylesheet, and `switch-archetype` would change the count by accident
+    // rather than on purpose — a remedy that moves a number without being
+    // about it is the "looks like one in the trace" failure this file refuses
+    // elsewhere. `UNREMEDIED_DETAIL` carries that sentence for the operator.
+    case "type-discipline":
+      return undefined;
   }
 }
 
