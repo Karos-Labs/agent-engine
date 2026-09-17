@@ -182,7 +182,6 @@ function fieldsFor(n: number, system: CarouselVisualSystem, over: Record<string,
   };
 }
 
-<<<<<<< HEAD
 const systemFrom = (
   entry: (typeof VISUAL_SYSTEM_CATALOG)[number],
   slideCount = 8,
@@ -194,10 +193,6 @@ const systemFrom = (
 ): CarouselVisualSystem => ({
   systemId: entry.id,
   compositionGrammar,
-=======
-const systemFrom = (entry: (typeof VISUAL_SYSTEM_CATALOG)[number], slideCount = 8): CarouselVisualSystem => ({
-  systemId: entry.id,
->>>>>>> origin/main
   ground: entry.ground,
   accentSlides: accentSlidesFor(slideCount, entry.accentForm),
   accentForm: entry.accentForm,

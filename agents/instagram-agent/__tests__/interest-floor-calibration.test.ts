@@ -272,10 +272,7 @@ async function materialize(dir: string, scriptLanguage?: string, brandHeadHtml?:
      */
     visualSystemCssBlock({
       systemId: "calibration",
-<<<<<<< HEAD
       compositionGrammar: "bottom-column",
-=======
->>>>>>> origin/main
       ground: "grid",
       accentSlides: [1, 2, 3, 4, 5, 6, 7, 8],
       accentForm: "rule",

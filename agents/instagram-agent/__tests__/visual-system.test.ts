@@ -68,7 +68,6 @@ describe("pickVisualSystem is pure and seeded", () => {
 });
 
 describe("the accent is emphasis, not wallpaper", () => {
-<<<<<<< HEAD
   it("names at most three slides, all of them real, none of them twice", () => {
     for (const count of [4, 5, 6, 7, 8, 10]) {
       for (const seed of ["a", "b", "c", "d"]) {
@@ -110,17 +109,6 @@ describe("the accent is emphasis, not wallpaper", () => {
     expect(accentSlidesFor(8, "rule", "run-1")).toEqual(accentSlidesFor(8, "rule", "run-1"));
   });
 
-=======
-  it("names at most three slides, and always the first and the last", () => {
-    for (const count of [4, 5, 6, 7, 8, 10]) {
-      const slides = accentSlidesFor(count, "rule");
-      expect(slides.length).toBeLessThanOrEqual(3);
-      expect(slides).toContain(1);
-      expect(slides).toContain(count);
-    }
-  });
-
->>>>>>> origin/main
   it("the `field` form takes ONE slide — a surface behind a block is loud, and twice is a pattern", () => {
     expect(accentSlidesFor(8, "field")).toEqual([8]);
   });
@@ -130,11 +118,7 @@ describe("the accent is emphasis, not wallpaper", () => {
   });
 
   it("holds at three even on a two-slide degenerate post, and never names a slide off the end", () => {
-<<<<<<< HEAD
     const slides = accentSlidesFor(2, "rule", "seed");
-=======
-    const slides = accentSlidesFor(2, "rule");
->>>>>>> origin/main
     expect(slides.every((s) => s >= 1 && s <= 2)).toBe(true);
     expect(new Set(slides).size).toBe(slides.length);
   });
