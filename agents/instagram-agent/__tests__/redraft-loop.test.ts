@@ -4,6 +4,7 @@ import { OutputLimitExceededError } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import { COPY_MAX_TOKENS } from "../src/agent/instagram-copy-agent.js";
+import { OUTPUT_LIMIT_RETRY_CEILING } from "@agent-engine/core";
 import {
   fakeRenderCarousel,
   fakeRouterSequence,
@@ -84,13 +85,19 @@ function draftFromAttemptThree(): InstagramCopyOutput {
  * whole output ceiling by definition. `computeStepCostUsd` prices this at about
  * $0.33, which is what those five attempts really cost and reported as $0.
  */
-function truncatedCopyTurn(): () => never {
+/**
+ * A turn that ran out of room. `attemptedMaxTokens` defaults to the step's own
+ * ceiling; pass the raised one to model the re-ask truncating too, which is
+ * what a draft that genuinely does not fit looks like now that this step gets
+ * the engine's automatic raise.
+ */
+function truncatedCopyTurn(attemptedMaxTokens: number = COPY_MAX_TOKENS): () => never {
   return () => {
     throw new OutputLimitExceededError(
-      `anthropic: model "claude-sonnet-4-6" hit the ${COPY_MAX_TOKENS}-token output limit before completing its structured output`,
+      `anthropic: model "claude-sonnet-4-6" hit the ${attemptedMaxTokens}-token output limit before completing its structured output`,
       {
-        usage: { modelUsed: "claude-sonnet-4-6", inputTokens: { cached: 23_167, uncached: 23_778 }, outputTokens: COPY_MAX_TOKENS },
-        attemptedMaxTokens: COPY_MAX_TOKENS,
+        usage: { modelUsed: "claude-sonnet-4-6", inputTokens: { cached: 23_167, uncached: 23_778 }, outputTokens: attemptedMaxTokens },
+        attemptedMaxTokens,
       },
     );
   };
@@ -128,7 +135,18 @@ describe("05-write-copy: a truncated attempt in the middle of the redraft loop",
       finalTurn(goodImageVettingOutput()),
       // Attempt 2: the failure five of six real redrafts hit. No vetting turn
       // follows it, because the draft never existed.
+      //
+      // TWO truncations, not one. `COPY_MAX_TOKENS` is 32,000, which used to
+      // be `OUTPUT_LIMIT_RETRY_CEILING` exactly — so `raisedOutputLimit`
+      // returned `undefined` and this step, like `intel-report`'s, could never
+      // get the engine's one automatic raise. It is the same step this file's
+      // header is about. With the stop moved to 64,000 the raise now fires
+      // here too, and a single truncated turn is RECOVERED rather than lost.
+      // Modelling attempt 2 as a genuine failure therefore takes a draft that
+      // does not fit even with the raise: the first call truncates at 32,000,
+      // the re-ask truncates at 64,000, and only then is the attempt spent.
       truncatedCopyTurn(),
+      truncatedCopyTurn(OUTPUT_LIMIT_RETRY_CEILING),
       // Attempt 3: the draft that should ship.
       finalTurn(draftFromAttemptThree()),
       finalTurn(goodImageVettingOutput()),
@@ -190,17 +208,20 @@ describe("05-write-copy: a truncated attempt in the middle of the redraft loop",
     //     that zero and cut the post's generated images to stay under a target
     //     it was already over. Reverting the adapter change fails this line.
     expect(attempt2!.costUsd, "a truncated attempt booked nothing").toBeGreaterThan(0);
-    expect(attempt2!.output?.steps?.[0]?.outputTokens).toBe(COPY_MAX_TOKENS);
+    // Both truncations are booked onto the one step: the original ceiling plus
+    // the raised re-ask. A step that paid twice must not read as one that paid
+    // once — that is the whole point of carrying the provider's usage.
+    expect(attempt2!.output?.steps?.[0]?.outputTokens).toBe(COPY_MAX_TOKENS + OUTPUT_LIMIT_RETRY_CEILING);
     // ~$0.33 at sonnet-4-6's $3/$15 per 1M with the cache-write premium. Held
     // as a floor rather than an exact figure: the assertion is that the run
     // sees a real number, not that pricing never moves.
     expect(attempt2!.costUsd).toBeGreaterThan(0.2);
 
-    // Twelve calls, ENUMERATED rather than observed: 3 pre-loop (scout,
-    // research, angle) + attempt 1 (copy, vetting) + attempt 2's single
-    // truncated copy call + attempt 3's five (copy, vetting, relevance, value,
-    // QA) + 1 packager.
+    // ENUMERATED rather than observed: 3 pre-loop (scout, research, angle) +
+    // attempt 1 (copy, vetting) + attempt 2's TWO truncated copy calls (the
+    // first at the step's ceiling, the second at the engine's raise) +
+    // attempt 3's five (copy, vetting, relevance, value, QA) + 1 packager.
     // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
-    expect(router.complete).toHaveBeenCalledTimes(13);
+    expect(router.complete).toHaveBeenCalledTimes(14);
   }, 120000);
 });
