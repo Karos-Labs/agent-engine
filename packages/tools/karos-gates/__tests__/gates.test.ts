@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentContext } from "@agent-engine/core";
-import { createKarosGatesTools, weightedLengthForX } from "../src/index.js";
+import { createKarosGatesTools, detectProductMentions, weightedLengthForX } from "../src/index.js";
 
 const ctx: AgentContext = {
   runId: "run_1",
@@ -850,3 +850,89 @@ function defaultArgsFor(toolName: string): unknown {
       throw new Error(`no default args for ${toolName}`);
   }
 }
+
+/**
+ * SCRUM: `mentionAttempted` was the draft's own `disclosureIncluded` flag — the
+ * model's word about its own text. A model that names the product while
+ * answering `false` switched off the warming window, the cooldown AND the
+ * disclosure requirement in one go, and the undisclosed mention went to a human
+ * to post from their own Reddit account. That is the fastest way to get one
+ * banned, and deleting the comment afterwards does not undo it.
+ */
+describe("gate.subredditRules reads the text, not the draft's self-report", () => {
+  const base = {
+    subreddit: "personalfinance",
+    configStatus: "configured",
+    now: "2026-09-17T00:00:00Z",
+  };
+
+  it("finds a product mention the draft denied, and says what it found", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      ...base,
+      text: "I had the same problem last year. Karos Labs solved it for us in a week.",
+      mentionAttempted: false,
+      mentionNames: ["Karos Labs"],
+    });
+    expect(verdict.verdict).toBe("content_fail");
+    expect(verdict["evidence"]).toContain("Karos Labs");
+    expect(verdict["reason"]).toMatch(/reported no mention/);
+  });
+
+  it("an honest draft with a mention is not failed for the mention itself", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      ...base,
+      text: "Disclosure: I work at Karos Labs. We built something for this.",
+      mentionAttempted: true,
+      mentionNames: ["Karos Labs"],
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+
+  it("the scan, not the flag, is what trips the warming window", async () => {
+    // The exact combination that used to pass everything: the model says no
+    // mention, the account is still warming, and the text names the product.
+    const verdict = await verdictOf("gate.subredditRules", {
+      ...base,
+      text: "Disclosure: I work at Karos Labs, and we have a write-up on this.",
+      mentionAttempted: false,
+      mentionNames: ["Karos Labs"],
+      accountWarmingUntil: "2026-12-01T00:00:00Z",
+    });
+    expect(verdict.verdict).toBe("content_fail");
+    expect(verdict["reason"]).toMatch(/warming/i);
+  });
+
+  it("no names configured leaves the old self-report behaviour exactly as it was", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      ...base,
+      text: "Karos Labs has a write-up on this.",
+      mentionAttempted: false,
+      mentionNames: [],
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+});
+
+describe("detectProductMentions", () => {
+  it("matches on whole words only, so a brand name inside a longer word is not a mention", () => {
+    // The false positive that would make somebody switch this gate off.
+    expect(detectProductMentions("working yourself into karoshi", ["Karos"])).toEqual([]);
+    expect(detectProductMentions("we use Karos daily", ["Karos"])).toEqual(["Karos"]);
+  });
+
+  it("matches around punctuation, possessives and casing", () => {
+    expect(detectProductMentions("Karos' pricing page", ["Karos"])).toEqual(["Karos"]);
+    expect(detectProductMentions("(karos) is fine", ["Karos"])).toEqual(["Karos"]);
+    expect(detectProductMentions("see https://karos.com/docs", ["karos.com"])).toEqual(["karos.com"]);
+  });
+
+  it("treats a name with regex characters as literal text, not as a pattern", () => {
+    expect(detectProductMentions("I use Notion.so", ["Notion.so"])).toEqual(["Notion.so"]);
+    // Would match "NotionXso" if the dot were left as a wildcard.
+    expect(detectProductMentions("I use NotionXso", ["Notion.so"])).toEqual([]);
+  });
+
+  it("skips names under three characters — an initialism collides with ordinary words", () => {
+    expect(detectProductMentions("it is an ok result", ["ok"])).toEqual([]);
+  });
+});
