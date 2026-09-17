@@ -65,7 +65,7 @@ export class InstagramNativeEditorAgent extends BaseAgent<NativeEditorVerdict> {
     modelPolicy: resolveModelPolicy("instagram-native-editor", {
       policy: "pinned",
       vendor: "gemini",
-      model: "gemini-2.5-pro",
+      model: "gemini-3.1-pro-preview",
       contentLanguageSensitive: false,
     }),
     // ── @1 → @2 (Phase 5, RFC-18 §6.5). Input +3,464 chars ≈ +866 tokens; OUTPUT delta ZERO. ──

@@ -103,7 +103,7 @@ describe("video.visualQaGate — request shape", () => {
     expect((textPart as { text: string }).text).toContain("AI agents and junior developers");
     expect(clipPart).toEqual({ inlineData: { mimeType: "video/mp4", data: TINY_MP4.toString("base64") } });
     expect(requests[0]!.config).toEqual({ responseMimeType: "application/json" });
-    expect(requests[0]!.model).toBe("gemini-2.5-flash");
+    expect(requests[0]!.model).toBe("gemini-3.8-flash");
   });
 
   it("prefers fileData for a gcsUri even when a local path is also given", async () => {
@@ -141,7 +141,7 @@ describe("video.visualQaGate — verdicts", () => {
     const { client } = recordingVision(JSON.stringify(GOOD_REPORT));
     const verdict = verdictOf(await createVisualQaGate({ client }).execute(qaInput({ videoPath: clipPath, expectations: expectations() }), CTX));
     expect(verdict.verdict).toBe("pass");
-    expect(verdict.toolVersion).toBe("1.3.0");
+    expect(verdict.toolVersion).toBe("1.4.0");
     expect((verdict as { evidence: string[] }).evidence).toEqual([
       "overallScore: 8.5",
       "hookLandsInFirstTwoSeconds: true",
@@ -253,8 +253,8 @@ describe("video.visualQaGate — billing and wiring", () => {
     const outcome = await createVisualQaGate({ client }).execute(qaInput({ videoPath: clipPath, expectations: expectations() }), CTX);
     const usage = (outcome as unknown as { usage: Array<{ model: string; unit: string; quantity: number }> }).usage;
     expect(usage).toEqual([
-      { model: "gemini-2.5-flash-video-qa-input-token", unit: "input-token", quantity: 30_000 },
-      { model: "gemini-2.5-flash-video-qa-output-token", unit: "output-token", quantity: 200 },
+      { model: "gemini-3.8-flash-video-qa-input-token", unit: "input-token", quantity: 30_000 },
+      { model: "gemini-3.8-flash-video-qa-output-token", unit: "output-token", quantity: 200 },
     ]);
     expect(computeToolCostUsd(usage)).toBeGreaterThan(0);
   });

@@ -176,7 +176,7 @@ describe("step 2 — the payload stops presenting the grade as central", () => {
   it("the agent is pinned to @6, on the tier the harder question is worth", () => {
     const config = (new InstagramImageVettingAgent({ router: {} as never, tools: {} }) as unknown as { config: { skillRef: string; modelPolicy?: { model?: string } } }).config;
     expect(config.skillRef).toBe("instagram-image-vet@6");
-    expect(config.modelPolicy?.model).toBe("gemini-2.5-pro");
+    expect(config.modelPolicy?.model).toBe("gemini-3.1-pro-preview");
   });
 });
 

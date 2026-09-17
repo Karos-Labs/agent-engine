@@ -66,7 +66,7 @@ export class InstagramImageVettingAgent extends BaseAgent<ImageVettingOutput> {
     // server racks were unusable because none of them had been taken with a
     // long exposure. Retargetable per deployment
     // (`MODEL_STEP_INSTAGRAM_IMAGE_VET_VENDOR/_MODEL`) and per run in Studio.
-    modelPolicy: resolveModelPolicy("instagram-image-vet", { policy: "pinned", model: "gemini-2.5-pro", vendor: "gemini" }),
+    modelPolicy: resolveModelPolicy("instagram-image-vet", { policy: "pinned", model: "gemini-3.1-pro-preview", vendor: "gemini" }),
     // Pinned to "2": v1 judged every clause of `visualNeed` as an equal hard
     // gate, so a candidate genuinely on-subject was rejected outright over a
     // single decorative mismatch (shot outdoors instead of the requested

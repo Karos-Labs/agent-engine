@@ -130,7 +130,7 @@ export async function runStrategyMapBuilder(
       // Reads documents and structures them, once per client × platform:
       // Gemini Flash by default, retargetable with
       // MODEL_STEP_STRATEGY_MAP_BUILDER_VENDOR/_MODEL like the trend scout.
-      modelPolicy: resolveModelPolicy(STRATEGY_MAP_BUILDER_STEP_ID, { policy: "pinned", model: "gemini-2.5-flash", vendor: "gemini" }),
+      modelPolicy: resolveModelPolicy(STRATEGY_MAP_BUILDER_STEP_ID, { policy: "pinned", model: "gemini-3.8-flash", vendor: "gemini" }),
       maxSteps: 1,
     },
     buildStrategyMapSystemPrompt(input.platform),

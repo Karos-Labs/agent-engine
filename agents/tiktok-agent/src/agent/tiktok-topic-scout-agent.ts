@@ -18,7 +18,7 @@ import { TopicScoutOutputSchema, type TopicScoutOutput } from "../workflow/types
  * given, and the evidence it was given is the whole point. The research call
  * happens in code, once, cached and freshness-enforced, before this agent runs.
  *
- * The model is Gemini 2.5 Pro on Vertex, not Claude: this step reads a pile
+ * The model is Gemini 3.1 Pro on Vertex, not Claude: this step reads a pile
  * of web documents plus an intel report and needs breadth and a large window
  * more than it needs voice — voice is the script/commentary step's job. It is
  * `pinned` (never silently substituted) but, like every model step, can be
@@ -31,7 +31,7 @@ export class TikTokTopicScoutAgent extends BaseAgent<TopicScoutOutput> {
       "Propose 6-10 short-video topics this client should make this week: each with the client's angle, a cold-open hook, the format that suits it, why now, and the research URLs it rests on. Ground every candidate in the research documents or the client's own intel — never invent a trend. Avoid anything the client recently published.",
     allowedTools: [],
     outputSchema: TopicScoutOutputSchema,
-    modelPolicy: resolveModelPolicy("tiktok-topic-scout", { policy: "pinned", model: "gemini-2.5-pro", vendor: "gemini" }),
+    modelPolicy: resolveModelPolicy("tiktok-topic-scout", { policy: "pinned", model: "gemini-3.1-pro-preview", vendor: "gemini" }),
     // Pinned to "2" (2026-09-09): v2 adds `alreadyInCatalog` (the lane's
     // rows as a hard do-not-repeat, including the same idea in new words),
     // `researchLens`, and a variety rule across hook types and pillars. Prep

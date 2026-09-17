@@ -96,7 +96,7 @@ describe("recommendModelsForStep (AU35 / SCRUM-313)", () => {
       taskType: "copy",
       language: "English",
       budgetTier: "budget",
-      expectedTop: "gemini-2.5-flash",
+      expectedTop: "gemini-3.8-flash",
       note: "no special language need + budget tier → a cheap, capable model, not the priciest one",
     },
     {
@@ -125,7 +125,7 @@ describe("recommendModelsForStep (AU35 / SCRUM-313)", () => {
       taskType: "narrative",
       language: "English",
       budgetTier: "budget",
-      expectedTop: "gemini-2.5-flash",
+      expectedTop: "gemini-3.8-flash",
       note: "no special language need + budget tier → cheap and capable beats premium",
     },
     {
@@ -139,7 +139,7 @@ describe("recommendModelsForStep (AU35 / SCRUM-313)", () => {
       taskType: "narrative",
       language: "Hebrew",
       budgetTier: "budget",
-      expectedTop: "gemini-2.5-pro",
+      expectedTop: "gemini-3.1-pro-preview",
       note: "Hebrew narrative must clear the multilingual-strong + rtl-strong bar — gemini-2.5-pro, never Sonnet",
     },
     {
@@ -154,7 +154,7 @@ describe("recommendModelsForStep (AU35 / SCRUM-313)", () => {
       taskType: "extraction",
       language: "English",
       budgetTier: "budget",
-      expectedTop: "gemini-2.5-flash",
+      expectedTop: "gemini-3.8-flash",
       note: "internal step, budget tier → cheapest model with good-enough structured output",
     },
     {
@@ -168,7 +168,7 @@ describe("recommendModelsForStep (AU35 / SCRUM-313)", () => {
       taskType: "extraction",
       language: "Hebrew",
       budgetTier: "budget",
-      expectedTop: "gemini-2.5-flash",
+      expectedTop: "gemini-3.8-flash",
       note: "extraction does not read the client's language at all — identical to the English/budget case",
     },
     {

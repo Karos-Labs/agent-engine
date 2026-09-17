@@ -321,7 +321,7 @@ describe("image.generate", () => {
     // The tool-version gate on main diffs this against the merge base; a
     // prompt change that keeps its version is exactly what that gate exists
     // to catch (PR #95 is the precedent).
-    expect(tool(null).version).toBe("1.2.0");
+    expect(tool(null).version).toBe("1.3.0");
   });
 
   it("emits the style lock and the 'Do not include:' block in the documented order: direction, lock, negatives, constraints", async () => {

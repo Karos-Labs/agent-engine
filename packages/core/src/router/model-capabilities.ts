@@ -210,6 +210,47 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   },
 
   // ── Gemini ────────────────────────────────────────────────────────────
+  //
+  // ORDER IS BEHAVIOUR HERE, and it was inverted on 2026-09-17. This table is
+  // iterated in insertion order by `recommendModelsForStep` and
+  // `selectModelForContentLanguage`, which keep the first of equals — so
+  // whichever generation is listed first is what an unpinned, capability-based
+  // pick resolves to. It used to be 2.5, deliberately, to stop a preview model
+  // being picked by nobody's decision. The 2.5 generation is now the one
+  // nobody should be picked into: Google's Developer API already answers 404
+  // "no longer available to new users" for `gemini-2.5-pro` and
+  // `gemini-2.5-flash`, and Vertex will follow. The 3.x rows therefore come
+  // first, and the 2.5 rows stay below them so a step that still pins one by
+  // id — or a stored run being re-read — resolves rather than throws.
+  "gemini-3.1-pro-preview": {
+    vendor: "gemini",
+    languageStrength: "multilingual-strong",
+    rtlSupport: "strong",
+    modality: ["text", "image", "audio", "video"],
+    contextWindowTokens: 1_000_000,
+    costTier: "standard",
+    structuredOutputReliability: "high",
+    regions: GLOBAL,
+  },
+  // The flash tier's 3.x replacement. Verified reachable 2026-09-17 with a
+  // generateContent call as the worker's own service account — and ONLY on the
+  // `global` endpoint: every 3.x id 404s at `us-central1`, which is why
+  // `karos-media`'s own client had to stop defaulting to that region.
+  "gemini-3.8-flash": {
+    vendor: "gemini",
+    // `strong`, not `multilingual-strong` — the same rating 2.5 Flash carried,
+    // kept deliberately so this migration moves model IDS and nothing else. A
+    // flash row rated multilingual-strong would outrank 3.1 Pro on cost for
+    // every Hebrew/RTL copy step, which is a routing decision with its own
+    // evidence to gather, not a side effect of a generation bump.
+    languageStrength: "strong",
+    rtlSupport: "strong",
+    modality: ["text", "image", "audio", "video"],
+    contextWindowTokens: 1_000_000,
+    costTier: "budget",
+    structuredOutputReliability: "high",
+    regions: GLOBAL,
+  },
   "gemini-2.5-pro": {
     vendor: "gemini",
     languageStrength: "multilingual-strong",
@@ -227,30 +268,6 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
     modality: ["text", "image", "audio", "video"],
     contextWindowTokens: 1_000_000,
     costTier: "budget",
-    structuredOutputReliability: "high",
-    regions: GLOBAL,
-  },
-
-  // Google's current frontier Pro model on Vertex (verified reachable on the
-  // `global` endpoint of karoscmo-prep, 2026-09-05, with a 1-token
-  // generateContent call). Pinned by landing-builder-agent's page-build step:
-  // the single-file HTML/CSS/JS build is the one step in this engine whose
-  // output is a whole front-end, and a 65k-token output window matters more
-  // there than anywhere else. Priced in `telemetry/pricing.ts`.
-  //
-  // Listed AFTER the 2.5 models on purpose: `recommendModelsForStep` and
-  // `selectModelForContentLanguage` both iterate this table in insertion
-  // order and keep the first of equals, so an entry placed above 2.5 Pro
-  // silently re-pointed every gemini-wired "multilingual-strong" pick to a
-  // preview model nobody asked for. Steps that want it pin it by id, as
-  // landing-build does.
-  "gemini-3.1-pro-preview": {
-    vendor: "gemini",
-    languageStrength: "multilingual-strong",
-    rtlSupport: "strong",
-    modality: ["text", "image", "audio", "video"],
-    contextWindowTokens: 1_000_000,
-    costTier: "standard",
     structuredOutputReliability: "high",
     regions: GLOBAL,
   },

@@ -41,8 +41,10 @@ import { ScraperError, type ScrapedRecord, type ScraperProvider, type SocialPlat
 // 1.0.0 — new in SCRUM-321 (AU37).
 // 1.0.1 — `VisionPart` grew a `fileData` branch and `stripCodeFence` became
 // shared with `video.visualQaGate`; neither tool's own behaviour changed.
-const INGEST_TOOL_VERSION = "1.0.1";
-const GET_TOOL_VERSION = "1.0.1";
+// 1.1.0 (both): the vision read moved from gemini-2.5-flash to
+// gemini-3.8-flash, with the billed SKU ids following it.
+const INGEST_TOOL_VERSION = "1.1.0";
+const GET_TOOL_VERSION = "1.1.0";
 
 /** Where a client's versioned visual-pattern profiles live, as `WorkspaceStoreLike` segments. */
 export const VISUAL_PATTERNS_SEGMENTS = ["client", "visual-patterns"] as const;
@@ -61,7 +63,7 @@ export const VISUAL_PATTERNS_SEGMENTS = ["client", "visual-patterns"] as const;
 export const CLIENT_CONSENT_SEGMENTS = ["client", "consent"] as const;
 
 /** The vision model asked what the high performers have in common. Priced in `packages/core/src/telemetry/pricing.ts`. */
-export const DEFAULT_VISION_MODEL = "gemini-2.5-flash";
+export const DEFAULT_VISION_MODEL = "gemini-3.8-flash";
 
 /** Ceiling on one downloaded reference image. Well under any model's inline-data limit, and enough for a layout read. */
 const MAX_IMAGE_BYTES = 4_000_000;
@@ -826,8 +828,8 @@ export function createIngestVisualPatterns(options: IngestVisualPatternsOptions)
           profile,
         },
         [
-          { model: "gemini-2.5-flash-vision-analysis-input-token", unit: "input-token", quantity: promptTokens },
-          { model: "gemini-2.5-flash-vision-analysis-output-token", unit: "output-token", quantity: outputTokens },
+          { model: "gemini-3.8-flash-vision-analysis-input-token", unit: "input-token", quantity: promptTokens },
+          { model: "gemini-3.8-flash-vision-analysis-output-token", unit: "output-token", quantity: outputTokens },
         ],
       );
     },

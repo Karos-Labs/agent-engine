@@ -177,14 +177,14 @@ describe("no Instagram step resolves to a premium model, in any language (RFC-15
   it("the native editor is pinned to the model the requirement WOULD have chosen, so the policy cannot move it somewhere worse", () => {
     const judge = everyInstagramAgentPolicy().find((p) => p.id === "instagram-native-editor");
     expect(judge).toBeDefined();
-    expect(judge!.policy.model).toBe("gemini-2.5-pro");
+    expect(judge!.policy.model).toBe("gemini-3.1-pro-preview");
     expect(judge!.policy.vendor).toBe("gemini");
     // Not flagged: the step is already on the answer, and letting the policy re-point it could only move it
     // to something cheaper and less capable.
     expect(judge!.policy.contentLanguageSensitive).not.toBe(true);
-    expect(MODEL_CAPABILITIES["gemini-2.5-pro"]?.languageStrength).toBe("multilingual-strong");
-    expect(MODEL_CAPABILITIES["gemini-2.5-pro"]?.rtlSupport).toBe("strong");
-    expect(MODEL_CAPABILITIES["gemini-2.5-pro"]?.costTier).toBe("standard");
+    expect(MODEL_CAPABILITIES["gemini-3.1-pro-preview"]?.languageStrength).toBe("multilingual-strong");
+    expect(MODEL_CAPABILITIES["gemini-3.1-pro-preview"]?.rtlSupport).toBe("strong");
+    expect(MODEL_CAPABILITIES["gemini-3.1-pro-preview"]?.costTier).toBe("standard");
   });
 
   /**
@@ -202,7 +202,7 @@ describe("no Instagram step resolves to a premium model, in any language (RFC-15
   it("the post packager is pinned to Flash and is NOT contentLanguageSensitive, so a Hebrew run does not silently buy a better model", () => {
     const packager = everyInstagramAgentPolicy().find((p) => p.id === "instagram-post-packager");
     expect(packager, "the packager must be in everyInstagramAgentPolicy() or this guard cannot see it").toBeDefined();
-    expect(packager!.policy.model).toBe("gemini-2.5-flash");
+    expect(packager!.policy.model).toBe("gemini-3.8-flash");
     expect(packager!.policy.vendor).toBe("gemini");
     expect(packager!.policy.contentLanguageSensitive).not.toBe(true);
     // The consequence, asserted rather than assumed: the policy object comes back UNCHANGED for a Hebrew
@@ -232,8 +232,19 @@ describe("no Instagram step resolves to a premium model, in any language (RFC-15
    * instead of leaving four comments quietly wrong. Break it by pricing any
    * qualifying non-premium row below 2.5-pro and it fails.
    */
-  it("gemini-2.5-pro is the CHEAPEST non-premium row rated multilingual-strong + rtlSupport strong", () => {
+  it("gemini-3.1-pro-preview is the CHEAPEST STILL-ROUTABLE non-premium row rated multilingual-strong + rtlSupport strong", () => {
+    // The 2.5 generation is still in `MODEL_CAPABILITIES`, and still cheaper —
+    // it has to be, because stored runs priced through it must keep pricing.
+    // It is NOT a candidate: Google's Developer API already answers 404 "no
+    // longer available to new users" for gemini-2.5-pro and gemini-2.5-flash,
+    // and pinning a step to a model on its way out is the thing this migration
+    // (2026-09-17) undid. Excluded by id and asserted below, so the day 2.5 is
+    // deleted from the catalog this list stops silently shrinking by one.
+    const RETIRED = ["gemini-2.5-pro", "gemini-2.5-flash"];
+    for (const id of RETIRED) expect(MODEL_CAPABILITIES[id], `${id} should still have a row, for stored runs`).toBeDefined();
+
     const qualifying = Object.entries(MODEL_CAPABILITIES)
+      .filter(([id]) => !RETIRED.includes(id))
       .filter(([, caps]) => caps.languageStrength === "multilingual-strong" && caps.rtlSupport === "strong")
       .filter(([, caps]) => caps.costTier !== "premium");
 
@@ -250,7 +261,7 @@ describe("no Instagram step resolves to a premium model, in any language (RFC-15
       return (price!.inputPer1M * 6000 + price!.outputPer1M * 650) / 1_000_000;
     };
     const cheapest = qualifying.map(([id]) => id).sort((a, b) => blended(a) - blended(b))[0];
-    expect(cheapest).toBe("gemini-2.5-pro");
+    expect(cheapest).toBe("gemini-3.1-pro-preview");
 
     // And the pinned model really is that row, so the comments and the code agree.
     const judge = everyInstagramAgentPolicy().find((p) => p.id === "instagram-native-editor");

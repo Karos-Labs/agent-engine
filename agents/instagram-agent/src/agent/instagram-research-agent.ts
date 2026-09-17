@@ -85,7 +85,7 @@ export class InstagramResearchAgent extends BaseAgent<ResearchOutput> {
     description: "Extract sourced, dated fact cards worth carrying into carousel slide copy from one already-fetched multi-lane research payload.",
     allowedTools: [],
     outputSchema: ResearchOutputSchema,
-    modelPolicy: resolveModelPolicy("instagram-research", { policy: "pinned", model: "gemini-2.5-flash", vendor: "gemini" }),
+    modelPolicy: resolveModelPolicy("instagram-research", { policy: "pinned", model: "gemini-3.8-flash", vendor: "gemini" }),
     skillRef: "instagram-research@2",
     /** See "The output ceiling" above — 16,384 truncated this step on geektime and cost that post every one of its fact cards. */
     maxTokens: 24_000,

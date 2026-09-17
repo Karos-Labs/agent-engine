@@ -18,7 +18,9 @@ import { stripCodeFence, type VisionAnalysisClient, type VisionPart } from "./vi
 // product label) and the frame then puts the client's name over them. The
 // reviewer names every visible logo, brand name or legible third-party text
 // in the footage; it is evidence for the human, not a verdict on its own.
-const TOOL_VERSION = "1.3.0";
+// 1.4.0: the gate watches the clip with gemini-3.8-flash instead of
+// gemini-2.5-flash, and bills the matching SKU ids.
+const TOOL_VERSION = "1.4.0";
 
 /**
  * `video.visualQaGate` — a vision model WATCHES the finished clip before it
@@ -127,7 +129,7 @@ export interface VisualQaGateOptions {
   maxInlineBytes?: number;
 }
 
-export const DEFAULT_VIDEO_QA_MODEL = "gemini-2.5-flash";
+export const DEFAULT_VIDEO_QA_MODEL = "gemini-3.8-flash";
 const DEFAULT_MAX_INLINE_BYTES = 18 * 1024 * 1024;
 
 const VIDEO_MIME_BY_EXTENSION: Record<string, string> = {
@@ -284,8 +286,8 @@ export function createVisualQaGate(options: VisualQaGateOptions = {}) {
       }
 
       const usage = [
-        { model: "gemini-2.5-flash-video-qa-input-token", unit: "input-token", quantity: promptTokens },
-        { model: "gemini-2.5-flash-video-qa-output-token", unit: "output-token", quantity: outputTokens },
+        { model: "gemini-3.8-flash-video-qa-input-token", unit: "input-token", quantity: promptTokens },
+        { model: "gemini-3.8-flash-video-qa-output-token", unit: "output-token", quantity: outputTokens },
       ];
 
       if (blockReason) {
@@ -340,8 +342,8 @@ export function createVisualQaGate(options: VisualQaGateOptions = {}) {
       // `cost-accuracy-golden.test.ts` reads for) — the same two SKUs the
       // early returns above report through `usage`.
       return success<VisualQaVerdict>({ verdict: "pass", evidence, toolVersion: TOOL_VERSION, beats }, [
-        { model: "gemini-2.5-flash-video-qa-input-token", unit: "input-token", quantity: promptTokens },
-        { model: "gemini-2.5-flash-video-qa-output-token", unit: "output-token", quantity: outputTokens },
+        { model: "gemini-3.8-flash-video-qa-input-token", unit: "input-token", quantity: promptTokens },
+        { model: "gemini-3.8-flash-video-qa-output-token", unit: "output-token", quantity: outputTokens },
       ]);
     },
   });

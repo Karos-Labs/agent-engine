@@ -74,7 +74,12 @@ export function createDefaultCaptureAdapters(options: CreateDefaultCaptureAdapte
   // `GEMINI_VERTEX_PROJECT_ID` sat configured on the same service.
   const geminiKey = env["GEMINI_API_KEY"]?.trim();
   const vertexProject = (env["GEMINI_VERTEX_PROJECT_ID"] ?? env["GOOGLE_CLOUD_PROJECT"])?.trim();
-  const vertexLocation = env["VERTEX_AI_LOCATION"]?.trim() || "us-central1";
+  // `global`, not `VERTEX_AI_LOCATION` (which is `us-central1` in both
+  // deployments): since the 3.x migration this adapter asks for
+  // `gemini-3.8-flash`, and every 3.x id 404s at `us-central1` while answering
+  // on `global` — probed 2026-09-17 as the worker's own service account.
+  // GEMINI_CAPTURE_LOCATION overrides if Google ever regionalises them.
+  const vertexLocation = env["GEMINI_CAPTURE_LOCATION"]?.trim() || "global";
   if (geminiKey) {
     adapters.gemini = createGeminiAdapter({ apiKey: geminiKey, ...(fetchImpl ? { fetchImpl } : {}) });
   } else if (options.vertexAuthorize && vertexProject) {
