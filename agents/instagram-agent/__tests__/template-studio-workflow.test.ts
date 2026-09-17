@@ -117,7 +117,7 @@ function secondPost() {
   const good = goodCopyOutput();
   return {
     ...good,
-    caption: "A separate look at how the design department rebuilt its weekly critique, and what changed in the calendar afterwards.",
+    caption: "A separate look at how the design department rebuilt its weekly critique.\nWhat changed in the calendar afterwards was the surprise.",
     slides: good.slides.map((slide, i) => ({
       ...slide,
       headline: fixtureHeadline(i, "a different angle"),

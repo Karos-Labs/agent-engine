@@ -288,22 +288,27 @@ describe("buildFirstCommentSources", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-describe("resolveHashtagPlacement — the measurement decides PLACEMENT, never EXISTENCE", () => {
-  it("sends the tags to the first comment when this client's own feed never uses one", () => {
-    expect(resolveHashtagPlacement({ measured: { posts: 22, meanSentenceWords: 12, meanCaptionChars: 300, questionsPerPost: 0.2, emojiPerPost: 0.4, hashtagsPerPost: 0 } })).toBe(
-      "firstComment",
-    );
+describe("resolveHashtagPlacement — the caption, whatever the client's own feed does", () => {
+  const measured = (hashtagsPerPost: number) => ({
+    measured: { posts: 22, meanSentenceWords: 12, meanCaptionChars: 300, questionsPerPost: 0.2, emojiPerPost: 0.4, hashtagsPerPost },
   });
 
-  it("puts them under the caption when the client's own posts carry tags", () => {
-    expect(resolveHashtagPlacement({ measured: { posts: 22, meanSentenceWords: 12, meanCaptionChars: 300, questionsPerPost: 0.2, emojiPerPost: 0.4, hashtagsPerPost: 4.1 } })).toBe(
-      "caption",
-    );
+  it("keeps the tags in the caption even for an account whose own posts never carry one", () => {
+    // This case returned "firstComment" until Phase 5.6. The owner's
+    // specification makes caption placement a HARD rule, and a habit of
+    // accounts that do not need reach is not a technique to imitate.
+    expect(resolveHashtagPlacement(measured(0))).toBe("caption");
   });
 
-  it("has no opinion when nothing was measured — an empty corpus is a fact about the scrape, not about the client", () => {
-    expect(resolveHashtagPlacement(undefined)).toBe("caption");
-    expect(resolveHashtagPlacement({})).toBe("caption");
+  it("keeps them in the caption when the client's own posts carry tags", () => {
+    expect(resolveHashtagPlacement(measured(4.1))).toBe("caption");
+  });
+
+  it("NO register produces a first-comment placement — the union member is dead, and this is what keeps it dead", () => {
+    const everyShape = [undefined, {}, measured(0), measured(0.4), measured(12), measured(Number.NaN)];
+    for (const register of everyShape) {
+      expect(resolveHashtagPlacement(register as never)).toBe("caption");
+    }
   });
 });
 

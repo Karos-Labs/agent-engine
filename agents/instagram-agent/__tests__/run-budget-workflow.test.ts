@@ -289,7 +289,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     // (A different post than run 1's, so 07d's dedupe check against the shipped-output window does not spend an attempt.)
     const secondPost: InstagramCopyOutput = {
       ...goodCopyOutput(),
-      caption: "A completely separate story about how the design department reorganized their weekly critique sessions.",
+      caption: "A completely separate story.\nThe design department reorganized their weekly critique sessions.",
       slides: goodCopyOutput().slides.map((s, i) => ({ ...s, headline: fixtureHeadline(i, "another take"), body: `Distinct sentence ${i + 1} exploring an unrelated dimension of the quarterly workflow experiments nobody wrote about yet.` })),
     };
     const next = await run(env, "budget_after_overrun", fakeRouterSequence(happyTurns({ copy: secondPost })));

@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { GateVerdict } from "@agent-engine/core";
 import { defineTool, success } from "@agent-engine/tool-common";
 
-const TOOL_VERSION = "1.2.0"; // 1.2.0: X counts URLs as 23 and emoji as 2; hook, hashtag and mention caps (Craft 01 §5/§10/§11, D24)
+const TOOL_VERSION = "1.3.0"; // 1.3.0: Instagram gets its own hook rule (<=100 chars, no emoji/@/# LEADING), and six more tells join the bank (Instagram Phase 5.6, items A10/B5)
 
 /**
  * Em dash, en dash, and a literal double ASCII hyphen (the typed stand-in for
@@ -113,6 +113,19 @@ const DEFAULT_BANNED_PHRASES = [
   "it's not just",
   "it isn't just",
   "is not just",
+  // Instagram Phase 5.6 item B5. The owner's specification names several more
+  // tells; these are the ones that are safe as SUBSTRINGS across every agent
+  // that shares this bank. Three from that list are deliberately absent:
+  // "Let's", "Imagine" and "journey" are ordinary English words whose AI-tell
+  // quality is entirely about context, and banning them here would fire on
+  // correct prose in five other agents. They are taught in the Instagram copy
+  // prompt instead, which is the right instrument for a judgement.
+  "isn't just",
+  "aren't just",
+  "in a world where",
+  "let that sink in",
+  "read that again",
+  "the ultimate guide",
 ];
 
 /**
@@ -164,6 +177,23 @@ const HOOK_MAX_CHARACTERS = 70;
 /** Craft 01 §11: at most one hashtag, at most two mentions, neither leading. */
 const X_MAX_HASHTAGS = 1;
 const X_MAX_MENTIONS = 2;
+
+/**
+ * Instagram's hook ceiling, and why it is not X's.
+ *
+ * The owner's Instagram specification states 100 characters: the caption is
+ * truncated after roughly that much before the "more" link, so the hook is
+ * literally everything a scrolling reader is shown. X's 70 is a tighter
+ * editorial choice on a shorter medium and is not transferable.
+ *
+ * The SHAPE rule differs too, and the difference is deliberate. X bans an
+ * emoji, a mention, a hashtag or a link anywhere in the hook. Instagram bans
+ * them only in the LEADING position: a caption that opens on an emoji or an
+ * @ has spent the reader's attention before the claim arrives, but an emoji
+ * inside a sentence is ordinary Instagram writing and banning it would be
+ * this codebase imposing X's voice on a different platform.
+ */
+const IG_HOOK_MAX_CHARACTERS = 100;
 
 const PLATFORM_MAX_LENGTH: Record<string, number> = {
   twitter: 280,
@@ -257,6 +287,15 @@ export const lintPost = defineTool<LintPostInput, GateVerdict>({
     }
     const main = lintOne(text, options);
     if (main.verdict !== "pass") return success<GateVerdict>(main);
+    // AFTER the body, unlike X's hook rule above, and for a reason worth
+    // stating: on Instagram the hook is the caption's own first line, so a
+    // caption over the 2,200 limit would be refused for its SHAPE while the
+    // thing that makes it unpublishable went unmentioned. Craft is the right
+    // complaint only once the post could be posted at all.
+    if (hook !== undefined && platform === "instagram") {
+      const hookVerdict = lintHookForInstagram(hook);
+      if (hookVerdict !== undefined) return success<GateVerdict>(hookVerdict);
+    }
     for (const [index, part] of parts.entries()) {
       const verdict = lintOne(part, options);
       if (verdict.verdict === "content_fail") {
@@ -399,6 +438,42 @@ function lintHookForX(hook: string): GateVerdict | undefined {
       verdict: "content_fail",
       evidence: [`hook contains ${offenders.join(", ")}`],
       reason: `the hook contains ${offenders.join(", ")}: the first line is the claim, and every one of those spends the reader's attention before the claim arrives`,
+      toolVersion: TOOL_VERSION,
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Instagram's hook rule. Returns `undefined` when it passes.
+ *
+ * Length is counted in code points rather than UTF-16 units, because the
+ * limit is about what a reader is shown and an emoji is one character to
+ * them. `Array.from` does that; `String.length` would count a single emoji
+ * as two and refuse a hook that is within the limit.
+ */
+function lintHookForInstagram(hook: string): GateVerdict | undefined {
+  const trimmed = hook.trim();
+  const length = [...trimmed].length;
+  if (length > IG_HOOK_MAX_CHARACTERS) {
+    return {
+      verdict: "content_fail",
+      evidence: [`hook is ${length} characters, limit is ${IG_HOOK_MAX_CHARACTERS}`],
+      reason: `the hook is ${length} characters and the limit is ${IG_HOOK_MAX_CHARACTERS}: the caption is cut at about that point before the "more" link, so everything past it is written for nobody`,
+      toolVersion: TOOL_VERSION,
+    };
+  }
+
+  const first = [...trimmed][0];
+  if (first === undefined) return undefined;
+  const leading =
+    EMOJI_PATTERN.test(first) ? "an emoji" : first === "@" ? "a handle" : first === "#" ? "a hashtag" : undefined;
+  EMOJI_PATTERN.lastIndex = 0;
+  if (leading !== undefined) {
+    return {
+      verdict: "content_fail",
+      evidence: [`hook opens on ${leading}`],
+      reason: `the hook opens on ${leading}: the first thing a scrolling reader is shown should be the claim, and this spends their attention before it arrives`,
       toolVersion: TOOL_VERSION,
     };
   }

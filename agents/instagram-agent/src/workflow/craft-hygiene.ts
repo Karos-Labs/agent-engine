@@ -3,6 +3,7 @@ import { WorkflowToolingFailure } from "@agent-engine/workflow";
 import { resolveExpectedScript } from "./language-gate.js";
 import { isEnglishTarget } from "./target-language.js";
 import type { InstagramCopyOutput, SlidesDataSelfCheck } from "./types.js";
+import { checkCaptionRegister, checkNoCompetitorNames, hookOf, namesTopic } from "./caption-craft.js";
 
 /**
  * P0 parity-audit Fix 3: carousel-agent-v2 SKILL.md's "core rules, baked in"
@@ -603,7 +604,21 @@ export const CRAFT_GATE_OUTAGE_SLUG = "craft-hygiene-gate-no-opinion";
  *
  * Assignable to `SlidesDataSelfCheck`, so `native-corrections.ts`'s `checkHygiene` port is unchanged.
  */
-export type CraftHygieneResult = SlidesDataSelfCheck & { outage?: string };
+export type CraftHygieneResult = SlidesDataSelfCheck & {
+  outage?: string;
+  /**
+   * Findings that are REPORTED and do not refuse the draft.
+   *
+   * The distinction this carries is the one the workflow already draws about
+   * a closing call to action: "code can prove a call to action is present and
+   * cannot prove one is absent, so a last slide that does not close goes to
+   * the judge with a note rather than back to you." Item B8's topic-placement
+   * check is the same shape — a phrase match can prove the topic IS named and
+   * cannot prove it is absent, because a good headline says "cut" where the
+   * topic said "cutting" and drops the unit word for a number.
+   */
+  notes?: string[];
+};
 
 export async function checkCraftHygiene(
   tools: AgentToolRegistry,
@@ -617,6 +632,19 @@ export async function checkCraftHygiene(
    * working unchanged.
    */
   targetLanguage?: string,
+  /**
+   * The topic this run chose, when the caller has it. Item B8's redraftable
+   * half: the caption's first line and slide 1 both have to name the subject,
+   * and both are this step's own output, so a finding here is one a redraft
+   * can act on.
+   */
+  topicPhrase?: string,
+  /**
+   * This client's tracked competitors, when the caller has them (item C5).
+   * Empty or absent means the check has nothing to look for, which is the
+   * honest reading of a client who never onboarded a competitor list.
+   */
+  competitorNames?: readonly string[],
 ): Promise<CraftHygieneResult> {
   const lintTool = tools["gate.lintPost"];
   if (!lintTool) {
@@ -630,7 +658,21 @@ export async function checkCraftHygiene(
 
   const slideTexts = copy.slides.map(slideProse);
   const lintOutcome = await lintTool.execute(
-    { text: copy.caption, parts: slideTexts, platform: "instagram", checkAntiSlop: true, maxExclamationMarks: 0, bannedPhrases: [...HEBREW_BANNED_PHRASES] },
+    {
+      text: copy.caption,
+      parts: slideTexts,
+      platform: "instagram",
+      checkAntiSlop: true,
+      maxExclamationMarks: 0,
+      bannedPhrases: [...HEBREW_BANNED_PHRASES],
+      // Item A10. On Instagram the hook is not a separate field — the
+      // caption's first line IS what the feed shows before "more", so this
+      // reads the shipped text rather than a field that could disagree with
+      // it. (`lint-post.ts` passes the hook separately precisely so a draft
+      // cannot satisfy the rule in one place and break it in another; here
+      // there is only one place.)
+      hook: hookOf(copy.caption),
+    },
     { ctx },
   );
   // ── Mechanism C: A GATE THAT COULD NOT RUN HAS NO OPINION (RFC-19 §3) ──
@@ -682,6 +724,73 @@ export async function checkCraftHygiene(
     return { ok: false, reason: `caption failed the sentence-case check: ${captionCase.reason}`, ...outage };
   }
 
+  // Item B4's measurable half: how many emoji, how long a line, and whether
+  // the caption is just the slides again. The rest of register is taught in
+  // the copy prompt, where a judgement belongs.
+  const register = checkCaptionRegister(copy.caption);
+  if (!register.ok) {
+    return { ok: false, reason: `the caption does not read like a caption: ${register.reason}`, ...outage };
+  }
+
+  // ── Item C5: a competitor's name in a client's own post ──
+  //
+  // Refused rather than noted, unlike B8 below, because this one can be
+  // right: a company name either appears or it does not. The texts checked
+  // are every public surface at once — the slides, the caption and (at the
+  // package step) the alt text and the tags, because a tag is as public as a
+  // headline.
+  if (competitorNames !== undefined && competitorNames.length > 0) {
+    const competitors = checkNoCompetitorNames(competitorNames, { texts: [copy.caption, ...slideTexts] });
+    if (!competitors.ok) return { ok: false, reason: competitors.reason!, ...outage };
+  }
+
+  // ── Item B8: reported, never refused ──
+  //
+  // The first cut of this REFUSED a draft whose caption and cover did not
+  // carry the topic phrase, and running it against this repo's own fixtures
+  // showed why that is wrong. The chosen topic was "5 automation wins from
+  // this quarter" while the copy — correctly, following the angle — was about
+  // automated weekly reporting. A reader would call those the same post. A
+  // substring match cannot, and no amount of stemming makes it able to: the
+  // copy step's job is to turn a topic into an argument, and the words change
+  // on the way.
+  //
+  // So it is a note. The instruction lives in the copy prompt (§2), where a
+  // judgement belongs, and this records what a machine could see — for the
+  // gate payload, and for Phase 6, which will have real search data to weigh
+  // it against.
+  const notes: string[] = [];
+
+  // ── Item B2: `hookPattern` is asked for, and its absence is a note ──
+  //
+  // This started as a refusal and was demoted on the same reasoning
+  // `payloadKind` records two screens up in `types.ts`: requiring the
+  // declaration of a live draft without refusing the fixtures that predate it
+  // is not something this gate can tell apart, and a draft sent back for a
+  // missing LABEL has spent a redraft on bookkeeping. The prompt (§29) asks
+  // for it; the residual gap is the same one `payloadKind` names, and it is
+  // named here rather than left to be rediscovered: a writer that omits the
+  // field escapes the check, and Phase 6 will rank the posts that carried one.
+  if (copy.hookPattern === undefined) {
+    notes.push(
+      "the draft declares no `hookPattern` — one of number_outcome, contrarian, mistake or relatable_pov; " +
+        "without it this post cannot be grouped with the others when hooks are ranked by what they did",
+    );
+  }
+  if (topicPhrase !== undefined && topicPhrase.trim().length > 0) {
+    const cover = copy.slides[0];
+    const coverText = cover === undefined ? "" : `${cover.headline} ${cover.body}`;
+    const missing: string[] = [];
+    if (!namesTopic(coverText, topicPhrase)) missing.push("slide 1");
+    if (!namesTopic(hookOf(copy.caption), topicPhrase)) missing.push("the caption's first line");
+    if (missing.length > 0) {
+      notes.push(
+        `the topic phrase "${topicPhrase}" is not carried by ${missing.join(" or ")} — ` +
+          "Instagram's search and Google both read those two, so naming the subject there is what makes the post findable",
+      );
+    }
+  }
+
   for (const [i, slide] of copy.slides.entries()) {
     const sentenceCase = checkSentenceCase(slideTexts[i]!);
     if (!sentenceCase.ok) {
@@ -689,5 +798,5 @@ export async function checkCraftHygiene(
     }
   }
 
-  return { ok: true, ...outage };
+  return { ok: true, ...outage, ...(notes.length > 0 ? { notes } : {}) };
 }

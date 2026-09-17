@@ -982,6 +982,18 @@ export type InstagramPayloadKind = z.infer<typeof InstagramPayloadKindSchema>;
  * refusing the fixtures that predate it.
  */
 
+/**
+ * The four hook shapes the copy guide teaches (§29), as a closed set.
+ *
+ * A closed set rather than free text because the whole point of the field is
+ * that Phase 6 can GROUP by it: "contrarian hooks send 1.8x what number
+ * hooks do on this account" is a sentence you can only write if the hooks
+ * were labelled the same way every week. A string field would be labelled
+ * four different ways by four runs.
+ */
+export const InstagramHookPatternSchema = z.enum(["number_outcome", "contrarian", "mistake", "relatable_pov"]);
+export type InstagramHookPattern = z.infer<typeof InstagramHookPatternSchema>;
+
 /** `InstagramCopyAgent`'s output — six to eight slides for a carousel (RFC-03 §3 step 05), exactly one for a single-image post; `checkSlidesData` enforces the count per format. */
 export const InstagramCopyOutputSchema = z.object({
   /** The format this copy was written for. Defaults to `carousel` so every existing caller and fixture keeps its shape. */
@@ -1011,6 +1023,32 @@ export const InstagramCopyOutputSchema = z.object({
    * declaration as "no opinion" rather than as `single-claim`.
    */
   payloadKind: InstagramPayloadKindSchema.optional(),
+  /**
+   * Phase 5.6 (item B2) — which of §29's four shapes this post's hook IS,
+   * declared by the writer.
+   *
+   * ## Why the performance work needs it
+   *
+   * Phase 6 re-ranks hooks by sends-per-reach on this client's own posts. It
+   * cannot do that without a key to rank BY, and deriving one after the fact
+   * from the hook's text is exactly the kind of retro-classification that
+   * produces a tidy chart from nothing. The label has to be written at the
+   * same time as the hook, by whoever chose the shape.
+   *
+   * ## `.optional()`, for the reason `payloadKind` above is optional
+   *
+   * Not because the field is optional to a writer — the prompt requires it,
+   * and `checkCraftHygiene` sends a draft back that omits it. Optional on the
+   * WIRE, so that a model which forgets one enum value does not lose the
+   * whole step's structured output and take the caption, the slides and the
+   * sourcing down with it. That failure has happened here before, over five
+   * characters of alt text, and the fix was the same shape: let the model
+   * overshoot, then have code insist.
+   *
+   * An absent value is recorded as absent. Nothing infers one.
+   */
+  hookPattern: InstagramHookPatternSchema.optional(),
+
   slides: z.array(InstagramSlideCopySchema).min(1).max(8),
   /**
    * The post's own caption — the text Instagram shows below the carousel,

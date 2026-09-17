@@ -473,6 +473,6 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyDraft> {
     // `05f-author-custom-archetype` is priced separately at $0.030, at most
     // once per carousel and only when a draft asks for it. See
     // `InstagramCustomArchetypeAgent`.
-    skillRef: "instagram-copy@22",
+    skillRef: "instagram-copy@23",
   };
 }
