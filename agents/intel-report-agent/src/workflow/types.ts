@@ -134,4 +134,12 @@ export interface IntelReportAgentWorkflowResult {
    * replaced.
    */
   numericGrounding?: IntelReportNumericGroundingMarker;
+  /**
+   * Present when a reviewer ran the cycle out of rounds or rejected the
+   * report outright.
+   *
+   * The report is kept and marked rather than the run ending, so the analysis
+   * survives for whoever has to act on it. Absent on an approval.
+   */
+  reviewOutcome?: { outcome: "revisions_exhausted" | "rejected"; detail: string };
 }

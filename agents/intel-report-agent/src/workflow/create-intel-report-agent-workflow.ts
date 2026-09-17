@@ -830,6 +830,22 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
      * thing only by luck.
      */
     const numericGrounding = numericGroundingByRevision.get(review.revision) ?? null;
+    /**
+     * A reviewer who ran the cycle out of rounds, or who rejected outright,
+     * recorded ON the report rather than ending the run.
+     *
+     * intel-report shares `runReviewCycle` with the six agents converted
+     * alongside it, so it inherits the same behaviour; this is what makes the
+     * reviewer's decision visible on the artefact they keep. Nothing here
+     * publishes anything — an intel report is an internal document a human
+     * reads — so what changes is that the report survives the rejection with
+     * the reason attached, instead of the run ending and the drafted analysis
+     * existing nowhere.
+     */
+    const reviewOutcome =
+      review.outcome !== undefined && review.outcome !== "approved"
+        ? { outcome: review.outcome, detail: review.outcomeDetail ?? review.outcome }
+        : null;
 
     // ── 05: persist — intel.writeReport computes overallScore/overallGrade deterministically ──
     const writeOutcome = await wf.step.code("05-persist-report", async () => {
@@ -853,6 +869,7 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
         // the client only because step 03 removed something says so on the
         // deliverable a reviewer opens, not only in a log line.
         ...(numericGrounding ? { numericGrounding } : {}),
+        ...(reviewOutcome ? { reviewOutcome } : {}),
       },
       snapshot: (deliverableId) => ({ ...writeOutcome, deliverableId }),
     });
@@ -892,6 +909,7 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       // own typed return value — see 01e's own comment.
       ...(contextGrounding.decision === "degraded" ? { contextGrounding: contextGrounding.marker } : {}),
       ...(numericGrounding ? { numericGrounding } : {}),
+      ...(reviewOutcome ? { reviewOutcome } : {}),
     };
   };
 }

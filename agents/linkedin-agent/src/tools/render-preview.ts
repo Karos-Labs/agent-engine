@@ -2,7 +2,12 @@ import { z } from "zod";
 import { checkLength, defineTool, success, truncateAtFold, truncateToLimit } from "@agent-engine/tool-common";
 import type { AgentTool } from "@agent-engine/core";
 
-const TOOL_VERSION = "1.0.0";
+// 1.0.1 — no behaviour change. `LINKEDIN_CHARACTER_LIMIT` became exported so
+// the workflow's length repair can trim to the same number this tool measures
+// against, rather than hardcoding a second copy of 3000 that could drift from
+// it. A patch bump because the tool's own verdicts are byte-identical, and a
+// bump at all because telemetry has to be able to tell the two eras apart.
+const TOOL_VERSION = "1.0.1";
 
 /** LinkedIn's actual character limit for a standard feed post (matches gate.lintPost's own table). */
 export const LINKEDIN_CHARACTER_LIMIT = 3000;
