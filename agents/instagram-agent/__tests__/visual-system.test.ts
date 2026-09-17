@@ -68,13 +68,45 @@ describe("pickVisualSystem is pure and seeded", () => {
 });
 
 describe("the accent is emphasis, not wallpaper", () => {
-  it("names at most three slides, and always the first and the last", () => {
+  it("names at most three slides, all of them real, none of them twice", () => {
     for (const count of [4, 5, 6, 7, 8, 10]) {
-      const slides = accentSlidesFor(count, "rule");
-      expect(slides.length).toBeLessThanOrEqual(3);
-      expect(slides).toContain(1);
-      expect(slides).toContain(count);
+      for (const seed of ["a", "b", "c", "d"]) {
+        const slides = accentSlidesFor(count, "rule", seed);
+        expect(slides.length).toBeGreaterThanOrEqual(1);
+        expect(slides.length).toBeLessThanOrEqual(3);
+        expect(slides.every((slide) => slide >= 1 && slide <= count)).toBe(true);
+        expect(new Set(slides).size).toBe(slides.length);
+        expect([...slides].sort((a, b) => a - b)).toEqual(slides);
+      }
     }
+  });
+
+  /**
+   * THE PROPERTY THE OLD CONTRACT MADE IMPOSSIBLE.
+   *
+   * This function used to return `[1, ceil(n/2), n]` — a pure function of the
+   * slide count — and the test above used to assert that, first and last every
+   * time. So every client with an eight-plate carousel marked plates 1, 4 and 8,
+   * forever, and three clients rendered side by side marked the same three.
+   * The owner named it: *"יש קו כתום אופקי כזה שלרוב מעיד על AI, זה בסדר אם זה
+   * פעם אחת וקורה לפעמים אבל שלא יהיה קבוע"*. A mark in the same place every
+   * time is not an accent, it is furniture — so the contract is now that the
+   * choice MOVES, and this is the assertion the old one could never have passed.
+   */
+  it("moves between runs, so the mark is never in the same place twice by rule", () => {
+    const seeds = ["run-1", "run-2", "run-3", "run-4", "run-5", "run-6", "run-7", "run-8"];
+    const sets = seeds.map((seed) => accentSlidesFor(8, "rule", seed).join(","));
+    expect(new Set(sets).size).toBeGreaterThan(1);
+
+    /* And the cover holds no privilege: across eight runs it is sometimes
+       marked and sometimes not, which is what "occasionally" means. */
+    const coverMarked = seeds.filter((seed) => accentSlidesFor(8, "rule", seed).includes(1)).length;
+    expect(coverMarked).toBeGreaterThan(0);
+    expect(coverMarked).toBeLessThan(seeds.length);
+  });
+
+  it("is deterministic for a given run, so two renders of one post agree", () => {
+    expect(accentSlidesFor(8, "rule", "run-1")).toEqual(accentSlidesFor(8, "rule", "run-1"));
   });
 
   it("the `field` form takes ONE slide — a surface behind a block is loud, and twice is a pattern", () => {
@@ -86,7 +118,7 @@ describe("the accent is emphasis, not wallpaper", () => {
   });
 
   it("holds at three even on a two-slide degenerate post, and never names a slide off the end", () => {
-    const slides = accentSlidesFor(2, "rule");
+    const slides = accentSlidesFor(2, "rule", "seed");
     expect(slides.every((s) => s >= 1 && s <= 2)).toBe(true);
     expect(new Set(slides).size).toBe(slides.length);
   });

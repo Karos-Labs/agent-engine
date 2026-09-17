@@ -93,35 +93,23 @@ declare const window: Record<string, unknown>;
 /**
  * ── THE SWITCHED-MARK REGISTRY, AT MODULE SCOPE. ──
  *
- * Three cases read it: the declaration scan, the complementary-guard scan and
- * the rendered box limb in the Chromium block at the foot. One list, so a mark
- * cannot be registered for one of the three and missed by the other two —
- * which is how `.cmp-rail` came to be the comparison card's accent mark while
- * sitting outside the registry entirely.
+ * It used to be fourteen rows: `.stat-band`, `.cmp-rail`, `.qc-foot`, `.cl-art`,
+ * `.hf-field`, `.me-rows` and the rest — a different accent mark per template,
+ * each with its own selector, its own paint mechanism (element, background,
+ * border, pseudo-element) and its own switch condition. That list is the defect
+ * it was written to police, written down: fourteen marks is why one carousel
+ * rendered the accent in three colours at eleven widths, and why a reader
+ * called the result machine-made.
  *
- * A row's `paint` says HOW the mark reaches a pixel, which is what the
- * rendered limb has to know to measure it:
- *   `element`      — the mark IS the element (`display: var(--fx-accent, …)`),
- *                    so its own rect is the measurement.
- *   `background`   — the mark is a `background-image` on the element
- *                    (`--fx-accent-ink`), so the element's rect plus a
- *                    resolved ink colour is the measurement.
- *   `border`       — the mark is the element's block-start EDGE
- *                    (`--fx-accent-ink` on a border), so the rect plus
- *                    `borderBlockStartColor` is the measurement. Distinct from
- *                    `background` because `.me-rows` carries BOTH: a
- *                    `color-mix` panel tint as its background-image and the
- *                    accent as its cap. Checking the background there would
- *                    read the tint and call the cap present — which is how
- *                    this row passed before the limb existed.
- *   `::before` / `::after` — the mark is a pseudo-element, which has no
- *                    `getBoundingClientRect`; its computed `display`, width
- *                    and height are.
+ * There is now ONE mark in the whole set. `.acc` is an element, it is switched
+ * by `--fx-accent`, its geometry is the run's own `--fx-accent-w/h`, its ink is
+ * `--fx-accent-ink`, and the shared sheet is the only place any of that is
+ * said. Every plate gets the same row, which is the point: a registry that
+ * cannot disagree with itself.
  *
- * `rendered: false` says the rule is declared ON PURPOSE for a template the
- * bundled markup does not carry the element for. There is exactly one, and
- * the rendered limb asserts the ABSENCE so the exemption cannot quietly
- * cover a mark that was deleted by accident.
+ * `design-system-sync.test.ts` carries the complementary guard — that no plate
+ * declares a border or an off-scale size of its own — so a fifteenth mark
+ * cannot come back in by another door.
  */
 const SWITCHED: {
   file: string;
@@ -131,43 +119,13 @@ const SWITCHED: {
   paint: "element" | "background" | "border" | "::before" | "::after";
   rendered?: false;
   absent?: string;
-}[] = [
-  { file: "slide.html", rule: /\.stat-band\s*\{[^}]*\}/, token: "fx-accent", selector: ".stat-band", paint: "element" },
-  // ── THE ONE ROW WHOSE ELEMENT IS DELIBERATELY NOT IN THE MARKUP. ──
-  // Spec §4.5 gives the cover no furniture at all, so `cover.html` deletes
-  // the `<div class="stat-band">` and keeps the RULE for the same reason
-  // every template keeps its `.brand-badge` rule: a client's own template may
-  // still carry the element, and a badge or a band that lost its placement
-  // rule would lay itself out in normal flow over the copy.
-  {
-    file: "cover.html",
-    rule: /\.stat-band\s*\{[^}]*\}/,
-    token: "fx-accent",
-    selector: ".stat-band",
-    paint: "element",
-    rendered: false,
-    absent: "spec §4.5: the cover carries no furniture, so the element is deleted from the markup and only the placement rule remains (see `.brand-badge`)",
-  },
-  { file: "stat-callout.html", rule: /\.stat-band\s*\{[^}]*\}/, token: "fx-accent", selector: ".stat-band", paint: "element" },
-  // `headline-focus.html`'s mark is the FIELD'S CAP, not a bar under the
-  // headline: `.hf-field` paints `--fx-accent-ink` gradients at
-  // `--fx-accent-w`/`--fx-accent-h`. It is a `background-image`, so it takes
-  // the INK token rather than `display` — see the case below this one, which
-  // is what stops the caps regressing to a raw `var(--accent)`.
-  { file: "headline-focus.html", rule: /\.hf-field\s*\{[^}]*background-image:[^}]*\}/, token: "fx-accent-ink", selector: ".hf-field", paint: "background" },
-  // Same shape one archetype over: the closer's mark is `.cl-art`'s cap.
-  { file: "closer.html", rule: /\.cl-art\s*\{[^}]*background-image:[^}]*\}/, token: "fx-accent-ink", selector: ".cl-art", paint: "background" },
-  { file: "quote-card.html", rule: /\.qc-foot::before\s*\{[^}]*\}/, token: "fx-accent", selector: ".qc-foot", paint: "::before" },
-  // `.cmp-rail` is the mark this phase gave the comparison card — the file's
-  // own comment says *"It IS the accent mark now"* — and it was outside this
-  // registry, which is the one guard that exists for exactly that.
-  { file: "comparison-card.html", rule: /\.cmp-rail\s*\{[^}]*\}/, token: "fx-accent", selector: ".cmp-rail", paint: "element" },
-  { file: "comparison-card.html", rule: /\.sc-figure-band::after\s*\{[^}]*\}/, token: "fx-accent", selector: ".sc-figure-band", paint: "::after" },
-  { file: "list-takeaway.html", rule: /\.sc-figure-band::after\s*\{[^}]*\}/, token: "fx-accent", selector: ".sc-figure-band", paint: "::after" },
-  { file: "quote-card.html", rule: /\.sc-figure-band::after\s*\{[^}]*\}/, token: "fx-accent", selector: ".sc-figure-band", paint: "::after" },
-  { file: "stat-callout.html", rule: /\.sc-figure-band::after\s*\{[^}]*\}/, token: "fx-accent", selector: ".sc-figure-band", paint: "::after" },
-  { file: "list-takeaway.html", rule: /\.me-rows:not\(:empty\)\s*\{[^}]*\}/, token: "fx-accent-ink", selector: ".me-rows", paint: "border" },
-];
+}[] = ARCHETYPE_TEMPLATE_FILES.map((file) => ({
+  file,
+  rule: /\.acc\s*\{[^}]*\}/,
+  token: "fx-accent" as const,
+  selector: ".acc",
+  paint: "element" as const,
+}));
 
 describe("the series badge is gone from the whole set", () => {
   it("no template declares a {{seriesBadge}} slot", async () => {

@@ -56,6 +56,13 @@
       it sits directly above the headline. Nothing else in the set paints a
       rule, and no element in the set carries a decorative border — a 984px
       `border-top` on a card reads to the eye exactly like a 984px hairline.
+   3b. NO COLOUR IS INVENTED HERE. The accent fell back to a literal `#ff5a1f`
+      when the run had not switched a slide on — so a client whose brand colour
+      is purple and a client whose brand colour is lime both rendered orange
+      rules, on the plates the system had deliberately left unmarked. The owner
+      caught it by eye before any test did. Every colour in this sheet now
+      resolves to a kit token or to `currentColor`.
+
    3. THE DECISION LAYER REACHES THE PIXELS. `--system-ground`, `--system-
       grammar`, `--display-weight`, `--display-tracking` and `--logo-zone-*`
       were all emitted by `visual-system.ts` / `brand-render-tokens.ts` and read
@@ -84,6 +91,17 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
+
+/* ── THE BRAND ACCENT ENTERS HERE, AND ONLY HERE. ──
+   `buildBrandHeadHtml` emits `--bg`, `--fg`, the faces and the logo zone — but
+   NOT `--accent`. Every template used to declare it itself, this rewrite
+   dropped the declaration, and the whole set fell through to a fallback: a
+   client whose accent is purple and one whose accent is lime both painted in
+   the foreground ink, and before the literal fallback was removed they painted
+   ORANGE. The owner saw it on two clients at once. An empty `{{accentColor}}`
+   makes this declaration invalid and the var simply stays unset, which is the
+   behaviour the fallbacks below are written for. */
+body { --accent: {{accentColor}}; }
 
 /* The reviewer's type-scale request. Hebrew sets ~6% larger at the same step,
    so the script sheet may override this; `script-fonts.ts` owns that. */
@@ -251,7 +269,15 @@ body[data-hero-scrim=""] .scrim { display: none; }
      `scrollHeight` reports it and the fit ladder can step. `flex-end` overflows
      upward through the reserved brand band, silently — this system shipped that
      bug for one render and the eyebrow printed into the headline. */
-  justify-content: space-between;
+  /* PACKED, WITH THE AIR ABOVE. `space-between` put the blocks at opposite ends
+     and left one hole in the middle — the owner's *"לפעמים כשיש רווח ריק גדול
+     מדי זה לא יפה אם יש למטה משהו ולמעלה משהו"*. His prescription was to do
+     both things at once: bring the blocks closer AND give the few words that
+     matter more size. This is the first half; the fit ladder's two grow rungs
+     are the second. `flex-start` plus an auto margin on the first child, rather
+     than `flex-end`, so a stack that does not fit still overflows DOWNWARD
+     where `scrollHeight` reports it. */
+  justify-content: flex-start;
   gap: var(--sp-2);
   overflow: visible;
 }
@@ -265,10 +291,36 @@ body[data-hero-scrim=""] .scrim { display: none; }
    not standing on somebody's face. With the picture as the only subject the
    field has one block in it, and `space-between` puts a lone block at the top —
    which is the one place a photo cover should not put its headline. */
-body:has(.hero) .plate > :last-child { margin-block-start: auto; }
+/* Over a photograph the copy goes to the foot — the spacer above already
+   does that, so this only has to stop a `top` anchor overriding it. */
+body:has(.hero) .plate::before { display: block; }
+body:has(.hero) .plate::after { display: none; }
 
-body[data-anchor="bottom"] .plate { justify-content: flex-start; }
-body[data-anchor="bottom"] .plate > :first-child { margin-block-end: auto; }
+/* ── THE SPACER, NOT AN AUTO MARGIN ON A CHILD. ──
+   Anchoring by putting `margin-block-start: auto` on `:first-child` breaks the
+   moment that child can hide, and on four plates it can: the image band is the
+   first child and it is `display: none` with no photograph. `:first-child`
+   still matches a hidden element, so the margin landed on nothing and the whole
+   stack snapped back to the top of the field — measured on the comparison card,
+   which came out top-heavy with 280px under it. This system has hit that same
+   trap three times now, in three different shapes.
+   A flexible pseudo-element cannot hide, cannot be reordered and takes no part
+   in `:first-child`, so the anchor holds whatever the markup does. It shrinks
+   to nothing when the content needs the room, so it can never cause overflow. */
+.plate::before {
+  content: "";
+  display: block;
+  flex: 1 1 0;
+  min-block-size: 0;
+}
+/* The run's composition grammar can still send the copy to the top instead. */
+body[data-anchor="top"] .plate::before { display: none; }
+body[data-anchor="top"] .plate::after {
+  content: "";
+  display: block;
+  flex: 1 1 0;
+  min-block-size: 0;
+}
 
 /* ---- the brand band: mark on one side, eyebrow on the other ------------- */
 .zone-mark {
@@ -279,7 +331,15 @@ body[data-anchor="bottom"] .plate > :first-child { margin-block-end: auto; }
   z-index: 4;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  /* PACKED, WITH THE AIR ABOVE. `space-between` put the blocks at opposite ends
+     and left one hole in the middle — the owner's *"לפעמים כשיש רווח ריק גדול
+     מדי זה לא יפה אם יש למטה משהו ולמעלה משהו"*. His prescription was to do
+     both things at once: bring the blocks closer AND give the few words that
+     matter more size. This is the first half; the fit ladder's two grow rungs
+     are the second. `flex-start` plus an auto margin on the first child, rather
+     than `flex-end`, so a stack that does not fit still overflows DOWNWARD
+     where `scrollHeight` reports it. */
+  justify-content: flex-start;
   gap: var(--sp-2);
   pointer-events: none;
 }
@@ -298,6 +358,24 @@ body[data-anchor="bottom"] .plate > :first-child { margin-block-end: auto; }
   white-space: nowrap;
 }
 .eyebrow:empty, .kicker:empty { display: none; }
+
+/* The bundled plates carry no series badge — it printed an internal format
+   label in the same corner on every slide, which is the repetition a reader
+   reads as machine-made. The PLACEMENT rule stays, because a client's own
+   template may still carry the slot and a badge that lost its rule would lay
+   itself out in normal flow on top of the copy. */
+.brand-badge {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: var(--mx);
+  z-index: 5;
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: var(--t-micro);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--badge-ink, color-mix(in srgb, var(--fg) 55%, transparent));
+}
+.brand-badge:empty { display: none; }
 
 /* ---- the foot band: handle and numeral ---------------------------------- */
 .zone-foot {
@@ -351,10 +429,14 @@ body[data-anchor="bottom"] .plate > :first-child { margin-block-end: auto; }
    None of them is a full-measure rule. A 952px hairline across a plate is the
    thing the owner named as the AI tell, and no form here can produce one. */
 .acc {
-  display: var(--fx-accent, block);
+  /* `none`, NOT `block`. The fallback is what a slide gets when the run did
+     not name it — and a mark that paints when nobody asked for it is the
+     "orange rule on every slide" the owner rejected. Default off, switched on
+     by `visualSystemCssBlock` for the one to three plates it chose. */
+  display: var(--fx-accent, none);
   inline-size: var(--fx-accent-w, 88px);
   block-size: var(--fx-accent-h, 10px);
-  background: var(--fx-accent-ink, var(--accent, #ff5a1f));
+  background: var(--fx-accent-ink, var(--accent, currentColor));
   flex: none;
 }
 
@@ -525,7 +607,7 @@ body[data-accent="none"] .acc { display: none; }
   font-style: normal;
   font-weight: inherit;
   font-family: inherit;
-  color: var(--fx-accent-ink, var(--accent, #ff5a1f));
+  color: var(--fx-accent-ink, var(--accent, currentColor));
 }
 body[data-face-bleed="1"] .mk-runs em { font-family: var(--f-display); }
 
