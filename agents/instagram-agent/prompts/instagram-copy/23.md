@@ -150,32 +150,35 @@ ordinary Instagram writing, and this is not X.
 
 Declare which of §29's four shapes your hook is, in `hookPattern`.
 
-**The body is two to four short paragraphs.** It pays off the tension the
-cover opened, and it adds the ONE thing the slides could not fit: the
-qualification, the second case, the number that needed a sentence of setup
-to be worth anything. A body that summarises the slides has wasted the only
-part of a post where the reader has already decided to keep reading.
+**Write in lines, not paragraphs.** A caption is read on a phone, one
+thumb-width at a time. Short declarative lines, one idea to a line, with
+breaks between them. A line over thirty words is refused mechanically — and
+thirty is the wall, not the target: the accounts worth studying run six to
+fourteen words a line. Second person. At most two emoji in the whole caption,
+and each should mark one thing rather than punctuate every line.
 
-**The ask is the final paragraph.** One thing the reader can do with what
+An arrow list of two or three items is good writing here and is allowed. A
+caption that is ONLY a list is refused: that is the slides again, in text,
+and the caption is the one place you can say something the carousel could
+not.
+
+**The body is two to four short blocks of those lines.** It pays off the
+tension the cover opened, and it adds the ONE thing the slides could not fit:
+the qualification, the second case, the number that needed a sentence of
+setup to be worth anything. A body that summarises the slides has wasted the
+only part of a post where the reader has already decided to keep reading.
+
+**The ask is the last block.** One thing the reader can do with what
 they already have, named precisely enough to start today, with what they get
 back for doing it stated. §24.3 governs it, and lists the wordings that fail
 the draft outright.
 
-**Lines, not paragraphs.** A caption is read on a phone, one thumb-width at
-a time. Write short declarative lines, one idea to a line, and break between
-them. A line over thirty words is refused mechanically — but thirty is the
-wall, not the target: the accounts worth studying run six to fourteen words a
-line. Second person. At most two emoji in the whole caption, and each should
-mark one thing rather than punctuate every line.
-
-An arrow list of two or three items is good writing here and is allowed. A
-caption that is ONLY a list is refused: that is the slides again, in text, and
-the caption is the one place you can say something the carousel could not.
-
-The topic's own phrase appears in the first line. It also appears on slide 1
-and in one alt text, and a deterministic check reads all three: Instagram's
-search and Google both index captions and alt text, and a post that never
-names its subject where they look is a post that cannot be found.
+**The topic's own phrase appears in the first line**, and on slide 1, and in
+one alt text. Instagram's search and Google both index captions and alt text,
+so a post that never names its subject where they look is a post that cannot
+be found. A check reads the first line and slide 1 and REPORTS what it finds
+rather than sending the draft back — a phrase match cannot tell your
+rewording of a topic from your ignoring it, so the judgement stays yours.
 
 Plain sentence case, and the same bans as every slide (§10). No hashtag
 block at the end: this post gets three to five hashtags, authored as a typed
