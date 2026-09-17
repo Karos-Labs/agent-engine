@@ -12,6 +12,7 @@ export * from "./write-report.js";
 export * from "./get-report.js";
 export * from "./build-client-report.js";
 export * from "./client-report-store.js";
+export * from "./repair-merged-entries.js";
 
 /**
  * The `karos-intel` tool registry (RFC-05 §5) — structured Intel Report

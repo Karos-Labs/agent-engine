@@ -28,6 +28,7 @@ import {
 } from "@agent-engine/workflow";
 import type { ClientBrand, ClientProfile, Competitor, OnPageAuditSnapshot, PageSignals, TechnicalSeoSnapshot } from "@agent-engine/tools";
 import { isPathDisallowed } from "@agent-engine/tool-karos-scraper";
+import { repairMergedEntriesDeep } from "@agent-engine/tool-karos-intel";
 import type { IntelReportOutput } from "@agent-engine/tool-karos-intel";
 import {
   IntelReportDraftAgent,
@@ -619,7 +620,14 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       if (usableDraft.status !== "completed") {
         throw new WorkflowToolingFailure(`report generation step resolved to "${usableDraft.status}"`);
       }
-      const report = usableDraft.finalOutput!;
+      // Repair the one serialization artifact this schema provokes before
+      // anything reads the draft: an unescaped `"` inside a list entry merges
+      // two array elements into one, which on prep run
+      // pubsub-21214555443299035 cost `bannedTerms` the term "cutting-edge"
+      // and left a meaningless entry in its place. Deterministic, applied
+      // rather than asserted, and every path below this line — grounding,
+      // review, persistence, the deliverable — flows from here.
+      const report = repairMergedEntriesDeep(usableDraft.finalOutput!);
 
       // ── verify — every numeric claim across the 7 analysis sections must trace back
       // to the research pull's own content (RFC-05 §5 / §3 step 4's "reconcile the
