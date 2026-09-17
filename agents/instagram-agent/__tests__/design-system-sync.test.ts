@@ -1,10 +1,12 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { PLATES, renderPlate } from "../../../scripts/sync-design-system.js";
 
-const DIR = join(process.cwd(), "agents/instagram-agent/assets/templates/default");
+/* From this file, not from `process.cwd()`: CI runs vitest per workspace. */
+const DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "assets/templates/default");
 const read = (file: string): string => readFileSync(join(DIR, file), "utf8");
 
 /**

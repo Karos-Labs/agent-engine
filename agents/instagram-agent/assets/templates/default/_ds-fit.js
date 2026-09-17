@@ -138,9 +138,16 @@
        close that on a short headline. Each rung is still a step of the scale,
        and the loop stops the moment anything would overflow, so filling the
        plate can never become clipping it. */
+    /* ONE RUNG, NOT TWO. Two rungs took a nine-word headline from 94px to
+       200px: six lines wall-to-wall, which is not a headline a CMO sets, and
+       which the interest floor reads as a GRAPHIC rather than as text — a cell
+       inside a 150px stroke holds one colour, so `textBoxShare` fell to 0.2%
+       and the floor reported "the ground layers rendered and the copy did not"
+       about a plate that had rendered perfectly. Filling a plate is the bounded
+       object's job; the type's job is to be read. */
     if (primary.length) {
       var grown = 0;
-      while (grown > -2 && !overflows()) {
+      while (grown > -1 && !overflows()) {
         grown -= 1;
         set(primary, grown);
         closeInk();

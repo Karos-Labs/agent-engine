@@ -656,8 +656,19 @@ body[data-accent="none"] .acc { display: none; }
 
 *:has(> span.mk-plain) { padding-block-start: max(var(--mk-twin-bleed, .22em), var(--mk-face-bleed, 0em)); }
 
-.mk-runs  { display: contents; }
-.mk-plain { display: contents; }
+/* ── BLOCK, NOT `display: contents`. ──
+   The twins are the only TEXT-BEARING LEAVES in the set: `.headline` and
+   `.body-text` always have two element children, so the probe's "an element
+   with words and no element children" lands on the spans and nowhere else.
+   `display: contents` gives an element no box, and a leaf with no rendered box
+   contributes no area — so every plate reported `textBoxShare` at 0-0.3% and
+   the interest floor said "the ground layers rendered and the copy did not"
+   about plates that had rendered perfectly, marks and all.
+   `contents` was introduced to stop an inline twin reporting a false overflow
+   against its host. The fit ladder's `closeInk` closes that properly now, on
+   every element of the plate and by measurement, so the box can come back. */
+.mk-runs  { display: block; }
+.mk-plain { display: block; }
 .mk-runs:empty { display: none; }
 .mk-runs:not(:empty) + .mk-plain { display: none; }
 /* `--mk-face-bleed` is the run's decision about whether an emphasis run may
@@ -905,9 +916,16 @@ body.ta-center .acc { margin-inline: auto; }
        close that on a short headline. Each rung is still a step of the scale,
        and the loop stops the moment anything would overflow, so filling the
        plate can never become clipping it. */
+    /* ONE RUNG, NOT TWO. Two rungs took a nine-word headline from 94px to
+       200px: six lines wall-to-wall, which is not a headline a CMO sets, and
+       which the interest floor reads as a GRAPHIC rather than as text — a cell
+       inside a 150px stroke holds one colour, so `textBoxShare` fell to 0.2%
+       and the floor reported "the ground layers rendered and the copy did not"
+       about a plate that had rendered perfectly. Filling a plate is the bounded
+       object's job; the type's job is to be read. */
     if (primary.length) {
       var grown = 0;
-      while (grown > -2 && !overflows()) {
+      while (grown > -1 && !overflows()) {
         grown -= 1;
         set(primary, grown);
         closeInk();

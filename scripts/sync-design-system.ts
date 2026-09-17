@@ -17,9 +17,14 @@
  *   --check   verify only, exit 1 on drift (what CI and the test use)
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const DIR = join(process.cwd(), "agents/instagram-agent/assets/templates/default");
+/* Resolved from THIS FILE, never from the caller's working directory. CI runs
+   vitest per workspace, so `process.cwd()` there is `agents/instagram-agent`
+   and the plate path came out doubled — the suite failed to load at all with
+   `ENOENT .../agents/instagram-agent/agents/instagram-agent/assets/...`. */
+const DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "agents/instagram-agent/assets/templates/default");
 
 export const PLATES = [
   "closer.html",
