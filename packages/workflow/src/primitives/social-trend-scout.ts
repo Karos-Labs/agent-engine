@@ -491,7 +491,7 @@ export async function runTrendScout(
 
 /** The scout's model policy, resolved through the same env override every hand-written agent uses. */
 function resolveScoutPolicy() {
-  return resolveModelPolicy(TREND_SCOUT_STEP_ID, { policy: "pinned", model: "gemini-2.5-flash", vendor: "gemini" });
+  return resolveModelPolicy(TREND_SCOUT_STEP_ID, { policy: "pinned", model: "gemini-3.8-flash", vendor: "gemini" });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

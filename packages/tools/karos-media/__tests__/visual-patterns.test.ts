@@ -342,7 +342,7 @@ describe("media.ingestVisualPatterns — ingestion for a consenting client", () 
    * SCRUM-391: this call used to report a synthetic `{unit: "vision-analysis",
    * quantity: 1}` unit priced at $0 (no UNIT_PRICING row existed for that
    * made-up SKU). It now reports the REAL token counts Gemini's response
-   * carries, billed at gemini-2.5-flash's real per-token rate — so the run's
+   * carries, billed at the vision model's real per-token rate — so the run's
    * cost reflects what the call actually consumed, not zero, and not a
    * flat guessed per-call rate either.
    */
@@ -360,14 +360,15 @@ describe("media.ingestVisualPatterns — ingestion for a consenting client", () 
     expect(outcome.status).toBe("success");
     const usage = (outcome as { usage?: readonly { model: string; unit: string; quantity: number }[] }).usage;
     expect(usage).toEqual([
-      { model: "gemini-2.5-flash-vision-analysis-input-token", unit: "input-token", quantity: 1800 },
-      { model: "gemini-2.5-flash-vision-analysis-output-token", unit: "output-token", quantity: 420 },
+      { model: "gemini-3.8-flash-vision-analysis-input-token", unit: "input-token", quantity: 1800 },
+      { model: "gemini-3.8-flash-vision-analysis-output-token", unit: "output-token", quantity: 420 },
     ]);
 
     const cost = computeToolCostUsd(usage!);
     expect(cost).toBeGreaterThan(0);
-    // 1800 * 0.3/1e6 + 420 * 2.5/1e6 = 0.00054 + 0.00105 = 0.00159
-    expect(cost).toBeCloseTo(0.00159, 6);
+    // gemini-3.8-flash rates since the 3.x migration ($0.75/$3.75 per 1M):
+    // 1800 * 0.75/1e6 + 420 * 3.75/1e6 = 0.00135 + 0.001575 = 0.002925
+    expect(cost).toBeCloseTo(0.002925, 6);
   });
 
   it("reports zero-quantity usage (not a fabricated flat unit) when the vision response carries no usageMetadata", async () => {
@@ -384,8 +385,8 @@ describe("media.ingestVisualPatterns — ingestion for a consenting client", () 
     expect(outcome.status).toBe("success");
     const usage = (outcome as { usage?: readonly { model: string; unit: string; quantity: number }[] }).usage;
     expect(usage).toEqual([
-      { model: "gemini-2.5-flash-vision-analysis-input-token", unit: "input-token", quantity: 0 },
-      { model: "gemini-2.5-flash-vision-analysis-output-token", unit: "output-token", quantity: 0 },
+      { model: "gemini-3.8-flash-vision-analysis-input-token", unit: "input-token", quantity: 0 },
+      { model: "gemini-3.8-flash-vision-analysis-output-token", unit: "output-token", quantity: 0 },
     ]);
     expect(computeToolCostUsd(usage!)).toBe(0);
   });

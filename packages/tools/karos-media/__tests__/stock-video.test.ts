@@ -99,8 +99,8 @@ describe("video.findStockClip relevance (2026-09-09)", () => {
       expect(vision.imagesShown).toEqual([3]);
       expect(vision.prompts[0]).toContain('What is said over this shot: "We give our winner one million dollars."');
       expect(outcome.usage).toEqual([
-        { model: "gemini-2.5-flash-vision-analysis-input-token", unit: "input-token", quantity: 2100 },
-        { model: "gemini-2.5-flash-vision-analysis-output-token", unit: "output-token", quantity: 90 },
+        { model: "gemini-3.8-flash-vision-analysis-input-token", unit: "input-token", quantity: 2100 },
+        { model: "gemini-3.8-flash-vision-analysis-output-token", unit: "output-token", quantity: 90 },
       ]);
       expect(f.downloads).toEqual(["https://videos.pexels.com/12-1920.mp4"]);
     } finally {

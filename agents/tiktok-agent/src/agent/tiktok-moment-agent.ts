@@ -16,7 +16,7 @@ import { MomentSelectionSchema, type MomentSelection } from "../workflow/types.j
  * step input; a selector that could go and fetch more material is a selector
  * that can wander out of the episode it was asked about.
  *
- * The model is Gemini 2.5 Pro on Vertex, and that is a fit, not a cost cut: a
+ * The model is Gemini 3.1 Pro on Vertex, and that is a fit, not a cost cut: a
  * two-hour podcast transcript with per-sentence timestamps runs well past
  * 200k tokens, and this step has to hold the WHOLE episode in view to say
  * "this moment and not that one" — a 1M-token window is the difference
@@ -31,7 +31,7 @@ export class TikTokMomentAgent extends BaseAgent<MomentSelection> {
       "Pick the single most clip-worthy moment from this transcript. The first line must work cold on a stranger who has no context — never open on setup. Snap start and end to sentence boundaries, keep the clip between 20 and 120 seconds, use only timestamps that appear in the transcript you were given, and label what the moment is about in a few words.",
     allowedTools: [],
     outputSchema: MomentSelectionSchema,
-    modelPolicy: resolveModelPolicy("tiktok-moment", { policy: "pinned", model: "gemini-2.5-pro", vendor: "gemini" }),
+    modelPolicy: resolveModelPolicy("tiktok-moment", { policy: "pinned", model: "gemini-3.1-pro-preview", vendor: "gemini" }),
     // Pinned to "2": v2 adds `topicLabel` (the run's topic when the footage
     // arrived with none), the "the topic is a hint, the footage is the truth"
     // rule for attached recordings, and the long-episode guidance. v1 stays

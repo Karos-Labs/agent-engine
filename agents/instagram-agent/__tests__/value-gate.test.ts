@@ -978,7 +978,7 @@ describe("runValueJudge — one Flash call (§5.1)", () => {
     const router = fakeRouterSequence([finalTurn(keepableRaw())]);
     await runValueJudge(fakeWorkflowContext(), { tools: {}, router, promptStore: makePromptStore() }, "07j", judgeInput());
     const policy = routerCall(router)[2] as ModelPolicy & { contentLanguageSensitive?: boolean };
-    expect(policy).toEqual({ policy: "pinned", model: "gemini-2.5-flash", vendor: "gemini" });
+    expect(policy).toEqual({ policy: "pinned", model: "gemini-3.8-flash", vendor: "gemini" });
     expect(policy.contentLanguageSensitive).toBeUndefined();
 
     const row = MODEL_CAPABILITIES[policy.model!]!;

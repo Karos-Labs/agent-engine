@@ -151,7 +151,7 @@ describe("per-client model policy (AU34 / SCRUM-312)", () => {
     // The Hebrew client's copy step went out on a model AU33's catalog rates
     // `multilingual-strong` + `rtlSupport: "strong"`; the English client's
     // stayed on the compiled default.
-    expect(policies[0]?.model).toBe("gemini-2.5-pro");
+    expect(policies[0]?.model).toBe("gemini-3.1-pro-preview");
     expect(policies[1]?.model).toBe("gemini-2.5-flash");
     expect(policies[0]?.model).not.toBe(policies[1]?.model);
     // Same compiled config object served both — the difference came from the
@@ -166,7 +166,7 @@ describe("per-client model policy (AU34 / SCRUM-312)", () => {
     // The same tenant-scoped access path `client.getBrand`/`client.getConfig`
     // use — `readJson(clientSlug, segments)`, never a process-global read.
     expect(store.reads).toEqual([{ clientSlug: "geektime", segments: ["client", "brand"] }]);
-    expect(applyClientLanguagePolicy("instagram-copy", GEMINI_COPY_POLICY, language).model).toBe("gemini-2.5-pro");
+    expect(applyClientLanguagePolicy("instagram-copy", GEMINI_COPY_POLICY, language).model).toBe("gemini-3.1-pro-preview");
   });
 
   it("falls back to the same `language` field on client/config when a tenant has no brand kit yet", async () => {
@@ -193,7 +193,7 @@ describe("per-client model policy (AU34 / SCRUM-312)", () => {
     const geminiCopy: ModelPolicy = { policy: "pinned", model: "gemini-2.5-flash", vendor: "gemini", contentLanguageSensitive: true };
     const resolved = applyClientLanguagePolicy("instagram-copy", geminiCopy, "Hebrew");
     expect(resolved.vendor).toBe("gemini");
-    expect(resolved.model).toBe("gemini-2.5-pro");
+    expect(resolved.model).toBe("gemini-3.1-pro-preview");
   });
 
   it("keeps a model that is already capable of the client's language rather than upgrading for its own sake", () => {
@@ -222,8 +222,8 @@ describe("per-client model policy (AU34 / SCRUM-312)", () => {
     // `ContentLanguageRequirement`, and on a vendor with a non-premium capable row both re-point.
     expect(requirementForContentLanguage("עברית")).toEqual({ multilingualStrong: true, rtlStrong: true, maxCostTier: "standard" });
     expect(requirementForContentLanguage("Japanese")).toEqual({ multilingualStrong: true, rtlStrong: false, maxCostTier: "standard" });
-    expect(applyClientLanguagePolicy("instagram-copy", GEMINI_COPY_POLICY, "עברית").model).toBe("gemini-2.5-pro");
-    expect(applyClientLanguagePolicy("instagram-copy", GEMINI_COPY_POLICY, "Japanese").model).toBe("gemini-2.5-pro");
+    expect(applyClientLanguagePolicy("instagram-copy", GEMINI_COPY_POLICY, "עברית").model).toBe("gemini-3.1-pro-preview");
+    expect(applyClientLanguagePolicy("instagram-copy", GEMINI_COPY_POLICY, "Japanese").model).toBe("gemini-3.1-pro-preview");
   });
 });
 
@@ -271,10 +271,10 @@ describe("the content-language re-point is capped below premium (RFC-15 §8)", (
     }
   });
 
-  it("a Gemini-vendor contentLanguageSensitive step still selects gemini-2.5-pro — the cap is a ceiling, not an off switch", () => {
-    expect(MODEL_CAPABILITIES["gemini-2.5-pro"]?.costTier).toBe("standard");
-    expect(applyClientLanguagePolicy("instagram-copy", GEMINI_COPY_POLICY, "Hebrew").model).toBe("gemini-2.5-pro");
-    expect(applyClientLanguagePolicy("instagram-copy", GEMINI_COPY_POLICY, "he-IL").model).toBe("gemini-2.5-pro");
+  it("a Gemini-vendor contentLanguageSensitive step still selects the 3.x Pro model — the cap is a ceiling, not an off switch", () => {
+    expect(MODEL_CAPABILITIES["gemini-3.1-pro-preview"]?.costTier).toBe("standard");
+    expect(applyClientLanguagePolicy("instagram-copy", GEMINI_COPY_POLICY, "Hebrew").model).toBe("gemini-3.1-pro-preview");
+    expect(applyClientLanguagePolicy("instagram-copy", GEMINI_COPY_POLICY, "he-IL").model).toBe("gemini-3.1-pro-preview");
   });
 
   it("ANTI-TAUTOLOGY: lift the cap to premium and the very same call DOES select claude-opus-4-8", () => {

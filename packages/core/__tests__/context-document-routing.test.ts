@@ -108,7 +108,7 @@ describe("routeContextDocumentModel — the model decision", () => {
       allowVendorEscalation: true,
     });
     expect(route.escalated).toBe(true);
-    expect(route.policy.model).toBe("gemini-2.5-pro");
+    expect(route.policy.model).toBe("gemini-3.1-pro-preview");
     // The vendor moves WITH the model here — unlike a Studio `stageModels`
     // pick — because the catalog itself says which vendor serves this id.
     expect(resolveModelVendor(route.policy)).toBe("gemini");
@@ -141,7 +141,7 @@ describe("routeContextDocumentModel — the model decision", () => {
       allowVendorEscalation: true,
     });
     expect(withoutOutput.policy.model).toBe("claude-opus-4-8");
-    expect(withOutput.policy.model).toBe("gemini-2.5-pro");
+    expect(withOutput.policy.model).toBe("gemini-3.1-pro-preview");
   });
 
   it("never drops a fallbackModel across a vendor change", () => {

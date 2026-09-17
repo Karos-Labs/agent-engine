@@ -52,7 +52,7 @@ export class InstagramTemplateSetReviewAgent extends BaseAgent<StudioSetReviewOu
     outputSchema: StudioSetReviewOutputSchema,
     maxSteps: 1,
     maxTokens: 2_000,
-    modelPolicy: resolveModelPolicy("instagram-template-set-review", { policy: "pinned", model: "gemini-2.5-flash", vendor: "gemini" }),
+    modelPolicy: resolveModelPolicy("instagram-template-set-review", { policy: "pinned", model: "gemini-3.8-flash", vendor: "gemini" }),
     skillRef: "instagram-template-set-review@1",
   };
 }

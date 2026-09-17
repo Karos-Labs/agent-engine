@@ -354,11 +354,17 @@ function createImageGenerationClientFromEnv(env: Record<string, string | undefin
     // deployment with one credential gets pictures.
     return direct as unknown as ImageGenerationClient | undefined;
   }
-  // Deliberately NOT `CLOUD_ML_REGION`, which is "global" here: an image model
-  // needs a concrete region. `us-central1` and `global` were both verified to
-  // serve `gemini-2.5-flash-image` for this project; the explicit region is the
-  // safer default of the two.
-  const location = env["IMAGE_GEN_LOCATION"]?.trim() || env["VERTEX_AI_LOCATION"]?.trim() || "us-central1";
+  // `global`, and NOT `VERTEX_AI_LOCATION`, since the 3.x migration
+  // (2026-09-17). That var holds `us-central1` in both deployments — a
+  // concrete region, which is what Veo needs and what this line used to
+  // inherit on the reasoning that an image model wants one too. It does not
+  // survive the model change: probed as the worker's own service account,
+  // `gemini-3.1-flash-image`, `gemini-3-pro-image` and every 3.x TEXT id
+  // answer on `global` and 404 at `us-central1`. Only the outgoing 2.5 ids
+  // served both, so inheriting that var now picks the one endpoint the new
+  // models are absent from. `IMAGE_GEN_LOCATION` still overrides, which is how
+  // a deployment pins a region if Google ever regionalises these ids.
+  const location = env["IMAGE_GEN_LOCATION"]?.trim() || "global";
   const vertex = new GoogleGenAI({ vertexai: true, project, location }) as unknown as GenerateContentClient;
   return withGenAiFailover(vertex, direct, { from: "vertex", to: "gemini-direct" }) as unknown as ImageGenerationClient;
 }

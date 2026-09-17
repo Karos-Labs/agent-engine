@@ -24,7 +24,9 @@ import { DEFAULT_VISION_MODEL, type VisionAnalysisClient, type VisionPart } from
 // `scripts/check-tool-versions.ts` reads the FILE and cannot tell a comment
 // from a call, and a gate that could be argued out of on "it was only a
 // comment" would be no gate.
-const TOOL_VERSION = "1.1.1";
+// 1.2.0: vision analysis moved from gemini-2.5-flash to gemini-3.8-flash, and
+// the billed SKU ids moved with it.
+const TOOL_VERSION = "1.2.0";
 
 /** Ceiling on one inspected image. Same bound the visual-pattern ingestion uses; well under the model's inline-data limit. */
 const MAX_IMAGE_BYTES = 4_000_000;
@@ -384,8 +386,8 @@ export function createInspectImages(options: { client?: VisionAnalysisClient | u
       // The same two per-token SKUs `media.ingestVisualPatterns` bills against
       // — real captured counts, never an estimate.
       return success<InspectImagesResult>({ inspections, unreadable, model }, [
-        { model: "gemini-2.5-flash-vision-analysis-input-token", unit: "input-token", quantity: promptTokens },
-        { model: "gemini-2.5-flash-vision-analysis-output-token", unit: "output-token", quantity: outputTokens },
+        { model: "gemini-3.8-flash-vision-analysis-input-token", unit: "input-token", quantity: promptTokens },
+        { model: "gemini-3.8-flash-vision-analysis-output-token", unit: "output-token", quantity: outputTokens },
       ]);
     },
   });

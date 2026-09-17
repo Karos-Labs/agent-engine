@@ -40,6 +40,6 @@ describe("InstagramResearchAgent — the output ceiling", () => {
   it("still routes to Gemini Flash, which is the adapter that reads that ceiling", () => {
     // If this step ever moved vendors the number above would be measured
     // against a different model's thinking behaviour and would need re-taking.
-    expect(JSON.stringify(config.modelPolicy)).toContain("gemini-2.5-flash");
+    expect(JSON.stringify(config.modelPolicy)).toContain("gemini-3.8-flash");
   });
 });

@@ -595,10 +595,10 @@ describe("the judge's own configuration", () => {
     expect(editorConfig().id).not.toBe("instagram-language-fluency");
   });
 
-  it("runs on gemini-2.5-pro and on no Opus, at any tier", () => {
+  it("runs on gemini-3.1-pro-preview and on no Opus, at any tier", () => {
     const config = editorConfig();
     expect(config.modelPolicy.vendor).toBe("gemini");
-    expect(config.modelPolicy.model).toBe("gemini-2.5-pro");
+    expect(config.modelPolicy.model).toBe("gemini-3.1-pro-preview");
     expect(JSON.stringify(config.modelPolicy)).not.toContain("opus");
   });
 
