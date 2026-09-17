@@ -145,7 +145,7 @@ describe("the gate's sources are the same evidence the drafting prompt reads", (
     const { report } = (stored as { result: { report: Record<string, string> } }).result;
     // Intact, i.e. NOT redacted: the context document counted as a source.
     expect(report["positioningAnalysis"]).toBe(QUOTING_THE_CONTEXT_DOC);
-    expect((result.status === "completed" ? result.output : null) as Record<string, unknown>).not.toHaveProperty("numericGrounding");
+    expect(result.status === "completed" ? result.output : null).not.toHaveProperty("numericGrounding");
   });
 
   it("still redacts the same figure when no document states it", async () => {
