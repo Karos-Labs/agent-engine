@@ -10,7 +10,7 @@ import { fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, t
 
 const params = { runId: "linkedin_run_1", clientSlug: "acme", productId: "linkedin-agent", runKind: "recurring" as const };
 
-const ALL_19_STEP_IDS = [
+const ALL_20_STEP_IDS = [
   "00-channel-setup",
   "00-intake-check",
   "01-load-client-context",
@@ -46,6 +46,9 @@ const ALL_19_STEP_IDS = [
   "12-render-preview-check",
   // D22 (2026-09): a bare link in the body holds the run. LinkedIn's craft
   // page files this under HARD with no exception, unlike x-agent's equivalent.
+  // Same rule as x-agent's 12b: a post approved on Monday cannot say
+  // "yesterday" about a Friday (linkedin-craft@8 §12a).
+  "12a-verify-dated-language",
   "12b-verify-link-placement",
   "13-verify-no-placeholder",
   "14-verify-no-leak",
@@ -95,7 +98,7 @@ describe("end-to-end: the 20-step LinkedIn agent workflow", () => {
     await env.cleanup();
   });
 
-  it("executes all 20 steps and resolves to completed / domainOutcome: delivered (auto-approved gate)", async () => {
+  it("executes all 21 steps and resolves to completed / domainOutcome: delivered (auto-approved gate)", async () => {
     const promptStore = makePromptStore();
     const router = goodDraftRouter();
     const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
@@ -112,7 +115,7 @@ describe("end-to-end: the 20-step LinkedIn agent workflow", () => {
 
     const stepRecords = await durableStore.listSteps(params.runId);
     const executedIds = stepRecords.map((s) => s.stepId).sort();
-    expect(executedIds).toEqual([...ALL_19_STEP_IDS].sort());
+    expect(executedIds).toEqual([...ALL_20_STEP_IDS].sort());
     expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
 
     // The deliverable really landed on the real file-backed WorkspaceStore, tenant-scoped.
@@ -123,7 +126,7 @@ describe("end-to-end: the 20-step LinkedIn agent workflow", () => {
     const catalog = await env.store.readJson<Array<{ status: string }>>("acme", ["topics", "catalog"]);
     expect(catalog?.some((t) => t.status === "committed")).toBe(true);
 
-    const descriptors: DynamicAgentStepDescriptor[] = ALL_19_STEP_IDS.map((stepId) => ({
+    const descriptors: DynamicAgentStepDescriptor[] = ALL_20_STEP_IDS.map((stepId) => ({
       stepId,
       label: stepId,
       type: stepId === "09-draft-post" ? "ai" : "code",
@@ -182,7 +185,7 @@ describe("end-to-end: the 20-step LinkedIn agent workflow", () => {
     // that absence is exactly what made a real run's step sequence read
     // straight past its human review step in the portal.
     const stepRecords = await durableStore.listSteps(params.runId);
-    expect(stepRecords.map((s) => s.stepId).sort()).toEqual([...ALL_19_STEP_IDS].sort());
+    expect(stepRecords.map((s) => s.stepId).sort()).toEqual([...ALL_20_STEP_IDS].sort());
     expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
     // And the checkpoint carries the DECISION, which is the only place the
     // run records that a human approved this and who they were.

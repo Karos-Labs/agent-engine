@@ -60,6 +60,8 @@ import {
   type SocialMediaPlan,
   type TrendResearch,
   type TrendScoutOutput,
+  relativeDayHeldReason,
+  relativeDayIssues,
 } from "@agent-engine/workflow";
 import { MAX_THREAD_PARTS, XDraftAgent, type Lane, type XPostOutput } from "../agent/x-draft-agent.js";
 import { renderPreview, X_CHARACTER_LIMIT, type RenderPreviewResult } from "../tools/render-preview.js";
@@ -805,6 +807,17 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       // when `firstReplyUrl` is unset (x-craft.md's own launch-post exception,
       // "the link IS the news", is a judgment call left to the drafting model).
       // A thread part carrying a link is the same mistake in a different slot.
+      // A draft is written now and published later — often days later, by a
+      // person working through a review queue. `wholePost` rather than
+      // `mainPostText`: thread part 4 goes out at the same moment as part 1
+      // and decays with it. Inside the revision loop, so the model gets one
+      // named redraft rather than the reviewer getting a dead run.
+      await wf.step.code(rev("12b-verify-dated-language"), () => {
+        const issues = relativeDayIssues(wholePost);
+        if (issues.length > 0) throw new WorkflowHeld(relativeDayHeldReason(issues, "x-craft §12b"));
+        return { checked: true };
+      });
+
       await wf.step.code(rev("13-verify-link-placement"), () => {
         if (draft.firstReplyUrl && [draft.mainPostText, ...draft.thread].some((part) => BARE_URL_PATTERN.test(part))) {
           throw new WorkflowHeld(

@@ -59,6 +59,8 @@ import {
   type SocialMediaPlan,
   type TrendResearch,
   type TrendScoutOutput,
+  relativeDayHeldReason,
+  relativeDayIssues,
 } from "@agent-engine/workflow";
 import { LinkedInDraftAgent, type LinkedInPostOutput } from "../agent/linkedin-draft-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
@@ -916,6 +918,16 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       //
       // Checked whether or not `firstCommentUrl` is set: a bare URL in the body
       // is wrong even when the model forgot to name where the link belongs.
+      // Same rule, same reason as x-agent's 12b: a post drafted on Friday and
+      // approved on Monday cannot say "yesterday". This is the check the
+      // 17.9.2026 draft needed — it led with a Series D that closed
+      // "yesterday" two days before the run.
+      await wf.step.code(rev("12a-verify-dated-language"), () => {
+        const issues = relativeDayIssues(draft.text);
+        if (issues.length > 0) throw new WorkflowHeld(relativeDayHeldReason(issues, "linkedin-craft §12"));
+        return { checked: true };
+      });
+
       await wf.step.code(rev("12b-verify-link-placement"), () => {
         const inBody = BARE_URL_PATTERN.exec(draft.text);
         if (inBody) {

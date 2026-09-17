@@ -10,7 +10,7 @@ import { fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, t
 
 const params = { runId: "x_run_1", clientSlug: "acme", productId: "x-agent", runKind: "recurring" as const };
 
-const ALL_21_STEP_IDS = [
+const ALL_22_STEP_IDS = [
   "00-intake-check",
   "01-load-client-context",
   // C7 (SCRUM-459): the learning loop's read side — seven optional projected
@@ -44,6 +44,9 @@ const ALL_21_STEP_IDS = [
   "10a-verify-not-duplicate",
   "11-verify-numbers-sourced",
   "12-verify-brand-compliance",
+  // A draft is written now and published later, so a sentence anchored to
+  // "yesterday" is wrong by the time a reader sees it (x-craft@8 §12b).
+  "12b-verify-dated-language",
   "13-verify-link-placement",
   "14-render-preview-check",
   // AU13: inside the revision loop, before the gate — a leak or placeholder
@@ -88,7 +91,7 @@ describe("end-to-end: the 21-step X agent workflow", () => {
     await env.cleanup();
   });
 
-  it("executes all 21 steps and resolves to completed / domainOutcome: delivered (auto-approved gate)", async () => {
+  it("executes all 22 steps and resolves to completed / domainOutcome: delivered (auto-approved gate)", async () => {
     const promptStore = makePromptStore();
     const router = goodDraftRouter();
     const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
@@ -106,7 +109,7 @@ describe("end-to-end: the 21-step X agent workflow", () => {
 
     const stepRecords = await durableStore.listSteps(params.runId);
     const executedIds = stepRecords.map((s) => s.stepId).sort();
-    expect(executedIds).toEqual([...ALL_21_STEP_IDS].sort());
+    expect(executedIds).toEqual([...ALL_22_STEP_IDS].sort());
     expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
 
     // The deliverable really landed on the real file-backed WorkspaceStore, tenant-scoped.
@@ -117,7 +120,7 @@ describe("end-to-end: the 21-step X agent workflow", () => {
     const catalog = await env.store.readJson<Array<{ status: string }>>("acme", ["topics", "catalog"]);
     expect(catalog?.some((t) => t.status === "committed")).toBe(true);
 
-    const descriptors: DynamicAgentStepDescriptor[] = ALL_21_STEP_IDS.map((stepId) => ({
+    const descriptors: DynamicAgentStepDescriptor[] = ALL_22_STEP_IDS.map((stepId) => ({
       stepId,
       label: stepId,
       type: stepId === "10-draft-post" ? "ai" : "code",
@@ -178,7 +181,7 @@ describe("end-to-end: the 21-step X agent workflow", () => {
     // that absence is exactly what made a real run's step sequence read
     // straight past its human review step in the portal.
     const stepRecords = await durableStore.listSteps(params.runId);
-    expect(stepRecords.map((s) => s.stepId).sort()).toEqual([...ALL_21_STEP_IDS].sort());
+    expect(stepRecords.map((s) => s.stepId).sort()).toEqual([...ALL_22_STEP_IDS].sort());
     expect(stepRecords.every((s) => s.status === "completed")).toBe(true);
     // And the checkpoint carries the DECISION, which is the only place the
     // run records that a human approved this and who they were.

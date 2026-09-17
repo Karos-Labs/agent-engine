@@ -85,6 +85,91 @@ describe("content gate failures (RFC-02 §3 steps 11-14d)", () => {
     expect(ids).not.toContain("13-verify-link-placement");
   });
 
+  /**
+   * The real draft this came from: Karos Labs' LinkedIn post on 17.9.2026
+   * opened with a Series D that closed "yesterday" — two days before the run.
+   * Every check that existed passed it, because they ask whether a claim is
+   * SOURCED, and it was; none asked whether it would still read true after a
+   * weekend in the review queue.
+   */
+  it("a draft anchored to 'yesterday' fails the dated-language check at step 12b -> held", async () => {
+    const promptStore = makePromptStore();
+    const router = fakeRouterSequence([
+      finalTurn(
+        goodPost({
+          text: "Profound closed its Series D yesterday.",
+          mainPostText: "Profound closed its Series D yesterday.",
+          // No dollar figure: `11-verify-numbers-sourced` runs first and would
+          // hold on an unsourced number before this check is reached. The rule
+          // under test is the date, so the fixture carries only the date.
+          hook: "Profound closed its Series D.",
+        }),
+      ),
+    ]);
+    const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore, router });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const result = await engine.run(workflowFn, { ...baseParams, runId: "x_run_gate_dated" });
+
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    // The held reason names the phrase AND the fix, so the revision has
+    // somewhere to go — told only "fix the date" it picks another wrong one.
+    expect(result.reason).toMatch(/"yesterday"/);
+    expect(result.reason).toMatch(/name the date instead/);
+
+    const ids = (await durableStore.listSteps("x_run_gate_dated")).map((s) => s.stepId);
+    expect(ids).toContain("12b-verify-dated-language");
+    expect(ids).not.toContain("13-verify-link-placement");
+  });
+
+  it("a thread whose LAST part carries the relative day is held too, because every part publishes at once", async () => {
+    const promptStore = makePromptStore();
+    const router = fakeRouterSequence([
+      finalTurn(
+        goodPost({
+          text: "SEO ranks your page. GEO shapes what AI says about you.",
+          mainPostText: "SEO ranks your page. GEO shapes what AI says about you.",
+          hook: "SEO ranks your page.",
+          thread: ["They are different jobs.", "The round closed yesterday."],
+        }),
+      ),
+    ]);
+    const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore, router });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const result = await engine.run(workflowFn, { ...baseParams, runId: "x_run_gate_dated_thread" });
+
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toMatch(/"yesterday"/);
+  });
+
+  it("a post that names the date clears the dated-language check", async () => {
+    const promptStore = makePromptStore();
+    const router = fakeRouterSequence([
+      finalTurn(
+        goodPost({
+          text: "Profound closed its Series D on September 15.",
+          mainPostText: "Profound closed its Series D on September 15.",
+          hook: "Profound closed its Series D.",
+        }),
+      ),
+    ]);
+    const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore, router });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const result = await engine.run(workflowFn, { ...baseParams, runId: "x_run_gate_dated_ok" });
+
+    const ids = (await durableStore.listSteps("x_run_gate_dated_ok")).map((s) => s.stepId);
+    expect(ids).toContain("12b-verify-dated-language");
+    expect(ids).toContain("13-verify-link-placement");
+    expect(result.status).not.toBe("held");
+  });
+
   it("a link in mainPostText alongside a set firstReplyUrl fails the link-placement check at step 13 -> held", async () => {
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([
