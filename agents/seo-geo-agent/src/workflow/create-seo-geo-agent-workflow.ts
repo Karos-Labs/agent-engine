@@ -902,17 +902,31 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
     // unavailable input 0 and excludes it from `dataCoveragePct`, so the
     // numbers themselves aren't fabricated — but nothing stopped the run
     // persisting and delivering a client-facing report whose every input was
-    // absent. Holding is the correct terminal state: it is recoverable, it
-    // spends no further model budget on fix-drafting and narrative, and it
-    // surfaces the disconnected fuel line instead of formatting it.
+    // absent, and a client reading a GEO score of 0 cannot tell "you scored
+    // badly" from "we did not measure you".
     //
-    // This is a stopgap for the missing capture layer, not a fix for it.
-    if (visibilityCapture.measuredCount === 0) {
-      throw new WorkflowHeld(
-        `AI-visibility capture measured nothing: ${visibilityCapture.capturedCount} of ${visibilityCapture.attemptedCount} cells captured, all "UNAVAILABLE". ` +
-          `Refusing to score or deliver a report with no measured data behind it.`,
-      );
-    }
+    // That second sentence is still the whole risk, and it is what this now
+    // guards against instead of holding. The TECHNICAL half of this report is
+    // separately measured by a real crawl, and refusing to deliver it because
+    // the AI-visibility half came back empty punishes the client for a
+    // disconnected fuel line on our side. So the run continues and the
+    // unmeasured half is made impossible to misread:
+    //
+    //   - `visibilityUnmeasured` rides on the report, so the portal and any
+    //     reader can see the state directly rather than inferring it from a
+    //     zero;
+    //   - `geoMeasuredBasisScore` is already `null` when nothing was measured
+    //     (`evaluate-scores.ts`), which is the honest field, and the narrative
+    //     is told in as many words not to characterise AI visibility at all;
+    //   - the repair ledger carries the same statement to the deliverable.
+    //
+    // No number is invented and no score is presented as measured. This is
+    // still a stopgap for the missing capture layer, not a fix for it.
+    const visibilityUnmeasured = visibilityCapture.measuredCount === 0;
+    const visibilityUnmeasuredNote = visibilityUnmeasured
+      ? `AI-visibility capture measured nothing: ${visibilityCapture.capturedCount} of ${visibilityCapture.attemptedCount} cells captured, all "UNAVAILABLE". ` +
+        "The GEO half of this report is NOT MEASURED — its score is not a low score, it is an absent one. The technical SEO half was measured normally."
+      : undefined;
 
     // ── 09: deterministic scoring (RFC-04 §2 Phase 4) — the N vs N_e dual-freeze (§4) ──
     const scoring = await wf.step.code("09-compute-scores", async (): Promise<SeoGeoScoringResult> => {
@@ -1115,6 +1129,18 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         // the site rather than only about the audit. Every number in these
         // lines is also in the gate's sources.
         measuredFacts: technicalPhase.measuredFacts.slice(0, 10),
+        // When nothing was captured, the summary must not characterise AI
+        // visibility at all — not even to call it weak. An absent measurement
+        // is not a finding, and letting the model narrate one would turn a
+        // disconnected capture layer into a claim about the client.
+        ...(visibilityUnmeasuredNote !== undefined
+          ? {
+              visibilityUnmeasured: true,
+              visibilityUnmeasuredNote,
+              craftDirective:
+                "AI visibility was NOT MEASURED for this run. Do not describe, score, rank or characterise the client's AI visibility in any way, including calling it low, weak or absent — say only that it was not measured this cycle, and write the rest of the summary about the technical findings, which were measured.",
+            }
+          : {}),
         ...(directive !== undefined ? { revisionRequest: directive } : {}),
       };
       const firstNarrative = await wf.step.agent(rev("14-draft-narrative"), narrativeAgent, narrativeInput);
@@ -1260,6 +1286,9 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
      * the bytes it always did.
      */
     const contentRepairs = narrativeRepairsByRevision.get(review.revision) ?? [];
+    if (visibilityUnmeasuredNote !== undefined) {
+      contentRepairs.push({ check: "ai-visibility-capture", action: "unresolved", detail: visibilityUnmeasuredNote });
+    }
     // A reviewer who ran out of rounds, or who rejected outright, is recorded
     // ON the deliverable rather than ending the run: the work survives for
     // them to act on, and the marker is what makes their decision unmissable.
@@ -1278,8 +1307,17 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       seoScore: scoring.seoScore,
       geoReadiness: scoring.geoReadiness,
       visibility: {
-        byN: scoring.visibilityByN,
-        byNe: scoring.visibilityByNe,
+        // NULLED when nothing was captured, and this is the line that makes
+        // delivering such a run defensible at all.
+        //
+        // The index is computed from the response set, so with every cell
+        // UNAVAILABLE it still resolves to a NUMBER — 7, on the fixture that
+        // caught this — and a client reading "AI visibility index: 7" has been
+        // handed a measurement nobody took. A banner elsewhere on the report
+        // does not undo that; the number itself has to be absent. This is the
+        // difference between delivering a partial report and fabricating one.
+        byN: visibilityUnmeasured ? null : scoring.visibilityByN,
+        byNe: visibilityUnmeasured ? null : scoring.visibilityByNe,
         // SCRUM-390: was a hardcoded "pending, blockingOn: Daniel" literal —
         // a client-visible artefact advertising an open decision over an
         // engine that had already resolved it. Reads the frozen record now.
@@ -1305,6 +1343,9 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       firedRecommendations: recommendations,
       fixDrafts,
       narrative: narrativeSummary,
+      // Structural, not prose: a reader (and the portal) can tell an absent
+      // GEO measurement from a bad one without parsing the summary.
+      ...(visibilityUnmeasured ? { visibilityUnmeasured: true } : {}),
       // Present only when the narrative had to be repaired to get here, so a
       // reader sees what was removed instead of a silently edited summary.
       ...(contentRepairs.length > 0 ? { contentRepairs } : {}),
