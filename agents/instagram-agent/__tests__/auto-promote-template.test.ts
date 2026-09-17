@@ -98,7 +98,10 @@ function copyWithCustomArchetype(seed: string, overrides: { bodyHtml?: string; s
     // shipped-output dedup window, and `07d` redrafts a second run that
     // re-ships recognisable copy. Only `sourceRef` is shared, which is what
     // `checkSlidesData` requires to match a fact's claim verbatim.
-    caption: `Where the ${seed} team put its attention this quarter, and which of those choices a reader can copy on Monday morning.`,
+    // Phase 5.6 item A10: the caption's first line is the hook and is held to
+    // 100 characters. This was one 118-character line, which sent the draft
+    // back and cost the run the custom archetype this suite is about.
+    caption: `Where the ${seed} team put its attention this quarter.\nAnd which of those choices a reader can copy on Monday morning.`,
     slides: good.slides.map((slide, i) => ({
       ...slide,
       headline: fixtureHeadline(i, `${seed} note`),

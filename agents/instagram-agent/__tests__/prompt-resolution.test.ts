@@ -501,8 +501,8 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // this asserts is that the rows exist at all, which is the step a prompt
     // bump most often forgets.
     const registry = readFileSync(path.join(PROMPTS_ROOT, "..", "..", "..", "scripts", "prompt-registry.ts"), "utf8");
-    expect(registry).toContain(`"14", "15", "16", "17", "18", "19", "20", "21", "22"`);
-    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,600}latestVersion: "22"/);
+    expect(registry).toContain(`"14", "15", "16", "17", "18", "19", "20", "21", "22", "23"`);
+    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,700}latestVersion: "23"/);
     // Phase 5 (RFC-18 §6.1). The packager's prompt is the one THIS phase added,
     // and the WIP commit this branch inherited had shipped both prompt files
     // with no registry row at all — which `check:prompts` fails on and which
@@ -534,13 +534,13 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect(registry).toContain(`{ promptId: "instagram-concept", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
   });
 
-  it("every agent reads the version this phase shipped: copy @21, post package @2, visual QA @5, image vet @6, entities @1, art director @2, concept @1", async () => {
+  it("every agent reads the version this phase shipped: copy @23, post package @2, visual QA @5, image vet @6, entities @1, art director @2, concept @1", async () => {
     // The last line of a prompt bump, and the one most often forgotten: a new
     // prompt file that no `skillRef` points at exists, resolves, and is read
     // by nothing.
     const promptStore = makePromptStore();
     const copy = new InstagramCopyAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@22");
+    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@23");
     const packager = new InstagramPostPackagerAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((packager as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-post-package@2");
     const qa = new InstagramVisualQaAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
@@ -555,14 +555,14 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect((concept as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-concept@1");
   });
 
-  it("instagram-copy@22, instagram-post-package@2, instagram-image-vet@6, instagram-entities@1, instagram-art-director@2 and instagram-concept@1 resolve, each byte-identical to its own latest.md", async () => {
+  it("instagram-copy@23, instagram-post-package@2, instagram-image-vet@6, instagram-entities@1, instagram-art-director@2 and instagram-concept@1 resolve, each byte-identical to its own latest.md", async () => {
     // Phase 3 (items Q and R). The byte comparison is the one `check:prompts`
     // makes too, and it is here as well because a drifted `latest.md` is the
     // failure mode where a run silently reads a DIFFERENT prompt from the one
     // its version pin names.
     const promptStore = makePromptStore();
     for (const [promptId, version, h1] of [
-      ["instagram-copy", "22", "# Instagram Copy Craft Guide, v22"],
+      ["instagram-copy", "23", "# Instagram Copy Craft Guide, v23"],
       ["instagram-post-package", "2", "# Instagram Post Package Guide, v2"],
       ["instagram-image-vet", "6", "# Instagram Image Vetting Craft Guide — v6"],
       ["instagram-entities", "1", "# Instagram Entity Extraction — v1"],
@@ -578,7 +578,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     }
   });
 
-  it("instagram-copy/latest.md is BYTE-identical to 22.md, and 19.md is still exactly 18.md plus §29", () => {
+  it("instagram-copy/latest.md is BYTE-identical to 23.md, and 19.md is still exactly 18.md plus §29", () => {
     // The design system (RFC-17 §5.7), step 2 of the five-step checklist.
     //
     // The title and the section numbers below were `17.md`/`§24` until the
@@ -611,15 +611,17 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     const v19 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "19.md"));
     const v20 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "20.md"));
     const v21 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "21.md"));
-    // Phase 5.5 (spec §2 A2/A3). @22 is the live file: §22 gains the scene
-    // brief's SUBJECT (`noun`, `entityRef`, `mustShow`), §6 gains the
-    // `namedEntities` input and §16 gains `sceneSteer`. @21 is published and is
-    // therefore frozen, and the two assertions below are what prove it — the
-    // rule that a published version never changes is the reason a revision
-    // lands as a new number rather than as an edit.
+    // Phase 5.6. @23 is the live file: §2 rewrites the hook's limit and the
+    // caption's register, §7 adds slide 2 as a second cover, §10 adds the
+    // three tells a phrase list cannot catch, and §29 and §30 are new. @22 is
+    // published and is therefore frozen, and the assertions below are what
+    // prove it: the rule that a published version never changes is the reason
+    // a revision lands as a new number rather than as an edit.
     const v22 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "22.md"));
+    const v23 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "23.md"));
     const latest = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "latest.md"));
-    expect(latest.equals(v22), "latest.md must be byte-identical to 22.md, not merely equivalent").toBe(true);
+    expect(latest.equals(v23), "latest.md must be byte-identical to 23.md, not merely equivalent").toBe(true);
+    expect(v22.equals(v23), "@22 and @23 are the same file, so the bump changed nothing").toBe(false);
     expect(v21.equals(v22), "@21 and @22 are the same file, so the bump changed nothing").toBe(false);
     expect(v20.equals(v21), "@20 and @21 are the same file, so the bump changed nothing").toBe(false);
     expect(v19.equals(v20), "@19 and @20 are the same file, so that bump changed nothing").toBe(false);

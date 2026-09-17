@@ -29,6 +29,7 @@ import { SKELETON_BELIEF_KEY, readSkeletonHistory, skeletonSignature } from "../
 import { CUSTOM_ARCHETYPE_BELIEF_KEY } from "../src/workflow/custom-archetype-memory.js";
 import { RUN_BUDGET_BELIEF_KEY, readBudgetHistory } from "../src/workflow/run-budget.js";
 import { CROSS_CLIENT_FORMAT_BELIEF_KEY } from "../src/workflow/visual-system.js";
+import { PERFORMANCE_BELIEF_KEY } from "../src/workflow/post-performance.js";
 import { NATIVE_EDITOR_RUBRIC_VERSION, okAxes } from "../src/workflow/language-gate.js";
 
 const params = { runId: "instagram_run_1", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
@@ -77,6 +78,13 @@ const HAPPY_PATH_STEP_IDS = [
   "02i2-load-target-audience",
   "02i3-load-market-strategy",
   "02i-resolve-client-brief",
+  // Phase 5.6 (item C5): this client's tracked competitors, one free
+  // deterministic read. `client.listCompetitors` reports `not_available` for a
+  // client who never onboarded the list, and that is read as "nothing to look
+  // for" rather than as a failure, so the step ALWAYS registers — the same
+  // posture `01b-read-learning-context` takes at the bottom of this list, and
+  // for the same reason: "there is nothing" is an answer worth checkpointing.
+  "02a2-competitor-names",
   // Phase 0 cost controls (owner's rule, 2026-09-09): the run's budget plan,
   // estimated and adapted BEFORE the first paid call — never a hold.
   "02j-plan-run-budget",
@@ -599,7 +607,7 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     expect(deliverables).toHaveLength(0);
   }, 60000);
 
-  it("09b writes all THREE belief keys in ONE memory.updateBeliefs diff, and the gate payload carries the skeleton", async () => {
+  it("09b writes every belief key in ONE memory.updateBeliefs diff, and the gate payload carries the skeleton", async () => {
     // Green once the integrator lands WP-C5 notes (g) and (h): one
     // `memory.updateBeliefs({ diff })` carrying RUN_BUDGET_BELIEF_KEY,
     // SKELETON_BELIEF_KEY and CUSTOM_ARCHETYPE_BELIEF_KEY together, plus
@@ -656,13 +664,17 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
 
     const beliefUpdates = updates.filter((diff) => RUN_BUDGET_BELIEF_KEY in diff || SKELETON_BELIEF_KEY in diff || CUSTOM_ARCHETYPE_BELIEF_KEY in diff);
     expect(beliefUpdates).toHaveLength(1);
-    // Phase 5.5 (spec §5 D) adds a FOURTH sibling key in the same one diff:
+    // Phase 5.5 (spec §5 D) added a FOURTH sibling key in the same one diff:
     // the fleet-variety row (`CROSS_CLIENT_FORMAT_BELIEF_KEY`), written only on
-    // a post that actually shipped, exactly as the skeleton entry is. One call
-    // is still the whole point — `updateBeliefs` shallow-merges, so a second
-    // call would read-modify-write the same document and lose a key.
+    // a post that actually shipped, exactly as the skeleton entry is. Phase 5.6
+    // (item C2) adds a FIFTH, `PERFORMANCE_BELIEF_KEY`: what this post WAS, so
+    // that Phase 6 has somewhere to attach what it DID. One call is still the
+    // whole point — `updateBeliefs` shallow-merges, so a second call would
+    // read-modify-write the same document and lose a key. This assertion is an
+    // exact set rather than a subset for that reason: a sixth key added by a
+    // SECOND call would pass a `toContain` and be a silent data loss.
     expect(Object.keys(beliefUpdates[0]!).sort()).toEqual(
-      [CROSS_CLIENT_FORMAT_BELIEF_KEY, CUSTOM_ARCHETYPE_BELIEF_KEY, RUN_BUDGET_BELIEF_KEY, SKELETON_BELIEF_KEY].sort(),
+      [CROSS_CLIENT_FORMAT_BELIEF_KEY, CUSTOM_ARCHETYPE_BELIEF_KEY, PERFORMANCE_BELIEF_KEY, RUN_BUDGET_BELIEF_KEY, SKELETON_BELIEF_KEY].sort(),
     );
 
     const beliefs = await env.store.readJson<Record<string, unknown>>("acme", ["memory", "beliefs"]);

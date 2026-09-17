@@ -1,5 +1,29 @@
 # Instagram Copy Craft Guide, v23
 
+**What changed at v23.** Everything v22 says still stands. Six changes, all
+answering the same thing: the owner's own Instagram specification, read
+against what this guide was actually telling you to write.
+
+1. Section 2's hook is **one hundred characters, counted**, not "twelve words
+   at most", and it may not open on an emoji, an `@` or a `#`. All three are
+   refused mechanically.
+2. Section 2 asks for **lines, not paragraphs**: one idea to a line, thirty
+   words a line as a wall, two emoji in the whole caption. A caption that is
+   only a bullet list is refused. Arrow bullets among prose are not.
+3. Section 2 asks for the topic's own phrase in the first line, and says
+   plainly that the check on it REPORTS rather than refuses.
+4. Section 7 adds **slide 2 is a second cover**, because Instagram re-serves a
+   carousel starting there for a reader who did not swipe.
+5. Section 10 names three tells a phrase list cannot catch: the rule of
+   three, "Let's" and "Imagine" as openers, and "journey" as a metaphor.
+6. Two new sections. Section 29 is `hookPattern`, a required declaration of
+   which of four shapes your hook is. Section 30 is which ASK to use, and the
+   one condition on the strongest of them.
+
+**Cost.** INPUT: about +5,800 prompt characters, about +1,460 tokens, about
++$0.0044 an attempt. OUTPUT: `hookPattern` is one enum value, so about +5
+tokens a draft, which is nothing against the ceiling section 5 measures.
+
 **What changed at v22.** Everything v21 says still stands. Two additions, both
 about the PICTURE, and both answering the same measured verdict: on the last
 set of real runs the owner looked at three finished posts and said the pictures
@@ -145,16 +169,16 @@ or say the half of it the cover had no room for.
 Three things the hook may not do, each refused mechanically before a judge
 reads the draft: it may not open on an emoji, it may not open on an `@`, and
 it may not open on a `#`. All three spend the reader's attention before the
-claim arrives. Inside the line they are fine — an emoji mid-sentence is
+claim arrives. Inside the line they are fine: an emoji mid-sentence is
 ordinary Instagram writing, and this is not X.
 
 Declare which of §29's four shapes your hook is, in `hookPattern`.
 
 **Write in lines, not paragraphs.** A caption is read on a phone, one
 thumb-width at a time. Short declarative lines, one idea to a line, with
-breaks between them. A line over thirty words is refused mechanically — and
-thirty is the wall, not the target: the accounts worth studying run six to
-fourteen words a line. Second person. At most two emoji in the whole caption,
+breaks between them. A line over thirty words is refused mechanically, and
+thirty is the wall rather than the target. The accounts worth studying run six
+to fourteen words a line. Second person. At most two emoji in the whole caption,
 and each should mark one thing rather than punctuate every line.
 
 An arrow list of two or three items is good writing here and is allowed. A
@@ -177,7 +201,7 @@ the draft outright.
 one alt text. Instagram's search and Google both index captions and alt text,
 so a post that never names its subject where they look is a post that cannot
 be found. A check reads the first line and slide 1 and REPORTS what it finds
-rather than sending the draft back — a phrase match cannot tell your
+rather than sending the draft back. A phrase match cannot tell your
 rewording of a topic from your ignoring it, so the judgement stays yours.
 
 Plain sentence case, and the same bans as every slide (§10). No hashtag
@@ -635,7 +659,7 @@ title is second.
 If the post's argument gives you no picture and no sourced number strong
 enough to open on, that is worth knowing before you write seven more slides:
 it usually means the angle has not found its specific yet.
-- **Slide 2 is a second cover.** When a reader does not swipe, Instagram serves the carousel again later STARTING AT SLIDE 2. So slide 2 is a first impression for a different reader — one who has never seen slide 1 and never will. It carries its own claim and stands alone: a reader meeting the post there must understand what it is about and what is being asserted, with no memory of the cover. What this rules out is the continuation — "and here is why" is not a slide 2, nor is a sentence whose subject is a pronoun pointing at slide 1, nor a headline that completes a sentence the cover started. What it does not mean is repeating slide 1: two covers saying the same sentence is a worse post than one. Slide 2 names the subject again, which is unavoidable and correct, and then asserts something slide 1 did not. A test: delete slide 1 and read from slide 2. If the first thing you read answers a question nobody asked, slide 2 is a continuation.
+- **Slide 2 is a second cover.** When a reader does not swipe, Instagram serves the carousel again later STARTING AT SLIDE 2. So slide 2 is a first impression for a different reader: one who has never seen slide 1 and never will. It carries its own claim and stands alone, so a reader meeting the post there must understand what it is about and what is being asserted, with no memory of the cover. What this rules out is the continuation. "And here is why" is not a slide 2, nor is a sentence whose subject is a pronoun pointing at slide 1, nor a headline that completes a sentence the cover started. What it does not mean is repeating slide 1: two covers saying the same sentence is a worse post than one. Slide 2 names the subject again, which is unavoidable and correct, and then asserts something slide 1 did not. A test: delete slide 1 and read from slide 2. If the first thing you read answers a question nobody asked, slide 2 is a continuation.
 - **Numbers are devices.** A slide whose body leads with a figure carries a `device` whose value IS that figure (section 19), on an archetype that renders one. One `stat_callout` and one `comparison_card` still exist per carousel for the two strongest numbers, and both of those ARE figure devices in themselves.
 - **Closer.** The last slide carries a call to action or a question the reader can answer, in the client's language.
 
@@ -719,9 +743,10 @@ list. Three balanced items in a row is a tell.
 **"Let's" and "Imagine" as openers.** Both instruct the reader to perform an
 act of attention before there is anything to attend to. Say the thing.
 
-**"Journey" as a metaphor.** Not banned as a word — a customer journey is a
-real term of art — but banned as a description of a company doing something
-ordinary. A company that improved its reporting did not go on a journey.
+**"Journey" as a metaphor.** It is not banned as a word, because a customer
+journey is a real term of art. It is banned as a description of a company
+doing something ordinary. A company that improved its reporting did not go on
+a journey.
 
 ## 11. Client knowledge and recent posts (read before drafting)
 
@@ -1596,17 +1621,17 @@ else changes.
 ## 29. `hookPattern`: declare which shape your hook is
 
 Every draft declares `hookPattern`, one of four. It is a typed field, not a
-description, and it is recorded on the shipped post so that later — once this
-client's own posts have performance behind them — the shapes can be ranked by
-what they actually did rather than by anyone's taste.
+description, and it is recorded on the shipped post. Later, once this client's
+own posts have performance behind them, the shapes can be ranked by what they
+actually did rather than by anyone's taste.
 
-- **`number_outcome`** — a figure and what it bought. "Four hours a week, from
+- **`number_outcome`**: a figure and what it bought. "Four hours a week, from
   one change to the weekly report."
-- **`contrarian`** — the thing the reader believes, contradicted. "Quarterly
+- **`contrarian`**: the thing the reader believes, contradicted. "Quarterly
   planning is why your roadmap keeps slipping."
-- **`mistake`** — an error the reader is probably making, named without
+- **`mistake`**: an error the reader is probably making, named without
   scolding. "Most teams measure onboarding from the wrong day."
-- **`relatable_pov`** — a situation the reader recognises, stated plainly.
+- **`relatable_pov`**: a situation the reader recognises, stated plainly.
   "You have three tools that each own half the answer."
 
 Declare the one your hook IS, not the one you wish it were. A hook that is
@@ -1618,16 +1643,16 @@ none of the four is a label, and §2's last test will already have told you so.
 the four available do measurably different things and the choice is not a
 matter of taste.
 
-- **Save** — for a payload the reader will need later: a checklist, a
-  comparison, a walkthrough. "Save this before your next planning week."
-- **Send** — for a post that settles an argument the reader is already having
+- **Save**: for a payload the reader will need later, such as a checklist, a
+  comparison or a walkthrough. "Save this before your next planning week."
+- **Send**: for a post that settles an argument the reader is already having
   with somebody. Sends per reach is the strongest signal this platform has.
-- **Question** — a real question the reader can answer from their own
+- **Question**: a real question the reader can answer from their own
   experience, in the client's language. A post that asks one gets markedly
   more comments than one that does not. "Which of these have you tried?" is a
   question; "thoughts?" is bait, and it is on §24.3's list.
-- **Comment for the asset** — the strongest of the four, and the only one with
-  a condition: it is available ONLY when this run actually gives you an asset
+- **Comment for the asset**: the strongest of the four, and the only one with
+  a condition. It is available ONLY when this run actually gives you an asset
   to name. "Comment PLAYBOOK and I will send you the one-page version" is an
   ask. Promising a thing that does not exist is not an ask, it is a lie, and
   it is the one failure in this section worse than a weak post.
