@@ -1029,6 +1029,23 @@ body:not(:has(#quote > span:not(:empty))) .quote-block { background-image: none;
       closeInk();
     }
 
+    /* ── THE SUBJECT YIELDS BEFORE THE COPY IS CLIPPED. ──
+       A plate that still does not fit after two steps has more copy than the
+       composition holds, and there are only two things it can give up: the
+       words, or the object they sit beside. Clipping the words is the one
+       outcome the interest floor refuses outright ("clipped"), and it is what a
+       long cover was doing at every type scale — the band and the lockup were
+       both holding their ground. The object stands down instead, which is the
+       same thing the cover already does when a photograph arrives. */
+    if (overflows()) {
+      var subject = document.querySelector('.cov-field, .sc-figure-band');
+      if (subject !== null) {
+        subject.style.display = 'none';
+        closeInk();
+        if (!overflows()) step = 2;
+      }
+    }
+
     /* Leave the outcome on the body so a render check, the interest floor and a
        failing test can all see which rung was used without re-deriving it. */
     document.body.setAttribute('data-fit-step', String(step));
