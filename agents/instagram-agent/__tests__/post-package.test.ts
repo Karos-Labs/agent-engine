@@ -10,6 +10,7 @@ import {
   STALE_AFTER_HOURS,
   buildFirstCommentSources,
   buildTimingNote,
+  MIN_POST_GAP_HOURS,
   checkPackageRules,
   checkPostPackage,
   packageLanguageGateFields,
@@ -553,7 +554,23 @@ describe("buildTimingNote — 08c3, $0 (RFC-18 §6.4)", () => {
   const now = new Date("2026-09-13T12:00:00Z");
 
   it("calls a post evergreen when nothing it rests on is dated recently", () => {
-    expect(buildTimingNote(FACT_CARDS, now)).toEqual({ basis: "evergreen", reason: "no dated claim — no timing constraint" });
+    expect(buildTimingNote(FACT_CARDS, now)).toEqual({
+      basis: "evergreen",
+      reason: "no dated claim — no timing constraint",
+      minGapHours: MIN_POST_GAP_HOURS,
+    });
+  });
+
+  it("states the platform's cadence floor on BOTH branches — a note only one of them carries is a note nobody can rely on", () => {
+    const fresh: PackagedFactCard = { claim: "c", source: "Reuters", date: "2026-09-10T09:00:00Z" };
+    expect(buildTimingNote(FACT_CARDS, now).minGapHours).toBe(MIN_POST_GAP_HOURS);
+    expect(buildTimingNote([...FACT_CARDS, fresh], now).minGapHours).toBe(MIN_POST_GAP_HOURS);
+  });
+
+  it("asks for at least a day, which is the thing the portal's ninety minutes does not know", () => {
+    // Reported, not enforced: the portal owns the calendar. See the field's
+    // own comment for why the engine states a number it cannot apply.
+    expect(MIN_POST_GAP_HOURS).toBe(24);
   });
 
   it(`marks a claim inside the ${EVENT_DATED_WINDOW_DAYS}-day window event-dated, and says when the hook goes off`, () => {

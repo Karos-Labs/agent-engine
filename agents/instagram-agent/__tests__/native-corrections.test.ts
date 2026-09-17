@@ -536,7 +536,7 @@ describe("applyPackageNativeCorrections — the post package's own round", () =>
     expect(JSON.stringify(out.pkg)).not.toContain("http");
   });
 
-  it("drops an alt-text replacement that would break its 125-character cap, rather than losing the whole package a step later", async () => {
+  it(`drops an alt-text replacement that would break its ${ALT_TEXT_MAX_CHARS}-character cap, rather than losing the whole package a step later`, async () => {
     const long = `בסופו של דבר ${"מאוד ".repeat(30)}`.trim();
     expect(long.length).toBeGreaterThan(ALT_TEXT_MAX_CHARS);
     const pkg = hebrewPackage();
