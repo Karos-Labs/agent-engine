@@ -842,12 +842,20 @@ body.ta-center .acc { margin-inline: auto; }
      object rather than a screen — but it YIELDS when the lockup needs the room.
      Rigid, it pushed the document past the canvas and `html`, `body` and
      `.plate` all reported as overflowing their own box. */
-  /* Rigid, and the LOCKUP is what yields. Letting the band shrink squeezed the
-     bounded object inside it until the device overflowed its own box; the fit
-     ladder already steps the type down when the plate does not fit, which is
-     the right thing to give up. */
-  flex: 0 0 auto;
-  min-block-size: 0;
+  /* ── THE BAND TAKES EXACTLY WHAT THE COPY DOES NOT NEED. ──
+     This was tuned from both ends and oscillated: rigid, a long cover
+     overflowed and the floor called it `clipped`; shrinkable, the object was
+     squeezed until the device overflowed; hidden outright, the plate came back
+     as `dead-space` at LER 0.50. All three are the same constraint from
+     different sides — a cover must not clip its words AND must not be empty.
+
+     `flex: 1 1 0` with a floor satisfies both without a number to tune. The
+     band ABSORBS whatever the lockup leaves, so a short cover can never be
+     empty; it SHRINKS to the floor when the copy is long, so a long cover can
+     never clip; and the floor is the height at which it is still an object the
+     interest floor can see. Nothing in the fit ladder has to intervene. */
+  flex: 1 1 0;
+  min-block-size: 220px;
   display: flex;
   align-items: flex-end;
   justify-content: flex-start;
@@ -939,6 +947,7 @@ body[data-cover="typographic-poster"] .lockup { gap: var(--sp-2); }
    whatever room they were given. */
 body:not(:has(.hero)) .cov-field {
   block-size: var(--cover-band, 600px);
+  max-block-size: var(--cover-band, 600px);
   /* NO TRANSPARENT STOP. The first version faded out at 82% and most of the
      band was too faint for `slide-metrics` to call the cell COVERED at all:
      the calibration measured the cover's only object at `imagery+device 3.3%`
@@ -1177,26 +1186,6 @@ body:not(:has(#title > span:not(:empty))) .cov-field { background-image: none; }
     while (overflows() && step < 2) {
       step += 1;
       set(hosts, step);
-      closeInk();
-    }
-
-    /* ── THE SUBJECT SHRINKS BEFORE THE COPY IS CLIPPED, AND ONLY THEN GOES. ──
-       A plate that still does not fit after two type steps can give up the
-       words or the object beside them. Clipping the words is the one outcome
-       the floor refuses outright, so the object gives — but it GIVES HEIGHT,
-       it does not disappear: hiding it outright traded a `clipped` finding for
-       a `dead-space` one at LER 0.50, which is the same plate failing at the
-       other end. The band is a ramp and reads at any height, so it steps down
-       to a floor it is still an object at, and only below that stands down. */
-    var subject = document.querySelector('.cov-field');
-    if (subject !== null && overflows()) {
-      var band = subject.getBoundingClientRect().height;
-      while (overflows() && band > 220) {
-        band -= 60;
-        subject.style.blockSize = band + 'px';
-        closeInk();
-      }
-      if (overflows()) subject.style.display = 'none';
       closeInk();
     }
 

@@ -1054,26 +1054,6 @@ body.ta-center .acc { margin-inline: auto; }
       closeInk();
     }
 
-    /* ── THE SUBJECT SHRINKS BEFORE THE COPY IS CLIPPED, AND ONLY THEN GOES. ──
-       A plate that still does not fit after two type steps can give up the
-       words or the object beside them. Clipping the words is the one outcome
-       the floor refuses outright, so the object gives — but it GIVES HEIGHT,
-       it does not disappear: hiding it outright traded a `clipped` finding for
-       a `dead-space` one at LER 0.50, which is the same plate failing at the
-       other end. The band is a ramp and reads at any height, so it steps down
-       to a floor it is still an object at, and only below that stands down. */
-    var subject = document.querySelector('.cov-field');
-    if (subject !== null && overflows()) {
-      var band = subject.getBoundingClientRect().height;
-      while (overflows() && band > 220) {
-        band -= 60;
-        subject.style.blockSize = band + 'px';
-        closeInk();
-      }
-      if (overflows()) subject.style.display = 'none';
-      closeInk();
-    }
-
     /* Leave the outcome on the body so a render check, the interest floor and a
        failing test can all see which rung was used without re-deriving it. */
     document.body.setAttribute('data-fit-step', String(step));
