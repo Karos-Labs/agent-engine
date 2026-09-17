@@ -228,6 +228,7 @@ export function makeSharedPromptStore(): InMemoryPromptStore {
   store.setPrompt("x-craft", "5", "X craft guidance.");
   store.setPrompt("x-craft", "6", "X craft guidance."); // C7 learning loop (SCRUM-459/460)
   store.setPrompt("x-craft", "7", "X craft guidance."); // D24 text only, the hook rule, weighted length
+  store.setPrompt("x-craft", "8", "X craft guidance."); // §12b no relative day words
   store.setPrompt("linkedin-craft", "1", "LinkedIn craft guidance.");
   store.setPrompt("linkedin-craft", "2", "LinkedIn craft guidance.");
   store.setPrompt("linkedin-craft", "3", "LinkedIn craft guidance.");
@@ -235,6 +236,7 @@ export function makeSharedPromptStore(): InMemoryPromptStore {
   store.setPrompt("linkedin-craft", "5", "LinkedIn craft guidance.");
   store.setPrompt("linkedin-craft", "6", "LinkedIn craft guidance."); // C7 learning loop (SCRUM-466)
   store.setPrompt("linkedin-craft", "7", "LinkedIn craft guidance."); // §12b the eleven rules, §8 the image gates
+  store.setPrompt("linkedin-craft", "8", "LinkedIn craft guidance."); // §12a no relative day words
   store.setPrompt("reddit-craft", "1", "Reddit craft guidance.");
   store.setPrompt("reddit-craft", "2", "Reddit craft guidance.");
   store.setPrompt("reddit-craft", "3", "Reddit craft guidance.");

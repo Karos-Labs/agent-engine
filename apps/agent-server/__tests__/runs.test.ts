@@ -86,8 +86,8 @@ describe("POST /api/v1/runs/start", () => {
     // built from records rather than a hand-authored list that had drifted
     // (it named 22 steps; the workflow runs 27 on this path, gate included —
     // 29 since the C7 learning loop added 01b-read-learning-context and
-    // 21-write-run-state).
-    expect(resumeRes.body.report.steps).toHaveLength(29);
+    // 21-write-run-state, 30 since x-craft@8 added 12b-verify-dated-language).
+    expect(resumeRes.body.report.steps).toHaveLength(30);
     // Phase 2.5 fix-batch regression check: a genuinely completed/delivered
     // run's own review-gate step must report as done/approved, never as
     // "failed: step did not run" (the report-serializer gate-status bug).
