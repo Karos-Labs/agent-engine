@@ -104,7 +104,14 @@ describe("DEFAULT_RENDER_RULES + resolveRenderRules — Phase 0 item D's rule so
     // filtered case by case at each consumer.
     expect([...LAYOUT_FIELD_KEYS].sort()).toEqual([
       "accentColor",
+      // The run's own accent form and cover form. Both were decided per run and
+      // read by no template, so four cover forms rendered as one cover and five
+      // accent forms as one bar at two sizes; they ride to the plate as layout
+      // metadata exactly like `groundStyle`, and for the same reason belong
+      // here: nobody writes them and a slide carrying only these has no prose.
+      "accentForm",
       "brandHandle",
+      "coverForm",
       "deviceFigures",
       "deviceKind",
       "dir",

@@ -95,6 +95,12 @@ body {
    behaviour the fallbacks below are written for. */
 body { --accent: {{accentColor}}; }
 
+/* The badge slot is not in the bundled markup, but its placement rule is (see
+   `.brand-badge`), and a rule that READS a token nobody declares resolves to
+   nothing — an ink of `initial` on a client template that does carry the slot.
+   Declared here so the value exists wherever the rule can apply. */
+body { --badge-ink: color-mix(in srgb, var(--fg) 55%, transparent); }
+
 /* The reviewer's type-scale request. Hebrew sets ~6% larger at the same step,
    so the script sheet may override this; `script-fonts.ts` owns that. */
 body            { --ts: 1; }
@@ -403,6 +409,14 @@ body[data-anchor="top"] .plate::after {
 .zone-mark .eyebrow,
 .zone-mark .kicker { position: static; inset: auto; }
 
+/* `:empty` ALONE CANNOT SEE AN EMPTY HANDLE. The slot is `<div
+   class="brand-handle"><bdi>{{brandHandle}}</bdi></div>`, so the div always has
+   an element child and is never `:empty` — a client with no handle would ship
+   an invisible box holding the layout open. The kit's head emits the same pair;
+   the template carries it too, for a document composed without one. */
+.brand-handle:empty,
+.brand-handle:has( > bdi:empty) { display: none; }
+
 .brand-handle {
   font-family: var(--f-mono, ui-monospace, monospace);
   font-size: var(--t-micro);
@@ -602,6 +616,17 @@ body[data-accent="none"] .acc { display: none; }
    wrong. Making it a block moved the same 3-27px report onto the block instead.
    With no box there is nothing to overflow: the host carries the text, the host
    carries the optical padding, and one geometric check covers both scripts. */
+/* ── THE HOST MAKES ROOM FOR A MARK'S BLEED. ──
+   An emphasis swatch is painted BEHIND its run and it overshoots the line box
+   upward — `emphasis-marks.ts` measures the overshoot per script and publishes
+   it as `--mk-twin-bleed` (.14em Latin, .22em Hebrew), with `--mk-face-bleed`
+   carrying the display face's own share. The fit ladder closes ink on the END
+   edge only, because that is the side `scrollHeight` can report; this is the
+   start edge, and without it a marked headline's first line is clipped.
+   The fallback is the HEBREW value, because a document composed without the
+   run sheet cannot know its own script and has to be safe for the worse case. */
+*:has(> span.mk-plain) { padding-block-start: max(var(--mk-twin-bleed, .22em), var(--mk-face-bleed, 0em)); }
+
 .mk-runs  { display: contents; }
 .mk-plain { display: contents; }
 .mk-runs:empty { display: none; }
