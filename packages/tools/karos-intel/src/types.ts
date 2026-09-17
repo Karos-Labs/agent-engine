@@ -351,6 +351,125 @@ export const TargetAudienceSchema = z.object({
 });
 export type TargetAudience = z.infer<typeof TargetAudienceSchema>;
 
+/**
+ * One axis of the voice, and where this brand sits on it.
+ *
+ * The axis is the useful part: "formal to casual" with a position and the
+ * condition that moves it is a rule a writer can apply to a sentence, which
+ * "the voice is professional yet approachable" is not.
+ */
+export const VoiceDimensionSchema = z.object({
+  scale: z.string().min(1).describe("The axis, as two poles: 'formal to casual', 'plain to technical', 'reserved to bold'."),
+  position: z.string().min(1).describe("Where this brand sits on it, in a phrase — not a number."),
+  shiftsWhen: z.string().optional().describe("The condition that moves it, when one exists: a surface, an audience, a moment in the funnel."),
+});
+export type VoiceDimension = z.infer<typeof VoiceDimensionSchema>;
+
+/** How the voice changes on one named surface (LinkedIn, the blog, a landing page). */
+export const PlatformVoiceSchema = z.object({
+  platform: z.string().min(1).describe("The named surface: LinkedIn, X, Instagram, the blog, email, a landing page."),
+  guidance: z.string().min(1).describe("What changes there — length, register, opening move, what is dropped — not a restatement of the general voice."),
+});
+export type PlatformVoice = z.infer<typeof PlatformVoiceSchema>;
+
+/** One situation and the call to action that belongs to it. */
+export const CtaRuleSchema = z.object({
+  situation: z.string().min(1).describe("Where the reader is: a cold social post, the end of a long-form article, a pricing page."),
+  cta: z.string().min(1).describe("The call to action for that situation, in the words to use."),
+});
+export type CtaRule = z.infer<typeof CtaRuleSchema>;
+
+/**
+ * The OPERATIONAL voice spec — the rules a writer applies to a sentence.
+ *
+ * Distinct from `brandVoiceTerritory` (where the voice sits in the market, a
+ * positioning claim) and from `brandVoiceRows`/`brandVoiceArchetypes` (a
+ * comparison across companies). Those three answer "how does this voice differ
+ * from the competition"; this one answers "how do I write the next sentence",
+ * which is the question every publishing agent actually has and which no field
+ * on this report could answer before.
+ *
+ * The bar is a working copywriting guide: a writer who has read only this
+ * block should produce on-voice copy on the first try. Everything is optional
+ * except the one-liner, because a run that cannot ground a rule must omit it
+ * rather than invent house style.
+ */
+export const BrandVoiceSpecSchema = z.object({
+  voiceInOneLine: z.string().min(1).describe("The voice in a single sentence a writer can hold in their head while typing."),
+  adjectives: z.array(z.string()).default([]).describe("Three to five single-word descriptors, each one a writer could act on."),
+  dimensions: z.array(VoiceDimensionSchema).default([]).describe("Where the voice sits on each axis that matters, and what moves it."),
+  sentenceMechanics: z
+    .array(z.string())
+    .default([])
+    .describe(
+      "Observable rules about the prose itself: typical sentence length, whether fragments are used, person and tense, active vs passive, punctuation the brand does or does not use. Ground each one in copy you actually read.",
+    ),
+  preferredTerms: z.array(z.string()).default([]).describe("The brand's own words for its things — the term it uses, not the category's generic."),
+  bannedTerms: z.array(z.string()).default([]).describe("Words and phrases that are off-voice for this brand specifically, not a generic buzzword list."),
+  platformVoice: z.array(PlatformVoiceSchema).default([]).describe("How the voice changes per surface, for the named surfaces this brand actually publishes on."),
+  ctaTaxonomy: z.array(CtaRuleSchema).default([]).describe("Which call to action belongs to which situation."),
+  samplePhrases: z
+    .array(z.string())
+    .default([])
+    .describe("Lines that are on-voice — quoted from the brand's own copy where possible, marked as written-to-pattern where not."),
+});
+export type BrandVoiceSpec = z.infer<typeof BrandVoiceSpecSchema>;
+
+/** One thing the client sells, as a buyer would need it described. */
+export const OfferingSchema = z.object({
+  name: z.string().min(1).describe("What the client calls it."),
+  whatItIs: z.string().min(1).describe("What it does for the buyer, in a sentence, in outcome terms."),
+  whoItIsFor: z.string().optional().describe("Which persona or segment it is for, when the evidence says."),
+});
+export type Offering = z.infer<typeof OfferingSchema>;
+
+/** One question buyers ask, and the client's own answer to it. */
+export const ProductFaqSchema = z.object({
+  question: z.string().min(1).describe("The question as a buyer would ask it."),
+  answer: z.string().min(1).describe("The answer as the client's own material supports it — never an answer you supplied."),
+});
+export type ProductFaq = z.infer<typeof ProductFaqSchema>;
+
+/**
+ * WHAT THE CLIENT SELLS — the block behind the `product-information` context
+ * document, which every content agent reads before it can describe the offer.
+ *
+ * This report had no field for it. The document was composed from
+ * `positioningAnalysis`, `contentAnalysis` and `conversionAnalysis`: three
+ * assessments of the client's MARKETING, from which no agent can learn what
+ * the product does, what it costs, what it is called, or which claims it is
+ * not allowed to make.
+ *
+ * `doNotMisstate` is the most load-bearing field here and the reason the block
+ * is worth the tokens: it is the list of claims an agent must not make on this
+ * client's behalf, and a wrong one is a published error rather than a weak
+ * sentence.
+ */
+export const ProductInformationSchema = z.object({
+  whatItDoes: z.string().min(1).describe("What the client sells and what it does for a buyer, in a short paragraph, in the client's own framing."),
+  offerings: z.array(OfferingSchema).default([]).describe("The named products, services, tiers or packages, as the site names them."),
+  businessModel: z
+    .string()
+    .optional()
+    .describe(
+      "How the client charges: retainer, subscription, per-seat, per-project, marketplace. State a price only when it is context-provided or observed on the site, per the pricing rule.",
+    ),
+  primaryCtas: z.array(z.string()).default([]).describe("The conversion actions the site actually asks for, in its own words ('Book a call', 'Start free')."),
+  proofPoints: z
+    .array(z.string())
+    .default([])
+    .describe("Credibility the client can cite: named clients, metrics, certifications, case studies. Each one traceable, never a plausible-sounding figure."),
+  doNotMisstate: z
+    .array(z.string())
+    .default([])
+    .describe(
+      "Claims an agent must NOT make for this client: capabilities it does not have, guarantees it does not give, regulated language it may not use, names it must get exactly right.",
+    ),
+  faq: z.array(ProductFaqSchema).default([]).describe("Questions buyers ask, answered only from the client's own material."),
+  techSignals: z.array(z.string()).default([]).describe("Observed stack, integrations or platform facts that a content agent may safely reference."),
+});
+export type ProductInformation = z.infer<typeof ProductInformationSchema>;
+
 export const IntelReportOutputSchema = ReportProfileExtrasSchema.extend({
   /** The date the report describes, as the portal stores it (`ClientReport.reportDate`, a string). Defaulted at build time when the model omits it. */
   reportDate: z.string().optional().describe("The date the report describes, as the portal stores it (ClientReport.reportDate). Defaulted at build time when the model omits it."),
@@ -397,6 +516,12 @@ export const IntelReportOutputSchema = ReportProfileExtrasSchema.extend({
    */
   targetAudience: TargetAudienceSchema.optional().describe(
     "The client's ICP blueprint — personas, pains, incumbents, channels and vocabulary — grounded in the research and the client's own target-audience document when one was provided. Optional: omit entirely rather than invent an audience the evidence does not support.",
+  ),
+  brandVoiceSpec: BrandVoiceSpecSchema.optional().describe(
+    "The operational voice spec — the rules a writer applies to a sentence, as opposed to where the voice sits against competitors. Optional: omit rather than invent house style the evidence does not reach.",
+  ),
+  productInformation: ProductInformationSchema.optional().describe(
+    "What the client actually sells: offerings, business model, CTAs, proof points, and the claims an agent must not make. Optional: omit rather than describe a product the evidence does not reach.",
   ),
   brandSynchronizationUpdate: z
     .string()
