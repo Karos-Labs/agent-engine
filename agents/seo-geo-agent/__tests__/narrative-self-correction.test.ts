@@ -30,7 +30,7 @@ function routerWithNarratives(narratives: string[]): ModelRouter {
   } as ModelRouter;
 }
 
-describe("14b: the narrative corrects an unsourced figure before the gate, and still holds when it cannot", () => {
+describe("14b: the narrative corrects an unsourced figure before the gate, and 15 redacts what it cannot", () => {
   let env: TestEnvironment;
 
   beforeEach(async () => {
@@ -58,12 +58,28 @@ describe("14b: the narrative corrects an unsourced figure before the gate, and s
     expect(steps.find((s) => s.stepId === "15-verify-narrative-numbers")?.status).toBe("completed");
   });
 
-  it("holds at the real gate when the redraft repeats the unsourced figure — the correction pass never waves a summary through", async () => {
+  it("REDACTS at the real gate when the redraft repeats the unsourced figure — the correction pass never waves a summary through", async () => {
+    // The load-bearing property is unchanged: 14b can improve a summary's
+    // chances and can never wave one through. What changed is the consequence
+    // — a figure the model derived rather than measured costs the sentence
+    // carrying it, not the whole report, which by this point has already paid
+    // for a technical crawl, a visibility capture, a scoring pass and two
+    // human gates.
     const router = routerWithNarratives(["Roughly 37% of checks still need a Search Console connection."]);
     const workflowFn = createSeoGeoAgentWorkflow({ tools: withMeasuredCapture(env.tools), promptStore: makePromptStore(), router, autoApprove: true });
-    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFn, params);
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toContain("37%");
+    const store = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(store).run(workflowFn, params);
+
+    expect(result.status).toBe("completed");
+
+    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
+    expect(deliverables).toHaveLength(1);
+    const report = (deliverables[0] as { data: { deliverable: Record<string, unknown> } }).data.deliverable;
+    // Gone from the published summary...
+    expect(report["narrative"]).not.toContain("37%");
+    // ...and the removal is on the record rather than silent.
+    expect(report["contentRepairs"]).toContainEqual(
+      expect.objectContaining({ check: "gate.numbersSourced", action: "redacted" }),
+    );
   });
 });

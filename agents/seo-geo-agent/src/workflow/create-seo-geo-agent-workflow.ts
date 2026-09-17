@@ -23,6 +23,12 @@ import {
   persistReviewFeedbackToMemory,
   revisionDirective,
   runReviewCycle,
+  runCheckWithRepair,
+  redactSentencesCarrying,
+  localContentFail,
+  localPass,
+  spansFromEvidence,
+  type ContentRepair,
 } from "@agent-engine/workflow";
 import {
   GEO_READINESS_BUCKETS,
@@ -202,6 +208,17 @@ function toSeoGeoCell(cell: {
 }
 
 /** Numeric strings the Phase 8 narrative's `gate.numbersSourced` check will accept — every one is a value the workflow itself already computed, never something the narrative agent could have invented. */
+/**
+ * What the summary says when every one of its sentences carried a figure the
+ * gate could not trace to the scoring inputs.
+ *
+ * Reachable only on a summary short enough that one sentence was the whole
+ * thing. It exists because the alternative at that point is falling back to
+ * the unredacted text — which republishes the very figure the gate refused.
+ */
+const NARRATIVE_WITHHELD =
+  "This summary is not reported: every figure it rested on was one the model derived rather than measured, and derived figures are withheld rather than published.";
+
 function buildNarrativeSources(scoring: SeoGeoScoringResult, firedCount: number, measuredFacts: readonly string[] = []): string[] {
   const sources: string[] = [
     `${scoring.seoScore.score}`,
@@ -1046,6 +1063,9 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
      * ever showed a human what the report's own prose actually says before
      * shipping it.
      */
+    /** What each drafting round had to repair in the narrative. Empty on the normal path. */
+    const narrativeRepairsByRevision = new Map<number, ContentRepair[]>();
+
     const draftOnce = async (revision: number, notes: readonly RevisionNote[]): Promise<DraftResult> => {
       /** Revision 0 keeps the ORIGINAL ids, so a first-pass trace is unchanged. */
       const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
@@ -1097,9 +1117,22 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         measuredFacts: technicalPhase.measuredFacts.slice(0, 10),
         ...(directive !== undefined ? { revisionRequest: directive } : {}),
       };
-      const narrativeResult = await wf.step.agent(rev("14-draft-narrative"), narrativeAgent, narrativeInput);
+      const firstNarrative = await wf.step.agent(rev("14-draft-narrative"), narrativeAgent, narrativeInput);
+      // A narrative that came back unusable gets ANOTHER draft, not a held run:
+      // `content_fail` here means the turn returned no parseable structured
+      // output, which is a coin flip rather than a verdict on the report.
+      const narrativeResult =
+        firstNarrative.status === "content_fail"
+          ? await wf.step.agent(rev("14z-regenerate-narrative"), narrativeAgent, narrativeInput)
+          : firstNarrative;
       if (narrativeResult.status === "content_fail") {
-        throw new WorkflowHeld(`narrative did not clear its own output validation: ${narrativeResult.status}`);
+        // Twice is no longer a coin flip. Nothing was written, so there is
+        // nothing to repair and nothing to annotate. `degraded` rather than
+        // `held`: `held` means "we looked and decided not to publish", a
+        // content verdict nobody made here. Neither status is auto-retried
+        // (the queue consumer acks every terminal status); this is about
+        // classifying the failure honestly.
+        throw new WorkflowToolingFailure("the narrative did not produce a parseable summary on two consecutive attempts");
       }
       if (narrativeResult.status !== "completed") {
         throw new WorkflowToolingFailure(`narrative step resolved to "${narrativeResult.status}"`);
@@ -1131,15 +1164,45 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         return redraft.finalOutput;
       });
 
-      // ── gate the narrative against fabricated numbers (RFC-04 §2 Phase 8's own recommendation) ──
-      await wf.step.code(rev("15-verify-narrative-numbers"), async () => {
-        const verdict = await runGate(tools, "gate.numbersSourced", { text: narrative.summary, sources }, ctx);
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
-        if (verdict.verdict === "content_fail") throw new WorkflowHeld(`narrative numbers not sourced: ${verdict.reason}`);
-        return verdict;
-      });
+      // ── 15: gate the narrative against fabricated numbers, then REPAIR ──
+      //
+      // (RFC-04 §2 Phase 8's own recommendation.) This step used to
+      // `throw new WorkflowHeld(...)`, which ended a run that had already paid
+      // for a full technical crawl, an AI-visibility capture, a scoring pass,
+      // a fix-generation review and two human gates — over one derived figure
+      // in one sentence of a summary. 14b above is the model's attempt at it;
+      // what follows is the deterministic floor.
+      //
+      // The gate keeps its full authority over what may be PUBLISHED: no
+      // unsourced figure survives this step. It loses the authority to end the
+      // run. `tooling_error` still throws.
+      const verified = await wf.step.code(
+        rev("15-verify-narrative-numbers"),
+        async (): Promise<{ summary: string; repairs: ContentRepair[] }> => {
+          const outcome = await runCheckWithRepair({
+            check: "gate.numbersSourced",
+            value: narrative.summary,
+            verify: async (summary) => runGate(tools, "gate.numbersSourced", { text: summary, sources }, ctx),
+            attempts: [
+              {
+                action: "redacted",
+                maxPasses: 3,
+                run: (summary, verdict) => {
+                  const redacted = redactSentencesCarrying(summary, spansFromEvidence(verdict.evidence), NARRATIVE_WITHHELD).text;
+                  return redacted === summary ? undefined : redacted;
+                },
+              },
+            ],
+            describeUnresolved: (verdict) => `${verdict.reason} — delivered with this noted rather than withheld`,
+          });
+          return { summary: outcome.value, repairs: outcome.repairs };
+        },
+      );
+      // Outside the step body: a checkpointed step is replayed from its stored
+      // value on resume and its body never runs again.
+      narrativeRepairsByRevision.set(revision, verified.repairs);
 
-      return { fixDrafts, narrative: narrative.summary };
+      return { fixDrafts, narrative: verified.summary };
     };
 
     // ── 16: human batch-review gate — nothing ships without a real review of what will actually ship ──
@@ -1191,6 +1254,12 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       },
     });
     const { fixDrafts, narrative: narrativeSummary } = review.output;
+    /**
+     * The repairs made to the round that was APPROVED — not the last round
+     * attempted. Omitted from the report when empty, so a clean run produces
+     * the bytes it always did.
+     */
+    const contentRepairs = narrativeRepairsByRevision.get(review.revision) ?? [];
 
     // ── 17: assemble the one merged report object ──
     const report = await wf.step.code("17-assemble-report", (): SeoGeoReport => ({
@@ -1224,6 +1293,9 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       firedRecommendations: recommendations,
       fixDrafts,
       narrative: narrativeSummary,
+      // Present only when the narrative had to be repaired to get here, so a
+      // reader sees what was removed instead of a silently edited summary.
+      ...(contentRepairs.length > 0 ? { contentRepairs } : {}),
       // The observed facts and where each family of inputs came from — so a
       // reader can tell "the site failed this check" from "this check could
       // not run", and the portal can show the site's real standing next to
