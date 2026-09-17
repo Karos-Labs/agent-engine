@@ -251,7 +251,7 @@ import {
   type SkeletonVarietyVerdict,
 } from "./skeleton-memory.js";
 import { PERFORMANCE_BELIEF_KEY, readPerformanceStore, withPost, type PostArm } from "./post-performance.js";
-import { countComparedEntities, selectSeries, seriesDirectedSlides, seriesDirective, SERIES_DIRECTIVE_SLIDES } from "./editorial-series.js";
+import { countComparedEntities, selectSeries, seriesDirectedSlides, seriesDirective, seriesLibraryFor, SERIES_DIRECTIVE_SLIDES } from "./editorial-series.js";
 import {
   buildGateVerdict,
   draftDigestFor,
@@ -1616,6 +1616,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      * workflow already produces by another route.
      */
     const performanceStore = structuralMemory.performance;
+
     /**
      * Phase 5.5, item D — the cross-client variety pressure: which series and
      * which visual systems have shipped RECENTLY, for ANY client, so the fleet
@@ -2083,6 +2084,24 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // optional read here.
         return [];
       }
+    });
+
+    /**
+     * Phase 5.6, item C3 — this client's own editorial library.
+     *
+     * Three to five of the bundled six, chosen from the brief's own segment
+     * words and stable per client. The six were shared by every client, and
+     * their own comment said so ("any client can carry"), which is the
+     * mechanism behind the owner's verdict on two finished posts: you could
+     * see the same writer made both.
+     *
+     * Derived here rather than stored, because it is a pure function of the
+     * brief and the slug: storing it would add a migration and a staleness
+     * question to answer a question that has no state in it.
+     */
+    const clientLibrary = seriesLibraryFor({
+      clientSlug: wf.clientSlug,
+      segments: [...brief.icp.industries, ...brief.offers.map((offer) => offer.name)],
     });
 
     // ── The run's ONE target language (Phase 1, closing audit defect 5's second door) ──
@@ -6278,7 +6297,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // genuinely right for this story still wins. Fail-open — an empty
           // list is no penalty, which is what an unreadable belief yields.
           crossClientSeriesIds: crossClientSeriesIds(crossClientFormatHistory, wf.clientSlug, 5),
-        });
+        },
+        // Phase 5.6, item C3: this client's OWN three to five, not the
+        // bundled six every client shared. Pure, free, stable per client, and
+        // derived from the brief the run already loaded — the same cost
+        // profile `selectSeries` itself has, and for the same reason.
+        clientLibrary.series);
         // INSIDE the step, and the resume guard is why. A ledger write outside
         // a `wf.step.code` re-fires on every resume, which
         // `resume-idempotency.test.ts` counts and refuses - it caught this one

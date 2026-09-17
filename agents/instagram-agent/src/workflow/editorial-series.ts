@@ -568,3 +568,144 @@ export function seriesDirective(choice: SeriesChoice, slideCount: number): strin
     "Write to that order. Do not re-choose the layouts — section 7's menu tells you what each archetype REQUIRES, and that still binds: a slide whose content cannot fill the layout it was given is a slide whose content is wrong, not a layout to swap. If a required object genuinely cannot be written from the cards you were given, leave the object out and name it in that slide's `unfillable` field — never in `headline`, `body`, or any other text the reader sees. If your output has no `unfillable` field, leave it unsaid: a note about the cards, the materials, the brief or this slide itself is working text, and working text on a plate is a defect the reader is looking at.",
   ].join("\n");
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// The client's own library (Phase 5.6, item C3)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * The specification asks for "3 to 5 on-brand post templates (a series per
+ * content type) so the feed reads as one system", per client.
+ *
+ * What exists is `BUNDLED_SERIES`: six series, the same six for every client,
+ * whose own comment says they were chosen so "any client can carry" them.
+ * That is exactly the sameness the owner named after reading two finished
+ * posts side by side, and the sentence he used is the requirement: *you can
+ * see the same AI made both.*
+ *
+ * ## What this does, and what it deliberately does not
+ *
+ * It gives each client a SUBSET of the six, three to five of them, chosen
+ * from their own brief and stable across runs. It does not author new series.
+ *
+ * Authoring is the version of this that reads better in a plan and worse in
+ * the code: `EditorialSeriesId` is a closed union and every downstream
+ * consumer — `skeletonFor`, the rotation hold, the cross-client penalty, the
+ * gate payload — is keyed on it, so a client-authored id is not a new series
+ * but a new type. And a series is not a name: it is a `middle` of validated
+ * archetypes whose ordering has been calibrated against the interest floor.
+ * A model inventing one at setup would be inventing a layout sequence nothing
+ * has rendered, which is the thing the owner's own ruling forbids ("dynamic
+ * composition from validated building blocks").
+ *
+ * A subset delivers the property that was actually asked for. Two clients
+ * with different briefs now run different editorial shapes, the feed of each
+ * reads as one system because it is three to five shapes rather than six, and
+ * every shape in it is one the repo already renders and calibrates.
+ */
+export const MIN_CLIENT_LIBRARY = 3;
+export const MAX_CLIENT_LIBRARY = 5;
+
+/**
+ * The one series every library must contain.
+ *
+ * `selectSeries` gives `the_breakdown` a standing score of 1 so that a run
+ * whose evidence says nothing still has a winner. Drop it from a library and
+ * an evidence-free run picks among a set of zeroes by array order, which
+ * reads like a choice and is not one.
+ */
+export const LIBRARY_ANCHOR: EditorialSeriesId = "the_breakdown";
+
+/**
+ * Which series a segment leans towards.
+ *
+ * Read off the owner's own industry table, which pairs each segment with the
+ * formats and the proof rules that suit it: a regulated business leads with
+ * figures and rules because that is what it is allowed to say; an agency or a
+ * creator leads with what people said and what happened, because their proof
+ * IS the account. The affinity is a NUDGE of one point, deliberately smaller
+ * than any evidence signal in `selectSeries`, because a client's segment
+ * should decide which shapes are available and never which shape a particular
+ * story takes.
+ */
+const SEGMENT_AFFINITY: ReadonlyArray<{ readonly match: RegExp; readonly prefers: readonly EditorialSeriesId[] }> = [
+  { match: /\b(financ|bank|insur|invest|legal|complian|regulat|health|medic|pharma)/i, prefers: ["by_the_numbers", "the_playbook"] },
+  { match: /\b(saas|software|platform|b2b|api|developer|infrastructur|cloud)/i, prefers: ["head_to_head", "the_breakdown"] },
+  { match: /\b(agenc|consult|studio|creator|coach|freelanc|marketing)/i, prefers: ["in_their_words", "field_notes"] },
+  { match: /\b(restaurant|hospitality|retail|shop|local|clinic|salon|gym|hotel)/i, prefers: ["field_notes", "in_their_words"] },
+  { match: /\b(ecommerce|dtc|consumer|brand|product|cpg)/i, prefers: ["head_to_head", "by_the_numbers"] },
+];
+
+/**
+ * A small stable hash of a string. Not cryptographic and does not need to be:
+ * its only job is that the same client gets the same library every week and
+ * two clients in the same segment do not get the same one.
+ */
+function stableHash(text: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h >>> 0;
+}
+
+export interface ClientLibraryInput {
+  /** Namespaces the library, so two clients with identical briefs still differ. */
+  readonly clientSlug: string;
+  /** `brief.icp.industries` and anything else that names what this client does. */
+  readonly segments?: readonly string[];
+}
+
+export interface ClientLibrary {
+  readonly series: readonly EditorialSeries[];
+  /** One sentence for the gate payload: which shapes this client runs, and on what basis. */
+  readonly rule: string;
+}
+
+/**
+ * This client's three to five series, deterministically.
+ *
+ * Pure, free, and identical across a resume, for the reason `selectSeries`
+ * states about itself: a choice a rule can make is a choice a model should not
+ * be paid to make.
+ */
+export function seriesLibraryFor(input: ClientLibraryInput, catalogue: readonly EditorialSeries[] = BUNDLED_SERIES): ClientLibrary {
+  const haystack = (input.segments ?? []).join(" ");
+  const preferred = new Set<EditorialSeriesId>();
+  const matchedSegments: string[] = [];
+  for (const row of SEGMENT_AFFINITY) {
+    const hit = row.match.exec(haystack);
+    if (hit === null) continue;
+    matchedSegments.push(hit[0].toLowerCase());
+    for (const id of row.prefers) preferred.add(id);
+  }
+
+  const seed = stableHash(input.clientSlug);
+  // Three, four or five, from the slug: the SIZE varies per client too, so two
+  // clients that happen to match the same segment row still run libraries of
+  // different shape.
+  const size = MIN_CLIENT_LIBRARY + (seed % (MAX_CLIENT_LIBRARY - MIN_CLIENT_LIBRARY + 1));
+
+  const anchor = catalogue.find((s) => s.id === LIBRARY_ANCHOR);
+  const rest = catalogue
+    .filter((s) => s.id !== LIBRARY_ANCHOR)
+    .map((s) => ({
+      series: s,
+      // Affinity first, then a per-client shuffle. Adding the hash rather than
+      // sorting by it keeps the affinity decisive and the tie-break stable.
+      score: (preferred.has(s.id) ? 1 : 0) + (stableHash(`${input.clientSlug}:${s.id}`) % 1000) / 1000,
+    }))
+    .sort((a, b) => b.score - a.score)
+    .map((entry) => entry.series);
+
+  const series = [...(anchor === undefined ? [] : [anchor]), ...rest].slice(0, Math.max(MIN_CLIENT_LIBRARY, size));
+
+  return {
+    series,
+    rule:
+      matchedSegments.length > 0
+        ? `${series.length} series for this client, from a brief naming ${matchedSegments.join(", ")}: ${series.map((s) => s.id).join(", ")}`
+        : `${series.length} series for this client; the brief named no segment this recognises, so the set is stable per client rather than steered: ${series.map((s) => s.id).join(", ")}`,
+  };
+}
