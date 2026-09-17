@@ -182,8 +182,17 @@ function fieldsFor(n: number, system: CarouselVisualSystem, over: Record<string,
   };
 }
 
-const systemFrom = (entry: (typeof VISUAL_SYSTEM_CATALOG)[number], slideCount = 8): CarouselVisualSystem => ({
+const systemFrom = (
+  entry: (typeof VISUAL_SYSTEM_CATALOG)[number],
+  slideCount = 8,
+  /* The grammar is an AXIS of this sweep, so it is a parameter rather than a
+     constant: the case that asserts the grammars move the lockup has to be able
+     to hand each one in. Default `bottom-column`, which is what a run with no
+     grammar of its own resolves to. */
+  compositionGrammar: CarouselVisualSystem["compositionGrammar"] = "bottom-column",
+): CarouselVisualSystem => ({
   systemId: entry.id,
+  compositionGrammar,
   ground: entry.ground,
   accentSlides: accentSlidesFor(slideCount, entry.accentForm),
   accentForm: entry.accentForm,
