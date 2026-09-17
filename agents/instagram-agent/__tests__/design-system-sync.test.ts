@@ -22,7 +22,7 @@ const read = (file: string): string => readFileSync(join(DIR, file), "utf8");
  */
 describe("the design system is one source, copied into eight plates", () => {
   it("has every plate byte-identical to the source", () => {
-    const drifted = PLATES.filter((plate) => read(plate) !== renderPlate(plate));
+    const drifted = PLATES.filter((plate) => read(plate) !== renderPlate(plate, DIR));
     expect(drifted, "run: npx tsx scripts/sync-design-system.ts").toEqual([]);
   });
 

@@ -17,14 +17,15 @@
  *   --check   verify only, exit 1 on drift (what CI and the test use)
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
-/* Resolved from THIS FILE, never from the caller's working directory. CI runs
-   vitest per workspace, so `process.cwd()` there is `agents/instagram-agent`
-   and the plate path came out doubled — the suite failed to load at all with
-   `ENOENT .../agents/instagram-agent/agents/instagram-agent/assets/...`. */
-const DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "agents/instagram-agent/assets/templates/default");
+/** Where the plates live, relative to the repo root — the directory this script
+ *  is always run from. The TEST passes its own path instead, resolved from its
+ *  own file: CI runs vitest per workspace, so its `process.cwd()` is
+ *  `agents/instagram-agent` and the path came out doubled. This file cannot
+ *  resolve from `import.meta` because `scripts/` typechecks as CommonJS
+ *  (TS1470), which is why the directory is a parameter rather than a constant. */
+const DEFAULT_DIR = join(process.cwd(), "agents/instagram-agent/assets/templates/default");
 
 export const PLATES = [
   "closer.html",
@@ -47,11 +48,11 @@ const REGIONS = [
  *  write normalises — a mixed-ending file is a diff nobody can review. */
 const crlf = (s: string): string => s.replace(/\r?\n/g, "\r\n");
 
-export function renderPlate(plate: string): string {
-  const original = readFileSync(join(DIR, plate), "utf8");
+export function renderPlate(plate: string, dir: string = DEFAULT_DIR): string {
+  const original = readFileSync(join(dir, plate), "utf8");
   let out = original;
   for (const region of REGIONS) {
-    const body = readFileSync(join(DIR, region.source), "utf8").replace(/\r?\n/g, "\n").trim();
+    const body = readFileSync(join(dir, region.source), "utf8").replace(/\r?\n/g, "\n").trim();
     const from = out.indexOf(region.start);
     const to = out.indexOf(region.end);
     if (from === -1 || to === -1 || to < from) {
@@ -71,10 +72,10 @@ function main(): void {
   const drifted: string[] = [];
   for (const plate of plates) {
     const next = renderPlate(plate);
-    const current = readFileSync(join(DIR, plate), "utf8");
+    const current = readFileSync(join(DEFAULT_DIR, plate), "utf8");
     if (current === next) continue;
     drifted.push(plate);
-    if (!check) writeFileSync(join(DIR, plate), next);
+    if (!check) writeFileSync(join(DEFAULT_DIR, plate), next);
   }
   if (check && drifted.length > 0) {
     console.error(
