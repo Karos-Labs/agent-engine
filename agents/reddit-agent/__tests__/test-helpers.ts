@@ -275,3 +275,26 @@ export async function setupTestEnvironment(
     cleanup: () => fs.rm(rootDir, { recursive: true, force: true }),
   };
 }
+
+/**
+ * The reply as the client actually receives it.
+ *
+ * Reads the persisted deliverable rather than the workflow's return value, so
+ * a repair that missed a field would show up here.
+ */
+export async function deliveredReply(env: TestEnvironment, runId: string): Promise<Record<string, unknown>> {
+  const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", runId, "_"]);
+  if (deliverables.length !== 1) throw new Error(`expected exactly one deliverable for ${runId}, found ${deliverables.length}`);
+  return (deliverables[0] as { data: { deliverable: Record<string, unknown> } }).data.deliverable;
+}
+
+/**
+ * The delivered reply's PROSE, and nothing else.
+ *
+ * Deliberately excludes `contentRepairs`: the ledger names every span it
+ * removed, which is the point of having one, so an assertion over the whole
+ * deliverable finds the span inside the record of its own removal.
+ */
+export function deliveredProse(reply: Record<string, unknown>): string {
+  return JSON.stringify([reply["text"], reply["replyBody"], reply["draftsEnvelope"]]);
+}

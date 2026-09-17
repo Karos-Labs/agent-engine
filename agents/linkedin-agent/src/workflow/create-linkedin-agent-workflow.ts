@@ -68,7 +68,7 @@ import {
 } from "@agent-engine/workflow";
 import type { GateVerdict } from "@agent-engine/core";
 import { LinkedInDraftAgent, type LinkedInPostOutput } from "../agent/linkedin-draft-agent.js";
-import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
+import { renderPreview, LINKEDIN_CHARACTER_LIMIT, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderLinkedInDraftsMarkdown } from "./render-drafts-markdown.js";
 import { whyNowFor } from "./learning.js";
 import { checkLinkedInFormatting, reflowLinkedInText, type LinkedInFormattingReport } from "./linkedin-format.js";
@@ -1171,12 +1171,17 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
             attempts: [
               {
                 action: "trimmed",
-                maxPasses: 4,
                 run: (value) => {
-                  const sentences = value.text.split(/(?<=[.!?])\s+/);
-                  if (sentences.length <= 1) return undefined;
-                  const text = sentences.slice(0, -1).join(" ").trim();
-                  return text.length === 0 ? undefined : { ...value, text };
+                  // Drops as many TRAILING sentences as the overrun needs, in one
+                  // pass. Shedding one sentence at a time runs out of passes on a
+                  // post far over the limit, and a trim that stops short delivers
+                  // an unpublishable post while reporting that it trimmed it.
+                  const parts = value.text.split(/(?<=[.!?])\s+/);
+                  if (parts.length <= 1) return undefined;
+                  let kept = parts.length;
+                  while (kept > 1 && parts.slice(0, kept).join(" ").trim().length > LINKEDIN_CHARACTER_LIMIT) kept -= 1;
+                  const text = parts.slice(0, kept).join(" ").trim();
+                  return text.length === 0 || text.length >= value.text.length ? undefined : { ...value, text };
                 },
               },
             ],

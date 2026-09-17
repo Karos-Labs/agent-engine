@@ -53,6 +53,10 @@ const REQUESTED_PATH_STEP_IDS = [
   "15-verify-no-placeholder",
   "16-verify-leak-check",
   "17-render-preview-check",
+  // The repair step. Always present, even on a clean reply: it asks what the
+  // checks above objected to and returns the draft untouched when the answer
+  // is nothing, so its presence says the repair path ran.
+  "17r-repair-reply",
   "18-batch-review-r0",
   "19-persist-deliverable",
   "20-persist-manifest",

@@ -5,7 +5,7 @@ import type { AgentTool } from "@agent-engine/core";
 const TOOL_VERSION = "1.0.0";
 
 /** LinkedIn's actual character limit for a standard feed post (matches gate.lintPost's own table). */
-const LINKEDIN_CHARACTER_LIMIT = 3000;
+export const LINKEDIN_CHARACTER_LIMIT = 3000;
 /** Roughly what's visible above the "…see more" fold before a reader has to tap through. */
 const LINKEDIN_FOLD_CHARACTERS = 210;
 

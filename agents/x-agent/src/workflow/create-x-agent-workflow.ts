@@ -1072,12 +1072,19 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
                 action: "trimmed",
                 maxPasses: 5,
                 run: async (value) => {
-                  /** Drops the trailing sentence of whichever part is over the limit. */
+                  /**
+                   * Cuts a part down to the limit in ONE pass, not one sentence
+                   * per pass: shedding one at a time runs out of passes on a
+                   * part far over 280, and a trim that stops short delivers an
+                   * unpublishable post while reporting that it trimmed it.
+                   */
                   const shorten = (part: string): string | undefined => {
                     const sentences = part.split(/(?<=[.!?])\s+/);
                     if (sentences.length <= 1) return undefined;
-                    const shorter = sentences.slice(0, -1).join(" ").trim();
-                    return shorter.length === 0 ? undefined : shorter;
+                    let kept = sentences.length;
+                    while (kept > 1 && sentences.slice(0, kept).join(" ").trim().length > X_CHARACTER_LIMIT) kept -= 1;
+                    const shorter = sentences.slice(0, kept).join(" ").trim();
+                    return shorter.length === 0 || shorter.length >= part.length ? undefined : shorter;
                   };
                   const mainPreview = await previewOf(value.text);
                   if (!mainPreview.withinLimit) {
