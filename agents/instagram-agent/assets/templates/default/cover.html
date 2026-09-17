@@ -769,7 +769,23 @@
     inline-size: fit-content; max-inline-size: 100%;
     font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro);
     letter-spacing: 0.24em; text-transform: uppercase;
-    color: color-mix(in srgb, var(--fg) 92%, transparent);
+    /* ── FULL `--fg`, AND THE 8% IT USED TO GIVE AWAY IS WHY. ──
+       This read `color-mix(in srgb, var(--fg) 92%, transparent)` — the same
+       softening `.body-text` and the subtitle carry, copied onto an element
+       that cannot afford it. The two are not comparable: body text is set at
+       `--t-label` (32px) at weight 400 over the field's FOOT, where the ramp
+       has dissolved and `--fg` measures 10.7:1 (see the table beside
+       `.cov-field`). This label is 22px of mono at 0.24em tracking, and on the
+       no-photograph path it sits on the ramp's HEAD, where the same table
+       records `--fg` at EXACTLY 4.5:1 on the bundled kit — no margin at all.
+       Compositing 8% of the ground into a thin, widely-tracked glyph at that
+       position took it to 3.93:1 (CI Chromium, glyph #ccc1b9 over #735248,
+       `interest-floor-calibration.test.ts`), i.e. under the bar, on the one
+       element of the cover a reader meets first.
+       The softening bought nothing this plate needed. A label that is present
+       is legible or it is decoration, and the ramp-head ground is the case
+       that decides it. */
+    color: var(--fg);
     margin-block-start: calc(36px * var(--ts, 1));
   }
   .eyebrow:empty { display: none; }
