@@ -1045,21 +1045,24 @@ body:not(:has(#head:not(:empty))) .cmp-cols { background-image: none; }
       closeInk();
     }
 
-    /* ── THE SUBJECT YIELDS BEFORE THE COPY IS CLIPPED. ──
-       A plate that still does not fit after two steps has more copy than the
-       composition holds, and there are only two things it can give up: the
-       words, or the object they sit beside. Clipping the words is the one
-       outcome the interest floor refuses outright ("clipped"), and it is what a
-       long cover was doing at every type scale — the band and the lockup were
-       both holding their ground. The object stands down instead, which is the
-       same thing the cover already does when a photograph arrives. */
-    if (overflows()) {
-      var subject = document.querySelector('.cov-field, .sc-figure-band');
-      if (subject !== null) {
-        subject.style.display = 'none';
+    /* ── THE SUBJECT SHRINKS BEFORE THE COPY IS CLIPPED, AND ONLY THEN GOES. ──
+       A plate that still does not fit after two type steps can give up the
+       words or the object beside them. Clipping the words is the one outcome
+       the floor refuses outright, so the object gives — but it GIVES HEIGHT,
+       it does not disappear: hiding it outright traded a `clipped` finding for
+       a `dead-space` one at LER 0.50, which is the same plate failing at the
+       other end. The band is a ramp and reads at any height, so it steps down
+       to a floor it is still an object at, and only below that stands down. */
+    var subject = document.querySelector('.cov-field');
+    if (subject !== null && overflows()) {
+      var band = subject.getBoundingClientRect().height;
+      while (overflows() && band > 220) {
+        band -= 60;
+        subject.style.blockSize = band + 'px';
         closeInk();
-        if (!overflows()) step = 2;
       }
+      if (overflows()) subject.style.display = 'none';
+      closeInk();
     }
 
     /* Leave the outcome on the body so a render check, the interest floor and a
