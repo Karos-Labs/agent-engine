@@ -626,8 +626,11 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
           value: post,
           verify: inspectSpans,
           attempts: [{ action: "redacted", maxPasses: 3, run: (value, verdict) => redactAcrossDraft(value, spansFromEvidence(verdict.evidence)) }],
-          describeUnresolved: (verdict) =>
-            `could not be removed without losing the article: ${verdict.evidence.join(", ")} — delivered with this noted rather than withheld`,
+          // The gate's OWN reason, not a "could not be removed" gloss: not
+          // every content failure is something to delete. A missing required
+          // disclaimer is a thing to ADD, and the delete-framing read as
+          // nonsense on the ledger a reviewer actually sees.
+          describeUnresolved: (verdict) => `${verdict.reason} — delivered with this noted rather than withheld`,
         });
         post = spanOutcome.value;
         repairs.push(...spanOutcome.repairs);
