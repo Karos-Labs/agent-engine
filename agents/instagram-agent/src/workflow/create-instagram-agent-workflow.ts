@@ -12577,6 +12577,20 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // NON_PROSE layout metadata), and the whole path exists only when edits
     // were actually sent — a plain approve's trace is byte-identical to
     // before this feature.
+
+    /**
+     * A reviewer who ran the cycle out of rounds, or who rejected outright,
+     * recorded ON the deliverable rather than ending the run.
+     *
+     * This agent shares `runReviewCycle` with the rest, so it inherits the
+     * same behaviour. Nothing here publishes anything — the deliverable still
+     * waits on a human — so what changes is that the reviewer keeps the work
+     * and the reason attached to it.
+     */
+    const reviewOutcome =
+      review.outcome !== undefined && review.outcome !== "approved"
+        ? { outcome: review.outcome, detail: review.outcomeDetail ?? review.outcome }
+        : null;
     let slidesData = review.output.slidesData;
     let rendered = review.output.rendered;
     let caption = review.output.copy.caption;
@@ -13445,7 +13459,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // with no key would either fail or, worse, claim the catalog issued
       // something it never did. Same guard x-agent's step 20 already applies to
       // its own reservation.
-      if (topicClaim.source === "reserved" && topicClaim.reservationKey) {
+      // A topic is only CONSUMED by a post a reviewer approved. Before this PR
+      // a reject threw before ever reaching here; now it returns, so the guard
+      // has to be explicit or a rejected post would burn the topic it was
+      // built from and no future run could use it.
+      if (topicClaim.source === "reserved" && topicClaim.reservationKey && reviewOutcome !== null) {
+        await tools["topics.release"]?.execute({ reservationKey: topicClaim.reservationKey }, { ctx }).catch(() => undefined);
+      } else if (topicClaim.source === "reserved" && topicClaim.reservationKey) {
         const commitOutcome = await tools["topics.commit"]!.execute({ reservationKey: topicClaim.reservationKey }, { ctx });
         // RFC-19, the bookkeeping cluster. `09b`'s own decision-log write states the precedent verbatim —
         // *"losing a promotion costs the pool one design, failing an approved post over it would cost the
@@ -13511,6 +13531,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       platform: "instagram",
       deliverable: {
         kind: "instagram-carousel",
+        ...(reviewOutcome ? { reviewOutcome } : {}),
         goal: goalLine.goal,
         ...(goalLine.audience !== undefined ? { audience: goalLine.audience } : {}),
         whyNow: goalLine.whyNow,
@@ -13544,6 +13565,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     });
 
     return {
+      ...(reviewOutcome ? { reviewOutcome } : {}),
       postId: runClaim.postId,
       topic: topicClaim.topic,
       slideCount: slidesData.slides.length,

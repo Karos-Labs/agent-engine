@@ -297,7 +297,7 @@ describe("tiktok-agent review cycle (runReviewCycle)", () => {
     expect(h.feedback[1]).toMatchObject({ note: "The disagreement framing is working, keep doing that." });
   }, 30000);
 
-  it("releases the reservation on an outright rejection, exactly once, and ships nothing", async () => {
+  it("releases the reservation on an outright rejection, exactly once, and keeps the clip", async () => {
     const h = stubTools();
     const workflow = makeWorkflow(h, [GOOD_MOMENT, FIRST_COMMENTARY]);
     const engine = new WorkflowEngine(new MemoryDurableStepStore());
@@ -311,13 +311,17 @@ describe("tiktok-agent review cycle (runReviewCycle)", () => {
       at: new Date().toISOString(),
     });
     const result = await engine.run(workflow, { ...PARAMS, runId, input: INPUT });
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/review rejected/i);
+    // tiktok shares `runReviewCycle`, so it inherits the change the six
+    // converted agents got: a reject no longer ends the run. The work is kept
+    // and marked with the reviewer's decision, and the topic reservation is
+    // RELEASED rather than committed — a rejected post must not burn the topic
+    // it was built from. Nothing publishes: the clip still waits on a human.
+    expect(result.status).toBe("completed");
 
     expect(h.calls.filter((c) => c === "topics.release")).toHaveLength(1);
     expect(h.calls).not.toContain("topics.commit");
-    expect(h.calls).not.toContain("ledger.writeDeliverable");
+    // The clip IS written now — that is the point of keeping the work.
+    expect(h.calls).toContain("ledger.writeDeliverable");
 
     // SCRUM-306 (AU23): the clip's content used to be lost the moment the run
     // held — never in `ledger.writeDeliverable` (asserted above it never
@@ -334,7 +338,7 @@ describe("tiktok-agent review cycle (runReviewCycle)", () => {
     expect(typeof parsedDraft.renderedPath).toBe("string");
   }, 30000);
 
-  it("holds at the revision ceiling rather than re-rendering indefinitely, and gives the moment back", async () => {
+  it("DELIVERS at the revision ceiling rather than re-rendering indefinitely, and gives the moment back", async () => {
     // Every round re-runs a paid drafting step and a full render; a reviewer
     // who keeps clicking revise would otherwise keep spending forever.
     const h = stubTools();
@@ -353,12 +357,16 @@ describe("tiktok-agent review cycle (runReviewCycle)", () => {
       });
     }
     const result = await engine.run(workflow, { ...PARAMS, runId, input: INPUT });
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/ceiling/i);
+    // tiktok shares `runReviewCycle`, so it inherits the change the six
+    // converted agents got: a reject no longer ends the run. The work is kept
+    // and marked with the reviewer's decision, and the topic reservation is
+    // RELEASED rather than committed — a rejected post must not burn the topic
+    // it was built from. Nothing publishes: the clip still waits on a human.
+    expect(result.status).toBe("completed");
 
     expect(h.calls.filter((c) => c === "topics.release")).toHaveLength(1);
-    expect(h.calls).not.toContain("ledger.writeDeliverable");
+    // The clip IS written now — that is the point of keeping the work.
+    expect(h.calls).toContain("ledger.writeDeliverable");
   }, 30000);
 
   it("does not release the moment while a human is still looking at the clip", async () => {

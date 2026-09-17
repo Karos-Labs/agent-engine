@@ -197,7 +197,7 @@ describe("revision loop", () => {
 
   // Every round re-runs the paid drafting steps, so the loop has to be bounded
   // or a reviewer clicking revise forever spends forever.
-  it("holds after the revision ceiling rather than re-drafting indefinitely", async () => {
+  it("DELIVERS after the revision ceiling rather than re-drafting indefinitely", async () => {
     const copy = goodCopyOutput();
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
@@ -226,12 +226,18 @@ describe("revision loop", () => {
     }
     const result = await engine.run(workflowFn, { ...base, runId });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/ceiling/i);
-    // The hold names every request, so whoever reads it sees the whole thread.
-    expect(result.reason).toContain("change number 1");
-    expect(result.reason).toContain("change number 3");
+    // The ceiling is not a rejection: a reviewer asking for one more change
+    // wants MORE, not nothing. Holding here threw away three rounds of work
+    // AND the reviewer's own outstanding requests. The best carousel now ships
+    // carrying every open request, so the next pass starts from something.
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+    // Every request is on the deliverable, so whoever reads it sees the whole
+    // thread — the run status no longer carries them because the run no longer
+    // ends on them.
+    const detail = result.output.reviewOutcome?.detail ?? "";
+    expect(detail).toContain("change number 1");
+    expect(detail).toContain("change number 3");
   }, 90000);
 
   it("routes per-slide template feedback to the registry, moving that template's quality score", async () => {

@@ -808,8 +808,16 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
     // feedback pipeline (AU22: this step used to also call the now-retired
     // `ledger.feedbackAppend`, a write-only log nothing ever read). ──
     await wf.step.code("18-commit-and-record", async () => {
+      // A topic is only CONSUMED by a post that a reviewer approved. Before
+      // this PR a reject threw before ever reaching here; now it returns, so
+      // the guard has to be explicit or a rejected article would burn the
+      // topic it was written from and no future run could use it.
       if (selected.source === "reserved" && reservation.reservationKey) {
-        await tools["topics.commit"]!.execute({ reservationKey: reservation.reservationKey }, { ctx });
+        if (review.outcome !== undefined && review.outcome !== "approved") {
+          await tools["topics.release"]?.execute({ reservationKey: reservation.reservationKey }, { ctx }).catch(() => undefined);
+        } else {
+          await tools["topics.commit"]!.execute({ reservationKey: reservation.reservationKey }, { ctx });
+        }
       }
       // The write half of the anti-repetition loop: the shipped post joins
       // this agent's rolling excerpt window, read back by research.pull's
