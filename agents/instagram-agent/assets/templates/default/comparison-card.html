@@ -323,6 +323,23 @@ body:has(.hero) .plate::after { display: none; }
   flex: 1 1 0;
   min-block-size: 0;
 }
+
+/* ── A PLATE THAT CARRIES A BOUNDED OBJECT GIVES THE FREE SPACE TO THE OBJECT,
+      NOT TO THE SPACER. ──
+   The spacer pushes the stack to the foot and leaves the air in one block at
+   the head — which is a large empty rectangle whichever end it sits at, and the
+   interest floor refuses one over 22% of the plate. An object that grows takes
+   that space instead: it is still bounded (a declared box, `no-repeat`, one
+   ramp), it is still content by every mask `slide-metrics` keeps, and a reader
+   sees a composed plate rather than a stack with a hole above it. */
+.plate:has(.cov-field:not([hidden])) > .plate-spacer,
+.plate:has(.quote-block),
+.plate:has(.cl-recap:not(:empty)) { }
+.plate:has(.quote-block)::before,
+.plate:has(.cl-recap:not(:empty))::before { flex-grow: 0; }
+.quote-block { flex: 1 1 auto; justify-content: center; }
+.cl-recap:not(:empty) { flex: 1 1 auto; }
+.cl-wrap { flex: 1 1 auto; }
 /* ── THE RUN'S COMPOSITION GRAMMAR, AS SOMETHING CSS CAN SELECT ON. ──
    `bottom` is the default and the spacer above is it. The other three move the
    spacer, or stand it down in favour of `space-between`. The grammar used to
@@ -893,6 +910,12 @@ body.ta-center .acc { margin-inline: auto; }
     for (var round = 0; round < 2; round++) {
       for (var j = 0; j < content.length; j++) {
         var h = content[j];
+        /* Inline boxes only: `scrollHeight` and `clientHeight` are both 0 on an
+           inline element, and block padding does not move its box either, so
+           padding one is noise that never closes anything. An emphasis mark's
+           bleed is paid for by its HOST, which is a block. */
+        var display = getComputedStyle(h).display;
+        if (display === 'inline' || display === 'contents' || display === 'none') continue;
         var over = h.scrollHeight - h.clientHeight;
         if (over <= 0) continue;
         var current = parseFloat(h.style.paddingBlockEnd) || 0;

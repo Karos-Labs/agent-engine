@@ -115,6 +115,12 @@
     for (var round = 0; round < 2; round++) {
       for (var j = 0; j < content.length; j++) {
         var h = content[j];
+        /* Inline boxes only: `scrollHeight` and `clientHeight` are both 0 on an
+           inline element, and block padding does not move its box either, so
+           padding one is noise that never closes anything. An emphasis mark's
+           bleed is paid for by its HOST, which is a block. */
+        var display = getComputedStyle(h).display;
+        if (display === 'inline' || display === 'contents' || display === 'none') continue;
         var over = h.scrollHeight - h.clientHeight;
         if (over <= 0) continue;
         var current = parseFloat(h.style.paddingBlockEnd) || 0;
