@@ -47,6 +47,11 @@ const REGIONS = [
 /** Templates are CRLF on disk and several guards read them as source, so every
  *  write normalises — a mixed-ending file is a diff nobody can review. */
 const crlf = (s: string): string => s.replace(/\r?\n/g, "\r\n");
+/** A COMPARISON ignores line endings entirely. The working copy is CRLF on
+ *  Windows and LF after a Linux checkout, so comparing the raw strings made the
+ *  drift check pass for the author and fail in CI on all eight plates, for no
+ *  reason a reader could see in the diff. */
+const lf = (s: string): string => s.replace(/\r?\n/g, "\n");
 
 export function renderPlate(plate: string, dir: string = DEFAULT_DIR): string {
   const original = readFileSync(join(dir, plate), "utf8");
@@ -73,7 +78,7 @@ function main(): void {
   for (const plate of plates) {
     const next = renderPlate(plate);
     const current = readFileSync(join(DEFAULT_DIR, plate), "utf8");
-    if (current === next) continue;
+    if (lf(current) === lf(next)) continue;
     drifted.push(plate);
     if (!check) writeFileSync(join(DEFAULT_DIR, plate), next);
   }

@@ -22,7 +22,12 @@ const read = (file: string): string => readFileSync(join(DIR, file), "utf8");
  */
 describe("the design system is one source, copied into eight plates", () => {
   it("has every plate byte-identical to the source", () => {
-    const drifted = PLATES.filter((plate) => read(plate) !== renderPlate(plate, DIR));
+    /* Compared with line endings normalised. The working copy is CRLF on Windows
+       and LF after a Linux checkout, and comparing the raw strings made this
+       guard pass for the author and fail for everyone else — on all eight
+       plates, for no reason a reader could see. */
+    const lf = (source: string): string => source.split("\r\n").join("\n");
+    const drifted = PLATES.filter((plate) => lf(read(plate)) !== lf(renderPlate(plate, DIR)));
     expect(drifted, "run: npx tsx scripts/sync-design-system.ts").toEqual([]);
   });
 

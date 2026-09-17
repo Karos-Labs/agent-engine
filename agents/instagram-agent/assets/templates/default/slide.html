@@ -124,7 +124,10 @@ body {
    `.brand-badge`), and a rule that READS a token nobody declares resolves to
    nothing — an ink of `initial` on a client template that does carry the slot.
    Declared here so the value exists wherever the rule can apply. */
-:root { --badge-ink: color-mix(in srgb, var(--fg) 55%, transparent); }
+/* On `body`, not `:root`: this one is the SET's own token, not a kit token,
+   so nothing upstream competes for it — and `default-template-render` asserts
+   the declaration is where a template author would look for it. */
+body { --badge-ink: color-mix(in srgb, var(--fg) 55%, transparent); }
 
 /* The reviewer's type-scale request. Hebrew sets ~6% larger at the same step,
    so the script sheet may override this; `script-fonts.ts` owns that. */
