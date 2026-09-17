@@ -6,7 +6,10 @@ import { ScraperError, type ScraperProvider } from "@agent-engine/tool-karos-scr
 import { MEDIA_CACHE_PREFIX, downloadImage, type FindImagesCandidate } from "./find-images.js";
 
 // 1.0.0 — new: the source articles a post is written FROM as an image source.
-const TOOL_VERSION = "1.0.0";
+// 1.1.0 (Phase 5.6, item A8): a publisher's social-card image is measured
+// before it is placed. Many are exactly 1200x630, which clears the floor;
+// the ones that do not are now refused instead of being enlarged.
+const TOOL_VERSION = "1.1.0";
 
 export const HarvestArticleImagesInputSchema = z.object({
   repoRoot: z.string().min(1).describe("Bounds root. Every returned path is relative to this and provably inside it."),
@@ -153,9 +156,11 @@ export function createHarvestArticleImages(options: { scraper?: ScraperProvider 
         for (const [imageIndex, imageUrl] of imageUrls.entries()) {
           if (saved >= input.perSource) break;
           const relative = await downloadImage(fetchImpl, { id: `article-${index}-${imageIndex}-${imageUrl}`, url: imageUrl }, absDir, relDir, index + 1);
-          if (relative === undefined) continue;
+          if (!relative.ok) continue;
           candidates.push({
-            path: relative,
+            path: relative.path,
+            pixels: relative.facts,
+            ...(relative.warnings.length > 0 ? { qualityNotes: relative.warnings } : {}),
             description:
               `lead image of the cited article${title ? ` "${title}"` : ""} (${source.url})` +
               ` — the publisher's own social-card picture for this story. [licence: ${PUBLISHER_LICENCE}]`,

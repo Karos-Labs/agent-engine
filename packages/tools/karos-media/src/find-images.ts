@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { defineTool, success, contentFail, toolingError } from "@agent-engine/tool-common";
+import { assessImageFloor, describeImageFloorRefusal, type ImagePixelFacts } from "./image-floor.js";
+import type { ImageProvenance } from "./image-provenance.js";
 import { ImageProviderError, type ImageSearchHit, type ImageSearchProvider } from "./providers.js";
 import { MEDIA_ROUTES, singleProviderSource, type ImageSource, type MediaRoute } from "./routing.js";
 
@@ -13,7 +15,12 @@ import { MEDIA_ROUTES, singleProviderSource, type ImageSource, type MediaRoute }
 // Both default to today's behaviour, so every existing caller is unaffected;
 // the MINOR digit is what says so. (`routing.ts` declares no `TOOL_VERSION` of
 // its own, so this is the file the push gate diffs for that change too.)
-const TOOL_VERSION = "1.1.0";
+// 1.2.0 (Phase 5.6, item A8): every candidate now carries its MEASURED pixels,
+// and an image under the platform's 1080px short-side floor is refused here
+// with its real size in the reason instead of being placed and enlarged. The
+// wire contract widens by one optional `pixels` field per candidate; no
+// existing field changed meaning, hence MINOR.
+const TOOL_VERSION = "1.2.0";
 
 /**
  * Every downloaded file lands under this repo-relative prefix. Kept in one
@@ -84,6 +91,25 @@ export interface FindImagesCandidate {
   provider: string;
   /** How defensible this image's licence is — `unknown` means the rights gate should be sceptical. */
   licenseConfidence: string;
+  /**
+   * What the image's own container says it measures. Optional only so a
+   * hand-written candidate in a test stays valid; every candidate this
+   * package produces carries it, because it is measured before the file is
+   * written (item A8).
+   */
+  pixels?: ImagePixelFacts;
+  /**
+   * Findings that did not refuse the image: an embedded non-sRGB profile, a
+   * GIF the feed will re-encode, or — for client-supplied media, which is
+   * measured rather than refused — a short side under the floor.
+   */
+  qualityNotes?: string[];
+  /**
+   * How a GENERATED frame was made — model, brief hash, and whether it is the
+   * photorealistic kind that must be declared (item A11). Absent on a sourced
+   * image, which carries a licence instead.
+   */
+  provenance?: ImageProvenance;
 }
 
 export interface FindImagesResult {
@@ -296,15 +322,22 @@ export function createFindImages(source: ImageSource | ImageSearchProvider, fetc
         for (const { provider, hit } of interleaveByProvider(perProviderHits)) {
           if (savedForNeed >= input.maxPerNeed) break;
           const saved = await downloadHit(fetchImpl, hit, absDir, relDir, need.n);
-          if (saved === undefined) continue;
+          if (!saved.ok) {
+            // The real reason, not "failed to download" — a 400px thumbnail
+            // and a 404 are different problems and the chain report says which.
+            attempts.push(`${provider}: ${saved.reason}`);
+            continue;
+          }
           candidates.push({
-            path: saved,
+            path: saved.path,
             // The licence rides on the description because that is the only
             // field that reaches the vetting agent, and it has to record a
             // real `license` string per selection.
             description: `slide ${need.n} candidate — ${hit.description} [licence: ${hit.license}]`,
             provider,
             licenseConfidence: hit.licenseConfidence ?? "unknown",
+            pixels: saved.facts,
+            ...(saved.warnings.length > 0 ? { qualityNotes: saved.warnings } : {}),
           });
           savedForNeed += 1;
           if (!providersUsed.includes(provider)) providersUsed.push(provider);
@@ -314,7 +347,7 @@ export function createFindImages(source: ImageSource | ImageSearchProvider, fetc
           const offered = perProviderHits.reduce((n, p) => n + p.hits.length, 0);
           if (offered > 0) {
             attempts.push(
-              `all ${offered} result(s) across ${perProviderHits.length} provider(s) failed to download`,
+              `none of the ${offered} result(s) across ${perProviderHits.length} provider(s) could be placed`,
             );
           }
           unmet.push({ n: need.n, query: need.query, reason: attempts.join("; ") });
@@ -406,15 +439,51 @@ function interleaveByProvider(
 }
 
 /**
- * Returns the repo-relative path written, or undefined when this hit could not
- * be saved.
+ * What a download attempt produced: the repo-relative path and the image's
+ * measured pixels, or the reason it could not be used.
+ *
+ * ## Why a reason and not just `undefined`
+ *
+ * Every refusal in this function used to return a bare `undefined`, so a
+ * caller could only ever say "failed to download" — for a 404, an HTML error
+ * page served as image/jpeg, a 30 MB file and a 400px thumbnail alike. That
+ * is the same collapsing of distinct diagnoses this file's own comments
+ * warn about two screens up ("a chain that returned pictures we then refused
+ * is a different diagnosis from a chain that had none"), and it is a direct
+ * cause of the owner's "why are there no images" — the answer existed at
+ * this line and was thrown away here.
+ */
+export type ImageDownload =
+  | { ok: true; path: string; facts: ImagePixelFacts; warnings: string[] }
+  | { ok: false; reason: string };
+
+/**
+ * How strictly the resolution floor applies to this source.
+ *
+ * `"enforce"` is right for everything the agent went and found: a provider
+ * that only has a 600px copy of a picture has not given us a usable picture,
+ * and the next provider in the chain deserves the slot.
+ *
+ * `"measure"` is for media the CLIENT supplied. Their own photograph is not
+ * a search result to be rejected — refusing it would hand back a post with
+ * an empty slide and a lecture, which the always-deliver ruling forbids. It
+ * is measured, its shortfall is recorded as a warning that travels with the
+ * asset, and it is placed.
+ */
+export type ImageFloorPolicy = "enforce" | "measure";
+
+/**
+ * Returns the repo-relative path written and what its pixels measured, or the
+ * reason this hit could not be used.
  *
  * Exported as `downloadImage` for `media.scrapeImages`, which needs the exact
  * same guarantees: content-type refused rather than guessed, size ceiling
  * enforced twice (declared and actual), filename derived from a hash so a
- * provider's id format cannot escape the directory. A second download path
- * with its own subtly different checks is precisely the kind of duplication
- * that ends with an HTML error page saved as .jpg.
+ * provider's id format cannot escape the directory, and — since the
+ * resolution floor moved in here — a measured short side. A second download
+ * path with its own subtly different checks is precisely the kind of
+ * duplication that ends with an HTML error page saved as .jpg, or with one
+ * source quietly exempt from the floor.
  */
 export { downloadHit as downloadImage };
 
@@ -424,33 +493,55 @@ async function downloadHit(
   absDir: string,
   relDir: string,
   n: number,
-): Promise<string | undefined> {
+  floorPolicy: ImageFloorPolicy = "enforce",
+): Promise<ImageDownload> {
   let response: Response;
   try {
     response = await fetchImpl(hit.url, { signal: AbortSignal.timeout(20_000) });
-  } catch {
-    return undefined;
+  } catch (error) {
+    return { ok: false, reason: `fetch failed (${error instanceof Error ? error.message : "unknown"})` };
   }
-  if (!response.ok) return undefined;
+  if (!response.ok) return { ok: false, reason: `HTTP ${response.status}` };
 
   const contentType = (response.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
   const extension = EXTENSION_BY_TYPE[contentType];
   // An unrecognised content-type is refused rather than guessed: the renderer
   // feeds these straight to a browser, and a saved HTML error page named .jpg
   // fails much later and much less clearly.
-  if (extension === undefined) return undefined;
+  if (extension === undefined) {
+    return { ok: false, reason: `served as ${contentType || "no content-type"}, not an image type we place` };
+  }
 
   const declared = Number(response.headers.get("content-length") ?? "0");
-  if (Number.isFinite(declared) && declared > MAX_BYTES) return undefined;
+  if (Number.isFinite(declared) && declared > MAX_BYTES) {
+    return { ok: false, reason: `declared ${Math.round(declared / 1024 / 1024)} MB, over the ${MAX_BYTES / 1024 / 1024} MB ceiling` };
+  }
 
   let bytes: Buffer;
   try {
     bytes = Buffer.from(await response.arrayBuffer());
   } catch {
-    return undefined;
+    return { ok: false, reason: "the response body could not be read" };
   }
   // Re-checked after the fact: content-length is a claim, not a guarantee.
-  if (bytes.byteLength === 0 || bytes.byteLength > MAX_BYTES) return undefined;
+  if (bytes.byteLength === 0) return { ok: false, reason: "empty body" };
+  if (bytes.byteLength > MAX_BYTES) {
+    return { ok: false, reason: `${Math.round(bytes.byteLength / 1024 / 1024)} MB, over the ${MAX_BYTES / 1024 / 1024} MB ceiling` };
+  }
+
+  // The resolution and colour floor, measured on the bytes we actually hold —
+  // before anything is written, so a refused image never reaches the disk and
+  // can never be picked up by a later path that trusts the directory.
+  const verdict = assessImageFloor(bytes);
+  // Unreadable bytes are refused under EITHER policy. `"measure"` softens the
+  // question "is this picture big enough", which is a judgement about a real
+  // image; it does not soften "is this an image at all". Placing a file no
+  // container parser recognises would mean inventing its dimensions, and a
+  // fabricated measurement is worse than no image.
+  if (verdict.facts === undefined) return { ok: false, reason: describeImageFloorRefusal(verdict) };
+  if (floorPolicy === "enforce" && !verdict.ok) {
+    return { ok: false, reason: describeImageFloorRefusal(verdict) };
+  }
 
   // Hashing the provider id keeps the filename stable for a given hit while
   // staying filesystem-safe whatever the provider's id format is.
@@ -459,8 +550,13 @@ async function downloadHit(
 
   try {
     await fs.writeFile(path.join(absDir, `${stem}${extension}`), bytes);
-  } catch {
-    return undefined;
+  } catch (error) {
+    return { ok: false, reason: `could not be written (${error instanceof Error ? error.message : "unknown"})` };
   }
-  return relative;
+
+  // A measured-policy asset that misses the floor still travels with the
+  // shortfall attached, so the deliverable can say so rather than the client
+  // discovering it in the feed.
+  const warnings = verdict.ok ? verdict.warnings : [...verdict.warnings, ...verdict.reasons];
+  return { ok: true, path: relative, facts: verdict.facts, warnings };
 }

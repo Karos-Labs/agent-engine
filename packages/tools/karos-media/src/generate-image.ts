@@ -4,6 +4,9 @@ import { z } from "zod";
 import { logWarning } from "@agent-engine/telemetry";
 import { defineTool, success, contentFail, toolingError, notAvailable } from "@agent-engine/tool-common";
 import { MEDIA_CACHE_PREFIX, type FindImagesCandidate } from "./find-images.js";
+import { assessImageFloor } from "./image-floor.js";
+import { IMAGE_MODEL_LADDER, ImageModelLadder, isModelUnavailableError } from "./image-model-ladder.js";
+import { buildImageProvenance } from "./image-provenance.js";
 
 // 1.0.1 (SCRUM-296/AU11): removed the redundant re-parse of already-validated input.
 // 1.1.0 (RFC-13 Phase 3, item Q): `art` gains `forbid` and `styleLock`, and
@@ -25,7 +28,19 @@ import { MEDIA_CACHE_PREFIX, type FindImagesCandidate } from "./find-images.js";
 // set of `toContain`s. But when a list IS non-empty the standing constraint
 // line changes shape, and the tool-version gate on main exists precisely so a
 // prompt change is legible in the version.
-const TOOL_VERSION = "1.2.0";
+// 2.0.0 (Phase 5.6, items D2/A8/A11): three changes, one of which is
+// breaking. The MODEL is no longer a constant — an unpinned caller now gets
+// the best rung of `IMAGE_MODEL_LADDER` this project can actually reach,
+// which means two callers passing identical input can receive frames from
+// different models, and `result.model` can name more than one. A generated
+// frame must now clear the same 1080px floor a sourced one does, so a call
+// that previously returned a small image now reports it unmet. And every
+// candidate carries `provenance`. The MAJOR digit is for the first of those:
+// the tool's output is no longer a function of its input alone, and a caller
+// that pinned its expectations to `gemini-2.5-flash-image` will see something
+// else. A caller passing `model` explicitly is unaffected — the ladder
+// collapses to that single rung.
+const TOOL_VERSION = "2.0.0";
 
 /**
  * The image-generation call, narrowed to what this tool uses so the package
@@ -76,7 +91,12 @@ export const GenerateImageInputSchema = z.object({
     .max(3)
     .default(1)
     .describe("Images per need, as separate billed calls. One is usually right: a rescue needs a picture that works, not a shortlist."),
-  aspectRatio: z.enum(["1:1", "3:4", "4:3", "9:16", "16:9"]).default("4:3").describe("Passed through as imageConfig.aspectRatio; verified accepted by the model."),
+  aspectRatio: z
+    .enum(["1:1", "3:4", "4:3", "4:5", "9:16", "16:9"])
+    .default("4:3")
+    .describe(
+      "Passed through as imageConfig.aspectRatio; verified accepted by the model. `4:5` is the platform's own portrait ratio and the one a full-bleed slide wants — it was absent from this enum until Phase 5.6, so a caller that wanted it had to ask for 3:4 and have the frame cropped.",
+    ),
   art: z
     .object({
       aesthetic: z.string().min(1).optional().describe("e.g. \"editorial\", \"documentary\", \"minimal product photography\"."),
@@ -168,7 +188,16 @@ export interface GenerateImageResult {
   model: string;
 }
 
-/** The default. Verified reachable in prep; every `imagen-*` id 404s there. */
+/**
+ * The model this tool falls back to, and no longer the model it starts from.
+ *
+ * It kept that name for three releases on the strength of a note that said
+ * *"Verified reachable in prep; every `imagen-*` id 404s there"* — a true
+ * observation about one project on one afternoon, which then decided every
+ * picture the fleet made. `IMAGE_MODEL_LADDER` asks the question again on
+ * each process instead; this constant is the ladder's last rung, kept
+ * exported because it is still the answer to "what will definitely work".
+ */
 export const DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image";
 
 /**
@@ -279,7 +308,10 @@ export function createGenerateImage(options: {
   /** Backoff applied to a `RESOURCE_EXHAUSTED`/`UNAVAILABLE` generateContent failure. */
   retry?: GenerateImageRetryOptions;
 }) {
-  const model = options.model ?? DEFAULT_IMAGE_MODEL;
+  // A caller that names a model still gets exactly it — `ImageModelLadder`
+  // collapses to a single rung when pinned. A caller that does not now gets
+  // the best model this project can actually reach, asked rather than assumed.
+  const ladder = new ImageModelLadder(IMAGE_MODEL_LADDER, options.model);
   const maxAttempts = Math.max(1, options.retry?.maxAttempts ?? 3);
   const baseDelayMs = options.retry?.baseDelayMs ?? 2_000;
   const sleep = options.retry?.sleepImpl ?? defaultSleep;
@@ -290,15 +322,47 @@ export function createGenerateImage(options: {
    * with no added latency.
    */
   async function generateWithBackoff(
-    request: Parameters<ImageGenerationClient["models"]["generateContent"]>[0],
-  ): Promise<Awaited<ReturnType<ImageGenerationClient["models"]["generateContent"]>>> {
+    request: Omit<Parameters<ImageGenerationClient["models"]["generateContent"]>[0], "model">,
+  ): Promise<{ response: Awaited<ReturnType<ImageGenerationClient["models"]["generateContent"]>>; model: string }> {
     const client = options.client!;
     let lastError: Error;
+
+    // Models this CALL has already found absent.
+    //
+    // The loop's termination must not depend on `ladder.strike` having taken
+    // effect. It nearly did: a first draft skipped the retry budget for a
+    // model-absent answer (correctly — nothing was served, so nothing should
+    // be charged against the retries) by rewinding `attempt`, and a
+    // deliberately broken `strike` in the falsification run turned that into
+    // an infinite loop. A local set makes the rewind safe whatever the ladder
+    // decides, which is the right coupling: the ladder's policy is about
+    // FUTURE calls, this set is about this one.
+    const absentHere = new Set<string>();
+
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const model = ladder.available().find((m) => !absentHere.has(m)) ?? ladder.preferred()!;
       try {
-        return await client.models.generateContent(request);
+        return { response: await client.models.generateContent({ ...request, model }), model };
       } catch (error) {
         lastError = error as Error;
+
+        // "This model does not exist here" is not a transient failure and not
+        // a refusal — it is a fact about the ladder. Struck off, and the next
+        // rung is tried on the NEXT pass of this same loop rather than
+        // counting against the retry budget, because no request was served.
+        const untried = ladder.available().filter((m) => m !== model && !absentHere.has(m));
+        if (isModelUnavailableError(lastError.message) && untried.length > 0) {
+          absentHere.add(model);
+          ladder.strike(model);
+          logWarning(`image.generate: ${model} is not reachable here — falling back to ${untried[0]}`, {
+            event: "image.generate.model_unavailable",
+            model,
+            fallback: untried[0],
+          });
+          attempt -= 1;
+          continue;
+        }
+
         const retryable = isRetryableGenerationError(lastError.message);
 
         // AU61: this loop used to retry and rethrow in silence. Every one of
@@ -366,17 +430,21 @@ export function createGenerateImage(options: {
 
       const candidates: FindImagesCandidate[] = [];
       const unmet: GenerateImageResult["unmet"] = [];
+      // Which rungs actually served this run, for the result's `model` field
+      // and for the cost units, which are billed per model.
+      const producedBy = new Map<string, number>();
 
       for (const need of input.needs) {
         let savedForNeed = 0;
         const failures: string[] = [];
 
         for (let attempt = 0; attempt < input.perNeed; attempt++) {
+          const brief = buildBrief(need.prompt, input.art);
           let response: Awaited<ReturnType<ImageGenerationClient["models"]["generateContent"]>>;
+          let servedBy: string;
           try {
-            response = await generateWithBackoff({
-              model,
-              contents: buildBrief(need.prompt, input.art),
+            const served = await generateWithBackoff({
+              contents: brief,
               config: {
                 // Both modalities: the model narrates its refusal as text when
                 // it declines, and that text is the only explanation on offer.
@@ -384,6 +452,8 @@ export function createGenerateImage(options: {
                 imageConfig: { aspectRatio: input.aspectRatio },
               },
             });
+            response = served.response;
+            servedBy = served.model;
           } catch (error) {
             // One need's failure must not abandon the others: a rescue filling
             // 1 of 2 gaps beats one filling neither, and the caller still sees
@@ -418,18 +488,43 @@ export function createGenerateImage(options: {
           const stem = `n${need.n}-gen${attempt}`;
           const relative = `${relDir}/${stem}${extension}`;
 
+          const bytes = Buffer.from(image.inlineData.data, "base64");
+
+          // The same resolution floor a SOURCED image must clear. A model that
+          // returns a 512px frame has not produced a usable slide picture, and
+          // "we made it ourselves" is not a reason to place one. The attempt
+          // is retried within this need's own budget rather than accepted.
+          const verdict = assessImageFloor(bytes);
+          if (!verdict.ok) {
+            failures.push(`the generated frame missed the floor — ${verdict.reasons.join("; ")}`);
+            continue;
+          }
+
           try {
-            await fs.writeFile(path.join(absDir, `${stem}${extension}`), Buffer.from(image.inlineData.data, "base64"));
+            await fs.writeFile(path.join(absDir, `${stem}${extension}`), bytes);
           } catch (error) {
             failures.push(`could not write the generated image: ${(error as Error).message}`);
             continue;
           }
 
+          producedBy.set(servedBy, (producedBy.get(servedBy) ?? 0) + 1);
           candidates.push({
             path: relative,
             description: `slide ${need.n} candidate — ${describeGenerated(need.prompt, input.art?.permittedFigures ?? [])} [licence: ${GENERATED_LICENSE}]`,
+            // Still `gemini-image`: `provider` names the SOURCE TIER, which
+            // is what the rest of the pipeline books and reports against, and
+            // generation is one tier however many models sit behind it. The
+            // model that actually served is on `provenance.model`.
             provider: "gemini-image",
             licenseConfidence: "generated",
+            pixels: verdict.facts,
+            ...(verdict.warnings.length > 0 ? { qualityNotes: verdict.warnings } : {}),
+            provenance: buildImageProvenance({
+              model: servedBy,
+              brief,
+              styleLock: input.art?.styleLock,
+              aesthetic: input.art?.aesthetic,
+            }),
           });
           savedForNeed += 1;
         }
@@ -453,9 +548,15 @@ export function createGenerateImage(options: {
       // tokens, which this does not capture: the residual is a known
       // under-report, bounded by the declined-attempt count, and named here
       // rather than left for someone to rediscover from a bill.
-      return success<GenerateImageResult>({ candidates, unmet, model }, [
-        { model, unit: "image", quantity: candidates.length },
-      ]);
+      // Billed per model that actually served, not per configured preference:
+      // a run that fell from Imagen to the Gemini path mid-way is two
+      // different unit prices and reporting it as one would restate the
+      // cost-reporting defect Phase 5.5 just finished fixing.
+      const served = [...producedBy.entries()];
+      return success<GenerateImageResult>(
+        { candidates, unmet, model: served.map(([m]) => m).join(", ") || (ladder.preferred() ?? "none") },
+        served.map(([m, quantity]) => ({ model: m, unit: "image" as const, quantity })),
+      );
     },
   });
 }

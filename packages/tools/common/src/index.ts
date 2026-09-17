@@ -5,6 +5,7 @@ export * from "./text-preview.js";
 export * from "./anti-tell.js";
 export * from "./http.js";
 export * from "./png.js";
+export * from "./image-size.js";
 export * from "./idempotency.js";
 export * from "./adapters/file-git/index.js";
 export * from "./adapters/gcs/index.js";

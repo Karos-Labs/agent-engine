@@ -26,6 +26,9 @@ import { buildProviderRegistry, createImageSource, singleProviderSource, type Im
 export * from "./providers.js";
 export * from "./providers/index.js";
 export * from "./find-images.js";
+export * from "./image-floor.js";
+export * from "./image-model-ladder.js";
+export * from "./image-provenance.js";
 export * from "./generate-image.js";
 export * from "./scrape-images.js";
 export * from "./ingest-assets.js";

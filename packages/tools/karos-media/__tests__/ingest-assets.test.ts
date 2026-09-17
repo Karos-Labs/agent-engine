@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createKarosMediaTools, type ImageSearchProvider } from "../src/index.js";
+import { realJpeg, realPng } from "./image-fixtures.js";
 
 /**
  * `media.ingestAssets` — Tier 0's downloader.
@@ -76,7 +77,7 @@ function ingester(options: { reader?: { download(p: string): Promise<Buffer> }; 
 
 describe("media.ingestAssets", () => {
   it("writes a gs:// image inside the bounds root and returns a repo-relative path", async () => {
-    const reader = stubReader({ "clients/c1/run-attachments/hero.jpg": Buffer.alloc(64, 7) });
+    const reader = stubReader({ "clients/c1/run-attachments/hero.jpg": realJpeg() });
     const outcome = await ingester({ reader }).execute(
       { repoRoot, runId: "run_1", assets: [{ uri: "gs://bucket/clients/c1/run-attachments/hero.jpg", slot: 1, label: "hero shot" }] },
       { ctx: CTX },
@@ -90,7 +91,10 @@ describe("media.ingestAssets", () => {
     expect(candidate.path).toBe(".media-cache/run_1/n1-client0.jpg");
     expect(path.isAbsolute(candidate.path)).toBe(false);
     // And it is genuinely on disk — the point of the whole tool.
-    await expect(fs.readFile(path.join(repoRoot, candidate.path))).resolves.toHaveLength(64);
+    // The bytes that went in are the bytes on disk — asserted against the
+    // fixture itself rather than a magic number, so a fixture change cannot
+    // quietly turn this into an assertion about nothing.
+    await expect(fs.readFile(path.join(repoRoot, candidate.path))).resolves.toHaveLength(realJpeg().byteLength);
     // Without a distinct licence tier the vetting agent reads an upload as
     // unknown provenance and refuses the one asset the client actually owns.
     expect(candidate.licenseConfidence).toBe("client-supplied");
@@ -114,7 +118,7 @@ describe("media.ingestAssets", () => {
   });
 
   it("keeps the good attachment and reports the bad one, rather than failing both", async () => {
-    const reader = stubReader({ "ok.jpg": Buffer.alloc(32, 3) });
+    const reader = stubReader({ "ok.jpg": realJpeg() });
     const outcome = await ingester({ reader }).execute(
       {
         repoRoot,
@@ -166,13 +170,13 @@ describe("media.ingestAssets", () => {
   });
 
   it("fetches an https:// image through the same downloader as every other tier", async () => {
-    const outcome = await ingester({ fetchImpl: respond(Buffer.alloc(48, 9), "image/jpeg") }).execute(
+    const outcome = await ingester({ fetchImpl: respond(realJpeg(), "image/jpeg") }).execute(
       { repoRoot, runId: "run_1", assets: [{ uri: "https://cdn.example.com/a.jpg", slot: 1 }] },
       { ctx: CTX },
     );
     expect(outcome.status).toBe("success");
     const candidate = outcome.status === "success" ? (outcome.result as { candidates: Array<{ path: string }> }).candidates[0]! : undefined;
-    await expect(fs.readFile(path.join(repoRoot, candidate!.path))).resolves.toHaveLength(48);
+    await expect(fs.readFile(path.join(repoRoot, candidate!.path))).resolves.toHaveLength(realJpeg().byteLength);
     // The same `n<slot>-` stem as the gs:// path above, and for the same
     // reason: it is the only key a caller has to pair a returned file with the
     // asset it was asked to fetch.
@@ -237,7 +241,7 @@ describe("media.ingestAssets", () => {
     });
 
     it("defaults to the image tables when no kind is given, so existing callers are unchanged", async () => {
-      const outcome = await ingester({ fetchImpl: respond(Buffer.alloc(16, 2), "image/png") }).execute(
+      const outcome = await ingester({ fetchImpl: respond(realPng(), "image/png") }).execute(
         { repoRoot, runId: "run_1", assets: [{ uri: "https://cdn.example.com/a.png", slot: 1 }] },
         { ctx: CTX },
       );

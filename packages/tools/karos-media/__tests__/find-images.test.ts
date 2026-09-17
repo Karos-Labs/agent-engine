@@ -11,6 +11,7 @@ import {
   ROUTE_CHAINS,
   type ImageSearchHit,
 } from "../src/index.js";
+import { realJpeg } from "./image-fixtures.js";
 
 const CTX = { runId: "run_1", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" } as never;
 
@@ -24,8 +25,18 @@ afterEach(async () => {
   await fs.rm(repoRoot, { recursive: true, force: true });
 });
 
-function jpeg(bytes = 64): Response {
-  return new Response(Buffer.alloc(bytes, 1), {
+/**
+ * A REAL JPEG at a size that clears the download path's resolution floor.
+ *
+ * `bytes` pads the body past the header when a test needs a specific size —
+ * the size ceiling is checked on the byte count and the floor on the parsed
+ * frame header, so a fixture has to be able to vary one without losing the
+ * other.
+ */
+function jpeg(bytes?: number): Response {
+  const real = realJpeg();
+  const body = bytes === undefined ? real : Buffer.concat([real, Buffer.alloc(Math.max(0, bytes - real.byteLength), 1)]);
+  return new Response(body, {
     status: 200,
     headers: { "content-type": "image/jpeg" },
   });

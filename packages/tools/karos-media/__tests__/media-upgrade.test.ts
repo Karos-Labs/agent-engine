@@ -10,6 +10,7 @@ import {
   type BrowserLike,
   type VisionAnalysisClient,
 } from "../src/index.js";
+import { realPngBase64 } from "./image-fixtures.js";
 
 /**
  * The 2026-09 media upgrade: a vision model that looks at pixels
@@ -23,7 +24,9 @@ import {
  */
 
 const CTX = { runId: "run_1", clientSlug: "acme", productId: "x-agent", runKind: "recurring" } as never;
-const PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
+// A real PNG at the plate's own size: a publisher's social card has to clear
+// the same resolution floor as any other sourced image.
+const PNG_B64 = realPngBase64();
 
 let repoRoot: string;
 beforeEach(async () => {

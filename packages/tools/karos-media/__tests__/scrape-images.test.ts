@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { ScraperError, type ScrapedRecord, type ScraperProvider } from "@agent-engine/tool-karos-scraper";
 import { createKarosMediaTools } from "../src/index.js";
+import { realJpeg } from "./image-fixtures.js";
 
 /**
  * `media.scrapeImages` — tier 2 of the visual pipeline.
@@ -24,7 +25,8 @@ afterEach(async () => {
   await fs.rm(repoRoot, { recursive: true, force: true });
 });
 
-const jpeg = (async () => new Response(Buffer.alloc(64, 1), { status: 200, headers: { "content-type": "image/jpeg" } })) as unknown as typeof fetch;
+// A REAL JPEG — a scraped post image is measured like every other source.
+const jpeg = (async () => new Response(realJpeg(), { status: 200, headers: { "content-type": "image/jpeg" } })) as unknown as typeof fetch;
 
 function stubScraper(bySearch: (platform: string, query: string) => ScrapedRecord[]): ScraperProvider {
   return {
