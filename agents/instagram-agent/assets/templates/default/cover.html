@@ -223,9 +223,13 @@ body[data-hero-scrim=""] .scrim { display: none; }
 .sc-figure-band {
   inline-size: 100%;
   block-size: 300px;
+  /* `0 1 auto` and a floor: the band is the element that YIELDS when a plate is
+     tight, because a picture reads at 220px and a headline does not, but it may
+     not be squeezed into a stripe. */
+  flex: 0 1 auto;
+  min-block-size: 220px;
   overflow: hidden;
   border-radius: 3px;
-  flex: none;
 }
 .sc-figure-band img {
   inline-size: 100%;
@@ -233,8 +237,13 @@ body[data-hero-scrim=""] .scrim { display: none; }
   object-fit: cover;
   display: block;
 }
-/* `onerror` removes the `<img>`, so a band with no picture leaves no hole. */
-.sc-figure-band:empty { display: none; }
+/* ── THE COLLAPSE TESTS THE `src`, NOT THE ELEMENT. ──
+   `:empty` and `:not(:has(img))` are both FALSE on exactly the plates this is
+   for: `fillTemplate` erases a slot nobody filled, so the markup renders
+   `<img src="">` and the element is still in the document. A band written that
+   way keeps its 300px everywhere and a plate with no photograph ships a hole.
+   `figure-band-collapse.test.ts` exists because this shipped once already. */
+.sc-figure-band:not(:has(img[src]:not([src=""]))) { display: none; }
 
 /* ---- the three bands ---------------------------------------------------- */
 /* A plate is: the mark band, the field, the foot band. Content lives in the
@@ -412,7 +421,12 @@ body[data-anchor="top"] .plate::after {
    is the run's all-or-none decision; the cover and the closer opt out in their
    own markup, every interior plate shows it, and no plate decides for itself. */
 .pg-index {
-  display: var(--fx-pagination, block);
+  /* `none`, for the same reason the accent defaults to `none`: a numeral that
+     paints when the run did not name the slide is the owner's "a number on some
+     slides and not on others" — decided by the markup instead of by the rule.
+     `numeralSlides` names every interior and never the cover or the closer, so
+     the switch is what makes it all-or-none. */
+  display: var(--fx-pagination, none);
   font-family: var(--f-mono, ui-monospace, monospace);
   font-size: var(--t-micro);
   letter-spacing: 0.16em;
@@ -447,9 +461,9 @@ body[data-accent="rule"] .acc { border-radius: 1px; }
    the plate anyway: the list's numerals, the recap's numerals, the source line.
    This replaces a `bracket` form that stood the rule on its end as a vertical
    bar beside the lockup; the owner's verdict on it was *"גם הקו האנכי שהוספת
-   נראה ממש רע - תוריד, עדיף פשוט לפעמים להשאיר אלמנט בצבע השני"*, and he is
-   right: a free-standing stroke with nothing to do is furniture whichever way
-   it is turned. Colour carried by content is the quietest accent there is. */
+   נראה ממש רע - תוריד, עדיף פשוט לפעמים להשאיר אלמנט בצבע השני"*, and that is
+   the correct call — a free-standing stroke with nothing to do is furniture
+   whichever way it is turned. Colour carried by content is the quietest accent there is. */
 body[data-accent="tint"] .acc { display: none; }
 body[data-accent="tint"] .source-line,
 body[data-accent="tint"] .eyebrow,
@@ -658,7 +672,7 @@ body.ta-center .acc { margin-inline: auto; }
 /* The subject band. `--cover-band` is the run's `coverForm` decision expressed
    in pixels; it is a flex BASIS rather than a fixed height, so a long title
    takes the space it needs instead of pushing itself off the plate. */
-.cov-subject {
+.cov-field {
   /* `flex: 0 0 auto`, and the reason is a composition bug this plate shipped
      once. With `flex-grow: 1` here AND the field's auto margin on the lockup,
      TWO things absorbed the free space: the band stretched and the lockup was
@@ -682,8 +696,8 @@ body.ta-center .acc { margin-inline: auto; }
    to y=132, so "90%" printed off the top edge of the plate and through the
    brand band. Collapsing a container is not the same as removing what is in
    it. A bounded object on top of a photograph is two subjects anyway. */
-body:has(.hero) .cov-subject { display: none; }
-.cov-subject:has(.device:empty) { display: none; }
+body:has(.hero) .cov-field { display: none; }
+.cov-field:has(.device:empty) { display: none; }
 
 /* ============================================================================
    THE FOUR COVER FORMS. The run picks one and holds it against recent runs, so
@@ -707,7 +721,7 @@ body:has(.hero) .cov-subject { display: none; }
    landed on a hidden box, the lockup lost its anchor and sat at the top of the
    plate with 400px of nothing under it. Each form that hides the band takes
    the margin back explicitly. */
-body[data-cover="portrait"] .cov-subject { display: none; }
+body[data-cover="portrait"] .cov-field { display: none; }
 body[data-cover="portrait"] .lockup { margin-block-start: auto; }
 
 /* ── A FORM THAT NEEDS A PHOTOGRAPH FALLS BACK WHEN THERE IS NONE. ──
@@ -719,7 +733,7 @@ body[data-cover="portrait"] .lockup { margin-block-start: auto; }
    source is missing or fails, so `:not(:has(.hero))` is the honest test for
    "no photograph arrived" — and the cover reverts to `figure`, which has a
    subject that does not depend on image sourcing having succeeded. */
-body[data-cover="portrait"]:not(:has(.hero)) .cov-subject { display: flex; }
+body[data-cover="portrait"]:not(:has(.hero)) .cov-field { display: flex; }
 body[data-cover="portrait"]:not(:has(.hero)) .lockup { margin-block-start: 0; }
 body[data-cover="portrait"] .scrim {
   background: linear-gradient(180deg,
@@ -731,7 +745,7 @@ body[data-cover="portrait"] .lockup .headline { max-inline-size: min(13ch, 100%)
 
 /* OBJECT — the subject is presented as an object: the device sits on its own
    panel, held off the ground, the way a product shot is held. */
-body[data-cover="object"] .cov-subject {
+body[data-cover="object"] .cov-field {
   background: color-mix(in srgb, var(--fg) 7%, transparent);
   border-radius: 4px;
   padding: var(--sp-2);
@@ -741,7 +755,7 @@ body[data-cover="object"] .cov-subject {
 /* TYPOGRAPHIC-POSTER — there is no subject but the sentence. The band is gone
    and the title is given the whole field, which is what makes the fit ladder
    take it up a step rather than leaving air. */
-body[data-cover="typographic-poster"] .cov-subject { display: none; }
+body[data-cover="typographic-poster"] .cov-field { display: none; }
 body[data-cover="typographic-poster"] .lockup { margin-block-start: auto; }
 body[data-cover="typographic-poster"] .lockup .headline { max-inline-size: min(11ch, 100%); }
 body[data-cover="typographic-poster"] .lockup { gap: var(--sp-2); }
@@ -775,7 +789,7 @@ body[data-cover="typographic-poster"] .lockup { gap: var(--sp-2); }
   </div>
 
   <div class="plate cover">
-    <div class="cov-subject">
+    <div class="cov-field">
       <div class="device cov-device" data-fitted="secondary">{{html:device}}</div>
     </div>
     <div class="lockup">
@@ -787,6 +801,7 @@ body[data-cover="typographic-poster"] .lockup { gap: var(--sp-2); }
 
   <div class="zone-foot">
     <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
+    <span class="pg-index" aria-hidden="true">{{slideIndex}}</span>
   </div>
 
   <script>

@@ -232,22 +232,34 @@ function auditTwinSlots(html: string, pairs: readonly TwinPair[]): string[] {
       );
     }
 
-    // The collapse rule, exactly once, naming this host.
-    const collapse = new RegExp(
-      `\\.${escapeRe(pair.host)}:has\\(\\.mk-runs:not\\(:empty\\)\\)\\s+\\.mk-plain\\s*\\{\\s*display:\\s*none;?\\s*\\}`,
-      "g",
-    );
-    const hits = styles.match(collapse) ?? [];
-    if (hits.length === 0) problems.push(`${pair.host}: no collapse rule — the plain twin would render alongside the runs`);
-    if (hits.length > 1) problems.push(`${pair.host}: ${hits.length} collapse rules, expected exactly 1`);
+  }
+
+  // ── ONE COLLAPSE RULE FOR THE WHOLE SET, NOT ONE PER HOST. ──
+  //
+  // This used to require `.<host>:has(.mk-runs:not(:empty)) .mk-plain` once per
+  // twin pair — sixteen near-identical rules across eight files, each naming a
+  // class, each a place to make a typo, and the limb below existed only to
+  // catch that typo. The shared sheet states the relationship between the two
+  // TWINS rather than between a host and a twin, so one adjacent-sibling rule
+  // covers every pair in the set and cannot name a host wrongly because it
+  // names no host at all.
+  const sharedCollapse = styles.match(/\.mk-runs:not\(:empty\)\s*\+\s*\.mk-plain\s*\{\s*display:\s*none;?\s*\}/g) ?? [];
+  if (sharedCollapse.length === 0) {
+    problems.push("no shared twin collapse rule — the plain twin would render alongside the runs");
+  }
+  if (sharedCollapse.length > 1) {
+    problems.push(`${sharedCollapse.length} shared twin collapse rules, expected exactly 1`);
   }
 
   // No collapse rule may name a host that is not a pair in this file. This is
   // the limb that catches a TYPO: `.headlne:has(.mk-runs...)` leaves the real
   // pair without a rule (caught above) AND leaves a rule pointing at nothing.
-  const declaredHosts = new Set(pairs.map((p) => p.host));
+  // A per-host collapse rule coming BACK is the drift this consolidation
+  // removed, so it is a problem in its own right rather than merely redundant:
+  // two mechanisms for one relationship is how the set drifted to begin with,
+  // and the host-named one is the fragile half.
   for (const m of styles.matchAll(/\.([A-Za-z0-9_-]+):has\(\.mk-runs:not\(:empty\)\)\s+\.mk-plain/g)) {
-    if (!declaredHosts.has(m[1]!)) problems.push(`collapse rule names .${m[1]} which is not a twin-slot host in this file`);
+    problems.push(`per-host collapse rule for .${m[1]} — the set has one shared rule; delete this one`);
   }
 
   // A twin host can never match `:empty` again — it has two element children

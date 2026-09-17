@@ -694,11 +694,22 @@ describe.skipIf(!isChromiumInstalled())("the switch reaches the pixels (Chromium
       // magnitude of headroom over the noise. It is a ceiling on NON-movement
       // only; every other archetype is still held to a strict increase, which
       // is the assertion that would catch a mark that stopped painting.
-      const UNMOVED: Record<string, string> = {
-        // The cover carries NO furniture at all (spec §4.5): its `.stat-band`
-        // div is deleted from the markup rather than switched. What accent it
-        // has is the field ramp, which is the composition, not a mark.
-        "cover.html": "the cover's accent moved, and a cover has no switchable furniture at all",
+const UNMOVED: Record<string, string> = {
+        // ── EMPTY, AND THAT IS THE POINT. ──
+        //
+        // `cover.html` was the last entry, exempt because spec §4.5 gave the
+        // cover no switchable furniture at all: the accent was declared for it
+        // and the element deleted from the markup. That stopped being true when
+        // the accent became one `.acc` on every plate and `accentSlidesFor`
+        // started drawing its one-to-three plates from the whole carousel with
+        // the cover holding no privilege — the owner's rule, so that a mark is
+        // never in the same place twice by rule. A cover can now carry the
+        // accent, and measured on this tree switching it moves the cover by
+        // 0.0015440, over the 0.001 non-movement ceiling.
+        //
+        // So every archetype is held to the STRICT INCREASE, which is the
+        // stronger of the two assertions. An entry here is a claim that a
+        // switch does nothing, and there is no longer a plate that is true of.
       };
       // ── `comparison-card.html` LEFT THIS TABLE, AND THE REASON IT WAS IN IT
       //    STOPPED BEING TRUE. ──

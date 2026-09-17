@@ -188,9 +188,13 @@ body[data-hero-scrim=""] .scrim { display: none; }
 .sc-figure-band {
   inline-size: 100%;
   block-size: 300px;
+  /* `0 1 auto` and a floor: the band is the element that YIELDS when a plate is
+     tight, because a picture reads at 220px and a headline does not, but it may
+     not be squeezed into a stripe. */
+  flex: 0 1 auto;
+  min-block-size: 220px;
   overflow: hidden;
   border-radius: 3px;
-  flex: none;
 }
 .sc-figure-band img {
   inline-size: 100%;
@@ -198,8 +202,13 @@ body[data-hero-scrim=""] .scrim { display: none; }
   object-fit: cover;
   display: block;
 }
-/* `onerror` removes the `<img>`, so a band with no picture leaves no hole. */
-.sc-figure-band:empty { display: none; }
+/* ── THE COLLAPSE TESTS THE `src`, NOT THE ELEMENT. ──
+   `:empty` and `:not(:has(img))` are both FALSE on exactly the plates this is
+   for: `fillTemplate` erases a slot nobody filled, so the markup renders
+   `<img src="">` and the element is still in the document. A band written that
+   way keeps its 300px everywhere and a plate with no photograph ships a hole.
+   `figure-band-collapse.test.ts` exists because this shipped once already. */
+.sc-figure-band:not(:has(img[src]:not([src=""]))) { display: none; }
 
 /* ---- the three bands ---------------------------------------------------- */
 /* A plate is: the mark band, the field, the foot band. Content lives in the
@@ -377,7 +386,12 @@ body[data-anchor="top"] .plate::after {
    is the run's all-or-none decision; the cover and the closer opt out in their
    own markup, every interior plate shows it, and no plate decides for itself. */
 .pg-index {
-  display: var(--fx-pagination, block);
+  /* `none`, for the same reason the accent defaults to `none`: a numeral that
+     paints when the run did not name the slide is the owner's "a number on some
+     slides and not on others" — decided by the markup instead of by the rule.
+     `numeralSlides` names every interior and never the cover or the closer, so
+     the switch is what makes it all-or-none. */
+  display: var(--fx-pagination, none);
   font-family: var(--f-mono, ui-monospace, monospace);
   font-size: var(--t-micro);
   letter-spacing: 0.16em;
@@ -412,9 +426,9 @@ body[data-accent="rule"] .acc { border-radius: 1px; }
    the plate anyway: the list's numerals, the recap's numerals, the source line.
    This replaces a `bracket` form that stood the rule on its end as a vertical
    bar beside the lockup; the owner's verdict on it was *"גם הקו האנכי שהוספת
-   נראה ממש רע - תוריד, עדיף פשוט לפעמים להשאיר אלמנט בצבע השני"*, and he is
-   right: a free-standing stroke with nothing to do is furniture whichever way
-   it is turned. Colour carried by content is the quietest accent there is. */
+   נראה ממש רע - תוריד, עדיף פשוט לפעמים להשאיר אלמנט בצבע השני"*, and that is
+   the correct call — a free-standing stroke with nothing to do is furniture
+   whichever way it is turned. Colour carried by content is the quietest accent there is. */
 body[data-accent="tint"] .acc { display: none; }
 body[data-accent="tint"] .source-line,
 body[data-accent="tint"] .eyebrow,
