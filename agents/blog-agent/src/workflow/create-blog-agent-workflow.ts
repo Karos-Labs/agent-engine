@@ -383,9 +383,14 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
             : draftResult;
 
         if (usableDraft.status === "content_fail") {
-          // Twice is no longer a coin flip. Nothing was drafted, so there is no
-          // content to repair — `degraded`, which the engine retries, rather
-          // than `held`, which simply ends.
+          // Twice is no longer a coin flip. Nothing was drafted, so there is
+          // no content to repair, and nothing to annotate either. `degraded`
+          // rather than `held` because the distinction is real: `held` means
+          // "we looked at this and decided not to publish", a content verdict
+          // nobody made here, while `degraded` means the machinery produced
+          // nothing. Neither is auto-retried — the queue consumer acks every
+          // terminal status — so this is about classifying the failure
+          // honestly, not about buying another attempt.
           throw new WorkflowToolingFailure("draft did not produce a parseable post on two consecutive attempts");
         }
         if (usableDraft.status !== "completed") {

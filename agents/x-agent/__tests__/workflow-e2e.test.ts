@@ -50,6 +50,10 @@ const ALL_21_STEP_IDS = [
   // must be revisable, not a post-approval dead end.
   "14c-verify-no-placeholder",
   "14d-verify-no-leak",
+  // The repair step. Always present, even on a clean post: it asks what the
+  // checks above objected to and returns the draft untouched when the answer
+  // is nothing, so its presence says the repair path ran.
+  "14r-repair-post",
   // 2026-09: the media resolver. Always a step; with no media tools in this
   // registry and no brief on the draft it records `none` and moves on.
   "14e-resolve-media",

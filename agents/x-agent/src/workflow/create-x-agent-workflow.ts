@@ -60,7 +60,14 @@ import {
   type SocialMediaPlan,
   type TrendResearch,
   type TrendScoutOutput,
+  runCheckWithRepair,
+  redactSentencesCarrying,
+  localContentFail,
+  localPass,
+  spansFromEvidence,
+  type ContentRepair,
 } from "@agent-engine/workflow";
+import type { GateVerdict } from "@agent-engine/core";
 import { MAX_THREAD_PARTS, XDraftAgent, type Lane, type XPostOutput } from "../agent/x-draft-agent.js";
 import { renderPreview, X_CHARACTER_LIMIT, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderXDraftsMarkdown } from "./render-drafts-markdown.js";
@@ -114,6 +121,18 @@ const BARE_URL_PATTERN = /https?:\/\//i;
  * that de-duplication flags and steers, it does not hold a run.
  */
 const MAX_DEDUPE_ATTEMPTS = 3;
+
+/**
+ * What the main post says when every one of its sentences carried a span a
+ * content gate rejected.
+ *
+ * Reachable only on a post short enough that one sentence was the whole thing.
+ * It exists because the alternative at that point is falling back to the
+ * unredacted text — which republishes the very span the gate refused — and
+ * because `text` is `min(1)` in the schema. A thread PART in this state is
+ * dropped instead, since X will not publish an empty post.
+ */
+const POST_WITHHELD = "(withheld: this post rested on content that failed verification)";
 
 /**
  * Names every post in a draft that is over X's limit, as the steer for one
@@ -619,7 +638,12 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
      * reservation) keeps its id and is reused. That reuse is why the revision
      * is in-run rather than a fresh run.
      */
+    /** What each drafting round had to repair before it could deliver. Empty on the normal path. */
+    const repairsByRevision = new Map<number, ContentRepair[]>();
+
     const draftOnce = async (revision: number, notes: readonly RevisionNote[]): Promise<XDraftWithMedia> => {
+      /** The last drafting input used, so step 14r's redraft reads exactly the same brief. */
+      let draftInputForRepair: Record<string, unknown> = {};
       /** Revision 0 keeps the ORIGINAL ids, so a first-pass trace is unchanged. */
       const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
       const directive = revisionDirective(notes);
@@ -654,7 +678,7 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
         for (let attempt = 1; attempt <= MAX_DEDUPE_ATTEMPTS; attempt++) {
           /** Attempt 1 keeps the ORIGINAL step ids, so a run that never repeats itself has a byte-identical trace to what it had before this check existed. */
           const att = (id: string) => (attempt === 1 ? id : `${id}-attempt-${attempt}`);
-          const draftResult = await wf.step.agent(rev(att("10-draft-post")), draftAgent, {
+          const draftInput = {
             ...runDirectionField(runDirection),
             topic: selected.topic,
             source: selected.source,
@@ -701,10 +725,28 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
             // asked about THIS draft minutes ago.
             ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
             ...(directive !== undefined ? { revisionRequest: directive } : {}),
-          });
+          };
+          // Kept for the repair redraft at 14r, which must send byte-identical
+          // evidence and differ only in its `revisionRequest`.
+          draftInputForRepair = draftInput;
+          const firstDraft = await wf.step.agent(rev(att("10-draft-post")), draftAgent, draftInput);
+
+          // A draft that came back unusable gets ANOTHER draft, not a held run:
+          // `content_fail` here means the turn returned no parseable structured
+          // output, which is a coin flip rather than a verdict on the post.
+          const draftResult =
+            firstDraft.status === "content_fail"
+              ? await wf.step.agent(rev(att("10z-regenerate-post")), draftAgent, draftInput)
+              : firstDraft;
 
           if (draftResult.status === "content_fail") {
-            throw new WorkflowHeld(`draft did not clear its own self-critique gate: ${draftResult.status}`);
+            // Twice is no longer a coin flip. Nothing was drafted, so there
+            // is nothing to repair and nothing to annotate. `degraded` rather
+            // than `held`: `held` means "we looked and decided not to
+            // publish", a content verdict nobody made here. Neither status is
+            // auto-retried (the queue consumer acks every terminal status);
+            // this is about classifying the failure honestly.
+            throw new WorkflowToolingFailure("draft did not produce a parseable post on two consecutive attempts");
           }
           // A loop that hit its turn ceiling did not malfunction (`step.agent`'s
           // own taxonomy), so it is not a `WorkflowToolingFailure` — which is
@@ -720,7 +762,11 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
               commitSteer = commitDirectiveAfterExhaustion(diagnosis);
               continue;
             }
-            throw new WorkflowHeld(`draft ran out of turns without returning a post: ${diagnosis}`);
+            // Nothing was drafted, so there is no content to repair. Not a
+            // content verdict either — the model ran out of turns, which is a
+            // malfunction (RFC-01 §6), and recording it as `held` claimed a
+            // judgment nobody made. Neither status is auto-retried.
+            throw new WorkflowToolingFailure(`draft ran out of turns without returning a post: ${diagnosis}`);
           }
           if (draftResult.status !== "completed") {
             throw new WorkflowToolingFailure(`draft step resolved to "${draftResult.status}"`);
@@ -766,118 +812,303 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
         // `continue` above is guarded on `attempt < MAX_DEDUPE_ATTEMPTS`.
         throw new WorkflowToolingFailure("the de-duplication redraft loop ended without a draft");
       };
-      const draft = await draftWithVerifiedDedupe();
-      const wholePost = fullText(draft);
+      /** `let`: the repair region below may hand back a corrected post, and everything downstream must see it. */
+      let draft = await draftWithVerifiedDedupe();
 
-      await wf.step.code(rev("11-verify-numbers-sourced"), async () => {
-        // What a figure in the post may be traced to: the full text of every
-        // research document (the gate verifies against CONTENT, and a URL alone
-        // — which is all `sourceLabel` is — verifies nothing), the client's own
-        // intel context, the run's topic (a catalog topic or a typed request is
-        // the client's own statement), and any legible text in an attached
-        // image. Until 2026-09 this was `[sourceLabel]`, so every number a
-        // draft quoted faithfully from a real source was held anyway.
-        const sources = [
-          ...researchSourceTexts(research.merged),
-          ...(clientIntelContext !== undefined ? [clientIntelContext] : []),
-          selected.topic,
-          ...(selected.trend !== undefined ? [selected.trend.headline, selected.trend.angle] : []),
-          ...(attachedMedia?.analyses.flatMap((a) => a.textInImage) ?? []),
-          ...(candidateSummary.hasNumericInsight ? [candidateSummary.sourceLabel] : []),
-        ];
-        const verdict = await runGate(tools, "gate.numbersSourced", { text: wholePost, sources }, ctx);
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
-        if (verdict.verdict === "content_fail") throw new WorkflowHeld(`numbers not sourced: ${verdict.reason}`);
-        return verdict;
-      });
-
-      await wf.step.code(rev("12-verify-brand-compliance"), async () => {
-        const forbiddenTerms = clientContext.brand["forbiddenTerms"] as string[] | undefined;
-        const verdict = await runGate(tools, "gate.brandCompliance", { text: wholePost, forbiddenTerms: forbiddenTerms ?? [] }, ctx);
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.brandCompliance: ${verdict.reason}`);
-        if (verdict.verdict === "content_fail") throw new WorkflowHeld(`brand compliance failed: ${verdict.reason}`);
-        return verdict;
-      });
-
-      // "Post clean, link in first reply" (x-craft.md §5): when the draft set a
-      // `firstReplyUrl`, the main post body must not ALSO carry a bare link —
-      // that means the model put the link in the wrong place. No check runs
-      // when `firstReplyUrl` is unset (x-craft.md's own launch-post exception,
-      // "the link IS the news", is a judgment call left to the drafting model).
-      // A thread part carrying a link is the same mistake in a different slot.
-      await wf.step.code(rev("13-verify-link-placement"), () => {
-        if (draft.firstReplyUrl && [draft.mainPostText, ...draft.thread].some((part) => BARE_URL_PATTERN.test(part))) {
-          throw new WorkflowHeld(
-            "the post (or a thread part) contains a bare link even though firstReplyUrl is set — links must go in the first reply, never the post body (x-craft.md §5)",
-          );
-        }
-        return { checked: true };
-      });
-
-      // ── 13b: a thread is checked part by part (x-craft@5 §9) ──
+      // ── 11-14r: inspect, then REPAIR. This region no longer holds the run. ──
       //
-      // Part 1 is `text`, checked at 14 as before. Every continuation part is
-      // its own post on X and has to clear the same 280-character limit; an
-      // account whose charter forbids threads holds here rather than at
-      // review. No step at all for a single post, so a plain run's trace is
-      // unchanged.
+      // Every check here used to `throw new WorkflowHeld(...)`, ending the run
+      // and handing the client an error where a post should have been. Each of
+      // these failures is a reason to fix one thing — drop a figure, move a
+      // link, trim a part, publish the main post without its thread — not a
+      // reason to withhold the post.
+      //
+      // The checks keep their full authority over what may be PUBLISHED and
+      // lose the authority to end the run. `tooling_error` still throws.
+      //
+      // What a figure in the post may be traced to: the full text of every
+      // research document (the gate verifies against CONTENT, and a URL alone
+      // — which is all `sourceLabel` is — verifies nothing), the client's own
+      // intel context, the run's topic (a catalog topic or a typed request is
+      // the client's own statement), and any legible text in an attached
+      // image. Until 2026-09 this was `[sourceLabel]`, so every number a draft
+      // quoted faithfully from a real source was held anyway.
+      const sources = [
+        ...researchSourceTexts(research.merged),
+        ...(clientIntelContext !== undefined ? [clientIntelContext] : []),
+        selected.topic,
+        ...(selected.trend !== undefined ? [selected.trend.headline, selected.trend.angle] : []),
+        ...(attachedMedia?.analyses.flatMap((a) => a.textInImage) ?? []),
+        ...(candidateSummary.hasNumericInsight ? [candidateSummary.sourceLabel] : []),
+      ];
+      const forbiddenTerms = (clientContext.brand["forbiddenTerms"] as string[] | undefined) ?? [];
+
+      /**
+       * Applies a span redaction across the main post AND every thread part.
+       *
+       * `text` and `mainPostText` are kept in lockstep: `fullText` reads `text`,
+       * the link and thread checks read `mainPostText`, and letting them drift
+       * would mean one check passing on a string the client never sees.
+       *
+       * A thread part emptied by redaction is DROPPED from the array rather
+       * than left blank — X will not publish an empty post, and a thread with a
+       * hole in it reads worse than a shorter thread.
+       */
+      const redactAcrossDraft = (post: XPostOutput, spans: readonly string[]): XPostOutput => {
+        const text = redactSentencesCarrying(post.text, spans, POST_WITHHELD).text;
+        return {
+          ...post,
+          text,
+          mainPostText: text,
+          thread: post.thread.map((part) => redactSentencesCarrying(part, spans).text).filter((part) => part.trim().length > 0),
+        };
+      };
+
+      /** The four span-flagging gates over the WHOLE post — main plus thread. */
+      const inspectSpans = async (post: XPostOutput): Promise<GateVerdict> => {
+        const whole = fullText(post);
+        const verdicts = await Promise.all([
+          runGate(tools, "gate.numbersSourced", { text: whole, sources }, ctx),
+          runGate(tools, "gate.brandCompliance", { text: whole, forbiddenTerms }, ctx),
+          runGate(tools, "gate.noPlaceholder", { text: whole }, ctx),
+          runGate(tools, "gate.leakCheck", { text: whole }, ctx),
+        ]);
+        const broken = verdicts.find((v) => v.verdict === "tooling_error");
+        if (broken !== undefined && broken.verdict === "tooling_error") {
+          throw new WorkflowToolingFailure(`x content gate: ${broken.reason}`);
+        }
+        const failures = verdicts.filter((v) => v.verdict === "content_fail");
+        if (failures.length === 0) return localPass("x-content-gates");
+        return localContentFail(
+          "x-content-gates",
+          failures.map((v) => (v.verdict === "content_fail" ? v.reason : "")).join("; "),
+          failures.flatMap((v) => v.evidence),
+        );
+      };
+
+      const previewOf = async (text: string): Promise<RenderPreviewResult> => {
+        const outcome = await tools["render.preview"]!.execute({ text }, { ctx });
+        if (outcome.status !== "success") throw new WorkflowToolingFailure(`render.preview failed: ${outcome.status}`);
+        return outcome.result as RenderPreviewResult;
+      };
+
+      /**
+       * Every SHAPE rule X imposes, as one list of problems: the main post's
+       * length, whether this account may thread at all, the thread ceiling, and
+       * each continuation part's own length.
+       *
+       * One entry per violation, never a single catch-all string.
+       * `runCheckWithRepair` keeps a repair only when strictly fewer items
+       * remain, so a lumped verdict would make every partial fix — trimming one
+       * over-long part of three — look like no fix at all and be discarded.
+       */
+      const shapeProblems = async (post: XPostOutput): Promise<string[]> => {
+        const problems: string[] = [];
+        const main = await previewOf(post.text);
+        if (!main.withinLimit) problems.push(`post exceeds the X character limit (${main.characterCount} chars)`);
+        if (post.thread.length > 0) {
+          if (!intake.allowThreads) {
+            problems.push(`the draft carries ${post.thread.length} thread part(s) but this account does not publish threads (xAllowThreads: false)`);
+          }
+          if (post.thread.length + 1 > MAX_THREAD_PARTS) {
+            problems.push(`the thread runs to ${post.thread.length + 1} posts; the ceiling is ${MAX_THREAD_PARTS}`);
+          }
+          for (const [index, part] of post.thread.entries()) {
+            const preview = await previewOf(part);
+            if (!preview.withinLimit) problems.push(`thread part ${index + 2} exceeds the X character limit (${preview.characterCount} chars)`);
+          }
+        }
+        // "Post clean, link in first reply" (x-craft.md §5): when the draft set
+        // a `firstReplyUrl`, neither the main post nor a thread part may ALSO
+        // carry a bare link — that means the model put it in the wrong place.
+        // No check when `firstReplyUrl` is unset (x-craft.md's own launch-post
+        // exception, "the link IS the news", is the drafting model's call).
+        if (post.firstReplyUrl && [post.mainPostText, ...post.thread].some((part) => BARE_URL_PATTERN.test(part))) {
+          problems.push("the post (or a thread part) contains a bare link even though firstReplyUrl is set — links go in the first reply, never the post body (x-craft.md §5)");
+        }
+        return problems;
+      };
+
+      /** Removes every bare URL from the main post and each thread part. */
+      const stripBareLinks = (post: XPostOutput): XPostOutput => {
+        const clean = (part: string) => part.replace(new RegExp(BARE_URL_PATTERN.source, "g"), "").replace(/[ \t]{2,}/g, " ").replace(/[ \t]+\n/g, "\n").trim();
+        const text = clean(post.text);
+        if (text.length === 0) return post;
+        return { ...post, text, mainPostText: text, thread: post.thread.map(clean).filter((part) => part.length > 0) };
+      };
+
+      // Each check keeps its own step id and records its verdict against the
+      // draft AS FIRST WRITTEN, which is what a trace wants to show.
+      const numbersVerdict = await wf.step.code(rev("11-verify-numbers-sourced"), () =>
+        runGate(tools, "gate.numbersSourced", { text: fullText(draft), sources }, ctx),
+      );
+      const brandVerdict = await wf.step.code(rev("12-verify-brand-compliance"), () =>
+        runGate(tools, "gate.brandCompliance", { text: fullText(draft), forbiddenTerms }, ctx),
+      );
+      const linkInspection = await wf.step.code(rev("13-verify-link-placement"), () => ({
+        bodyLink:
+          draft.firstReplyUrl && [draft.mainPostText, ...draft.thread].some((part) => BARE_URL_PATTERN.test(part)) ? true : false,
+      }));
+      // No step at all for a single post, so a plain run's trace is unchanged.
       if (draft.thread.length > 0) {
         await wf.step.code(rev("13b-verify-thread"), async () => {
-          if (!intake.allowThreads) {
-            throw new WorkflowHeld(`the draft carries ${draft.thread.length} thread part(s) but this account does not publish threads (xAllowThreads: false)`);
-          }
-          if (draft.thread.length + 1 > MAX_THREAD_PARTS) {
-            throw new WorkflowHeld(`the thread runs to ${draft.thread.length + 1} posts; the ceiling is ${MAX_THREAD_PARTS}`);
-          }
-          const parts: RenderPreviewResult[] = [];
-          for (const [index, part] of draft.thread.entries()) {
-            const outcome = await tools["render.preview"]!.execute({ text: part }, { ctx });
-            if (outcome.status !== "success") throw new WorkflowToolingFailure(`render.preview failed on thread part ${index + 2}: ${outcome.status}`);
-            const preview = outcome.result as RenderPreviewResult;
-            if (!preview.withinLimit) {
-              throw new WorkflowHeld(`thread part ${index + 2} exceeds the X character limit (${preview.characterCount} chars)`);
-            }
-            parts.push(preview);
-          }
-          return { parts: parts.length + 1, characterCounts: [draft.mainPostText.length, ...parts.map((p) => p.characterCount)] };
+          const counts: number[] = [];
+          for (const part of draft.thread) counts.push((await previewOf(part)).characterCount);
+          return {
+            parts: draft.thread.length + 1,
+            allowed: intake.allowThreads,
+            withinCeiling: draft.thread.length + 1 <= MAX_THREAD_PARTS,
+            characterCounts: [draft.mainPostText.length, ...counts],
+          };
         });
       }
+      const previewInspection = await wf.step.code(rev("14-render-preview-check"), async () => {
+        const preview = await previewOf(draft.text);
+        return { withinLimit: preview.withinLimit, characterCount: preview.characterCount };
+      });
+      const placeholderVerdict = await wf.step.code(rev("14c-verify-no-placeholder"), () =>
+        runGate(tools, "gate.noPlaceholder", { text: fullText(draft) }, ctx),
+      );
+      const leakVerdict = await wf.step.code(rev("14d-verify-no-leak"), () =>
+        runGate(tools, "gate.leakCheck", { text: fullText(draft) }, ctx),
+      );
 
-      await wf.step.code(rev("14-render-preview-check"), async () => {
-        const outcome = await tools["render.preview"]!.execute({ text: draft.text }, { ctx });
-        if (outcome.status !== "success") throw new WorkflowToolingFailure(`render.preview failed: ${outcome.status}`);
-        const preview = outcome.result as RenderPreviewResult;
-        if (!preview.withinLimit) {
-          throw new WorkflowHeld(`post exceeds the X character limit (${preview.characterCount} chars)`);
-        }
-        return preview;
+      /** Everything the span gates objected to, unwrapped from each gate's own evidence shape. */
+      const flaggedSpans = [numbersVerdict, brandVerdict, placeholderVerdict, leakVerdict].flatMap((verdict) => {
+        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`x content gate: ${verdict.reason}`);
+        // `spansFromEvidence`, not `.evidence`: gate.leakCheck reports
+        // `local file path: "..."`, which the redactor cannot match as-is.
+        return verdict.verdict === "content_fail" ? spansFromEvidence(verdict.evidence) : [];
       });
 
-      // ── 14c-14d: placeholder and leak checks ──
-      //
-      // Inside `draftOnce`, before the human gate, matching every sibling channel
-      // agent (linkedin 13/14, blog 13/14, newsletter 13/14, reddit 15/16).
-      //
-      // These used to run as steps 16/17, AFTER `15-batch-review` and outside the
-      // revision loop. That put a reviewer's approved draft one step away from a
-      // `WorkflowHeld` with no revision path: a leak found post-approval could
-      // not be revised, only abandoned, and the reviewer never saw the finding
-      // that killed it. Running them here means a placeholder or credential leak
-      // surfaces as a revision the reviewer can act on, exactly like every other
-      // content check in this loop.
-      await wf.step.code(rev("14c-verify-no-placeholder"), async () => {
-        const verdict = await runGate(tools, "gate.noPlaceholder", { text: wholePost }, ctx);
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.noPlaceholder: ${verdict.reason}`);
-        if (verdict.verdict === "content_fail") throw new WorkflowHeld(`unresolved placeholder: ${verdict.reason}`);
-        return verdict;
-      });
+      /**
+       * 14r — the repair step.
+       *
+       * Runs only when something above objected, so a clean post costs nothing
+       * extra. ONE model redraft told every problem at once, kept only if
+       * strictly cleaner, then deterministic floors that cannot fail to
+       * converge.
+       */
+      const repaired = await wf.step.code(
+        rev("14r-repair-post"),
+        async (): Promise<{ post: XPostOutput; repairs: ContentRepair[] }> => {
+          const openingShape = await shapeProblems(draft);
+          if (flaggedSpans.length === 0 && openingShape.length === 0) return { post: draft, repairs: [] };
 
-      await wf.step.code(rev("14d-verify-no-leak"), async () => {
-        const verdict = await runGate(tools, "gate.leakCheck", { text: wholePost }, ctx);
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.leakCheck: ${verdict.reason}`);
-        if (verdict.verdict === "content_fail") throw new WorkflowHeld(`leak check failed: ${verdict.reason}`);
-        return verdict;
-      });
+          const repairs: ContentRepair[] = [];
+          let post = draft;
+
+          // ── one model redraft, told everything that is wrong ──
+          const asked = [
+            ...(flaggedSpans.length > 0
+              ? [
+                  `These exact spans were rejected and must not appear anywhere in the post or any thread part: ${flaggedSpans.join(", ")}.`,
+                  "For a figure: restate it exactly as a source writes it, or make the point qualitatively with no number.",
+                  "For a banned phrase or an unresolved placeholder: rewrite without it.",
+                  "For anything resembling a credential, an internal path or an internal-only term: remove it.",
+                ]
+              : []),
+            ...(openingShape.length > 0 ? [`The post was also rejected on shape: ${openingShape.join("; ")}. Fix each of these.`] : []),
+            "Keep everything else exactly as it is.",
+          ].join(" ");
+
+          const redraft = await draftAgent.run(ctx, { ...draftInputForRepair, revisionRequest: asked });
+          if (redraft.status === "completed" && redraft.finalOutput) {
+            const candidate: XPostOutput = { ...redraft.finalOutput, mainPostText: redraft.finalOutput.text };
+            const candidateSpans = await inspectSpans(candidate);
+            const candidateShape = await shapeProblems(candidate);
+            const before = flaggedSpans.length + openingShape.length;
+            const after = (candidateSpans.verdict === "content_fail" ? spansFromEvidence(candidateSpans.evidence).length : 0) + candidateShape.length;
+            if (after < before) {
+              post = candidate;
+              repairs.push({
+                check: "x-content-gates",
+                action: "rewritten",
+                detail: `redrafted to clear ${before - after} of ${before} flagged problem(s)`,
+              });
+            }
+          }
+
+          // ── floor 1: spans ──
+          const spanOutcome = await runCheckWithRepair({
+            check: "x-content-gates",
+            value: post,
+            verify: inspectSpans,
+            attempts: [{ action: "redacted", maxPasses: 3, run: (value, verdict) => redactAcrossDraft(value, spansFromEvidence(verdict.evidence)) }],
+            describeUnresolved: (verdict) => `${verdict.reason} — delivered with this noted rather than withheld`,
+          });
+          post = spanOutcome.value;
+          repairs.push(...spanOutcome.repairs);
+
+          // ── floor 2: shape ──
+          //
+          // Four mechanical repairs, each the honest answer to its own rule:
+          // a link that belongs in the first reply is REMOVED from the body
+          // (it is already in `firstReplyUrl`, so nothing is lost); a thread an
+          // account may not publish is DROPPED, delivering the main post the
+          // account CAN publish; a thread over the ceiling is cut to it; and an
+          // over-long post or part loses its trailing sentence.
+          const shapeOutcome = await runCheckWithRepair({
+            check: "x-post-shape",
+            value: post,
+            verify: async (value) => {
+              const problems = await shapeProblems(value);
+              return problems.length === 0 ? localPass("x-post-shape") : localContentFail("x-post-shape", problems.join("; "), problems);
+            },
+            attempts: [
+              {
+                action: "moved",
+                run: (value) => (value.firstReplyUrl && [value.mainPostText, ...value.thread].some((p) => BARE_URL_PATTERN.test(p)) ? stripBareLinks(value) : undefined),
+              },
+              {
+                action: "substituted",
+                run: (value) => (value.thread.length > 0 && !intake.allowThreads ? { ...value, thread: [] } : undefined),
+              },
+              {
+                action: "trimmed",
+                run: (value) => (value.thread.length + 1 > MAX_THREAD_PARTS ? { ...value, thread: value.thread.slice(0, MAX_THREAD_PARTS - 1) } : undefined),
+              },
+              {
+                action: "trimmed",
+                maxPasses: 5,
+                run: async (value) => {
+                  /** Drops the trailing sentence of whichever part is over the limit. */
+                  const shorten = (part: string): string | undefined => {
+                    const sentences = part.split(/(?<=[.!?])\s+/);
+                    if (sentences.length <= 1) return undefined;
+                    const shorter = sentences.slice(0, -1).join(" ").trim();
+                    return shorter.length === 0 ? undefined : shorter;
+                  };
+                  const mainPreview = await previewOf(value.text);
+                  if (!mainPreview.withinLimit) {
+                    const shorter = shorten(value.text);
+                    if (shorter !== undefined) return { ...value, text: shorter, mainPostText: shorter };
+                  }
+                  for (const [index, part] of value.thread.entries()) {
+                    const preview = await previewOf(part);
+                    if (preview.withinLimit) continue;
+                    const shorter = shorten(part);
+                    if (shorter === undefined) continue;
+                    const thread = [...value.thread];
+                    thread[index] = shorter;
+                    return { ...value, thread };
+                  }
+                  return undefined;
+                },
+              },
+            ],
+            describeUnresolved: (verdict) => `${verdict.reason} — delivered with this noted rather than withheld`,
+          });
+          post = shapeOutcome.value;
+          repairs.push(...shapeOutcome.repairs);
+
+          return { post, repairs };
+        },
+      );
+      draft = repaired.post;
+      // Outside the step body: a checkpointed step is replayed from its stored
+      // value on resume and its body never runs again.
+      repairsByRevision.set(revision, repaired.repairs);
 
       // ── 14e: the post's media — attached first, then the draft's own brief ──
       //
@@ -931,7 +1162,9 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       await runTopicGuardrail(
         wf,
         { tools, promptStore: options.promptStore, router: options.router },
-        wholePost,
+        // Re-derived from the REPAIRED draft, not the draft as first written:
+        // the guardrail must judge the subject of the post that actually ships.
+        fullText(draft),
         intake.forbiddenTopics,
         revision === 0 ? undefined : `-r${revision}`,
       );
@@ -987,6 +1220,12 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       },
     });
     const { mediaPlan, ...draft } = review.output;
+    /**
+     * The repairs made to the round that was APPROVED — not the last round
+     * attempted. Omitted from the deliverable when empty, so a clean run
+     * produces the bytes it always did.
+     */
+    const contentRepairs = repairsByRevision.get(review.revision) ?? [];
 
     // ── 18-19: deliverable & manifest persistence ──
     // Additive: `draftsMarkdown` is the DRAFTS.md-shaped string karosCMO's
@@ -1017,6 +1256,9 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
         ...mediaForDeliverable(mediaPlan),
         contentMode: modeSelection.mode,
         ...(selected.trend !== undefined ? { trend: selected.trend } : {}),
+        // Present only when something had to be repaired to get here, so a
+        // reviewer sees what changed instead of a silently edited post.
+        ...(contentRepairs.length > 0 ? { contentRepairs } : {}),
         draftsMarkdown,
       },
       snapshot: (deliverableId) => ({

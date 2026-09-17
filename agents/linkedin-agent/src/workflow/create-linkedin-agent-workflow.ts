@@ -857,8 +857,12 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
               ? await wf.step.agent(rev(att("09z-regenerate-post")), draftAgent, draftInput)
               : draftResult;
           if (usableDraft.status === "content_fail") {
-            // Twice is no longer a coin flip. Nothing was drafted, so there is
-            // nothing to repair — `degraded`, which the engine retries.
+            // Twice is no longer a coin flip. Nothing was drafted, so there
+            // is nothing to repair and nothing to annotate. `degraded` rather
+            // than `held`: `held` means "we looked and decided not to
+            // publish", a content verdict nobody made here. Neither status is
+            // auto-retried (the queue consumer acks every terminal status);
+            // this is about classifying the failure honestly.
             throw new WorkflowToolingFailure("draft did not produce a parseable post on two consecutive attempts");
           }
           if (usableDraft.status !== "completed") {

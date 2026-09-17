@@ -5,7 +5,8 @@ import type { AgentTool, AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createXAgentWorkflow, describeLengthOverrun } from "../src/workflow/create-x-agent-workflow.js";
 import { renderXDraftsMarkdown } from "../src/workflow/render-drafts-markdown.js";
-import { fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import {
+  deliveredPost, fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 
 /**
  * The 2026-09 elite-tier upgrade, end to end on the real workflow:
@@ -230,7 +231,7 @@ describe("x-agent 2026-09 upgrade", () => {
     expect(gateTurns[1]!.toolCall!.result.reason).toBeUndefined();
   });
 
-  it("a model that keeps returning an over-limit part is steered once more by the workflow and only then held, before review", async () => {
+  it("a model that keeps returning an over-limit part is steered once more, then DEGRADES rather than holding", async () => {
     // Self-critique allows two revisions (three turns), then the workflow's
     // own length steer re-attempts the draft once (three more turns), and only
     // a model that ignores all of it reaches the deterministic 13b hold.
@@ -239,13 +240,17 @@ describe("x-agent 2026-09 upgrade", () => {
     const store = new MemoryDurableStepStore();
     const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router });
     const result = await new WorkflowEngine(store).run(workflowFn, { ...baseParams, runId: "x_thread_2" });
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    // The self-critique verdict is the hold reason now: the step itself
-    // refuses to return a draft its gate rejected, which is the earlier and
-    // more specific of the two checks.
-    expect(result.reason).toMatch(/self-critique/);
-    expect(router.complete).toHaveBeenCalledTimes(3);
+
+    // The draft step's own self-critique never returned a usable post, so
+    // there is nothing for 14r to repair — the shape floor can only trim a
+    // draft that exists. `degraded` rather than `held`: no content verdict was
+    // reached, the machinery simply produced nothing.
+    expect(result.status).toBe("degraded");
+    if (result.status !== "degraded") throw new Error("unreachable");
+    expect(result.failureReason).toMatch(/two consecutive attempts/);
+    // One extra turn versus before: the unparseable draft is re-flipped once
+    // before anything terminal happens.
+    expect(router.complete).toHaveBeenCalledTimes(6);
   });
 
   it("describeLengthOverrun names every over-limit post the way render.preview counts, and is silent when all fit", () => {
@@ -257,15 +262,22 @@ describe("x-agent 2026-09 upgrade", () => {
     expect(steer).toContain("at most 280 characters");
   });
 
-  it("holds a thread for an account whose charter forbids threads (xAllowThreads: false)", async () => {
+  it("DROPS the thread for an account whose charter forbids threads, and ships the main post", async () => {
+    // The account's rule is still obeyed absolutely — no thread is published.
+    // But obeying it by withholding the main post as well punished the client
+    // for the model's mistake. The main post is publishable on its own, so it
+    // is what ships, with the dropped thread recorded on the deliverable.
     await env.store.writeJson("acme", ["client", "config"], { xHandle: "@acmehq", xAllowThreads: false });
     const router = fakeRouterSequence([finalTurn(goodPost({ thread: ["A second part."] }))]);
     const store = new MemoryDurableStepStore();
-    const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router });
+    const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true });
     const result = await new WorkflowEngine(store).run(workflowFn, { ...baseParams, runId: "x_thread_3" });
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/does not publish threads/);
+
+    expect(result.status).toBe("completed");
+
+    const post = await deliveredPost(env, "x_thread_3");
+    expect(post["thread"]).toEqual([]);
+    expect(post["contentRepairs"]).toContainEqual(expect.objectContaining({ action: "substituted" }));
   });
 
   it("a single post keeps the marker-free DRAFTS.md shape byte for byte", () => {
