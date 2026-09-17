@@ -44,6 +44,9 @@ const ALL_19_STEP_IDS = [
   "10-verify-numbers-sourced",
   "11-verify-brand-compliance",
   "12-render-preview-check",
+  // D22 (2026-09): a bare link in the body holds the run. LinkedIn's craft
+  // page files this under HARD with no exception, unlike x-agent's equivalent.
+  "12b-verify-link-placement",
   "13-verify-no-placeholder",
   "14-verify-no-leak",
   // 2026-09: the media resolver. Always a step; with no media tools in this

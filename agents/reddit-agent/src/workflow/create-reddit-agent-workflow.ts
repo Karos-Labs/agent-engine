@@ -179,6 +179,33 @@ function stringList(value: unknown): string[] {
  * The run still pauses at a mandatory human `batch_review` gate (RFC-01
  * §8.3) unless `options.autoApprove` opts out.
  */
+/**
+ * The client's own names, for `gate.subredditRules`'s mention scan.
+ *
+ * Deliberately a small, boring list — the company name, the brand name, the
+ * product name and the Reddit handle. Widening it to every proper noun in the
+ * profile would hold drafts for naming a customer or a city, and a gate that
+ * cries wolf is a gate somebody switches off. Empty is a valid answer for a
+ * client whose profile has none of these; the gate then falls back to the
+ * draft's self-report, which is exactly where it was before.
+ */
+function productMentionNames(clientContext: { profile: Record<string, unknown>; brand: Record<string, unknown> }): string[] {
+  const candidates = [
+    clientContext.profile["companyName"],
+    clientContext.profile["name"],
+    clientContext.profile["productName"],
+    clientContext.brand["name"],
+    clientContext.brand["productName"],
+  ];
+  const names = new Set<string>();
+  for (const value of candidates) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed.length >= 3) names.add(trimmed);
+  }
+  return [...names];
+}
+
 export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOptions) {
   const scraper = options.scraper === null ? undefined : (options.scraper ?? createScraperProvider({}));
   const redditTools = createRedditThreadTools({
@@ -803,6 +830,13 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
             subreddit: selectedThread.targetSubreddit,
             ...subredditRulesLookup,
             mentionAttempted: draft.disclosureIncluded,
+            // The names the gate scans for, so the mention checks rest on the
+            // draft's TEXT rather than on `disclosureIncluded`, which is the
+            // model's word for what it wrote. A model that names the product
+            // and reports no mention used to switch warming, cooldown and
+            // disclosure off in one go, and the undisclosed mention went to a
+            // human to post from their own account.
+            mentionNames: productMentionNames(clientContext),
             now: new Date().toISOString(),
           },
           ctx,

@@ -1,8 +1,9 @@
 import { z } from "zod";
-import { checkLength, defineTool, success, truncateAtFold, truncateToLimit } from "@agent-engine/tool-common";
+import { defineTool, success, truncateAtFold, truncateToLimit } from "@agent-engine/tool-common";
+import { weightedLengthForX } from "@agent-engine/tool-karos-gates";
 import type { AgentTool } from "@agent-engine/core";
 
-const TOOL_VERSION = "1.0.1";
+const TOOL_VERSION = "1.1.0"; // 1.1.0: counts the way X counts — 23 per URL, 2 per emoji
 
 /** X's actual character limit for a standard post. Exported so the workflow's in-loop length steer counts the way this tool does. */
 export const X_CHARACTER_LIMIT = 280;
@@ -40,7 +41,17 @@ export const renderPreview: AgentTool<RenderPreviewInput, RenderPreviewResult> =
   version: TOOL_VERSION,
   inputSchema: RenderPreviewInputSchema,
   async execute({ text }) {
-    const { characterCount, withinLimit } = checkLength(text, X_CHARACTER_LIMIT);
+    // X's own counting, not `String.length` (docs.x.com/resources/fundamentals/
+    // counting-characters): every URL is 23 characters whatever its real
+    // length, every emoji is 2. Counting plainly meant a 275-character post
+    // with two links measured as within the limit here and as 319 on X — it
+    // passed every check we had and would have been refused on publish.
+    //
+    // The same function the gate uses, deliberately: the gate steering the
+    // model and the deterministic check holding the run must not be able to
+    // disagree about how long a post is.
+    const characterCount = weightedLengthForX(text);
+    const withinLimit = characterCount <= X_CHARACTER_LIMIT;
     const aboveTheFold = truncateAtFold(text, X_FOLD_CHARACTERS);
     const rendered = truncateToLimit(text, X_CHARACTER_LIMIT);
     return success<RenderPreviewResult>({ characterCount, withinLimit, aboveTheFold, rendered });

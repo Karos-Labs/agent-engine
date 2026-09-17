@@ -327,7 +327,19 @@ describe("x-agent 2026-09 upgrade", () => {
     expect(plan?.status).toBe("none");
   });
 
-  it("answers a screenshot brief with the cited page, vision-checked, staged to a URL the portal can fetch", async () => {
+  it("D24: a screenshot brief is REFUSED — X does not create or source pictures", async () => {
+    // This test used to assert the opposite. D24 ("X is text only: it does not
+    // create or source pictures; a client's own picture is attached if given")
+    // was decided on 2026-09-15, and until now the agent ran the full four-tier
+    // cascade — screenshot, harvest, stock, `image.generate` — with text-only
+    // available as a per-run opt-in the client had to remember. That is the
+    // decision inverted, and the inversion is exactly the defect Lola filed
+    // against LinkedIn the same week: a scraped screenshot of somebody else's
+    // page shipped as the post image.
+    //
+    // The tools are registered here on purpose. The point is not that the
+    // cascade is unavailable — it is that X never asks it, even when a model
+    // asks for a screenshot and every tier could serve one.
     const repoRoot = path.join(env.rootDir, "repo");
     await fs.mkdir(path.join(repoRoot, ".media-cache", "x_media_1"), { recursive: true });
     await fs.writeFile(path.join(repoRoot, ".media-cache", "x_media_1", "screenshot-abc.png"), Buffer.from("png"));
@@ -347,12 +359,9 @@ describe("x-agent 2026-09 upgrade", () => {
       "media.screenshotPage": fakeTool("media.screenshotPage", {
         candidate: { path: ".media-cache/x_media_1/screenshot-abc.png", description: "screenshot of the launch page", provider: "screenshot", licenseConfidence: "unknown", sourceUrl: "https://example.test/launch" },
       }),
-      "media.inspectImages": fakeTool("media.inspectImages", {
-        inspections: [{ ref: "screenshot-1", description: "the article headline and a chart", subjects: ["headline"], textInImage: ["31% fewer meeting hours"], mood: "clinical", hasPeople: false, looksLikeScreenshot: true, hasWatermark: false, looksAiGenerated: false, quality: "usable", qualityReason: "legible", fitsBrief: true, fitScore: 5, fitReason: "the cited page" }],
-        unreadable: [],
-        model: "gemini-2.5-flash",
-      }),
-      "media.stageAsset": fakeTool("media.stageAsset", { url: "https://storage.example/signed.png", gcsUri: "gs://bucket/agent-engine/x_media_1/screenshot-abc.png", contentType: "image/png", bytes: 3 }),
+      "media.inspectImages": fakeTool("media.inspectImages", { inspections: [], unreadable: [], model: "gemini-2.5-flash" }),
+      "media.stageAsset": fakeTool("media.stageAsset", { url: "https://storage.example/signed.png", gcsUri: "gs://bucket/x.png", contentType: "image/png", bytes: 3 }),
+      "image.generate": fakeTool("image.generate", { path: ".media-cache/x_media_1/generated.png" }),
     };
     const router = fakeRouterSequence([
       finalTurn(goodPost({ mediaBrief: { needsVisual: true, kind: "screenshot", sourceUrl: "https://example.test/launch", rationale: "the launch page is the story" } })),
@@ -368,18 +377,22 @@ describe("x-agent 2026-09 upgrade", () => {
     const result = await new WorkflowEngine(store).run(workflowFn, { ...baseParams, runId: "x_media_1" });
     expect(result.status).toBe("completed");
     if (result.status !== "completed") throw new Error("unreachable");
-    expect(result.output.mediaStatus).toBe("screenshot");
-    expect(calls).toEqual(["media.screenshotPage", "media.inspectImages", "media.stageAsset"]);
 
-    const deliverables = await env.store.listJson<{ deliverable: { mediaRefs: string[]; media: { url: string; requiresCredit: boolean; creditUrl: string }; draftsMarkdown: string } }>(
+    // The post ships as text, and the rationale says why in words a reviewer
+    // can read rather than leaving them to wonder where the picture went.
+    expect(result.output.mediaStatus).toBe("none");
+    expect(calls, "no sourcing or generation tier may be asked on X").toEqual([]);
+
+    const deliverables = await env.store.listJson<{ deliverable: { mediaRefs: string[]; media?: unknown; draftsMarkdown: string } }>(
       "acme",
       ["ledger", "deliverables", "x_media_1", "_"],
     );
     const d = deliverables[0]!.data.deliverable;
-    expect(d.mediaRefs).toEqual(["https://storage.example/signed.png"]);
-    expect(d.media.requiresCredit).toBe(true);
-    expect(d.media.creditUrl).toBe("https://example.test/launch");
-    expect(d.draftsMarkdown).toContain("**Media:** https://storage.example/signed.png");
+    expect(d.mediaRefs).toEqual([]);
+    // The card still SAYS there is no picture and why — `**Media:** none — …`
+    // is the honest line. What must never appear is a URL on it.
+    expect(d.draftsMarkdown).toContain("**Media:** none");
+    expect(d.draftsMarkdown).not.toContain("https://storage.example/signed.png");
   });
 
   it("analyses client-attached media BEFORE drafting, hands the description to the writer, and attaches that image", async () => {

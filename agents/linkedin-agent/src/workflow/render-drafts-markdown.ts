@@ -51,6 +51,14 @@ export function renderLinkedInDraftsMarkdown(input: {
     ...goalLineBullets(goalLine).map((bullet) => `- ${bullet}`),
     `- **Takeaway:** ${draft.takeaway}`,
   ];
+  // D22: the link the author pastes as the first comment, immediately after
+  // posting. On the card because that is where the person doing the posting
+  // looks — a rule that lives only in a craft page is a rule nobody applies
+  // at 9am. Adding it later by editing the post costs -42% impressions, so
+  // "immediately" is the whole instruction.
+  if (draft.firstCommentUrl !== undefined && draft.firstCommentUrl.length > 0) {
+    meta.push(`- **First comment:** ${draft.firstCommentUrl} — post this as the first comment yourself, right after the post goes up`);
+  }
   if (media?.asset !== undefined) {
     const credit = media.asset.requiresCredit && media.asset.creditUrl ? ` · credit ${media.asset.creditUrl}` : "";
     meta.push(`- **Media:** ${media.asset.url ?? media.asset.path}`, `- **Media source:** ${media.status}, ${media.asset.provider}${credit}`);

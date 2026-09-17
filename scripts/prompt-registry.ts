@@ -269,8 +269,12 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "linkedin-craft",
     agent: "linkedin-agent",
-    versions: ["1", "2", "3", "4", "5", "6"],
-    latestVersion: "6",
+    // 7: the eleven rules from the 06 Agent Improve sheet (Lola, 2026-09-07)
+    // as §12b, and §8's image rules — no web-page screenshots, and the four
+    // gates any picture clears. Both came from reading posts this agent
+    // actually shipped rather than from a style opinion.
+    versions: ["1", "2", "3", "4", "5", "6", "7"],
+    latestVersion: "7",
     requires: { languageDirective: true, numbersSourced: true },
   },
   {
@@ -374,8 +378,13 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "x-craft",
     agent: "x-agent",
-    versions: ["1", "2", "3", "4", "5", "6"],
-    latestVersion: "6",
+    // 7: D24 — X is text only. §10 stopped asking the model for screenshots
+    // and photographs, because the workflow stopped acting on the request;
+    // and §5/§11 state the three limits the gate now actually enforces (hook
+    // 70 with no @/#/link/emoji, one hashtag, two mentions) rather than
+    // describing them as taste.
+    versions: ["1", "2", "3", "4", "5", "6", "7"],
+    latestVersion: "7",
     requires: { languageDirective: true, numbersSourced: true },
   },
 ];

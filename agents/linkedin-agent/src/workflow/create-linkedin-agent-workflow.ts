@@ -121,6 +121,13 @@ export interface CreateLinkedInAgentWorkflowOptions {
  * the trace and the reviewer), never held: `evaluateDedupe`'s own policy is
  * that de-duplication flags and steers, it does not hold a run.
  */
+/**
+ * A bare link anywhere in the body. Deliberately the same shape x-agent uses
+ * — a scheme is what makes a URL a URL, and anything cleverer starts matching
+ * "example.com" inside a sentence, which is prose, not a link.
+ */
+const BARE_URL_PATTERN = /https?:\/\//i;
+
 const MAX_DEDUPE_ATTEMPTS = 3;
 
 /** The draft plus the media and formatting report the run produced for it — what the review gate shows and the deliverable persists. */
@@ -898,6 +905,28 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       // gate.noPlaceholder and gate.leakCheck exist in packages/tools/karos-gates
       // but were never wired into any channel's runtime step sequence before
       // Phase 2.5 — restored here, run before the human ever sees the draft.
+      // ── D22: the link goes in the first comment, and the body carries none ──
+      //
+      // Craft 02 §11 files this under HARD, and unlike x-agent's equivalent it
+      // has NO exception: X's craft page carves out "the link IS the news",
+      // LinkedIn's does not. A body link costs -18.8% median reach (vdB 2026)
+      // to -26.5% average (Ordinal, 900K+ posts), and it cannot be fixed after
+      // delivery — adding a link by editing the post costs a further -42% of
+      // impressions (ConnectSafely), so the only place to catch it is here.
+      //
+      // Checked whether or not `firstCommentUrl` is set: a bare URL in the body
+      // is wrong even when the model forgot to name where the link belongs.
+      await wf.step.code(rev("12b-verify-link-placement"), () => {
+        const inBody = BARE_URL_PATTERN.exec(draft.text);
+        if (inBody) {
+          throw new WorkflowHeld(
+            `the post body contains a link (${inBody[0]}) — on LinkedIn the link goes in the first comment, never in the body ` +
+              `(D22, linkedin-craft §11); put it in firstCommentUrl and write the body without it`,
+          );
+        }
+        return { firstCommentUrl: draft.firstCommentUrl ?? null };
+      });
+
       await wf.step.code(rev("13-verify-no-placeholder"), async () => {
         const verdict = await runGate(tools, "gate.noPlaceholder", { text: draft.text }, ctx);
         if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.noPlaceholder: ${verdict.reason}`);
