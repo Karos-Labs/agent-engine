@@ -138,7 +138,7 @@ describe("a library is a catalogue selectSeries can actually run on", () => {
     // `head_to_head` is the one series with a structural gate, so a library
     // without it is the sharpest version of this case.
     const without = BUNDLED_SERIES.filter((s) => s.id !== "head_to_head");
-    const choice = selectSeries({ angleId: "wrong-assumption", comparedEntities: 2 }, without);
+    const choice = selectSeries({ angleId: "wrong-assumption", comparedEntities: 2, restsOnKinds: [] }, without);
     expect(choice.series.id).not.toBe("head_to_head");
     expect(BUNDLED_SERIES.map((s) => s.id)).toContain(choice.series.id);
   });
