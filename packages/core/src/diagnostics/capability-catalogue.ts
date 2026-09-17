@@ -303,6 +303,22 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
       "Decided 2026-09-06: no deployment ever carried GOOGLE_BUSINESS_TOKEN, so the leg was a guaranteed tombstone; the service account is the credential the engine already runs with, and adding it as a profile manager is a per-client step a person can do in Business Profile Manager. A user grant WAS then pasted (2026-09-07, both projects) and is wired alongside GOOGLE_OAUTH_CLIENT_ID/SECRET — but it is a REFRESH token, not the access token this variable was designed for, so gbp-credential.ts exchanges it and falls back to ADC when it cannot: filling this variable in must never remove the credential that already worked. The two OAuth secrets arrived CROSSED between the projects (each held the other project's app, so every exchange returned unauthorized_client while both looked present); corrected by testing each token against each client, and both now exchange for scope business.manage. NEITHER credential reaches reviews yet, for a reason no variable can express: Google's Business Profile access is unapproved for these projects. The API quota is literally 0 (DefaultRequestsPerMinutePerProject — verified 429/RESOURCE_EXHAUSTED with a valid minted token, i.e. authentication SUCCEEDING), and mybusiness.googleapis.com — the legacy v4 surface where reviews live and the only one this adapter calls — cannot even be enabled (AUTH_PERMISSION_DENIED binding the service; it is allow-list-only). So a credential being present here says nothing about reviews arriving until that approval lands.",
   },
 
+  // ── Instagram / Meta ─────────────────────────────────────────────────────
+  {
+    id: "meta-instagram-internal",
+    title: "Instagram account reads and internal posting — Karos Labs' own Business Manager access to a client's linked Instagram account",
+    owner: "packages/tools/karos-meta (meta.*)",
+    requires: [
+      { name: "META_SYSTEM_USER_TOKEN", kind: "required" },
+      { name: "META_PUBLISH_ENABLED", kind: "enhances" },
+    ],
+    whenAbsent:
+      "Without META_SYSTEM_USER_TOKEN, every meta.* tool reports not_available with zero network calls — no agent step can read a client's Instagram profile, media or insights on Karos Labs' shared Business Manager grant, and meta.publishInstagramPost cannot run regardless of META_PUBLISH_ENABLED. With the token but without META_PUBLISH_ENABLED, reads work but the publish tool stays inert — a deliberate second gate, since this credential can post live to a client's account, not just read it.",
+    rationale:
+      "packages/tools/karos-meta/README.md — generated in Meta Business Settings -> System Users, once the app's Advanced Access is approved. Not yet wired in either cloudbuild file as of this row (2026-09-17), so this capability reports DISABLED in both environments until that deploy step lands; per Albert (2026-09), META_PUBLISH_ENABLED is not to be flipped on without checking with him first.",
+    shortfall: "no Instagram Graph API access",
+  },
+
   // ── Google first-party connectors (SEO/GEO Layer 1) ──────────────────────
   {
     id: "google-connectors-oauth",
