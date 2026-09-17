@@ -1,0 +1,20 @@
+{
+  "name": "@agent-engine/tool-karos-meta",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Meta Graph API connector via Karos Labs' own Business Manager System User token: Instagram post/reel performance (reach, views, saved, shares, follows, profile visits) and follower count, plus an internal, off-by-default Instagram publish path (meta.publishInstagramPost, gated on META_PUBLISH_ENABLED). No Facebook Page publish target — Instagram only.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "pretest": "node ../../../scripts/check-dist-freshness.mjs",
+    "test": "npm run typecheck && vitest run"
+  },
+  "dependencies": {
+    "@agent-engine/core": "^0.0.1",
+    "@agent-engine/tool-common": "^0.0.1",
+    "zod": "^4.4.3"
+  }
+}

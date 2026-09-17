@@ -9,6 +9,7 @@ import {
   createKarosIntakeTools,
   createKarosMediaTools,
   createKarosConnectorsTools,
+  createKarosMetaTools,
   createLandingEngineConfigFromEnv,
 } from "@agent-engine/tools";
 import { createServerMediaStore, createServerArchiveStore } from "./gcs-artifact-stores.js";
@@ -149,5 +150,14 @@ export function createServerTools(workspaceStore: WorkspaceStoreLike, env: Recor
     // root; with none of them set the tool reports `not_available` and the
     // SEO/GEO score still computes in full from the validated Layer-2 path.
     ...createKarosConnectorsTools({ env }),
+    // Meta (Instagram) read + internal publish pack, on Karos Labs' own
+    // shared Business Manager System User token. Merged in here rather than
+    // inside createAllKarosTools() for the same reason media.*/connectors.*
+    // are — third-party egress on a credential a caller asking for "all
+    // karos tools" should not silently acquire. `meta.publishInstagramPost`
+    // stays inert (`not_available`, zero network calls) unless this
+    // deployment has explicitly set META_PUBLISH_ENABLED in addition to
+    // META_SYSTEM_USER_TOKEN — see @agent-engine/tool-karos-meta's README.
+    ...createKarosMetaTools({ env }),
   };
 }
