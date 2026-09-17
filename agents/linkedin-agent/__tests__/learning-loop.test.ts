@@ -140,17 +140,50 @@ describe("linkedin-agent and the learning loop (C7)", () => {
     expect(markdown).toContain("- **For:** People leaders evaluating hybrid work policies");
   });
 
-  it("a never-topic HOLDS an explicit request; the window and the never list skip catalog rows", async () => {
+  it("a never-topic REFUSES an explicit request and writes something else; the window and the never list skip catalog rows", async () => {
     await projectAll(env);
-    const heldRouter = fakeRouterSequence([finalTurn(goodPost())]);
-    const held = await new WorkflowEngine(new MemoryDurableStepStore()).run(
-      createLinkedInAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router: heldRouter, autoApprove: true }),
+    // Two turns now, not one: refusing the request no longer ends the run
+    // before drafting, so this run actually writes a post about something else
+    // (and may spend a repair turn doing it).
+    const refusedRouter = fakeRouterSequence([finalTurn(goodPost()), finalTurn(goodPost()), finalTurn(goodPost())]);
+    const refusedStore = new MemoryDurableStepStore();
+    const refused = await new WorkflowEngine(refusedStore).run(
+      createLinkedInAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router: refusedRouter, autoApprove: true }),
       { ...params, runId: "li_learning_held", input: { requestedTopic: "four-day weeks for ops teams" } },
     );
-    expect(held.status).toBe("held");
-    if (held.status !== "held") throw new Error("unreachable");
-    expect(held.reason).toMatch(/never-topic/);
-    expect((heldRouter.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls).toHaveLength(0);
+
+    // The client's rule is absolute and unchanged: the requested subject is
+    // NOT written about. What changed is that the run now writes about
+    // something the account IS allowed to discuss, and tells whoever asked
+    // that their request was declined — instead of ending with an error and
+    // no post.
+    expect(refused.status).toBe("completed");
+    if (refused.status !== "completed") throw new Error("unreachable");
+    expect(refused.output.topic).not.toMatch(/four-day weeks/i);
+
+    const refusedSelection = (await refusedStore.listSteps("li_learning_held")).find((st) => st.stepId === "07-select-candidate")!.output as {
+      refusedRequest?: string;
+    };
+    expect(refusedSelection.refusedRequest).toMatch(/never-topic/);
+
+    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", "li_learning_held", "_"]);
+    const post = (deliverables[0] as { data: { deliverable: Record<string, unknown> } }).data.deliverable;
+    expect(post["contentRepairs"]).toContainEqual(
+      expect.objectContaining({ check: "never-topic", action: "substituted", detail: expect.stringMatching(/four-day weeks/i) }),
+    );
+
+  });
+
+  it("the subject window and the never list skip catalog rows, leaving the strategy map as the next honest candidate", async () => {
+    await projectAll(env);
+    // Reserve-and-commit the first catalog row, which the sibling test above
+    // used to do as a side effect of its own run. Doing it explicitly keeps
+    // the two tests independent: this one is about SELECTION PRECEDENCE, and
+    // it should not depend on how another test happens to consume the catalog.
+    const firstCtx = { runId: "seed-first", clientSlug: "acme", productId: "linkedin-agent", runKind: "recurring" as const, metadata: {} };
+    const first = await env.tools["topics.reserve"]!.execute({ reservationKey: "seed__first", count: 1 }, { ctx: firstCtx });
+    expect(first.status).toBe("success");
+    await env.tools["topics.commit"]!.execute({ reservationKey: "seed__first" }, { ctx: firstCtx });
 
     // Catalog: hybrid work anchor days → async collaboration → manager
     // burnout. The held run above already reserved the first at its step 06;

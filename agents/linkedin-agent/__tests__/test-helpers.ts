@@ -77,3 +77,23 @@ export async function setupTestEnvironment(opts: { withProfile?: boolean; withVo
     cleanup: () => fs.rm(rootDir, { recursive: true, force: true }),
   };
 }
+
+/**
+ * The post as the client actually receives it.
+ *
+ * Reads the persisted deliverable rather than the workflow's return value on
+ * purpose: the deliverable spreads every draft field, so `body`, `hook`,
+ * `headline`, `takeaway` and `callToAction` all reach the client. A repair
+ * that fixed only the gated `text` would re-check clean and ship the rest
+ * unredacted; assertions built on this catch that.
+ */
+export async function deliveredPost(env: TestEnvironment, runId: string): Promise<Record<string, unknown>> {
+  const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", runId, "_"]);
+  if (deliverables.length !== 1) throw new Error(`expected exactly one deliverable for ${runId}, found ${deliverables.length}`);
+  return (deliverables[0] as { data: { deliverable: Record<string, unknown> } }).data.deliverable;
+}
+
+/** Every prose field of a delivered post, concatenated. */
+export function allProse(post: Record<string, unknown>): string {
+  return JSON.stringify([post["text"], post["headline"], post["hook"], post["body"], post["takeaway"], post["callToAction"]]);
+}

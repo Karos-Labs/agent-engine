@@ -113,7 +113,44 @@ describe("linkedin-agent revision loop", () => {
     expect(remembered.map((r) => r.data.productId)).toContain("linkedin-agent");
   }, 60000);
 
-  it("still holds on an outright rejection, because the gate exists to be able to say no", async () => {
+  it("DELIVERS the best draft when the reviewer runs the cycle out of rounds, carrying every open request", async () => {
+    // The ceiling is reached, not a rejection: a reviewer asking for one more
+    // change wants MORE, not nothing. This used to hold, which threw away every
+    // round of work and left them with neither the draft they had been
+    // iterating on nor their own outstanding requests.
+    const router = fakeRouterSequence([draft(FIRST), draft(REVISED), draft(FIRST)]);
+    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+    const runId = "linkedin_rev_exhausted";
+
+    // MAX_REVISION_ROUNDS is 2, so r0, r1 and r2 all exist and r2 is the last.
+    for (const round of [0, 1, 2]) {
+      await engine.run(workflowFn, { ...params, runId });
+      await engine.resolveGate(runId, `15-batch-review-r${round}`, {
+        decision: "revise",
+        actor: "jane@karoslabs.com",
+        feedback: `round ${round}: still not there`,
+        at: new Date().toISOString(),
+      });
+    }
+
+    const result = await engine.run(workflowFn, { ...params, runId });
+    expect(result.status).toBe("completed");
+
+    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", runId, "_"]);
+    expect(deliverables).toHaveLength(1);
+    const post = (deliverables[0] as { data: { deliverable: Record<string, unknown> } }).data.deliverable;
+    const repairs = post["contentRepairs"] as Array<{ check: string; action: string; detail: string }>;
+    // Every round's request is on the deliverable, so the next pass starts from
+    // something rather than from scratch.
+    const note = repairs.find((r) => r.check === "human-review");
+    expect(note?.action).toBe("unresolved");
+    expect(note?.detail).toContain("round 0: still not there");
+    expect(note?.detail).toContain("round 2: still not there");
+  }, 60000);
+
+  it("keeps and MARKS the work on an outright rejection — the marker is how the gate says no", async () => {
     const router = fakeRouterSequence([draft(FIRST)]);
     const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router });
     const engine = new WorkflowEngine(new MemoryDurableStepStore());
@@ -127,8 +164,13 @@ describe("linkedin-agent revision loop", () => {
       at: new Date().toISOString(),
     });
     const result = await engine.run(workflowFn, { ...params, runId });
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/review rejected/i);
+    // This reverses a deliberate earlier decision, and the reversal is the
+    // point: a reject used to end the run, so a drafted post a reviewer had
+    // opinions about existed nowhere afterwards and the next run started from
+    // scratch. The gate still says no — the rejection rides on the deliverable
+    // where nobody can miss it, and no caller treats a rejected deliverable as
+    // shippable. What changed is that the reviewer keeps the work and the
+    // reason attached to it.
+    expect(result.status).toBe("completed");
   }, 60000);
 });

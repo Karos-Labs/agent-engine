@@ -59,9 +59,16 @@ import {
   type SocialMediaPlan,
   type TrendResearch,
   type TrendScoutOutput,
+  runCheckWithRepair,
+  redactSentencesCarrying,
+  localContentFail,
+  localPass,
+  spansFromEvidence,
+  type ContentRepair,
 } from "@agent-engine/workflow";
+import type { GateVerdict } from "@agent-engine/core";
 import { LinkedInDraftAgent, type LinkedInPostOutput } from "../agent/linkedin-draft-agent.js";
-import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
+import { renderPreview, LINKEDIN_CHARACTER_LIMIT, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderLinkedInDraftsMarkdown } from "./render-drafts-markdown.js";
 import { whyNowFor } from "./learning.js";
 import { checkLinkedInFormatting, reflowLinkedInText, type LinkedInFormattingReport } from "./linkedin-format.js";
@@ -129,6 +136,17 @@ export interface CreateLinkedInAgentWorkflowOptions {
 const BARE_URL_PATTERN = /https?:\/\//i;
 
 const MAX_DEDUPE_ATTEMPTS = 3;
+
+/**
+ * What a prose field says when every one of its sentences carried a span a
+ * content gate rejected.
+ *
+ * Reachable only on a post short enough that one sentence was the whole field.
+ * It exists because the alternative at that point is falling back to the
+ * unredacted text — which republishes the very span the gate refused — and
+ * because every one of these fields is `min(1)` in the schema.
+ */
+const POST_WITHHELD = "(withheld: this line rested on content that failed verification)";
 
 /** The draft plus the media and formatting report the run produced for it — what the review gate shows and the deliverable persists. */
 type LinkedInDraftWithMedia = LinkedInPostOutput & { mediaPlan: SocialMediaPlan; formatting: LinkedInFormattingReport };
@@ -631,15 +649,22 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       // window is not proposed again (same rules as x-agent's step 07).
       const never = (topic: string) => touchesNeverTopic(topic, learning.preferences);
       const repeated = (topic: string) => subjectWindowConflict(topic, learning.subjectWindow);
-      if (runDirection.topicOverride) {
-        const hit = never(runDirection.topicOverride);
-        if (hit) throw new WorkflowHeld(`the requested topic touches a never-topic the client set ("${hit}") — a person has to decide this one`);
-        return { topic: runDirection.topicOverride, source: "requested" };
-      }
-      if (clientContext.requestedTopic) {
-        const hit = never(clientContext.requestedTopic);
-        if (hit) throw new WorkflowHeld(`the configured topic touches a never-topic the client set ("${hit}") — a person has to decide this one`);
-        return { topic: clientContext.requestedTopic, source: "requested" };
+      // A topic on the client's never-list is refused whoever asked for it —
+      // including a person typing it into the portal. That rule is absolute and
+      // is NOT relaxed here.
+      //
+      // What changed is the consequence. This used to end the run, so the
+      // person who asked got an error and the client got no post that day.
+      // Now the request is declined, the refusal is carried out to the
+      // deliverable, and selection falls through to something this account IS
+      // allowed to talk about. The subject they asked for still never gets
+      // written.
+      let refusedRequest: string | undefined;
+      const requested = runDirection.topicOverride ?? clientContext.requestedTopic;
+      if (requested !== undefined) {
+        const hit = never(requested);
+        if (hit === undefined) return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: requested, source: "requested" };
+        refusedRequest = `the requested topic ("${requested}") touches a never-topic the client set ("${hit}"), so this run wrote about something else instead`;
       }
       const trend =
         scout !== undefined
@@ -648,24 +673,54 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       const trendOk = trend !== undefined && never(trend.topic) === undefined && repeated(trend.topic) === undefined ? trend : undefined;
       const reservedOk = reservation.topics.filter((t) => never(t) === undefined && repeated(t) === undefined);
       if (trendOk !== undefined && intake.trendJacking === "always" && trendOk.brandFit >= 4 && reservedOk.length > 0) {
-        return { topic: trendOk.topic, source: "trend", trend: trendOk };
+        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: trendOk.topic, source: "trend", trend: trendOk };
       }
       if (reservedOk.length > 0) {
-        return { topic: reservedOk[0]!, source: "reserved" };
+        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: reservedOk[0]!, source: "reserved" };
       }
       if (trendOk !== undefined) {
-        return { topic: trendOk.topic, source: "trend", trend: trendOk };
+        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: trendOk.topic, source: "trend", trend: trendOk };
       }
       // The strategy map (C1 / SCRUM-464): the client's own problem × stage
       // rows, picked for this run's stage — above the research fallback,
       // below the catalog and the scout.
       if (strategyRow !== undefined && never(strategyRow.idea) === undefined) {
-        return { topic: strategyRow.idea, source: "strategy", strategyRowId: strategyRow.id };
+        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: strategyRow.idea, source: "strategy", strategyRowId: strategyRow.id };
       }
       if (candidateSummary.candidateTopic && never(candidateSummary.candidateTopic) === undefined && repeated(candidateSummary.candidateTopic) === undefined) {
-        return { topic: candidateSummary.candidateTopic, source: "research" };
+        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: candidateSummary.candidateTopic, source: "research" };
       }
-      throw new WorkflowHeld("no candidate topic available for this run — nothing honestly cleared selection");
+      // ── nothing cleared selection ──
+      //
+      // This used to end the run. It no longer does, but the relaxation is
+      // deliberately one-sided: candidates are rejected here for two very
+      // different reasons, and only one of them is soft.
+      //
+      // `repeated` means this platform covered the subject recently. That is a
+      // freshness preference, and a slightly repetitive post the client can
+      // decline beats no post at all.
+      //
+      // `never` is a rule the client set about what they do not talk about.
+      // That is not relaxed, here or anywhere below — a topic on the
+      // never-list stays refused no matter how little else is available.
+      const reservedRepeatOk = reservation.topics.filter((t) => never(t) === undefined);
+      if (reservedRepeatOk.length > 0) {
+        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: reservedRepeatOk[0]!, source: "reserved" };
+      }
+      if (trend !== undefined && never(trend.topic) === undefined) {
+        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: trend.topic, source: "trend", trend };
+      }
+      if (strategyRow !== undefined && never(strategyRow.idea) === undefined) {
+        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: strategyRow.idea, source: "strategy", strategyRowId: strategyRow.id };
+      }
+      if (candidateSummary.candidateTopic && never(candidateSummary.candidateTopic) === undefined) {
+        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: candidateSummary.candidateTopic, source: "research" };
+      }
+      // Everything available is on the client's never-list. Refusing to write
+      // is the correct answer to that, and the only remaining honest one.
+      throw new WorkflowHeld(
+        "every available topic is on the client's never-list — there is nothing this account is permitted to post about this run",
+      );
     });
 
     /**
@@ -753,6 +808,9 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
      * research, the topic reservation) keeps its id and is reused. That
      * reuse is why the revision is in-run rather than a fresh run.
      */
+    /** What each drafting round had to repair before it could deliver. Empty on the normal path. */
+    const repairsByRevision = new Map<number, ContentRepair[]>();
+
     const draftOnce = async (revision: number, notes: readonly RevisionNote[]): Promise<LinkedInDraftWithMedia> => {
       /** Revision 0 keeps the ORIGINAL ids, so a first-pass trace is unchanged. */
       const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
@@ -777,13 +835,15 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       // The scored text is exactly what step 18 records back into the window
       // (`draft.text`, after the formatting reflow), so every future run
       // compares like with like.
+      /** The last drafting input used, so step 14r's redraft reads exactly the same brief. */
+      let draftInputForRepair: Record<string, unknown> = {};
       const draftWithVerifiedDedupe = async (): Promise<LinkedInPostOutput> => {
         /** Set by a failed 09a check, so the NEXT attempt's prompt names exactly which published post to move away from. */
         let dedupeRetrySteer: string | undefined;
         for (let attempt = 1; attempt <= MAX_DEDUPE_ATTEMPTS; attempt++) {
           /** Attempt 1 keeps the ORIGINAL step ids, so a run that never repeats itself has a byte-identical trace to what it had before this check existed. */
           const att = (id: string) => (attempt === 1 ? id : `${id}-attempt-${attempt}`);
-          const draftResult = await wf.step.agent(rev(att("09-draft-post")), draftAgent, {
+          const draftInput = {
             ...runDirectionField(runDirection),
             topic: selected.topic,
             source: selected.source,
@@ -820,19 +880,36 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
             // a reviewer asked about THIS draft minutes ago.
             ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
             ...(directive !== undefined ? { revisionRequest: directive } : {}),
-          });
+          };
+          const draftResult = await wf.step.agent(rev(att("09-draft-post")), draftAgent, draftInput);
+          // Kept for the repair redraft below, which must send byte-identical
+          // evidence and differ only in its `revisionRequest`.
+          draftInputForRepair = draftInput;
 
-          if (draftResult.status === "content_fail") {
-            throw new WorkflowHeld(`draft did not clear its own self-critique gate: ${draftResult.status}`);
+          // A draft that came back unusable gets ANOTHER draft, not a held
+          // run: `content_fail` here means the turn returned no parseable
+          // structured output, which is a coin flip rather than a verdict.
+          const usableDraft =
+            draftResult.status === "content_fail"
+              ? await wf.step.agent(rev(att("09z-regenerate-post")), draftAgent, draftInput)
+              : draftResult;
+          if (usableDraft.status === "content_fail") {
+            // Twice is no longer a coin flip. Nothing was drafted, so there
+            // is nothing to repair and nothing to annotate. `degraded` rather
+            // than `held`: `held` means "we looked and decided not to
+            // publish", a content verdict nobody made here. Neither status is
+            // auto-retried (the queue consumer acks every terminal status);
+            // this is about classifying the failure honestly.
+            throw new WorkflowToolingFailure("draft did not produce a parseable post on two consecutive attempts");
           }
-          if (draftResult.status !== "completed") {
-            throw new WorkflowToolingFailure(`draft step resolved to "${draftResult.status}"`);
+          if (usableDraft.status !== "completed") {
+            throw new WorkflowToolingFailure(`draft step resolved to "${usableDraft.status}"`);
           }
           // The formatting reflow happens HERE, before the dedupe score and
           // every gate, so everything downstream — the recorded excerpt, the
           // gates, the reviewer — sees the exact text that ships. Whitespace
           // only; not a word of the model's prose changes.
-          const raw = draftResult.finalOutput!;
+          const raw = usableDraft.finalOutput!;
           const candidate: LinkedInPostOutput = { ...raw, text: reflowLinkedInText(raw.text) };
 
           const dedupeVerdict = await checkOutputDedupe(wf, rev(att("09a-verify-not-duplicate")), candidate.text, outputHistory);
@@ -846,7 +923,8 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
         // `continue` above is guarded on `attempt < MAX_DEDUPE_ATTEMPTS`.
         throw new WorkflowToolingFailure("the de-duplication redraft loop ended without a draft");
       };
-      const draft = await draftWithVerifiedDedupe();
+      /** `let`: the repair region below may hand back a corrected post, and everything downstream must see it. */
+      let draft = await draftWithVerifiedDedupe();
 
       // ── 09b: the shape check — notes for the reviewer, never a hold ──
       //
@@ -857,54 +935,104 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       // another drafting pass or hold a post whose content cleared every gate.
       const formatting = await wf.step.code(rev("09b-verify-formatting"), () => checkLinkedInFormatting(draft.text, draft.takeaway));
 
-      await wf.step.code(rev("10-verify-numbers-sourced"), async () => {
-        // What a figure in the post may be traced to: the full text of every
-        // research document (the gate verifies against CONTENT; a URL alone
-        // verifies nothing), the client's own intel context, the run's topic,
-        // the scouted story, and any legible text in an attached image. Until
-        // 2026-09 this was `[sourceLabel]`, so every number a draft quoted
-        // faithfully from a real source was held anyway.
-        const sources = [
-          ...researchSourceTexts(research.merged),
-          ...(clientIntelContext !== undefined ? [clientIntelContext] : []),
-          selected.topic,
-          ...(selected.trend !== undefined ? [selected.trend.headline, selected.trend.angle] : []),
-          ...(attachedMedia?.analyses.flatMap((a) => a.textInImage) ?? []),
-          ...(candidateSummary.hasNumericInsight ? [candidateSummary.sourceLabel] : []),
-        ];
-        const verdict = await runGate(tools, "gate.numbersSourced", { text: draft.text, sources }, ctx);
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
-        if (verdict.verdict === "content_fail") throw new WorkflowHeld(`numbers not sourced: ${verdict.reason}`);
-        return verdict;
+      // ── 10-14r: inspect, then REPAIR. This region no longer holds the run. ──
+      //
+      // Every check here used to `throw new WorkflowHeld(...)`, ending the run
+      // and handing the client an error where a post should have been — over
+      // one figure, one banned word, or a link in the wrong place. Each of
+      // those is a reason to fix that one thing, not to withhold the post.
+      //
+      // The checks keep their full authority over what may be PUBLISHED and
+      // lose the authority to end the run. `tooling_error` still throws.
+      //
+      // What a figure in the post may be traced to: the full text of every
+      // research document (the gate verifies against CONTENT; a URL alone
+      // verifies nothing), the client's own intel context, the run's topic, the
+      // scouted story, and any legible text in an attached image. Until 2026-09
+      // this was `[sourceLabel]`, so every number a draft quoted faithfully
+      // from a real source was held anyway.
+      const sources = [
+        ...researchSourceTexts(research.merged),
+        ...(clientIntelContext !== undefined ? [clientIntelContext] : []),
+        selected.topic,
+        ...(selected.trend !== undefined ? [selected.trend.headline, selected.trend.angle] : []),
+        ...(attachedMedia?.analyses.flatMap((a) => a.textInImage) ?? []),
+        ...(candidateSummary.hasNumericInsight ? [candidateSummary.sourceLabel] : []),
+      ];
+      const forbiddenTerms = (clientContext.brand["forbiddenTerms"] as string[] | undefined) ?? [];
+      const requiredDisclaimer = clientContext.brand["requiredDisclaimer"] as string | undefined;
+
+      /**
+       * Applies a span redaction across EVERY prose field, not just the gated
+       * `text`.
+       *
+       * The deliverable spreads the whole draft, so `body`, `hook`, `headline`,
+       * `takeaway` and `callToAction` all reach the client. Repairing `text`
+       * alone would re-check clean and ship the rest unredacted.
+       *
+       * Never falls back to the original on an emptied field: that would put
+       * the flagged span straight back, which is the one mistake that turns
+       * this whole mechanism into a no-op.
+       */
+      const redactAcrossDraft = (post: LinkedInPostOutput, spans: readonly string[]): LinkedInPostOutput => ({
+        ...post,
+        text: redactSentencesCarrying(post.text, spans, POST_WITHHELD).text,
+        headline: redactSentencesCarrying(post.headline, spans, POST_WITHHELD).text,
+        hook: redactSentencesCarrying(post.hook, spans, POST_WITHHELD).text,
+        body: redactSentencesCarrying(post.body, spans, POST_WITHHELD).text,
+        takeaway: redactSentencesCarrying(post.takeaway, spans, POST_WITHHELD).text,
+        callToAction: redactSentencesCarrying(post.callToAction, spans, POST_WITHHELD).text,
       });
 
-      await wf.step.code(rev("11-verify-brand-compliance"), async () => {
-        const forbiddenTerms = clientContext.brand["forbiddenTerms"] as string[] | undefined;
-        const requiredDisclaimer = clientContext.brand["requiredDisclaimer"] as string | undefined;
-        const verdict = await runGate(
+      /** The four span-flagging gates, run together — they share an evidence shape and a repair. */
+      const inspectSpans = async (post: LinkedInPostOutput): Promise<GateVerdict> => {
+        const verdicts = await Promise.all([
+          runGate(tools, "gate.numbersSourced", { text: post.text, sources }, ctx),
+          runGate(
+            tools,
+            "gate.brandCompliance",
+            { text: post.text, forbiddenTerms, ...(requiredDisclaimer !== undefined ? { requiredDisclaimer } : {}) },
+            ctx,
+          ),
+          runGate(tools, "gate.noPlaceholder", { text: post.text }, ctx),
+          runGate(tools, "gate.leakCheck", { text: post.text }, ctx),
+        ]);
+        const broken = verdicts.find((v) => v.verdict === "tooling_error");
+        if (broken !== undefined && broken.verdict === "tooling_error") {
+          throw new WorkflowToolingFailure(`linkedin content gate: ${broken.reason}`);
+        }
+        const failures = verdicts.filter((v) => v.verdict === "content_fail");
+        if (failures.length === 0) return localPass("linkedin-content-gates");
+        return localContentFail(
+          "linkedin-content-gates",
+          failures.map((v) => (v.verdict === "content_fail" ? v.reason : "")).join("; "),
+          failures.flatMap((v) => v.evidence),
+        );
+      };
+
+      const previewOf = async (post: LinkedInPostOutput): Promise<RenderPreviewResult> => {
+        const outcome = await tools["render.preview"]!.execute({ text: post.text }, { ctx });
+        if (outcome.status !== "success") throw new WorkflowToolingFailure(`render.preview failed: ${outcome.status}`);
+        return outcome.result as RenderPreviewResult;
+      };
+
+      // Each check keeps its own step id and records its verdict against the
+      // draft AS FIRST WRITTEN, which is what a trace wants to show.
+      const numbersVerdict = await wf.step.code(rev("10-verify-numbers-sourced"), () =>
+        runGate(tools, "gate.numbersSourced", { text: draft.text, sources }, ctx),
+      );
+      const brandVerdict = await wf.step.code(rev("11-verify-brand-compliance"), () =>
+        runGate(
           tools,
           "gate.brandCompliance",
-          { text: draft.text, forbiddenTerms: forbiddenTerms ?? [], ...(requiredDisclaimer !== undefined ? { requiredDisclaimer } : {}) },
+          { text: draft.text, forbiddenTerms, ...(requiredDisclaimer !== undefined ? { requiredDisclaimer } : {}) },
           ctx,
-        );
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.brandCompliance: ${verdict.reason}`);
-        if (verdict.verdict === "content_fail") throw new WorkflowHeld(`brand compliance failed: ${verdict.reason}`);
-        return verdict;
+        ),
+      );
+      const previewInspection = await wf.step.code(rev("12-render-preview-check"), async () => {
+        const preview = await previewOf(draft);
+        return { withinLimit: preview.withinLimit, characterCount: preview.characterCount };
       });
-
-      await wf.step.code(rev("12-render-preview-check"), async () => {
-        const outcome = await tools["render.preview"]!.execute({ text: draft.text }, { ctx });
-        if (outcome.status !== "success") throw new WorkflowToolingFailure(`render.preview failed: ${outcome.status}`);
-        const preview = outcome.result as RenderPreviewResult;
-        if (!preview.withinLimit) {
-          throw new WorkflowHeld(`post exceeds the LinkedIn character limit (${preview.characterCount} chars)`);
-        }
-        return preview;
-      });
-
-      // gate.noPlaceholder and gate.leakCheck exist in packages/tools/karos-gates
-      // but were never wired into any channel's runtime step sequence before
-      // Phase 2.5 — restored here, run before the human ever sees the draft.
       // ── D22: the link goes in the first comment, and the body carries none ──
       //
       // Craft 02 §11 files this under HARD, and unlike x-agent's equivalent it
@@ -916,30 +1044,196 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       //
       // Checked whether or not `firstCommentUrl` is set: a bare URL in the body
       // is wrong even when the model forgot to name where the link belongs.
-      await wf.step.code(rev("12b-verify-link-placement"), () => {
+      const linkInspection = await wf.step.code(rev("12b-verify-link-placement"), () => {
         const inBody = BARE_URL_PATTERN.exec(draft.text);
-        if (inBody) {
-          throw new WorkflowHeld(
-            `the post body contains a link (${inBody[0]}) — on LinkedIn the link goes in the first comment, never in the body ` +
-              `(D22, linkedin-craft §11); put it in firstCommentUrl and write the body without it`,
-          );
-        }
-        return { firstCommentUrl: draft.firstCommentUrl ?? null };
+        return { bodyUrl: inBody ? inBody[0] : null, firstCommentUrl: draft.firstCommentUrl ?? null };
+      });
+      const placeholderVerdict = await wf.step.code(rev("13-verify-no-placeholder"), () =>
+        runGate(tools, "gate.noPlaceholder", { text: draft.text }, ctx),
+      );
+      const leakVerdict = await wf.step.code(rev("14-verify-no-leak"), () => runGate(tools, "gate.leakCheck", { text: draft.text }, ctx));
+
+      /** Everything the span gates objected to, unwrapped from each gate's own evidence shape. */
+      const flaggedSpans = [numbersVerdict, brandVerdict, placeholderVerdict, leakVerdict].flatMap((verdict) => {
+        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`linkedin content gate: ${verdict.reason}`);
+        // `spansFromEvidence`, not `.evidence`: gate.leakCheck reports
+        // `local file path: "..."`, which the redactor cannot match as-is.
+        return verdict.verdict === "content_fail" ? spansFromEvidence(verdict.evidence) : [];
       });
 
-      await wf.step.code(rev("13-verify-no-placeholder"), async () => {
-        const verdict = await runGate(tools, "gate.noPlaceholder", { text: draft.text }, ctx);
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.noPlaceholder: ${verdict.reason}`);
-        if (verdict.verdict === "content_fail") throw new WorkflowHeld(`draft contains an unresolved placeholder: ${verdict.reason}`);
-        return verdict;
-      });
+      /**
+       * 14r — the repair step.
+       *
+       * Runs only when something above objected, so a clean post costs nothing
+       * extra. ONE model redraft told every problem at once, kept only if
+       * strictly cleaner, then deterministic floors that cannot fail to
+       * converge.
+       */
+      const repaired = await wf.step.code(
+        rev("14r-repair-post"),
+        async (): Promise<{ post: LinkedInPostOutput; repairs: ContentRepair[] }> => {
+          const overLimit = previewInspection.withinLimit
+            ? null
+            : `post exceeds the LinkedIn character limit (${previewInspection.characterCount} chars)`;
+          const bodyUrl = linkInspection.bodyUrl;
+          if (flaggedSpans.length === 0 && overLimit === null && bodyUrl === null) return { post: draft, repairs: [] };
 
-      await wf.step.code(rev("14-verify-no-leak"), async () => {
-        const verdict = await runGate(tools, "gate.leakCheck", { text: draft.text }, ctx);
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.leakCheck: ${verdict.reason}`);
-        if (verdict.verdict === "content_fail") throw new WorkflowHeld(`draft appears to leak sensitive content: ${verdict.reason}`);
-        return verdict;
-      });
+          const repairs: ContentRepair[] = [];
+          let post = draft;
+
+          // ── one model redraft, told everything that is wrong ──
+          const asked = [
+            ...(flaggedSpans.length > 0
+              ? [
+                  `These exact spans were rejected and must not appear anywhere in the post: ${flaggedSpans.join(", ")}.`,
+                  "For a figure: restate it exactly as a source writes it, or make the point qualitatively with no number.",
+                  "For a banned phrase or an unresolved placeholder: rewrite the sentence without it.",
+                  "For anything resembling a credential, an internal path or an internal-only term: remove it.",
+                ]
+              : []),
+            ...(overLimit !== null ? [`The post was also rejected for length: ${overLimit}. Cut it to fit without losing the point.`] : []),
+            ...(bodyUrl !== null
+              ? [`The body contains a link (${bodyUrl}). On LinkedIn the link goes in firstCommentUrl, never in the body — move it there and write the body without it.`]
+              : []),
+            "Keep everything else exactly as it is.",
+          ].join(" ");
+
+          const redraft = await draftAgent.run(ctx, { ...draftInputForRepair, revisionRequest: asked });
+          if (redraft.status === "completed" && redraft.finalOutput) {
+            const candidate: LinkedInPostOutput = { ...redraft.finalOutput, text: reflowLinkedInText(redraft.finalOutput.text) };
+            const candidateSpans = await inspectSpans(candidate);
+            const candidatePreview = await previewOf(candidate);
+            const before = flaggedSpans.length + (overLimit === null ? 0 : 1) + (bodyUrl === null ? 0 : 1);
+            const after =
+              (candidateSpans.verdict === "content_fail" ? spansFromEvidence(candidateSpans.evidence).length : 0) +
+              (candidatePreview.withinLimit ? 0 : 1) +
+              (BARE_URL_PATTERN.exec(candidate.text) ? 1 : 0);
+            if (after < before) {
+              post = candidate;
+              repairs.push({
+                check: "linkedin-content-gates",
+                action: "rewritten",
+                detail: `redrafted to clear ${before - after} of ${before} flagged problem(s)`,
+              });
+            }
+          }
+
+          // ── floor 1: spans ──
+          const spanOutcome = await runCheckWithRepair({
+            check: "linkedin-content-gates",
+            value: post,
+            verify: inspectSpans,
+            attempts: [
+              // A MISSING required disclaimer is the one brand failure fixed by
+              // ADDING rather than removing — and it is fixable exactly, because
+              // the client configured the sentence verbatim. Tried first:
+              // appending it is a smaller, truer edit than deleting a sentence,
+              // and redaction cannot reach it at all. No legal copy is invented.
+              {
+                action: "rewritten",
+                run: (value) => {
+                  if (requiredDisclaimer === undefined || value.text.includes(requiredDisclaimer)) return undefined;
+                  return { ...value, text: `${value.text}\n\n${requiredDisclaimer}` };
+                },
+              },
+              { action: "redacted", maxPasses: 3, run: (value, verdict) => redactAcrossDraft(value, spansFromEvidence(verdict.evidence)) },
+            ],
+            // The gate's OWN reason, not a "could not be removed" gloss: not
+            // every content failure is something to delete, and the
+            // delete-framing read as nonsense for a missing disclaimer on the
+            // ledger a reviewer actually sees.
+            describeUnresolved: (verdict) => `${verdict.reason} — delivered with this noted rather than withheld`,
+          });
+          post = spanOutcome.value;
+          repairs.push(...spanOutcome.repairs);
+
+          // ── floor 2: the link goes where it belongs ──
+          //
+          // Mechanically fixable and worth fixing rather than flagging: the URL
+          // is lifted out of the body verbatim and put in `firstCommentUrl`,
+          // which is exactly what the rule asks for. An existing
+          // `firstCommentUrl` is not overwritten — the model already chose a
+          // link for the comment, and replacing it would be a second edit
+          // nobody asked for.
+          const linkOutcome = await runCheckWithRepair({
+            check: "linkedin-link-placement",
+            value: post,
+            verify: (value) => {
+              const found = BARE_URL_PATTERN.exec(value.text);
+              return Promise.resolve(
+                found
+                  ? localContentFail("linkedin-link-placement", `the post body contains a link (${found[0]})`, [found[0]])
+                  : localPass("linkedin-link-placement"),
+              );
+            },
+            attempts: [
+              {
+                action: "moved",
+                maxPasses: 3,
+                run: (value, verdict) => {
+                  const url = verdict.evidence[0];
+                  if (url === undefined) return undefined;
+                  const text = value.text.split(url).join("").replace(/[ \t]{2,}/g, " ").replace(/[ \t]+\n/g, "\n").trim();
+                  if (text.length === 0) return undefined;
+                  return {
+                    ...value,
+                    text,
+                    body: value.body.split(url).join("").replace(/[ \t]{2,}/g, " ").trim() || value.body,
+                    firstCommentUrl: value.firstCommentUrl ?? url,
+                  };
+                },
+              },
+            ],
+            describeUnresolved: (verdict) => `${verdict.reason} — delivered with this noted rather than withheld`,
+          });
+          post = linkOutcome.value;
+          repairs.push(...linkOutcome.repairs);
+
+          // ── floor 3: the character limit ──
+          //
+          // A social post, unlike a long-form article, IS safely truncatable at
+          // a sentence boundary: the last sentence is the one that overflows,
+          // and losing it beats losing the post.
+          const lengthOutcome = await runCheckWithRepair({
+            check: "linkedin-length",
+            value: post,
+            verify: async (value) => {
+              const preview = await previewOf(value);
+              return preview.withinLimit
+                ? localPass("linkedin-length")
+                : localContentFail("linkedin-length", `post exceeds the LinkedIn character limit (${preview.characterCount} chars)`, [
+                    `${preview.characterCount}`,
+                  ]);
+            },
+            attempts: [
+              {
+                action: "trimmed",
+                run: (value) => {
+                  // Drops as many TRAILING sentences as the overrun needs, in one
+                  // pass. Shedding one sentence at a time runs out of passes on a
+                  // post far over the limit, and a trim that stops short delivers
+                  // an unpublishable post while reporting that it trimmed it.
+                  const parts = value.text.split(/(?<=[.!?])\s+/);
+                  if (parts.length <= 1) return undefined;
+                  let kept = parts.length;
+                  while (kept > 1 && parts.slice(0, kept).join(" ").trim().length > LINKEDIN_CHARACTER_LIMIT) kept -= 1;
+                  const text = parts.slice(0, kept).join(" ").trim();
+                  return text.length === 0 || text.length >= value.text.length ? undefined : { ...value, text };
+                },
+              },
+            ],
+            describeUnresolved: (verdict) => `${verdict.reason} — delivered with this noted rather than withheld`,
+          });
+          post = lengthOutcome.value;
+          repairs.push(...lengthOutcome.repairs);
+
+          return { post, repairs };
+        },
+      );
+      draft = repaired.post;
+      // Outside the step body: a checkpointed step is replayed from its stored
+      // value on resume and its body never runs again.
+      repairsByRevision.set(revision, repaired.repairs);
 
       // ── 14b: the post's media — attached first, then the draft's own brief ──
       //
@@ -1018,6 +1312,30 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       },
     });
     const { mediaPlan, formatting, ...draft } = review.output;
+    /**
+     * The repairs made to the round that was APPROVED — not the last round
+     * attempted, which on an approve-after-revise run is the same thing only by
+     * luck. Omitted from the deliverable when empty, so a clean run produces
+     * the bytes it always did.
+     */
+    const contentRepairs = repairsByRevision.get(review.revision) ?? [];
+    // A reviewer who ran out of rounds, or who rejected outright, is recorded
+    // ON the deliverable rather than ending the run: the work survives for
+    // them to act on, and the marker is what makes their decision unmissable.
+    // Nothing here publishes anything — every deliverable still waits on a
+    // human — so this changes what a reviewer KEEPS, not what ships.
+    // A topic someone asked for and did not get is something they must find
+    // out about, so it rides on the deliverable like every other adaptation.
+    if (selected.refusedRequest !== undefined) {
+      contentRepairs.push({ check: "never-topic", action: "substituted", detail: selected.refusedRequest });
+    }
+    if (review.outcome !== undefined && review.outcome !== "approved") {
+      contentRepairs.push({
+        check: "human-review",
+        action: "unresolved",
+        detail: review.outcomeDetail ?? review.outcome,
+      });
+    }
 
     // ── 16-17: deliverable & manifest persistence ──
     // Additive: `draftsMarkdown` is the "# LinkedIn drafts"-shaped string
@@ -1047,6 +1365,9 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
         ...draft,
         ...mediaForDeliverable(mediaPlan),
         contentMode: modeSelection.mode,
+        // Present only when something had to be repaired to get here, so a
+        // reviewer sees what changed instead of a silently edited post.
+        ...(contentRepairs.length > 0 ? { contentRepairs } : {}),
         // C3 (SCRUM-457): `formattingNotes` are the shape check's notes FOR THE
         // REVIEWER (step 09b), and karosCMO's `materialize.ts` renders every
         // name in its `metaFields` list onto the client's asset — so shipping
@@ -1072,8 +1393,16 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
     // feedback pipeline (AU22: this step used to also call the now-retired
     // `ledger.feedbackAppend`, a write-only log nothing ever read). ──
     await wf.step.code("18-commit-and-record", async () => {
+      // A topic is only CONSUMED by a post a reviewer approved. Before this PR
+      // a reject threw before ever reaching here; now it returns, so the guard
+      // has to be explicit or a rejected post would burn the topic it was
+      // written from and no future run could use it.
       if (selected.source === "reserved" && reservation.reservationKey) {
-        await tools["topics.commit"]!.execute({ reservationKey: reservation.reservationKey }, { ctx });
+        if (review.outcome !== undefined && review.outcome !== "approved") {
+          await tools["topics.release"]?.execute({ reservationKey: reservation.reservationKey }, { ctx }).catch(() => undefined);
+        } else {
+          await tools["topics.commit"]!.execute({ reservationKey: reservation.reservationKey }, { ctx });
+        }
       }
       // The write half of the anti-repetition loop: the shipped post joins
       // this agent's rolling excerpt window, read back by research.pull's

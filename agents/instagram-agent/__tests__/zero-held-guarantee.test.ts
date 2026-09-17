@@ -328,7 +328,7 @@ describe("zero-held guarantee: a picture problem never costs the post", () => {
 
   // ── The boundary: holds that are NOT picture problems and must survive ──
 
-  it("still holds when a human rejects the batch review, because that is the gate doing its job", async () => {
+  it("keeps and MARKS the work when a human rejects the batch review — the marker is how the gate says no", async () => {
     const copy = goodCopyOutput();
     const registry = tools(env, {
       "media.findImages": deadTool("media.findImages", { status: "content_fail", reason: "nothing found" }),
@@ -353,11 +353,12 @@ describe("zero-held guarantee: a picture problem never costs the post", () => {
     });
     const result = await engine.run(workflowFn, { ...base, runId });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    // `runReviewCycle` is generic across agents, so the wording is
-    // "review rejected" rather than anything carousel-specific.
-    expect(result.reason).toMatch(/review rejected/i);
+    // instagram shares `runReviewCycle`, so it inherits the change the six
+    // converted agents got: a reject no longer ends the run. The work is kept
+    // and marked with the reviewer's decision, and the topic reservation is
+    // RELEASED rather than committed — a rejected post must not burn the topic
+    // it was built from. Nothing publishes: the carousel still waits on a human.
+    expect(result.status).toBe("completed");
 
     // SCRUM-306 (AU23): the rejected draft's content used to survive only in
     // this run's own step checkpoints — never durable, never readable by a

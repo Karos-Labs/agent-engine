@@ -53,6 +53,10 @@ const REQUESTED_PATH_STEP_IDS = [
   "15-verify-no-placeholder",
   "16-verify-leak-check",
   "17-render-preview-check",
+  // The repair step. Always present, even on a clean reply: it asks what the
+  // checks above objected to and returns the draft untouched when the answer
+  // is nothing, so its presence says the repair path ran.
+  "17r-repair-reply",
   "18-batch-review-r0",
   "19-persist-deliverable",
   "20-persist-manifest",
@@ -195,7 +199,7 @@ describe("end-to-end: the Reddit agent reply-only workflow, requested-thread pat
     expect(gateStep?.output).toMatchObject({ decision: "approve", actor: "jane@karoslabs.com" });
   });
 
-  it("rejects the batch review with a reason -> held, and the deliverable never ships", async () => {
+  it("rejects the batch review with a reason -> the work is KEPT and marked rejected, not discarded", async () => {
     const promptStore = makePromptStore();
     const router = goodDraftRouter();
     const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router });
@@ -212,12 +216,14 @@ describe("end-to-end: the Reddit agent reply-only workflow, requested-thread pat
     });
 
     const result = await engine.run(workflowFn, params);
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/review rejected/i);
-
-    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
-    expect(deliverables).toHaveLength(0);
+    // This reverses a deliberate earlier decision, and the reversal is the
+    // point: a reject used to end the run, so a drafted post a reviewer had
+    // opinions about existed nowhere afterwards and the next run started from
+    // scratch. The gate still says no — the rejection rides on the deliverable
+    // where nobody can miss it, and no caller treats a rejected deliverable as
+    // shippable. What changed is that the reviewer keeps the work and the
+    // reason attached to it.
+    expect(result.status).toBe("completed");
   });
 
   it("still drafts when the thread itself cannot be read: title only, and the draft is told so", async () => {

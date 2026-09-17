@@ -140,7 +140,7 @@ describe("seo-geo-agent review cycle (runReviewCycle)", () => {
     expect(remembered.map((r) => r.data.productId)).toContain("seo-geo-agent");
   }, 30000);
 
-  it("still holds on an outright rejection, and nothing is persisted", async () => {
+  it("keeps and MARKS the work on an outright rejection — the marker is how the gate says no", async () => {
     const router = sequentialFakeRouter([goodFixDrafts(), goodNarrative()]);
     const workflowFn = createSeoGeoAgentWorkflow({ tools: withMeasuredCapture(env.tools), promptStore: makePromptStore(), router });
     const engine = new WorkflowEngine(new MemoryDurableStepStore());
@@ -154,13 +154,27 @@ describe("seo-geo-agent review cycle (runReviewCycle)", () => {
       at: new Date().toISOString(),
     });
     const result = await engine.run(workflowFn, { ...baseParams, runId });
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/review rejected/i);
-    expect(result.reason).toMatch(/narrative reads too negative for this client/);
+    // This reverses a deliberate earlier decision, and the reversal is the
+    // point: a reject used to end the run, so a drafted post a reviewer had
+    // opinions about existed nowhere afterwards and the next run started from
+    // scratch. The gate still says no — the rejection rides on the deliverable
+    // where nobody can miss it, and no caller treats a rejected deliverable as
+    // shippable. What changed is that the reviewer keeps the work and the
+    // reason attached to it.
+    expect(result.status).toBe("completed");
 
+    // The report IS persisted now, carrying the reviewer's own words where a
+    // reader cannot miss them.
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", runId, "_"]);
-    expect(deliverables).toHaveLength(0);
+    expect(deliverables).toHaveLength(1);
+    const report = (deliverables[0] as { data: { deliverable: Record<string, unknown> } }).data.deliverable;
+    expect(report["contentRepairs"]).toContainEqual(
+      expect.objectContaining({
+        check: "human-review",
+        action: "unresolved",
+        detail: expect.stringContaining("narrative reads too negative for this client"),
+      }),
+    );
   }, 30000);
 });
 

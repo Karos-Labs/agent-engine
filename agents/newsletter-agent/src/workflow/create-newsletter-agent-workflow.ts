@@ -29,7 +29,15 @@ import {
   runGate,
   finalizeDeliverable,
   recordOutputExcerpt,
+  runCheckWithRepair,
+  redactSentencesCarrying,
+  stripSpansFrom,
+  localContentFail,
+  localPass,
+  spansFromEvidence,
+  type ContentRepair,
 } from "@agent-engine/workflow";
+import type { GateVerdict } from "@agent-engine/core";
 import { NewsletterDraftAgent, type NewsletterPostOutput } from "../agent/newsletter-draft-agent.js";
 import { NewsletterPlanAgent, type NewsletterEditionPlan } from "../agent/newsletter-plan-agent.js";
 import { NewsletterEditorAgent, type NewsletterEditorVerdict } from "../agent/newsletter-editor-agent.js";
@@ -88,6 +96,16 @@ const MAX_DEDUPE_ATTEMPTS = 3;
  * still have cost a human a re-run instead of costing the model a redraft.
  */
 const MAX_EDITORIAL_ROUNDS = 3;
+
+/**
+ * What a prose field says when every one of its sentences carried a span a
+ * content gate rejected.
+ *
+ * It exists because the alternative at that point is falling back to the
+ * unredacted text — which republishes the very span the gate refused — and
+ * because every one of these fields is `min(1)` in the schema.
+ */
+const SECTION_WITHHELD = "(withheld: this passage rested on content that failed verification)";
 
 /** How many distinct research questions one edition asks. Each is a billed scrape, so this is a cost ceiling as much as a breadth setting. */
 const MAX_RESEARCH_QUERIES = 4;
@@ -371,7 +389,14 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
         source = "research";
         secondaryTopics = [];
       } else {
-        throw new WorkflowHeld("no candidate main story available for this run — nothing honestly cleared selection");
+        // Nothing cleared selection — which used to end the run, so a thin
+        // research week cost the client their edition. The audience they
+        // configured is a story: writing to what they told us they serve is
+        // the most defensible thing available when research and the catalog
+        // both come up empty, and it invents nothing on their behalf.
+        mainStory = `What ${intake.targetAudience} should be paying attention to right now`;
+        source = "client-strategy";
+        secondaryTopics = [];
       }
 
       return { mainStory, source, secondaryTopics };
@@ -457,6 +482,9 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
      * research, the topic reservation, the plan) keeps its id and is reused.
      * That reuse is why the revision is in-run rather than a fresh run.
      */
+    /** What each drafting round had to repair before it could deliver. Empty on the normal path. */
+    const repairsByRevision = new Map<number, ContentRepair[]>();
+
     const draftOnce = async (revision: number, notes: readonly RevisionNote[]) => {
       /** Revision 0 keeps the ORIGINAL ids, so a first-pass trace is unchanged. */
       const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
@@ -499,7 +527,7 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
           for (let attempt = 1; attempt <= MAX_DEDUPE_ATTEMPTS; attempt++) {
             /** Attempt 1 keeps the ORIGINAL step ids. */
             const att = (base: string) => (attempt === 1 ? base : `${base}-attempt-${attempt}`);
-            const draftResult = await wf.step.agent(id(att("09-draft-post")), draftAgent, {
+            const draftInput = {
               ...runDirectionField(runDirection),
               mainStory: selected.mainStory,
               secondaryTopics: selected.secondaryTopics,
@@ -520,15 +548,29 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
               ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
               ...(directive !== undefined ? { revisionRequest: directive } : {}),
               ...(editorialNotes !== undefined ? { editorialNotes } : {}),
-            });
+            };
+            const draftResult = await wf.step.agent(id(att("09-draft-post")), draftAgent, draftInput);
 
-            if (draftResult.status === "content_fail") {
-              throw new WorkflowHeld(`draft did not clear its own self-critique gate: ${draftResult.status}`);
+            // A draft that came back unusable gets ANOTHER draft, not a held
+            // run: `content_fail` here means the turn returned no parseable
+            // structured output, which is a coin flip rather than a verdict.
+            const usableDraft =
+              draftResult.status === "content_fail"
+                ? await wf.step.agent(id(att("09z-regenerate-post")), draftAgent, draftInput)
+                : draftResult;
+            if (usableDraft.status === "content_fail") {
+              // Twice is no longer a coin flip. Nothing was drafted, so there
+              // is nothing to repair and nothing to annotate. `degraded` rather
+              // than `held`: `held` means "we looked and decided not to
+              // publish", a content verdict nobody made here. Neither status is
+              // auto-retried (the queue consumer acks every terminal status);
+              // this is about classifying the failure honestly.
+              throw new WorkflowToolingFailure("draft did not produce a parseable edition on two consecutive attempts");
             }
-            if (draftResult.status !== "completed") {
-              throw new WorkflowToolingFailure(`draft step resolved to "${draftResult.status}"`);
+            if (usableDraft.status !== "completed") {
+              throw new WorkflowToolingFailure(`draft step resolved to "${usableDraft.status}"`);
             }
-            const candidate = draftResult.finalOutput!;
+            const candidate = usableDraft.finalOutput!;
             const asShipped = composeCompliantDraft(candidate, clientContext.brand);
 
             const dedupeVerdict = await checkOutputDedupe(
@@ -547,7 +589,8 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
           // `continue` above is guarded on `attempt < MAX_DEDUPE_ATTEMPTS`.
           throw new WorkflowToolingFailure("the de-duplication redraft loop ended without a draft");
         };
-        const authoredDraft = await draftWithVerifiedDedupe();
+        /** `let`: the last round's repair below may hand back a corrected edition. */
+        let authoredDraft = await draftWithVerifiedDedupe();
 
         /**
          * Everything wrong with this round's draft, collected across every
@@ -591,22 +634,26 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
         // already-checkpointed step 09's output and step 01's client context, so
         // resuming a run recomputes the exact same value without adding a step
         // boundary.
-        const draft = composeCompliantDraft(authoredDraft, clientContext.brand);
+        let draft = composeCompliantDraft(authoredDraft, clientContext.brand);
 
+        // What a figure in the edition may be traced to: the full text of every
+        // research document (the gate verifies against CONTENT, and a URL alone
+        // verifies nothing), the client's own intel report, and the topics the
+        // run was given (a catalog topic or a typed request is the client's own
+        // statement).
+        //
+        // Hoisted out of the step so the repair below re-checks against exactly
+        // the same evidence this gate first used — a repair judged against a
+        // different source set is judged against a different question.
+        const numbersSources = [
+          ...researchSourceTexts(research),
+          ...(clientIntelContext !== undefined ? [clientIntelContext] : []),
+          selected.mainStory,
+          ...selected.secondaryTopics,
+          ...(candidateSummary.hasNumericInsight ? [candidateSummary.sourceLabel] : []),
+        ];
         const numbersVerdict = await wf.step.code(id("11-verify-numbers-sourced"), async () => {
-          // What a figure in the edition may be traced to: the full text of every
-          // research document (the gate verifies against CONTENT, and a URL alone
-          // verifies nothing), the client's own intel report, and the topics the
-          // run was given (a catalog topic or a typed request is the client's own
-          // statement).
-          const sources = [
-            ...researchSourceTexts(research),
-            ...(clientIntelContext !== undefined ? [clientIntelContext] : []),
-            selected.mainStory,
-            ...selected.secondaryTopics,
-            ...(candidateSummary.hasNumericInsight ? [candidateSummary.sourceLabel] : []),
-          ];
-          const verdict = await runGate(tools, "gate.numbersSourced", { text: draft.text, sources }, ctx);
+          const verdict = await runGate(tools, "gate.numbersSourced", { text: draft.text, sources: numbersSources }, ctx);
           if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
           return verdict;
         });
@@ -684,13 +731,167 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
         });
         for (const item of lint.evidence) problem(`editorial lint: ${item}`);
 
-        if (problems.length > 0) {
-          if (round < MAX_EDITORIAL_ROUNDS) {
-            roundNotes.push(...problems);
-            continue;
-          }
-          throw new WorkflowHeld(problems.join("; "));
+        if (problems.length > 0 && round < MAX_EDITORIAL_ROUNDS) {
+          roundNotes.push(...problems);
+          continue;
         }
+
+        // ── 15r: the last round REPAIRS rather than holding ──
+        //
+        // This branch used to be `throw new WorkflowHeld(problems.join("; "))`:
+        // three full editorial rounds of drafting, gating and redrafting, and
+        // then the client got the problem list instead of an edition. The
+        // redraft loop above is already the model's three attempts at this, so
+        // what is left is the deterministic floor — drop the sentence carrying
+        // each flagged span, trim what is over a limit — and then deliver.
+        //
+        // The repair works on the AUTHORED draft and re-composes the compliance
+        // footer afterwards, never on the composed text: editing `draft.text`
+        // directly would let a redaction eat the client's locked disclaimer,
+        // address or unsubscribe link, which step 12 then refuses as an
+        // internal bug. Repair the model's words, re-inject the platform's.
+        const repaired = await wf.step.code(
+          id("15r-repair-edition"),
+          async (): Promise<{ authored: NewsletterPostOutput; repairs: ContentRepair[] }> => {
+            if (problems.length === 0) return { authored: authoredDraft, repairs: [] };
+
+            /** The offending literals, unwrapped from each gate's own evidence shape. */
+            const spans = spansFromEvidence(
+              [brandVerdict, numbersVerdict, placeholderVerdict, leakVerdict].flatMap((v) =>
+                v.verdict === "content_fail" ? v.evidence : [],
+              ),
+            );
+
+            const redactAcross = (edition: NewsletterPostOutput, drop: readonly string[]): NewsletterPostOutput => ({
+              ...edition,
+              // Short single-line fields lose the span, not the whole field:
+              // dropping "the sentence" of a subject line drops the subject line.
+              subjectLine: stripSpansFrom(edition.subjectLine, drop).text,
+              previewText: stripSpansFrom(edition.previewText, drop).text,
+              intro: redactSentencesCarrying(edition.intro, drop, SECTION_WITHHELD).text,
+              sections: edition.sections.map((section) => ({
+                ...section,
+                heading: stripSpansFrom(section.heading, drop).text,
+                body: redactSentencesCarrying(section.body, drop, SECTION_WITHHELD).text,
+              })),
+              callToAction: { ...edition.callToAction, text: stripSpansFrom(edition.callToAction.text, drop).text },
+              signoff: redactSentencesCarrying(edition.signoff, drop, SECTION_WITHHELD).text,
+              // `text` is the flattened mirror the gates actually read, and the
+              // deliverable ships it. Redacting the parts and leaving it alone
+              // would re-check clean and mail the flagged span to the list.
+              text: redactSentencesCarrying(edition.text, drop, SECTION_WITHHELD).text,
+            });
+
+            const inspect = async (edition: NewsletterPostOutput): Promise<GateVerdict> => {
+              const composed = composeCompliantDraft(edition, clientContext.brand);
+              const forbiddenTerms = (clientContext.brand["forbiddenTerms"] as string[] | undefined) ?? [];
+              const verdicts = await Promise.all([
+                runGate(tools, "gate.brandCompliance", { text: edition.text, forbiddenTerms }, ctx),
+                runGate(tools, "gate.numbersSourced", { text: composed.text, sources: numbersSources }, ctx),
+                runGate(tools, "gate.noPlaceholder", { text: composed.text }, ctx),
+                runGate(tools, "gate.leakCheck", { text: composed.text }, ctx),
+              ]);
+              const broken = verdicts.find((v) => v.verdict === "tooling_error");
+              if (broken !== undefined && broken.verdict === "tooling_error") {
+                throw new WorkflowToolingFailure(`newsletter content gate: ${broken.reason}`);
+              }
+              const failures = verdicts.filter((v) => v.verdict === "content_fail");
+              if (failures.length === 0) return localPass("newsletter-content-gates");
+              return localContentFail(
+                "newsletter-content-gates",
+                failures.map((v) => (v.verdict === "content_fail" ? v.reason : "")).join("; "),
+                failures.flatMap((v) => v.evidence),
+              );
+            };
+
+            const repairs: ContentRepair[] = [];
+            let edition = authoredDraft;
+
+            if (spans.length > 0) {
+              const outcome = await runCheckWithRepair({
+                check: "newsletter-content-gates",
+                value: edition,
+                verify: inspect,
+                attempts: [{ action: "redacted", maxPasses: 3, run: (value, verdict) => redactAcross(value, spansFromEvidence(verdict.evidence)) }],
+                describeUnresolved: (verdict) => `${verdict.reason} — delivered with this noted rather than withheld`,
+              });
+              edition = outcome.value;
+              repairs.push(...outcome.repairs);
+            }
+
+            // ── the length floors ──
+            //
+            // A subject line and a preview text are hard caps an inbox enforces,
+            // and both are safely cut at the limit. The body is cut at a
+            // sentence boundary, dropping as many trailing sentences as the
+            // overrun needs in one pass.
+            const lengthOutcome = await runCheckWithRepair({
+              check: "newsletter-length",
+              value: edition,
+              verify: async (value) => {
+                const composed = composeCompliantDraft(value, clientContext.brand);
+                const outcome = await tools["render.preview"]!.execute(
+                  { subjectLine: composed.subjectLine, previewText: composed.previewText, text: composed.text },
+                  { ctx },
+                );
+                if (outcome.status !== "success") throw new WorkflowToolingFailure(`render.preview failed: ${outcome.status}`);
+                const p = outcome.result as RenderPreviewResult;
+                const found = [
+                  ...(p.subjectLineWithinLimit ? [] : [`subject line exceeds the 70-character limit (${p.subjectLineCharacterCount} chars)`]),
+                  ...(p.previewTextWithinLimit ? [] : [`preview text exceeds the 140-character limit (${p.previewTextCharacterCount} chars)`]),
+                  ...(p.bodyWithinLimit ? [] : [`edition exceeds the 10000-character body limit (${p.bodyCharacterCount} chars)`]),
+                ];
+                // One entry per violated limit, never one lumped string: a
+                // repair is kept only when strictly fewer remain, so lumping
+                // would make fixing the subject line on an edition that is also
+                // over on body look like no fix at all.
+                return found.length === 0 ? localPass("newsletter-length") : localContentFail("newsletter-length", found.join("; "), found);
+              },
+              attempts: [
+                {
+                  action: "trimmed",
+                  maxPasses: 3,
+                  run: (value) => {
+                    const subjectLine = value.subjectLine.length > 70 ? value.subjectLine.slice(0, 70).trim() : value.subjectLine;
+                    const previewText = value.previewText.length > 140 ? value.previewText.slice(0, 140).trim() : value.previewText;
+                    if (subjectLine !== value.subjectLine || previewText !== value.previewText) {
+                      return { ...value, subjectLine, previewText };
+                    }
+                    // Body overrun: shed trailing sentences from the LAST
+                    // section, which is the end of the edition a reader reaches
+                    // last, rather than cutting the lead story mid-argument.
+                    const sections = [...value.sections];
+                    const last = sections[sections.length - 1];
+                    if (last === undefined) return undefined;
+                    const parts = last.body.split(/(?<=[.!?])\s+/);
+                    if (parts.length <= 1) return undefined;
+                    const body = parts.slice(0, -1).join(" ").trim();
+                    if (body.length === 0) return undefined;
+                    sections[sections.length - 1] = { ...last, body };
+                    return { ...value, sections, text: value.text.replace(last.body, body) };
+                  },
+                },
+              ],
+              describeUnresolved: (verdict) => `${verdict.reason} — delivered with this noted rather than withheld`,
+            });
+            edition = lengthOutcome.value;
+            repairs.push(...lengthOutcome.repairs);
+
+            // Whatever the editorial lint found that no gate owns is reported
+            // rather than repaired: it is style advice for a human, not a
+            // publishable/unpublishable verdict.
+            for (const item of lint.evidence) {
+              repairs.push({ check: "newsletter-editorial-lint", action: "unresolved", detail: item });
+            }
+
+            return { authored: edition, repairs };
+          },
+        );
+        authoredDraft = repaired.authored;
+        draft = composeCompliantDraft(authoredDraft, clientContext.brand);
+        // Outside the step body: a checkpointed step is replayed from its stored
+        // value on resume and its body never runs again.
+        repairsByRevision.set(revision, repaired.repairs);
 
         // ── 15c: the editor — the judgment none of the gates can make ──
         const editorResult = await wf.step.agent(id("15c-editor-verdict"), editorAgent, {
@@ -711,10 +912,32 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
           ...(lastEditorNotes.length > 0 ? { previousNotes: lastEditorNotes } : {}),
           ...(directive !== undefined ? { revisionRequest: directive } : {}),
         });
-        if (editorResult.status !== "completed") {
-          throw new WorkflowToolingFailure(`editor verdict step resolved to "${editorResult.status}"`);
+        // An editor that could not RUN is not a reason to lose the edition.
+        //
+        // This step is a judgment, not a gate: its own "revise" verdict is
+        // already allowed to ship on the last round (see `flagged` below), so a
+        // step that failed to produce any verdict cannot reasonably be more
+        // fatal than one that produced a negative one. The edition ships with
+        // the gap recorded, and the reviewer decides.
+        if (editorResult.status !== "completed" || !editorResult.finalOutput) {
+          repairsByRevision.set(revision, [
+            ...(repairsByRevision.get(revision) ?? []),
+            {
+              check: "newsletter-editor",
+              action: "unresolved",
+              detail: `the editorial review did not return a verdict (${editorResult.status}) — this edition ships without it`,
+            },
+          ]);
+          await runTopicGuardrail(
+            wf,
+            { tools, promptStore: options.promptStore, router: options.router },
+            draft.text,
+            intake.forbiddenTopics,
+            revision === 0 ? undefined : `-r${revision}`,
+          );
+          return draft;
         }
-        lastEditor = editorResult.finalOutput!;
+        lastEditor = editorResult.finalOutput;
         lastEditorNotes = lastEditor.notes;
 
         if (lastEditor.verdict === "revise" && round < MAX_EDITORIAL_ROUNDS) {
@@ -797,6 +1020,24 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
       },
     });
     const draft = review.output;
+    /**
+     * The repairs made to the round that was APPROVED — not the last round
+     * attempted. Omitted from the deliverable when empty, so a clean run
+     * produces the bytes it always did.
+     */
+    const contentRepairs = repairsByRevision.get(review.revision) ?? [];
+    // A reviewer who ran out of rounds, or who rejected outright, is recorded
+    // ON the deliverable rather than ending the run: the work survives for
+    // them to act on, and the marker is what makes their decision unmissable.
+    // Nothing here publishes anything — every deliverable still waits on a
+    // human — so this changes what a reviewer KEEPS, not what ships.
+    if (review.outcome !== undefined && review.outcome !== "approved") {
+      contentRepairs.push({
+        check: "human-review",
+        action: "unresolved",
+        detail: review.outcomeDetail ?? review.outcome,
+      });
+    }
     const editorial = editorialByRevision.get(review.revision);
 
     // ── 17a: the email itself — the same fields the reviewer approved, as a
@@ -826,7 +1067,14 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
       persistDeliverableStepId: "17-persist-deliverable",
       persistManifestStepId: "18-persist-manifest",
       kind: "newsletter-edition",
-      deliverable: { ...draft, html: email.html, htmlDark: email.htmlDark },
+      deliverable: {
+        ...draft,
+        html: email.html,
+        htmlDark: email.htmlDark,
+        // Present only when something had to be repaired to get here, so a
+        // reviewer sees what changed instead of a silently edited edition.
+        ...(contentRepairs.length > 0 ? { contentRepairs } : {}),
+      },
       snapshot: (deliverableId) => ({
         mainStory: selected.mainStory,
         source: selected.source,
@@ -846,8 +1094,16 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
     // `persistReviewFeedbackToMemory` for every round, which is the one real
     // feedback pipeline (AU22). ──
     await wf.step.code("19-commit-and-record", async () => {
+      // A topic is only CONSUMED by a post a reviewer approved. Before this PR
+      // a reject threw before ever reaching here; now it returns, so the guard
+      // has to be explicit or a rejected post would burn the topic it was
+      // written from and no future run could use it.
       if (selected.source === "reserved" && reservation.reservationKey) {
-        await tools["topics.commit"]!.execute({ reservationKey: reservation.reservationKey }, { ctx });
+        if (review.outcome !== undefined && review.outcome !== "approved") {
+          await tools["topics.release"]?.execute({ reservationKey: reservation.reservationKey }, { ctx }).catch(() => undefined);
+        } else {
+          await tools["topics.commit"]!.execute({ reservationKey: reservation.reservationKey }, { ctx });
+        }
       }
       // The write half of the anti-repetition loop: the shipped post joins
       // this agent's rolling excerpt window, read back by research.pull's
