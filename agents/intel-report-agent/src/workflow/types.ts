@@ -1,5 +1,6 @@
 import type { ClientBrand, ClientProfile, Competitor } from "@agent-engine/tools";
 import type { DegradedContextGroundingMarker } from "@agent-engine/workflow";
+import type { IntelReportNumericGroundingMarker } from "./create-intel-report-agent-workflow.js";
 
 /**
  * Step 00's output: the tenant context every later step reads from
@@ -122,4 +123,15 @@ export interface IntelReportAgentWorkflowResult {
    * silently-degraded recurring report.
    */
   contextGrounding?: DegradedContextGroundingMarker;
+  /**
+   * Present when step 03 had to repair the report's numbers to let it
+   * through: a figure that could not be traced to any source gathered for
+   * this run was dropped, sentence and all.
+   *
+   * Absent on the normal path. It exists because that step stopped holding
+   * the run — a report the client can read, minus one sentence, beats an
+   * error message — and a silent repair would be worse than the hold it
+   * replaced.
+   */
+  numericGrounding?: IntelReportNumericGroundingMarker;
 }
