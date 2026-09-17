@@ -102,20 +102,13 @@ substitutions:
   # Presence is not pairing.
   _GOOGLE_OAUTH_CLIENT_ID_SECRET: GOOGLE_OAUTH_CLIENT_ID
   _GOOGLE_OAUTH_CLIENT_SECRET_SECRET: GOOGLE_OAUTH_CLIENT_SECRET
-  # The SECOND Google transport for every Gemini call — the Gemini Developer
-  # API key `ResilientGeminiAdapter` and `karos-media`'s
-  # `resilient-genai-client.ts` both hop to when Vertex answers 403/404/429/5xx.
-  # It was wired in neither environment, which left the steps that LOOK at
-  # something (image.generate, media.inspectImages, video.visualQaGate) with no
-  # fallback at all: by design they have no text substitute, so Vertex was
-  # their only route. Same model ids on a different transport — no pinned model
-  # is ever silently swapped.
-  #
-  # Secret NAME, not value: the existing `GEMINI_API_KEY` secret the portal
-  # already uses. `agent-engine-sa@karoscmo` was granted
-  # secretmanager.secretAccessor on it rather than a second key being minted,
-  # the same sharing OPENAI_API_KEY and PERPLEXITY_API_KEY above already do.
-  _GEMINI_API_KEY_SECRET: GEMINI_API_KEY
+  # GEMINI_API_KEY is deliberately NOT mounted — see the same block in
+  # `cloudbuild.yaml` for the probe. Short version: the `GEMINI_API_KEY` secret
+  # in karoscmo answers 404 "no longer available to new users" for
+  # gemini-2.5-pro AND gemini-2.5-flash on the Developer API (only
+  # gemini-2.5-flash-image is served), so as the Gemini chain's second hop it
+  # cannot serve either pinned text model — and mounting it would move the
+  # geo-visibility capture off its working Vertex route onto that 404.
   # The pasted user grant for Google Business Profile. An OVERRIDE, not the
   # credential: absent, the GBP legs mint a business.manage token from the
   # worker's own identity (gbp-credential.ts). Wired because it exists now, and
@@ -255,8 +248,7 @@ steps:
       # substitution, whose built-in default is claude-haiku-4-5. Read only on
       # that last hop, so it changes nothing while Vertex answers.
       - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},BQ_DATASET_ID=${_BQ_DATASET_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,QUEUE_TOPIC_RUN_JOBS=${_QUEUE_TOPIC_RUN_JOBS},PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_HOSTING_PROJECT=${_LANDING_HOSTING_PROJECT},LANDING_HOSTING_SITE_PREFIX=${_LANDING_HOSTING_SITE_PREFIX},INSTAGRAM_AGENT_REPO_ROOT=/app,VIDEO_HARVEST_PROVIDER=yt-dlp,GEMINI_FALLBACK_CLAUDE_MODEL=claude-sonnet-4-6,PUBSUB_PUSH_AUDIENCE_URL=${_PUBSUB_PUSH_AUDIENCE_URL},AUTH_ENABLED=true,AUTH_AUDIENCE=${_AUTH_AUDIENCE},AUTH_ALLOWED_SERVICE_ACCOUNTS=${_AUTH_ALLOWED_SERVICE_ACCOUNTS}
-      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest,PERPLEXITY_API_KEY=${_PERPLEXITY_API_KEY_SECRET}:latest,PSI_API_KEY=${_PSI_API_KEY_SECRET}:latest,ELEVENLABS_API_KEY=${_ELEVENLABS_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,GOOGLE_PLACES_KEY=${_GOOGLE_PLACES_KEY_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest,GOOGLE_BUSINESS_TOKEN=${_GOOGLE_BUSINESS_TOKEN_SECRET}:latest,GOOGLE_OAUTH_CLIENT_ID=${_GOOGLE_OAUTH_CLIENT_ID_SECRET}:latest,GOOGLE_OAUTH_CLIENT_SECRET=${_GOOGLE_OAUTH_CLIENT_SECRET_SECRET}:latest,GEMINI_API_KEY=${_GEMINI_API_KEY_SECRET}:latest
-      # instagram-agent writes under `repoRoot` (INSTAGRAM_AGENT_REPO_ROOT=/app):
+      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest,PERPLEXITY_API_KEY=${_PERPLEXITY_API_KEY_SECRET}:latest,PSI_API_KEY=${_PSI_API_KEY_SECRET}:latest,ELEVENLABS_API_KEY=${_ELEVENLABS_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,GOOGLE_PLACES_KEY=${_GOOGLE_PLACES_KEY_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest,GOOGLE_BUSINESS_TOKEN=${_GOOGLE_BUSINESS_TOKEN_SECRET}:latest,GOOGLE_OAUTH_CLIENT_ID=${_GOOGLE_OAUTH_CLIENT_ID_SECRET}:latest,GOOGLE_OAUTH_CLIENT_SECRET=${_GOOGLE_OAUTH_CLIENT_SECRET_SECRET}:latest      # instagram-agent writes under `repoRoot` (INSTAGRAM_AGENT_REPO_ROOT=/app):
       # `.media-cache/<runId>/` from media.findImages, and
       # `instagram-output/<client>/<postId>/` from publish.renderCarousel. The
       # container filesystem is read-only, so both used to fail with EACCES —
@@ -297,8 +289,7 @@ steps:
       # GEMINI_FALLBACK_CLAUDE_MODEL: see the same var on the HTTP service above.
       # The worker is where it matters — every agent step runs here.
       - --set-env-vars=GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},BQ_DATASET_ID=${_BQ_DATASET_ID},ANTHROPIC_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},CLOUD_ML_REGION=global,VERTEX_AI_LOCATION=${_REGION},GEMINI_VERTEX_PROJECT_ID=${_ANTHROPIC_VERTEX_PROJECT_ID},PROMPT_STORE_DRIVER=firestore,QUEUE_PROVIDER=pubsub,QUEUE_TOPIC_RUN_JOBS=${_QUEUE_TOPIC_RUN_JOBS},PUBSUB_PROJECT_ID=${_PUBSUB_PROJECT_ID},QUEUE_SUBSCRIPTION_RUN_JOBS=${_QUEUE_SUBSCRIPTION_RUN_JOBS},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},GCS_ARTIFACTS_BUCKET=${_GCS_ARTIFACTS_BUCKET},GCS_WORKSPACE_BUCKET=${_GCS_WORKSPACE_BUCKET},LANDING_HOSTING_PROJECT=${_LANDING_HOSTING_PROJECT},LANDING_HOSTING_SITE_PREFIX=${_LANDING_HOSTING_SITE_PREFIX},INSTAGRAM_AGENT_REPO_ROOT=/app,VIDEO_HARVEST_PROVIDER=yt-dlp,GEMINI_FALLBACK_CLAUDE_MODEL=claude-sonnet-4-6
-      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest,PERPLEXITY_API_KEY=${_PERPLEXITY_API_KEY_SECRET}:latest,PSI_API_KEY=${_PSI_API_KEY_SECRET}:latest,ELEVENLABS_API_KEY=${_ELEVENLABS_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,GOOGLE_PLACES_KEY=${_GOOGLE_PLACES_KEY_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest,GOOGLE_BUSINESS_TOKEN=${_GOOGLE_BUSINESS_TOKEN_SECRET}:latest,GOOGLE_OAUTH_CLIENT_ID=${_GOOGLE_OAUTH_CLIENT_ID_SECRET}:latest,GOOGLE_OAUTH_CLIENT_SECRET=${_GOOGLE_OAUTH_CLIENT_SECRET_SECRET}:latest,GEMINI_API_KEY=${_GEMINI_API_KEY_SECRET}:latest
-      # instagram-agent writes under `repoRoot` (INSTAGRAM_AGENT_REPO_ROOT=/app):
+      - --set-secrets=ANTHROPIC_API_KEY=${_ANTHROPIC_API_KEY_SECRET}:latest,SCRAPPYCOCO_API_KEY=${_SCRAPPYCOCO_API_KEY_SECRET}:latest,PERPLEXITY_API_KEY=${_PERPLEXITY_API_KEY_SECRET}:latest,PSI_API_KEY=${_PSI_API_KEY_SECRET}:latest,ELEVENLABS_API_KEY=${_ELEVENLABS_API_KEY_SECRET}:latest,UNSPLASH_ACCESS_KEY=${_UNSPLASH_ACCESS_KEY_SECRET}:latest,PEXELS_API_KEY=${_PEXELS_API_KEY_SECRET}:latest,PIXABAY_API_KEY=${_PIXABAY_API_KEY_SECRET}:latest,GOOGLE_PLACES_KEY=${_GOOGLE_PLACES_KEY_SECRET}:latest,OPENAI_API_KEY=${_OPENAI_API_KEY_SECRET}:latest,GOOGLE_BUSINESS_TOKEN=${_GOOGLE_BUSINESS_TOKEN_SECRET}:latest,GOOGLE_OAUTH_CLIENT_ID=${_GOOGLE_OAUTH_CLIENT_ID_SECRET}:latest,GOOGLE_OAUTH_CLIENT_SECRET=${_GOOGLE_OAUTH_CLIENT_SECRET_SECRET}:latest      # instagram-agent writes under `repoRoot` (INSTAGRAM_AGENT_REPO_ROOT=/app):
       # `.media-cache/<runId>/` from media.findImages, and
       # `instagram-output/<client>/<postId>/` from publish.renderCarousel. The
       # container filesystem is read-only, so both used to fail with EACCES —
