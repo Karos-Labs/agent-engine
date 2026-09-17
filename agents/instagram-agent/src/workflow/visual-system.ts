@@ -106,6 +106,34 @@ export const LOCKUP_ANCHOR: Record<CompositionGrammar, string> = {
   "split-band": "space-between",
 };
 
+/**
+ * The grammar as the keyword the PLATES select on: written to every slide's
+ * `compositionAnchor` field and carried to the template as `data-anchor`.
+ *
+ * A second, shorter vocabulary than `LOCKUP_ANCHOR` on purpose. That one is a
+ * `justify-content` value for the elastic field; this one names the END of the
+ * field the lockup is anchored to, because the plates implement the anchor with
+ * a flexible pseudo-element rather than with `justify-content` — a spacer
+ * survives a hidden first child and an auto margin on `:first-child` does not,
+ * which is a trap this system hit three times (see `headline-focus.html`).
+ *
+ * EXPORTED, and that is the fix. The mapping was inline in `assembleSlidesData`
+ * as a ternary, so the axes render sweep did not emit the field at all:
+ * `data-anchor` reached the plate EMPTY, no anchor rule matched, all four
+ * grammars rendered the default `bottom`, and the case that asserts *"the
+ * grammar moves the lockup"* compared a render with itself — it read
+ * `contentCentroid.y` 0.5205627983094601 under `top-column` and
+ * 0.5205627983094601 under `bottom-column`, identical to sixteen decimal
+ * places, which is the signature of an axis that never arrived. One spelling,
+ * in the file that owns the axis.
+ */
+export const COMPOSITION_ANCHOR: Record<CompositionGrammar, string> = {
+  "top-column": "top",
+  "bottom-column": "bottom",
+  "centre-measure": "centre",
+  "split-band": "split",
+};
+
 /** What this client's pictures are OF. Read by the scene brief and the image vet (W2-A), carried here so it is frozen with the rest. */
 export const IMAGERY_REGISTERS = ["documentary", "product-surface", "illustration", "none"] as const;
 export type ImageryRegister = (typeof IMAGERY_REGISTERS)[number];

@@ -2685,7 +2685,32 @@ export function checkInterestFloor(
   // The rectangle, its corners and the subject are still computed, still on
   // every finding's `measured`, still on the gate payload, and still read by
   // `interest-relayout.ts`'s cover limb.
-  if (metrics.largestEmptyRectShare > rectCeiling && role !== "interior") {
+  // ── AND THE INTERIOR LIMB COMES BACK FOR THE HOLE THAT CUTS THE PLATE IN
+  //    TWO, WHICH IS THE CASE THE DEMOTION ABOVE LEFT REFUSED BY NOTHING. ──
+  //
+  // The demotion is right about what it measured and it was one case too wide.
+  // Clause H refuses the grey screen because the grey screen carries ONE
+  // element; a plate with a kicker at its head and a body at its foot and
+  // nothing between them carries two, clears clause H, clears the ink floor,
+  // and — at the interior role — was refused by no clause at all. Measured on
+  // this tree: `headline-focus.html` rendered with its statement slot empty
+  // reports `largestEmptyRectShare` 0.6611 against a 0.28 interior ceiling and
+  // `checkInterestFloor` returned an EMPTY finding list. That is the hollow
+  // plate `largestEmptyRect` exists to name, passing.
+  //
+  // `holeSpansFrame` is the reinstatement, and it is the same predicate two
+  // lines up rather than a new number: the demotion's false positive was a
+  // rectangle within a point of its ceiling (0.2694 against 0.28) whose extent
+  // moved with the palette because antialiasing was marking its cells. A
+  // rectangle that reaches 90% of an AXIS of the canvas is a fact about the
+  // composition — no ground-to-ink distance grows a hole across the whole
+  // frame — so the limb that comes back is the one no palette can move, and
+  // the ceiling is untouched at every role (§5.6 rule 4 stands).
+  //
+  // The two unit cases that pin the demotion assert `toContain("one-element")`
+  // at interior, not `toEqual`, so the grey screen keeps being refused by the
+  // clause that is right about it whether or not this limb also speaks.
+  if (metrics.largestEmptyRectShare > rectCeiling && (role !== "interior" || holeSpansFrame(metrics.largestEmptyRect))) {
     // WAIVED rather than skipped when the plate carries a subject. The hole
     // is real either way and the reviewer, the judge and the ledger should
     // all still see it with the reason it was allowed -- the same posture

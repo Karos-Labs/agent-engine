@@ -738,7 +738,15 @@ function report(label: string, role: SlideRole, measured: Measured): void {
       `text ${pct(m.textShare)}`.padEnd(12),
       `accent ${pct(m.accentShare)}`.padEnd(14),
       `edges ${m.edgeDensity.toFixed(3)}`.padEnd(13),
-      `colours ${m.quantisedColourCount}`,
+      `colours ${m.quantisedColourCount}`.padEnd(12),
+      // ── WHERE THE HOLE IS, NOT ONLY HOW BIG. ──
+      // The findings have carried the rectangle's corners since clause C was
+      // written and this table did not, so a `dead-space` row in CI said 24%
+      // and never said at which end — and the remedy for a hole above the
+      // lockup is a different edit from the remedy for one below it. Printed
+      // as the fraction of the canvas each side is, which is the form the
+      // ceilings are in.
+      `rect ${m.largestEmptyRect.x.toFixed(2)},${m.largestEmptyRect.y.toFixed(2)} ${m.largestEmptyRect.w.toFixed(2)}x${m.largestEmptyRect.h.toFixed(2)}`,
     ].join(" "),
   );
 }
