@@ -110,9 +110,9 @@ const BRIEF_1_1_0 = [
 
 const DESCRIPTION_1_1_0_TAIL = "no third-party copyright, no watermark, no identifiable real person unless described above.";
 
-describe("image.generate 2.0.0 — the permit is absent for the whole fleet", () => {
-  it("declares 2.0.0: the brief changes shape when a permit names something, and the model is now laddered", () => {
-    expect(schemaOnly().version).toBe("2.0.0");
+describe("image.generate 2.1.0 — the permit is absent for the whole fleet", () => {
+  it("declares 2.1.0: the brief changes shape when a permit names something, and the model is now laddered", () => {
+    expect(schemaOnly().version).toBe("2.1.0");
   });
 
   it("buildBrief is BYTE-IDENTICAL to 1.1.0 when no permit names anything", async () => {
@@ -174,7 +174,7 @@ describe("image.generate 2.0.0 — the permit is absent for the whole fleet", ()
   });
 });
 
-describe("image.generate 2.0.0 — a permit that names something", () => {
+describe("image.generate 2.1.0 — a permit that names something", () => {
   it("a permitted mark appears only as the badge clause, never widening the no-lettering constraint", async () => {
     const { briefs, tool } = recordingTool();
     await tool.execute(
@@ -271,7 +271,7 @@ describe("image.generate 2.0.0 — a permit that names something", () => {
   });
 });
 
-describe("image.generate 2.0.0 — the schema keeps the permit small and named", () => {
+describe("image.generate 2.1.0 — the schema keeps the permit small and named", () => {
   const base = { repoRoot: "/tmp/x", runId: "run_1", needs: [{ n: 1, prompt: "x" }] };
   const parse = (art: Record<string, unknown>) => schemaOnly().inputSchema.safeParse({ ...base, art }).success;
 

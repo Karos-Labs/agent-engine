@@ -51,7 +51,15 @@ import { buildImageProvenance } from "./image-provenance.js";
 // stops a default from being the whole answer — and 1.3.0's own note that
 // 3.1 serves ONLY on the `global` endpoint is exactly the fragility a ladder
 // exists for.
-const TOOL_VERSION = "2.0.0";
+// 2.1.0 (the merge with main): resolving the two above left the ladder's TOP
+// rung as `gemini-3.1-flash-image` where 2.0.0's was `gemini-2.5-flash-image`,
+// so an unpinned caller gets a frame from a different model and a different
+// per-image rate than 2.0.0 gave. MINOR rather than MAJOR: no field changed
+// shape and no caller has to do anything — only which model answers first.
+// The push gate caught this, which is the gate doing precisely its job: the
+// version was carried through a conflict resolution unchanged while the
+// constant under it changed value.
+const TOOL_VERSION = "2.1.0";
 /**
  * The image-generation call, narrowed to what this tool uses so the package
  * does not take a type dependency on the whole `@google/genai` surface.
