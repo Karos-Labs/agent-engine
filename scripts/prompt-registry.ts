@@ -311,8 +311,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "intel-report-craft",
     agent: "intel-report-agent",
-    versions: ["1", "2", "3", "4", "5", "6"],
-    latestVersion: "6",
+    versions: ["1", "2", "3", "4", "5", "6", "7"],
+    latestVersion: "7",
     requires: { numbersSourced: true },
   },
   // Landing Builder v2 (RFC-11). The blueprint decides every fact on the page
