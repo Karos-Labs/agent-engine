@@ -728,9 +728,23 @@ body.ta-center .acc { margin-inline: auto; }
 }
 .cl-wrap .headline { max-inline-size: min(16ch, 100%); }
 
+/* ── THE CLOSER'S BOUNDED OBJECT (RFC-20 §5.5). ──
+   The closer is the one plate in the set that can carry neither a photograph
+   nor a device: it is a payoff, not a page. That left it as the emptiest plate
+   in every measurement — 30-35% of it one empty rectangle against a 22%
+   ceiling, which is the owner's *"חלק מהשקפים ריקים"* with a number on it.
+   The recap strip sits on a band of its own: a declared extent, `no-repeat`,
+   one ramp, and it stands down when there is no recap to hold. */
 .cl-recap {
   margin-block-start: var(--sp-2);
   inline-size: 100%;
+  padding: var(--sp-2);
+  border-radius: 4px;
+  background-image: linear-gradient(146deg,
+    color-mix(in srgb, var(--accent) 26%, transparent),
+    color-mix(in srgb, var(--accent) 12%, transparent) 56%,
+    color-mix(in srgb, var(--fg) 8%, transparent) 100%);
+  background-repeat: no-repeat;
 }
 .cl-recap:empty { display: none; }
 .rc-strip {
