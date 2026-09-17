@@ -348,6 +348,12 @@ export const TargetAudienceSchema = z.object({
   summary: z.string().min(1).describe("Two to four sentences: who buys, why, and what the client's stated ICP is if the client stated one."),
   personas: z.array(TargetAudiencePersonaSchema).min(1).describe("One or more labelled personas; the primary first."),
   evidence: z.array(z.string()).default([]).describe("Where this came from, in the same source labels as the analysis prose: context-provided / training knowledge / industry pattern."),
+  rulesForContentAgents: z
+    .array(z.string())
+    .default([])
+    .describe(
+      "How to APPEAL to this audience, as instructions a writer can follow — the one part of this blueprint addressed to the writer rather than describing the reader. 'Open on the cost of the problem, never on the product' is one; 'they value clarity' is not.",
+    ),
 });
 export type TargetAudience = z.infer<typeof TargetAudienceSchema>;
 
@@ -470,6 +476,94 @@ export const ProductInformationSchema = z.object({
 });
 export type ProductInformation = z.infer<typeof ProductInformationSchema>;
 
+/** One promise, to one audience, with the reason to believe it. */
+export const ValuePropositionSchema = z.object({
+  audience: z.string().min(1).describe("Which persona or segment this promise is for."),
+  promise: z.string().min(1).describe("The outcome it promises, in one sentence, in the buyer's terms."),
+  proof: z.string().optional().describe("The reason to believe it — traceable, or omitted."),
+});
+export type ValueProposition = z.infer<typeof ValuePropositionSchema>;
+
+/** One recurring theme the brand's communication is built on. */
+export const MessagingPillarSchema = z.object({
+  pillar: z.string().min(1).describe("The theme, named as the brand would name it."),
+  whatItMeans: z.string().min(1).describe("What it actually asserts — not a restatement of the name."),
+  proofPoints: z.array(z.string()).default([]).describe("What makes it credible; each one traceable."),
+  whenToLead: z.string().optional().describe("The moment this pillar is the right one to open with."),
+});
+export type MessagingPillar = z.infer<typeof MessagingPillarSchema>;
+
+/** One channel's job in the mix, and how often it is fed. */
+export const ChannelPrioritySchema = z.object({
+  channel: z.string().min(1).describe("The named channel."),
+  role: z.string().min(1).describe("What this channel is FOR — reach, proof, conversion, community — not a description of the channel."),
+  cadence: z.string().optional().describe("How often it should publish, when the evidence supports a number."),
+});
+export type ChannelPriority = z.infer<typeof ChannelPrioritySchema>;
+
+/**
+ * WHAT TO SAY, and in what order — the layer between "who we are" and "what
+ * this post says". The portal's `market-strategy` document had the positioning
+ * and growth ANALYSIS but nothing prescriptive: an agent could read what the
+ * market looks like and still not know which three things this brand always
+ * comes back to, or which one opens a cold post.
+ *
+ * `messageHierarchy` is the field that makes the rest usable. A list of pillars
+ * with no order is a list an agent picks from at random, which is how a brand
+ * ends up saying everything and landing nothing.
+ */
+export const MessagingSchema = z.object({
+  positioningStatement: z.string().min(1).describe("The positioning in one sentence: for whom, against what alternative, and what is uniquely true."),
+  valuePropositions: z.array(ValuePropositionSchema).default([]).describe("One per audience the client actually addresses."),
+  messagingPillars: z.array(MessagingPillarSchema).default([]).describe("The two to four themes every piece of communication should ladder up to."),
+  messageHierarchy: z
+    .string()
+    .optional()
+    .describe("What leads, what supports, and what is never the hook — the order, stated, so an agent does not pick from the pillars at random."),
+  channelPriorities: z.array(ChannelPrioritySchema).default([]).describe("Each channel's job in the mix, for the channels this client actually uses."),
+});
+export type Messaging = z.infer<typeof MessagingSchema>;
+
+/** The imagery direction: what pictures this brand uses, and what it never uses. */
+export const ImageryDirectionSchema = z.object({
+  direction: z.string().min(1).describe("The visual register in a sentence — what a photograph or illustration for this brand looks like."),
+  subjects: z.array(z.string()).default([]).describe("What is IN the pictures: product surfaces, people at work, abstract form, data."),
+  avoid: z.array(z.string()).default([]).describe("Imagery that is off-brand for this brand specifically — the generic-stock tells it must not fall into."),
+});
+export type ImageryDirection = z.infer<typeof ImageryDirectionSchema>;
+
+/**
+ * THE VISUAL RULES BEYOND THE SWATCHES. `branding-guidelines` had the palette,
+ * the fonts and a visual-style word, which is enough to colour a template and
+ * not enough to art-direct one. Every image, carousel and landing page the
+ * fleet renders makes these decisions; without this block each one makes them
+ * again, differently.
+ */
+export const VisualDirectionSchema = z.object({
+  logoUsage: z.array(z.string()).default([]).describe("Rules for the mark: clear space, what it may sit on, which lockup belongs where, what is never done to it."),
+  imagery: ImageryDirectionSchema.optional().describe("The photography and illustration direction."),
+  iconography: z.string().optional().describe("Icon and graphic-element style: weight, corner treatment, whether they are filled or stroked."),
+  layout: z.string().optional().describe("Composition habits: grid, density, alignment, how much air the brand leaves."),
+  motion: z.string().optional().describe("How things move, when the brand moves at all."),
+});
+export type VisualDirection = z.infer<typeof VisualDirectionSchema>;
+
+/** What one competitor is actually doing on one named surface. */
+export const PlatformRealitySchema = z.object({
+  platform: z.string().min(1).describe("The named surface."),
+  observation: z.string().min(1).describe("What is observably true there — who is present, what they post, at what cadence. Measured, not assumed."),
+  implication: z.string().optional().describe("What it means for this client, per the so-what rule."),
+});
+export type PlatformReality = z.infer<typeof PlatformRealitySchema>;
+
+/** A company not yet a competitor, and the signal that would make it one. */
+export const WatchListEntrySchema = z.object({
+  company: z.string().min(1).describe("The company or entrant."),
+  why: z.string().min(1).describe("Why it is worth watching without being a direct competitor today."),
+  signal: z.string().optional().describe("The observable change that would move it onto the competitor list."),
+});
+export type WatchListEntry = z.infer<typeof WatchListEntrySchema>;
+
 export const IntelReportOutputSchema = ReportProfileExtrasSchema.extend({
   /** The date the report describes, as the portal stores it (`ClientReport.reportDate`, a string). Defaulted at build time when the model omits it. */
   reportDate: z.string().optional().describe("The date the report describes, as the portal stores it (ClientReport.reportDate). Defaulted at build time when the model omits it."),
@@ -523,6 +617,17 @@ export const IntelReportOutputSchema = ReportProfileExtrasSchema.extend({
   productInformation: ProductInformationSchema.optional().describe(
     "What the client actually sells: offerings, business model, CTAs, proof points, and the claims an agent must not make. Optional: omit rather than describe a product the evidence does not reach.",
   ),
+  messaging: MessagingSchema.optional().describe(
+    "What to say and in what order: positioning statement, value propositions, messaging pillars, the hierarchy between them, and each channel's job. Optional: omit rather than invent a message architecture the evidence does not support.",
+  ),
+  visualDirection: VisualDirectionSchema.optional().describe(
+    "The visual rules beyond the swatches: logo usage, imagery direction, iconography, layout and motion. Optional: omit rather than art-direct from nothing.",
+  ),
+  perPlatformReality: z
+    .array(PlatformRealitySchema)
+    .optional()
+    .describe("What is observably true on each named surface the category competes on. Measured observations only."),
+  watchList: z.array(WatchListEntrySchema).optional().describe("Companies not competing directly today, and the signal that would change that."),
   brandSynchronizationUpdate: z
     .string()
     .min(1)

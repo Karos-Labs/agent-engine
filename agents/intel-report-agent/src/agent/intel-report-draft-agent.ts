@@ -110,7 +110,17 @@ const INTEL_REPORT_DRAFT_STEP_CONFIG: AgentStepConfig<IntelReportOutput> = {
   // brand carried competitor archetypes and no writing rule, and the document
   // that should say what the client sells said nothing about the product. The
   // step's ceiling rises with the schema (32k → 48k). v6 stays frozen.
-  skillRef: "intel-report-craft@7",
+  // v8 (2026-09-17) closes the rest of the gap to the curated lab profile the
+  // owner set as the bar: sec 16 `messaging` (positioning statement, value
+  // propositions, messaging pillars and the HIERARCHY between them, each
+  // channel's job), sec 17 `visualDirection` (logo usage, imagery direction,
+  // iconography, layout, motion — the visual rules a renderer needs and a
+  // palette cannot give it), sec 18 `perPlatformReality` + `watchList`, and
+  // `targetAudience.rulesForContentAgents` (lab sec 8), the one part of the ICP
+  // blueprint addressed to the writer rather than describing the reader.
+  // Measured before: this report covered 3 of brand-voice.md's 13 sections and
+  // roughly 0 of product-information.md's 12. v7 stays frozen.
+  skillRef: "intel-report-craft@8",
 };
 
 export interface IntelReportDraftAgentOptions {
