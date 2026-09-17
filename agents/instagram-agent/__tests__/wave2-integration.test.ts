@@ -210,7 +210,10 @@ describe("the gate verdict is built from facts the run already has", () => {
 describe("the emitted sheet names the slides the carousel actually has", () => {
   const systemFor = (slideCount: number, accentForm: CarouselVisualSystem["accentForm"]): CarouselVisualSystem => ({
     systemId: "test",
+<<<<<<< HEAD
     compositionGrammar: "bottom-column",
+=======
+>>>>>>> origin/main
     ground: "grid",
     accentSlides: accentSlidesFor(slideCount, accentForm),
     accentForm,

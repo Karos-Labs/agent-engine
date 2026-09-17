@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentContext } from "@agent-engine/core";
-import { createKarosGatesTools } from "../src/index.js";
+import { createKarosGatesTools, detectProductMentions, weightedLengthForX } from "../src/index.js";
 
 const ctx: AgentContext = {
   runId: "run_1",
@@ -190,6 +190,103 @@ describe("gate.lintPost", () => {
       const verdict = await verdictOf("gate.lintPost", { text: "Add this rule: .banner { display: none !important; } Ship it now!" });
       expect(verdict.verdict).toBe("content_fail");
     });
+  });
+});
+
+describe("gate.lintPost on X: the platform's own counting and Craft 01's caps", () => {
+  /**
+   * X counts a URL as 23 characters whatever its real length and an emoji as
+   * 2 (docs.x.com/resources/fundamentals/counting-characters). Counting
+   * plainly is how a post measured 275 here and 319 on the platform — it
+   * passed every check we had and would have been refused on publish.
+   */
+  describe("weightedLengthForX", () => {
+    it("charges 23 for a URL however long the URL is", () => {
+      expect(weightedLengthForX("https://x.com/a")).toBe(23);
+      expect(weightedLengthForX(`https://example.test/${"a".repeat(200)}`)).toBe(23);
+    });
+
+    it("charges 2 per emoji, and treats a ZWJ family as one emoji", () => {
+      expect(weightedLengthForX("🙂")).toBe(2);
+      // Seven code points, one glyph, one weighted pair.
+      expect(weightedLengthForX("👨‍👩‍👧‍👦")).toBe(2);
+    });
+
+    it("leaves ordinary prose alone", () => {
+      expect(weightedLengthForX("A perfectly reasonable post.")).toBe("A perfectly reasonable post.".length);
+    });
+  });
+
+  it("holds a post that is inside 280 plainly but over it the way X counts", async () => {
+    // 236 characters plus two SHORT urls. Plainly that is 262 and fits; on X
+    // each url costs 23 whatever it looks like, so it is 284 and does not.
+    // Short urls on purpose: this is the case plain counting gets wrong in
+    // the dangerous direction, where the gate says yes and the platform says
+    // no.
+    const text = `${"a".repeat(236)} https://a.co https://b.co`;
+    expect(text.length).toBeLessThan(280);
+    expect(weightedLengthForX(text)).toBeGreaterThan(280);
+    const verdict = await verdictOf("gate.lintPost", { text, platform: "x" });
+    expect(verdict.verdict).toBe("content_fail");
+    expect(String(verdict.reason)).toMatch(/weighted/);
+  });
+
+  it("does not apply X's counting to another platform", async () => {
+    const text = `${"a".repeat(236)} https://a.co https://b.co`;
+    expect((await verdictOf("gate.lintPost", { text, platform: "linkedin" })).verdict).toBe("pass");
+  });
+
+  describe("the hook (Craft 01 §5)", () => {
+    it("holds a hook over 70 characters", async () => {
+      const hook = "Digital assets on a distributed ledger are finally getting sane custody rules.";
+      expect(hook.length).toBeGreaterThan(70);
+      expect((await verdictOf("gate.lintPost", { text: "body", platform: "x", hook })).verdict).toBe("content_fail");
+    });
+
+    it("holds a hook carrying a mention, a hashtag, a link or an emoji", async () => {
+      for (const hook of ["@acme cut onboarding in half", "#onboarding cut in half", "see https://example.test", "Cut in half 🙂"]) {
+        const verdict = await verdictOf("gate.lintPost", { text: "body", platform: "x", hook });
+        expect(verdict.verdict, hook).toBe("content_fail");
+      }
+    });
+
+    it("passes a clean hook, and ignores the hook entirely off X", async () => {
+      expect((await verdictOf("gate.lintPost", { text: "body", platform: "x", hook: "Onboarding fell from 14 days to 3." })).verdict).toBe("pass");
+      // A LinkedIn hook is 140 characters and has its own rules; this gate
+      // must not quietly apply X's to it.
+      const long = "x".repeat(120);
+      expect((await verdictOf("gate.lintPost", { text: "body", platform: "linkedin", hook: long })).verdict).toBe("pass");
+    });
+  });
+
+  describe("hashtags and mentions (Craft 01 §11)", () => {
+    it("allows one hashtag and holds two", async () => {
+      expect((await verdictOf("gate.lintPost", { text: "We shipped #onboarding today.", platform: "x" })).verdict).toBe("pass");
+      expect((await verdictOf("gate.lintPost", { text: "We shipped it. #onboarding #saas", platform: "x" })).verdict).toBe("content_fail");
+    });
+
+    it("allows two mentions and holds three", async () => {
+      expect((await verdictOf("gate.lintPost", { text: "Good thread from @a and @b on this.", platform: "x" })).verdict).toBe("pass");
+      expect((await verdictOf("gate.lintPost", { text: "Good thread from @a and @b and @c.", platform: "x" })).verdict).toBe("content_fail");
+    });
+
+    it("holds a post that OPENS with a mention, which X shows to almost nobody", async () => {
+      const verdict = await verdictOf("gate.lintPost", { text: "@acme is right about onboarding.", platform: "x" });
+      expect(verdict.verdict).toBe("content_fail");
+      expect(String(verdict.reason)).toMatch(/reply/);
+    });
+
+    it("does not mistake an email address for a mention", async () => {
+      expect((await verdictOf("gate.lintPost", { text: "Write to us at hello@acme.com about it.", platform: "x" })).verdict).toBe("pass");
+    });
+
+    it("holds markdown bold, which X renders as literal asterisks", async () => {
+      expect((await verdictOf("gate.lintPost", { text: "This is **important** to us.", platform: "x" })).verdict).toBe("content_fail");
+    });
+  });
+
+  it("bans the negative-parallelism tell on every platform", async () => {
+    expect((await verdictOf("gate.lintPost", { text: "It's not just a tool, it is a philosophy.", platform: "linkedin" })).verdict).toBe("content_fail");
   });
 });
 
@@ -753,3 +850,89 @@ function defaultArgsFor(toolName: string): unknown {
       throw new Error(`no default args for ${toolName}`);
   }
 }
+
+/**
+ * SCRUM: `mentionAttempted` was the draft's own `disclosureIncluded` flag — the
+ * model's word about its own text. A model that names the product while
+ * answering `false` switched off the warming window, the cooldown AND the
+ * disclosure requirement in one go, and the undisclosed mention went to a human
+ * to post from their own Reddit account. That is the fastest way to get one
+ * banned, and deleting the comment afterwards does not undo it.
+ */
+describe("gate.subredditRules reads the text, not the draft's self-report", () => {
+  const base = {
+    subreddit: "personalfinance",
+    configStatus: "configured",
+    now: "2026-09-17T00:00:00Z",
+  };
+
+  it("finds a product mention the draft denied, and says what it found", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      ...base,
+      text: "I had the same problem last year. Karos Labs solved it for us in a week.",
+      mentionAttempted: false,
+      mentionNames: ["Karos Labs"],
+    });
+    expect(verdict.verdict).toBe("content_fail");
+    expect(verdict["evidence"]).toContain("Karos Labs");
+    expect(verdict["reason"]).toMatch(/reported no mention/);
+  });
+
+  it("an honest draft with a mention is not failed for the mention itself", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      ...base,
+      text: "Disclosure: I work at Karos Labs. We built something for this.",
+      mentionAttempted: true,
+      mentionNames: ["Karos Labs"],
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+
+  it("the scan, not the flag, is what trips the warming window", async () => {
+    // The exact combination that used to pass everything: the model says no
+    // mention, the account is still warming, and the text names the product.
+    const verdict = await verdictOf("gate.subredditRules", {
+      ...base,
+      text: "Disclosure: I work at Karos Labs, and we have a write-up on this.",
+      mentionAttempted: false,
+      mentionNames: ["Karos Labs"],
+      accountWarmingUntil: "2026-12-01T00:00:00Z",
+    });
+    expect(verdict.verdict).toBe("content_fail");
+    expect(verdict["reason"]).toMatch(/warming/i);
+  });
+
+  it("no names configured leaves the old self-report behaviour exactly as it was", async () => {
+    const verdict = await verdictOf("gate.subredditRules", {
+      ...base,
+      text: "Karos Labs has a write-up on this.",
+      mentionAttempted: false,
+      mentionNames: [],
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+});
+
+describe("detectProductMentions", () => {
+  it("matches on whole words only, so a brand name inside a longer word is not a mention", () => {
+    // The false positive that would make somebody switch this gate off.
+    expect(detectProductMentions("working yourself into karoshi", ["Karos"])).toEqual([]);
+    expect(detectProductMentions("we use Karos daily", ["Karos"])).toEqual(["Karos"]);
+  });
+
+  it("matches around punctuation, possessives and casing", () => {
+    expect(detectProductMentions("Karos' pricing page", ["Karos"])).toEqual(["Karos"]);
+    expect(detectProductMentions("(karos) is fine", ["Karos"])).toEqual(["Karos"]);
+    expect(detectProductMentions("see https://karos.com/docs", ["karos.com"])).toEqual(["karos.com"]);
+  });
+
+  it("treats a name with regex characters as literal text, not as a pattern", () => {
+    expect(detectProductMentions("I use Notion.so", ["Notion.so"])).toEqual(["Notion.so"]);
+    // Would match "NotionXso" if the dot were left as a wildcard.
+    expect(detectProductMentions("I use NotionXso", ["Notion.so"])).toEqual([]);
+  });
+
+  it("skips names under three characters — an initialism collides with ordinary words", () => {
+    expect(detectProductMentions("it is an ok result", ["ok"])).toEqual([]);
+  });
+});

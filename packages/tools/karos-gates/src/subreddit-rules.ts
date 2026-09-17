@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { defineTool, success } from "@agent-engine/tool-common";
 
-const TOOL_VERSION = "1.0.0";
+const TOOL_VERSION = "1.1.0";
 
 export const SubredditRulesGateInputSchema = z.object({
   // text/subreddit/offLimits/aiContentBanned/disclosureRequired/requiredDisclosure/minKarma/minAccountAgeDays have no existing TSDoc to transcribe (SCRUM-293 flag) — descriptions synthesized from the tool's own doc comment and execute()'s usage of each field.
@@ -47,6 +47,27 @@ export const SubredditRulesGateInputSchema = z.object({
     .default(false)
     .describe(
       "Whether this draft actually contains a product mention. Phase 1 has no `account.json`-style `mention_names` text scan; the caller derives this from the draft's own self-reported `disclosureIncluded` flag instead. Defaults false so a pre-draft call never spuriously trips the warming/cooldown checks.",
+    ),
+  /**
+   * The client's own product and brand names, for an actual text scan.
+   *
+   * `mentionAttempted` above is the DRAFT'S OWN WORD for whether it mentions
+   * the product, and a model that names the product while answering
+   * `disclosureIncluded: false` turns every check that depends on it into a
+   * no-op: the warming window, the cooldown, and the disclosure requirement all
+   * pass, and an undisclosed product mention ships to a human to post under
+   * their own account. On Reddit that is the single fastest way to get one
+   * banned, and it is not recoverable by editing the comment afterwards.
+   *
+   * Given names, this gate reads the text instead of taking the model's word
+   * for it. Empty (the default) keeps the old self-report-only behaviour, so a
+   * caller with no names configured is no worse off than before.
+   */
+  mentionNames: z
+    .array(z.string())
+    .default([])
+    .describe(
+      "The client's product and brand names, scanned for in `text` on whole-word boundaries. Supplied so the mention checks do not rest on the draft's own self-reported `disclosureIncluded`; empty means the self-report is all there is.",
     ),
   /** Mirrors `SubredditRulesLookup.mentionCooldownDays`/`lastMentionAt`/`accountWarmingUntil` — see that file for what each means. */
   mentionCooldownDays: z
@@ -111,6 +132,38 @@ export type SubredditRulesVerdict =
  * (`reddit-agent-v2/references/reddit-craft.md` §7, "no mention while
  * warming... no mention without disclosure").
  */
+/**
+ * Which of `names` the text actually names, on whole-word boundaries.
+ *
+ * Whole-word, because substring matching on a brand name is how "Karos" fires
+ * on "karoshi" and a clean draft gets held for a mention that is not there —
+ * and a gate that cries wolf is a gate somebody switches off.
+ *
+ * Names shorter than three characters are skipped: they are almost always an
+ * initialism that collides with an ordinary word, and the false-positive cost
+ * outweighs what they catch.
+ *
+ * Exported so its behaviour is testable on its own, since the interesting cases
+ * (possessives, hyphens, casing, a name inside a URL) are all about this
+ * function and not about the gate's control flow.
+ */
+export function detectProductMentions(text: string, names: readonly string[]): string[] {
+  const found: string[] = [];
+  for (const raw of names) {
+    const name = raw.trim();
+    if (name.length < 3) continue;
+    // Escaped whole, so a name containing "." or "+" ("Notion.so", "C++ Shop")
+    // matches literally rather than as a pattern.
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Not `\b` on both ends: a name ending in a non-word character (".so")
+    // would never satisfy a trailing `\b`. Anchored on "not a word character"
+    // instead, which is the property actually wanted.
+    const pattern = new RegExp(`(^|[^\\w])${escaped}($|[^\\w])`, "i");
+    if (pattern.test(text)) found.push(name);
+  }
+  return found;
+}
+
 export const subredditRules = defineTool<SubredditRulesGateInput, SubredditRulesVerdict>({
   name: "gate.subredditRules",
   description:
@@ -129,12 +182,21 @@ export const subredditRules = defineTool<SubredditRulesGateInput, SubredditRules
     accountKarma,
     accountAgeDays,
     mentionAttempted,
+    mentionNames,
     mentionCooldownDays,
     lastMentionAt,
     accountWarmingUntil,
     now,
     text,
   }) {
+    // THE DRAFT'S SELF-REPORT IS NOT EVIDENCE. `mentionAttempted` is what the
+    // model said about its own text; the scan is what the text says. Either one
+    // is enough to count as a mention — a model that under-reports must not
+    // switch the warming, cooldown and disclosure checks off, and one that
+    // over-reports is being cautious, which costs nothing here.
+    const scanned = detectProductMentions(text, mentionNames);
+    const mentions = mentionAttempted || scanned.length > 0;
+
     if (offLimits) {
       return success<SubredditRulesVerdict>({
         verdict: "content_fail",
@@ -155,7 +217,7 @@ export const subredditRules = defineTool<SubredditRulesGateInput, SubredditRules
       });
     }
 
-    if (mentionAttempted && accountWarmingUntil && now) {
+    if (mentions && accountWarmingUntil && now) {
       const nowMs = Date.parse(now);
       const warmingUntilMs = Date.parse(accountWarmingUntil);
       if (!Number.isNaN(nowMs) && !Number.isNaN(warmingUntilMs) && nowMs < warmingUntilMs) {
@@ -169,7 +231,7 @@ export const subredditRules = defineTool<SubredditRulesGateInput, SubredditRules
       }
     }
 
-    if (mentionAttempted && lastMentionAt && mentionCooldownDays !== undefined && now) {
+    if (mentions && lastMentionAt && mentionCooldownDays !== undefined && now) {
       const nowMs = Date.parse(now);
       const lastMentionMs = Date.parse(lastMentionAt);
       if (!Number.isNaN(nowMs) && !Number.isNaN(lastMentionMs)) {
@@ -184,6 +246,23 @@ export const subredditRules = defineTool<SubredditRulesGateInput, SubredditRules
           });
         }
       }
+    }
+
+    // The draft names the product and told us it did not. Whatever the
+    // subreddit's disclosure rule says, this is the fact that every other
+    // mention check was resting on, and it was wrong — so say so rather than
+    // let the run continue on a corrected flag the reviewer never sees.
+    if (scanned.length > 0 && !mentionAttempted) {
+      return success<SubredditRulesVerdict>({
+        verdict: "content_fail",
+        evidence: scanned,
+        reason:
+          `the draft names the product (${scanned.join(", ")}) but reported no mention — on Reddit an undisclosed ` +
+          `product mention is what gets an account banned, and editing the comment afterwards does not undo it. ` +
+          `Either drop the name or set the disclosure.`,
+        toolVersion: TOOL_VERSION,
+        configStatus: "configured",
+      });
     }
 
     if (disclosureRequired && requiredDisclosure && !text.toLowerCase().includes(requiredDisclosure.toLowerCase())) {

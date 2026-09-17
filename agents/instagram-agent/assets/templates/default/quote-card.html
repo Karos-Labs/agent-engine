@@ -16,6 +16,7 @@
   the same accent every other plate in the carousel uses.
 -->
 <style>
+<<<<<<< HEAD
 /* @ds:start */
 /* ============================================================================
    THE DESIGN SYSTEM — one source of truth for all eight plates.
@@ -53,11 +54,289 @@
       by NOTHING, which is why three clients rendered the same look and why the
       brand mark printed over the eyebrow. Every one of them is consumed below.
    ========================================================================== */
+=======
+  :root {
+    --bg: #17181C;
+    --fg: #F4F2EC;
+    --accent: {{accentColor}};
+    /* THE WASH TONE, and it is a mix rather than the accent itself.
+       A ground wash has to land in the measurement's 12-18 band — visible
+       tone that is not a mark — for EVERY accent the palette walk admits,
+       and the accent alone cannot do that. The only gate on --accent is
+       ACCENT_GROUND_CONTRAST_FLOOR = 3 against the ground, so a dark accent
+       sits ~92 units from the bundled ground and a pale one ~159: the same
+       14% alpha that measures 12.9 on the first measures 22.3 on the second,
+       which is INK. Rendered with a pale kit every template in this
+       directory then put ink in the 8px bleed band (clippedEdgeShare 0.5-0.7%
+       against a 0.4% ceiling) and counted its own wash as content.
+       Mixing the accent halfway into the foreground compresses that spread:
+       the mix is ~170 units from the ground on a dark accent and ~195 on a
+       pale one, so 8% of it is 13.6 and 15.6 — inside the band on both, with
+       the accent's hue still in it. */
+    --wash: color-mix(in srgb, var(--accent) 45%, var(--fg));
+    --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+    --f-body: 'Inter', system-ui, -apple-system, sans-serif;
+    --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
+    /* Quote slides get wider gutters than the rest of the set — both legacy
+       generations did this, and it is what keeps a 70px italic measure from
+       running the full plate width. */
+    --ts: 1;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* Reviewer typography controls (Phase 2): a discrete type-scale multiplier
+     and logical text alignment, applied per slide via body classes. Classes,
+     never a {{fontScale}} CSS var: a stripped placeholder degrades to a
+     harmless "ts-" class token, whereas an EMPTY-but-defined custom property
+     substitutes as empty (not the var() fallback) and would invalidate every
+     font-size on an older checkpointed slides-data re-rendered post-deploy. */
+  body.ts-s { --ts: 0.85; }
+  body.ts-l { --ts: 1.18; }
+  /* ── PHASE 5.5: THE ONE TYPE SCALE (`visual-system.ts`, `TYPE_SCALE_PX`). ──
+     Six steps for the whole archetype set, against the 45 distinct `font-size`
+     values the eight bundled templates declared between them. A plate picks a
+     step by ROLE rather than by which file the writer's layout landed on.
+     `visualSystemCssBlock` overrides these per run with the resolved system's
+     type flavour; these are the self-contained defaults a brandless render
+     uses.
+
+     ── ON `body`, NOT ON `:root`, AND THAT IS NOT A STYLE CHOICE. ──
+     A custom property's `var()` references are substituted AT THE ELEMENT THAT
+     DECLARES IT. `--ts` is `1` on `:root` and is overridden on `body.ts-s` /
+     `body.ts-l`, so a `--t-*` declared on `:root` resolves `var(--ts, 1)`
+     against the ROOT's value — always 1 — and then inherits down already
+     substituted. Declared there, the reviewer's whole type-scale control
+     silently stopped reaching every size that reads a step: measured, this
+     plate rendered its 300px figure at 300px at `ts-s`, where the literal it
+     replaced rendered 255px, and the calibration's own s-vs-l control pair
+     reported the two plates painting identical ink (0.4175 both). Declared
+     HERE the substitution happens on `body`, where `body.ts-s` is in force. */
+  body {
+    /* ── PHASE 5.5: THE PAGE MARGIN IS THE VISUAL SYSTEM'S `gutter` AXIS. ──
+       `--gutter` is emitted per run by `visualSystemCssBlock` (`wide` 64px,
+       `tight` 48px) and was read by nothing: every template hard-coded its own
+       margin, so two catalog entries that differ ONLY in gutter rendered the
+       same plate and the twelve-entry catalog was a variety claim a reader
+       could not see. The literal stays as the fallback, so a document composed
+       without the run sheet is byte-identical. */
+    --mx: calc(var(--gutter, 64px) * 1.25);
+    --t-micro: calc(22px * var(--ts, 1));
+    --t-label: calc(32px * var(--ts, 1));
+    --t-lead: calc(46px * var(--ts, 1));
+    --t-statement: calc(84px * var(--ts, 1));
+    --t-display: calc(124px * var(--ts, 1));
+    --t-figure: calc(220px * var(--ts, 1));
+  }
+  body.ta-center { text-align: center; }
+  body.ta-end { text-align: end; }
+  html, body { width: 1080px; height: 1440px; }
+  body {
+    position: relative; overflow: hidden; background: var(--bg); color: var(--fg); font-family: var(--f-body);
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: 96px var(--mx) 96px;
+  }
+
+  /* ── L1: the tonal wash, full bleed, inside the 12-18 band. A pixel is
+        GROUND within 12 of the ground colour and INK beyond 18, so a wash
+        between the two is visible tone that is not a mark: it may reach the
+        frame edge without putting ink in the band `clippedEdgeShare` reads,
+        and it takes the plate off "flat". ── */
+  .ground {
+    position: absolute; inset: 0; z-index: 0;
+    /* A CORNER wash, not half the plate, because the pull-quote panel below
+       covers well over 40% of the frame. `measureSlidePng` decides what
+       colour a slide's ground IS by taking the modal FLAT cell; a half-plate
+       wash splits the real ground's vote across several tones while the panel
+       pools its own, the panel wins, and every dark pixel at the frame edge is
+       then measured as clipped ink. The standing rule for this set: a panel
+       over about 40% of the frame means the plate gets a corner wash. */
+    background-image: radial-gradient(58% 26% at 100% 0%, color-mix(in srgb, var(--wash) var(--ground-texture-alpha, 8%), transparent) 0%, transparent 72%);
+  }
+  /* ── THERE IS NO L2 ON THIS PLATE ANY MORE, and that is the point. ──
+     A full-bleed texture inset 16px used to paint ink in every cell of the
+     frame, which made `occupiedShare` and `largestEmptyRectShare` constants:
+     every ground-bearing template in this directory reported the same 1.5%
+     largest empty rectangle with the full copy on it and with every slot
+     empty. The texture now lives only on the pull-quote panel, which is the
+     region the composition actually occupies — see `cover.html`'s header for
+     the rule and `headline-focus.html`'s for the pitch. ── */
+
+  .qc-head { position: relative; z-index: 3; flex: 0 0 auto; }
+  /* `inline-block` so a client's `pill`/`brackets` badge variant wraps the
+     words rather than painting a full-measure bar. */
+  .eyebrow {
+    /* ── THE LABEL'S BOX IS ITS LABEL. ──
+       A block-level eyebrow spans the whole measure whatever it says, so its
+       BOX reaches the opposite corner of the plate even when its ink stops
+       after two words. `renderCarousel`'s reserved-zone probe reads boxes, so
+       a full-width label was reported as entering the brand mark's corner from
+       the other side of the frame — a finding about nothing, on the instrument
+       §7 F2 exists to make trustworthy. `fit-content` makes the two agree.
+       `stat-callout.html` has always been `inline-block` for the same reason. */
+    inline-size: fit-content; max-inline-size: 100%;
+    display: inline-block;
+    font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro);
+    letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent);
+  }
+  .eyebrow:empty { display: none; }
+  /* ── THE LABEL'S RULE IS GONE FROM THIS ARCHETYPE. ──
+     `headline-focus.html` carries the whole argument in one line: a carousel
+     gets ONE accent colour, ONE rule geometry and ONE free-standing mark per
+     plate. This file's mark is `.qc-foot::before`, the dash before the attribution — the one
+     `template-furniture.test.ts`'s switched-mark registry names for it — so a
+     hairline under the label was a second rule, in a second colour, at a
+     second length, on the same plate; re-colouring it only made the repetition
+     louder (measured: two identical accent bars, 30px apart). It is deleted
+     rather than switched off, because a div that can never paint is not a
+     composition.
+
+     WHAT IT WAS WORTH, A/B'd on this tree one object apart — the whole table
+     and the argument are in `headline-focus.html`: populated
+     `largestEmptyRectShare` 0.3205 without the rail against 0.2627 with it
+     (`inkShare` .0379 / .0391), and the blank plate 1.0000 against 0.9139.
+     THIS FILE GIVES UP THE MOST OF THE SIX — 5.8 points — and it is the one
+     deletion that takes a populated plate over the 0.28 interior ceiling.
+     Recorded rather than reversed: a hairline painting on six of eight plates
+     of every carousel is not the answer to a hole above the panel.
+
+     ── AND "CLAUSE C DOES NOT GATE INTERIORS" IS NOT A REASON, SO IT IS NO
+        LONGER THE ONE GIVEN. ──
+     The first version of this note ended on that sentence, which is an appeal
+     to an ungated clause: the regression was accepted because nothing would
+     catch it. What is here instead is the work and the number it bought.
+     Both compositions the review asked for were built and measured on this
+     tree — hug the panel to its content, and move the attribution inside it —
+     and BOTH made the plate worse; `.quote-block`'s own note carries the two
+     tables and the reason (the card's 22px ring pitch bounds the panel's
+     interior as an empty rectangle, so every pixel the panel gives back lands
+     in bare ground, which is not bounded). What did help is the gap: the
+     panel's `margin-block-end` is 44px rather than 96px, which is 52px of band
+     the rail used to split simply not existing any more.
+     WHERE IT LEAVES THE NUMBER, geektime, through the production composition:
+     en s 0.3240, en m 0.3079, en l 0.2716, he s 0.3728, he m 0.3652. Still
+     over 0.28 on four of five, so the 5.8 points are NOT recovered and this
+     file still owns the largest dead band in the set. That is a real open
+     debt, it belongs to the composition pass that owns `.quote-block`'s
+     proportions, and the sweep prints these rows on every run so it cannot
+     drift further while nobody is gating it. */
+
+  /* The pull-quote panel: graded and textured for the reason in the header,
+     with the accent spent on one heavy rule down the reading-start edge
+     rather than on the panel fill. */
+  .quote-block {
+    /* ── PHASE 5.5: THE PANEL IS SIZED BY ITS QUOTE, AND IT CARRIES ITS OWN
+          ATTRIBUTION. ──
+       It used to STRETCH to the cap and centre the quote inside itself, on the
+       argument that *"centring inside a stretched panel composes the same way
+       for a one-line quote and a six-line one"*. It does — and on the one-line
+       case what it composes is a hole. Measured on this tree through the
+       production composition, the SHORT Hebrew quote: `geektime he s`
+       `quote-card 0.0188 ink / 0.0262 occ / 0.3626 LER` and `karoslabs he s`
+       `0.0243 / 0.0322 / 0.4188`. Read on the PNG: ~300px of empty panel above
+       the quotation mark, ~280px below the single line of type, and
+       `.quote-attr` ("ראש תחום תפעול, 2026") sitting 130px BELOW the panel on
+       bare ground, level with `@geektime`. Two thirds of the block's area was
+       air and the credit had been exiled to the watermark strip.
+       The 310px-of-internal-air figure the old note quoted was taken on a LONG
+       quote. On a short one the air is the panel's whole surplus, because the
+       panel's height was a function of the CAP and not of the quote.
+       BOTH OF THE REVIEW'S SUGGESTED FIXES WERE BUILT AND MEASURED, AND BOTH
+       MADE THE PLATE WORSE. The numbers are on this tree, through the
+       production composition, geektime:
+         hug the content (`flex: 0 1 auto`, 420px floor, `margin-block: auto`
+           to split the surplus)         he s 0.3626 -> 0.3748 LER
+         move `.quote-attr` into the panel  en s 0.3259 -> 0.4002,
+           en m 0.3097 -> 0.3384, he s 0.3626 -> 0.4613, he m -> 0.4092,
+           and at `l` the panel reaches 1015px — over half the frame, which
+           disarms clause B's `clippedEdgeShare` limb on this archetype.
+       The reason both fail is one fact about this archetype: the card's
+       concentric rings sit on a 22px pitch, so a cell crossed by a ring is not
+       empty and the panel's INTERIOR is bounded as an empty rectangle by
+       construction. Bare GROUND is not. Every pixel the panel gives back, or
+       every pixel of plate the panel's growth pushes into a band, lands in the
+       one region the metric can win on.
+       SO THE PANEL KEEPS THE STRETCH AND THE FIX IS THE GAP. The attribution's
+       real defect is that it sat 130px clear of the object it belongs to, next
+       to the `@handle`; the panel's `margin-block-end` comes down from 96px to
+       44px (see the margin rule below), which attaches the credit to the panel
+       and lets the panel take the 52px back.
+       WHAT THAT COSTS, MEASURED, NOT ASSUMED — geektime, before -> after:
+         en s 0.3259 -> 0.3240   en m 0.3097 -> 0.3079   en l 0.2733 -> 0.2716
+         he s 0.3626 -> 0.3728   he m 0.3672 -> 0.3652
+       Four rows improve by ~0.2 points and ONE — the short Hebrew quote — gets
+       1.0 point worse, because that is the case where the panel is furthest
+       from its own content and the 52px it gains is 52px of panel air rather
+       than 52px of type. It is stated rather than averaged away. The plate is
+       over the 0.28 interior ceiling on every row either way, which is
+       `.qc-rail`'s deletion still open below and the composition debt this
+       archetype carries into the next phase — what changed here is that the
+       credit now reads as the quotation's and not as the watermark's. */
+    position: relative; z-index: 3; flex: 1 1 auto; min-block-size: 0;
+    /* CAPPED, for the reason `stat-callout.html`'s slab is: an uncapped
+       stretch put ~550px of empty tint inside the panel (a 20%-tall band
+       above the quote mark and a 25%-tall band below the quote) INSIDE the
+       region that supplies this archetype's device score, which is decoration
+       being scored as content one level down. Capped at 860px the same plate
+       carries ~310px of internal air, split either side of a quote that now
+       sets four points larger, and the space the cap gives back becomes two
+       even gaps on the ground rather than one hole (largest empty rectangle
+       9.5%, ceiling 22% at the cover role). Hugging outright was measured and
+       rejected twice — 22.6% under the panel then, and `largestEmptyRectShare`
+       up on every case in the 2026-09-17 re-measurement recorded above.
+       The 310px figure was taken on a LONG quote and is not the short case;
+       what the short case gets is not a smaller panel but a third element in
+       it (the attribution), which is the change above. */
+    max-block-size: calc(860px * var(--ts, 1));
+    display: flex; flex-direction: column; justify-content: center;
+    /* The bottom margin is not slack: it keeps the panel under half the
+       frame. At or above half, the interest floor treats a slide as carrying
+       a FULL-BLEED element and switches clause B's `clippedEdgeShare` limb
+       off (`FULL_BLEED_IMAGERY_SHARE`) — which is the right call for a
+       photograph reaching the edges and the wrong one for a panel sitting
+       inside a 64px margin, since it would leave clipped type on this
+       archetype to the DOM limb alone. */
+    /* The bottom margin is not slack: it keeps the panel under half the
+       frame. At or above half, the interest floor treats a slide as carrying
+       a FULL-BLEED element and switches clause B's `clippedEdgeShare` limb
+       off (`FULL_BLEED_IMAGERY_SHARE`) — which is the right call for a
+       photograph reaching the edges and the wrong one for a panel sitting
+       inside a 64px margin, since it would leave clipped type on this
+       archetype to the DOM limb alone.
+       It is 44px at the block-end rather than 96px, and that is the whole of
+       this file's answer to *"the attribution is exiled below the panel, next
+       to the watermark"*. 96px put a line of type 130px clear of the object it
+       belongs to, on bare ground, level with `@handle`; 44px is one line's
+       height and reads as the panel's own credit. Nothing was reserving the
+       other 52px — `body`'s `padding-block-end` is 96px and is what actually
+       keeps the foot off the handle strip. The panel grows into those 52px,
+       which is also 52px of bare ground the plate no longer has to account
+       for. See `.qc-foot` for the arrangement that was tried instead and
+       measured worse. */
+    margin-block: calc(44px * var(--ts, 1)) calc(44px * var(--ts, 1));
+    padding: calc(44px * var(--ts, 1)) calc(52px * var(--ts, 1)) calc(40px * var(--ts, 1));
+  }
+  /* THE PANEL PAINTS ONLY WHEN THERE IS A QUOTE IN IT. `imageryOrDeviceShare`
+     counts a covered, low-colour-count cell as a drawn device, so an
+     unconditional tinted block scores its whole area whether or not anything
+     is standing on it — which is how a plate with every slot empty used to
+     clear the role floors it exists to fail. */
+  /* ── THE CARD IS PRINTED IN CONCENTRIC ARCS, AND THAT IS THIS ARCHETYPE'S
+        MARK. ──
+     The whole bundled set used to carry one 45-degree hairline field, so six
+     of the eight plates read as the same wallpaper with different words on it
+     — the owner's second complaint verbatim. Every archetype now spends a
+     different MARK (`headline-focus.html`'s header lists the set and states
+     why a mark is needed at all rather than a flat tint or clean ground).
+     This one is the only CURVED mark in the directory: concentric rings
+     centred on the card, so the ground echoes the round shoulder of the one
+     glyph this archetype is built around. At a glance it is a ripple, not a
+     hatch — nothing else in the set can be mistaken for it.
+>>>>>>> origin/main
 
 /* ---- canvas ------------------------------------------------------------- */
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 
+<<<<<<< HEAD
 /* THE CANVAS IS 1080x1440. `render-carousel.ts` defaults `canvas` to
    `{ w: 1080, h: 1440 }` and every clause of the interest floor measures
    against those coordinates. This system's first draft said 1350 — Instagram's
@@ -75,6 +354,49 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
+=======
+     2px rings on a 22px pitch, by the same cell arithmetic every mark in this
+     directory answers to: a 2px stroke can never fill three quarters of a 4px
+     cell, so the rings add no drawn-device coverage and the card's device
+     share stays the TINT's. The pitch also bounds the largest empty rectangle
+     inside the card to one ~20px gap, and — the reason a bare graded panel is
+     not an option here — a cell crossed by a ring is not FLAT, which is what
+     stops a panel covering half the frame from out-voting the real ground for
+     `backgroundHex` (see the third rule in this file's header). */
+  /* Asked of the quote's CHILDREN. `.quote-text` is a twin-slot pair now (see
+     the twin-slot block below), so it has two element children on every render
+     and `:not(:empty)` on the host itself would be true on a plate with no
+     quote on it — the panel would paint, and the panel IS this archetype's
+     drawn device, so an empty quote card would have cleared the role floors
+     this guard exists to make it fail. */
+  .quote-block:has(.quote-text > span:not(:empty)) {
+    /* ── THE PANEL'S READING EDGE IS UNDER THE ACCENT SWITCH. ──
+       It was `solid var(--accent)`, unconditionally, and measured through the
+       production composition it was the LOUDEST accent object in the whole
+       carousel: this rule's own inline-start border at 14x860 in the full accent
+       at `m`, on slide 3 — a slide the run's own system had NOT switched the
+       accent on for, beside a 96x18 mark on the slides it had. One object, two
+       permissions, and 860px against 18px of length.
+       It keeps its width and its position, because it is the archetype's
+       quotation mark and it belongs to the panel. What it no longer does is
+       spend the brand's colour on a plate the system chose to keep quiet: off
+       the switch it is the same structural tone every other panel edge in the
+       set uses, and the panel's own tint still says "this is a quotation". */
+    border-inline-start: calc(14px * var(--ts, 1)) solid var(--fx-accent-ink, color-mix(in srgb, var(--fg) 26%, transparent));
+    /* ── 2026-09-15: THE DOT FIELD IS DELETED. ──
+       A `repeating-radial-gradient` of 2px dots on a 22px pitch is the one the
+       owner named directly: ״לפעמים אתה עושה נקודות ברקע שממש קשה להסתכל על
+       זה״ — dots in the background that are genuinely hard to look at. It is
+       the same rule every other texture in this directory went under
+       (restraint reference rule 1) and it survived the first sweep only
+       because that pass matched `repeating-linear-gradient` and this one is
+       radial. The panel keeps its accent tint and its 14px accent border. */
+    background-image:
+      linear-gradient(162deg,
+        color-mix(in srgb, var(--accent) 14%, transparent) 0%,
+        color-mix(in srgb, var(--accent) 8%, transparent) 100%);
+  }
+>>>>>>> origin/main
 
 /* ── THE BRAND ACCENT ENTERS HERE, AND ONLY HERE. ──
    `buildBrandHeadHtml` emits `--bg`, `--fg`, the faces and the logo zone — but
@@ -198,6 +520,7 @@ body[data-ground="grid"] .ground {
   background-size: 100% 540px, 100% 540px;
 }
 
+<<<<<<< HEAD
 /* GLYPH — one oversized accent form bled off a corner. No letterform: a text
    glyph in the ground is the thing that read as a watermark on a template. */
 body[data-ground="glyph"] .ground {
@@ -208,6 +531,45 @@ body[data-ground="glyph"] .ground {
   background-position: 108% -10%;
   background-size: 74% 560px;
 }
+=======
+     Scoped to `:has(.sc-figure-band img)`, so a plate with no picture keeps the
+     exact flex it had before the band existed and every share the calibration
+     measured on it still holds. */
+  body:has(.sc-figure-band img[src]:not([src=""])) .quote-block { flex: 1 0 auto; }
+  /* ── PHASE 5.5: hidden unless the system switches it on. ──
+     A contentless 8px accent rule under the picture band. `--fx-accent` is set
+     by `visualSystemCssBlock` on at most three slides of a carousel; on the
+     rest this mark does not paint at all. It is `display` rather than an ink
+     swap because the bar is a positioned `::after` with no layout to preserve. */
+  .sc-figure-band::after {
+    display: var(--fx-accent, none);
+    content: ""; position: absolute; inset-block-end: 0; inset-inline: 0;
+    block-size: calc(8px * var(--ts, 1)); background: var(--accent);
+  }
+  .quote-mark {
+    font-family: var(--f-display); font-style: italic; font-weight: 400;
+    font-size: calc(var(--t-figure) * 0.8182); line-height: 0.55; color: var(--accent);
+    /* The tight leading IS the lockup (see the header). The padding gives the
+       glyph the room its line box does not have, so the DOM probe stops
+       reporting the mark as an overflowing element; the negative margin
+       underneath puts the optical gap back where legacy had it. */
+    padding-block-end: 0.5em; margin-block-end: calc(-58px * var(--ts, 1));
+  }
+  /* BOUND TO THE QUOTE, like every other ink-bearing layer in this directory.
+     This glyph is hard-coded in the markup, not substituted, so it painted on
+     EVERY render including one where `quoteText` came through empty: a 180px
+     accent-coloured mark, 816x189 device px, measuring 9.9% of the frame as a
+     text-bearing leaf. That is ink with no content justifying it — the exact
+     rule `cover.html`'s header states for this whole set — and it defeated the
+     DOM half of clause G on a plate with nothing to read on it: the empty
+     quote card reported `textBoxShare` 0.0992 against a 0.02 floor and looked
+     to the probe like a slide that had copy. `display: none`, not
+     `visibility: hidden`, so it leaves no box for the probe to sum. Asked of
+     the CHILDREN for the same reason the panel guard above is: `.quote-text`
+     is a twin-slot pair and is never `:empty` itself. */
+  .quote-block:not(:has(.quote-text > span:not(:empty))) .quote-mark { display: none; }
+  /* ── A SHORT PULL QUOTE IS SET LARGE, and the base rung stays at 84. ──
+>>>>>>> origin/main
 
 /* ---- the BOUNDED picture ------------------------------------------------ */
 /* TWO KINDS OF PICTURE, AND THE DIFFERENCE IS DELIBERATE (RFC-20 §11.1).
@@ -274,6 +636,7 @@ body[data-ground="glyph"] .ground {
      one edge of a 1142px field leaves 35-44% — measured on this tree, on six of
      eight plates. Splitting the air into two gaps is what a composition does.
 
+<<<<<<< HEAD
      `space-between` and not `flex-end`: when content is taller than the field
      it falls back to packing from the START, so overflow goes DOWNWARD where
      `scrollHeight` reports it and the fit ladder can step. `flex-end` overflows
@@ -305,6 +668,81 @@ body[data-ground="glyph"] .ground {
    does that, so this only has to stop a `top` anchor overriding it. */
 body:has(.hero) .plate::before { display: block; }
 body:has(.hero) .plate::after { display: none; }
+=======
+     So the type comes up — but as a STEP for the quote that needs it, not as
+     a new base rung. Raising the base to 108px was tried first (c7d5d1c) and
+     CI 35029212820 refused it one file over: `template-mark-slots` reported
+     `quote-card.html rtl l: marked render overflows`, because every quote up
+     to 70 characters at `l` was now set at 108 x 1.18 x 0.94 = 120px in a
+     panel capped at 860px. The ladder's thresholds were tuned around 84px
+     and a base rung is every quote's size; a step is one quote's. */
+  .quote-text {
+    font-family: var(--f-display); font-style: italic; font-weight: 500;
+    font-size: calc(var(--t-statement) * 1); line-height: 1.26; letter-spacing: -0.008em; text-wrap: balance;
+    padding-block-end: max(0.22em, var(--mk-face-bleed, 0em));
+  }
+  .quote-text.small { font-size: calc(var(--t-statement) * 0.7619); line-height: 1.24; }
+  .quote-text.tiny { font-size: calc(var(--t-statement) * 0.5952); line-height: 1.28; }
+  /* ── THE STEP UP, for a quote that is a single breath. ──
+     The ladder only ever stepped DOWN, so a 31-character quote got the same
+     84px as a 90-character one and sat as two short lines in the middle of an
+     860px panel. A quote this short is the plate's whole subject and can carry
+     display size: 104px is `cover.html`'s `.headline` measure, the panel holds
+     four lines of it under the cap at `l`, and the `he rtl short s` row reads
+     `inkShare` 0.0200 with it (from 0.0157) — the type doing the work rather
+     than a texture. The step is taken from the same `mkLen` count as the
+     others, below the `small` threshold at every scale, so no quote the ladder
+     already sized moves: English SHORT is 44 characters and stays at 84px, and
+     the mark-slots fixtures are untouched. */
+  .quote-text.big { font-size: calc(var(--t-display) * 0.8387); line-height: 1.16; }
+  /* ── INSIDE THE PANEL, ON ITS BLOCK-END PADDING EDGE. ──
+     It was a sibling BELOW the panel, which put the credit on bare ground
+     level with the `@handle` watermark — read on
+     `.local/owner-out/geektime-he-s-03-quote-card.png`, 130px under a panel
+     that was itself two-thirds air. A quotation, its mark and its attribution
+     are one object; a reader who has to cross a gap and a background change
+     to find out who said it is reading two.
+     `margin-block-start: auto` rather than flow order alone: `.quote-block` is
+  /* ── OUTSIDE THE PANEL, AND ATTACHED TO IT. ──
+     The defect is real and it is the GAP, not the side of the border the
+     credit is on: read on
+     `.local/owner-out/geektime-he-s-03-quote-card.png`, "ראש תחום תפעול, 2026"
+     sat 130px below the panel on bare ground, level with `@geektime` — so a
+     reader meets the credit as part of the watermark strip rather than as part
+     of the quotation.
+     MOVING IT INSIDE THE PANEL WAS TRIED FIRST AND MEASURED WORSE, which is
+     why it is still out here. With `.qc-foot` as `.quote-block`'s last child,
+     the panel takes the foot's height out of the plate's flow and stretches to
+     its 860px cap: `largestEmptyRectShare` went geektime en s 0.3259 -> 0.4002,
+     en m 0.3097 -> 0.3384, he s 0.3626 -> 0.4613, he m 0.3672 -> 0.4092 — and
+     at `l` the panel reached 1015px, over half the frame, which would switch
+     clause B's `clippedEdgeShare` limb off on this archetype
+     (`FULL_BLEED_IMAGERY_SHARE`). A composition change that trades a 130px gap
+     for ten points of dead space and a disarmed clause is not a fix.
+     What closes it instead is the panel's own `margin-block-end`, cut from
+     96px to 44px so the credit sits a line's height under the rule it belongs
+     to. `body`'s 96px `padding-block-end` still holds the foot off the
+     `@handle` strip, so nothing was reserving that 96px but habit. */
+  .qc-foot { position: relative; z-index: 3; flex: 0 0 auto; display: flex; align-items: center; gap: calc(26px * var(--ts, 1)); }
+  /* PHASE 5.5 — a contentless 64x6 accent dash before the attribution, hidden
+     unless the visual system switched this slide's accent on. */
+  /* ── PHASE 5.5, ITEM C: THE ACCENT MARK IS ONE GEOMETRY, NOT SIX. ──
+     The run's `accentForm` decides the mark's shape ONCE and publishes it as
+     `--fx-accent-w` / `--fx-accent-h`. Before this the length was a property of
+     whichever template the writer's layout landed on — 64px on a quote card,
+     200px on a stat plate, 240px on a closer, full measure on a panel — so the
+     three slides the accent switch allows a mark on carried three different
+     shapes, which is the owner's *"sometimes a long purple marker and
+     sometimes a short one"* read as geometry rather than as colour. Each file
+     keeps its own literal as the var() fallback, so a document composed
+     without the run sheet is byte-identical. */
+  .qc-foot::before { display: var(--fx-accent, none); content: ""; flex: 0 0 auto; inline-size: var(--fx-accent-w, calc(64px * var(--ts, 1))); block-size: var(--fx-accent-h, calc(6px * var(--ts, 1))); background: var(--accent); }
+  .qc-foot:has(.quote-attr:empty) { display: none; }
+  .quote-attr {
+    font-family: var(--f-body); font-size: calc(var(--t-label) * 0.8438); font-weight: 500;
+    letter-spacing: 0.01em; color: color-mix(in srgb, var(--fg) 82%, transparent);
+  }
+>>>>>>> origin/main
 
 /* ── THE SPACER, NOT AN AUTO MARGIN ON A CHILD. ──
    Anchoring by putting `margin-block-start: auto` on `:first-child` breaks the
@@ -347,6 +785,7 @@ body[data-anchor="centre"] .plate::after {
    fit ladder can see it. */
 body[data-anchor="split"] .plate { justify-content: space-between; }
 
+<<<<<<< HEAD
 /* ---- the brand band: mark on one side, eyebrow on the other ------------- */
 .zone-mark {
   position: absolute;
@@ -743,6 +1182,79 @@ body:not(:has(#quote > span:not(:empty))) .quote-block { background-image: none;
   <div class="ground" aria-hidden="true"></div>
 
   <div class="zone-mark">
+=======
+     WHAT THE PAIR DOES NOT BUY ON THIS ARCHETYPE, stated here so nobody
+     reaches for it: `.quote-text` is set ITALIC at 84px, and an italic run's
+     background box is an upright rectangle while the glyphs it is meant to
+     sit behind lean. `block` is therefore refused on this file whatever the
+     ground's luminance says (RFC-17 §5.4) — the kinds that work here are the
+     ones drawn from the baseline or in the glyphs themselves. That is a
+     decision for the shared mark sheet, not for this file; what this file
+     owes it is the slot, and the slot is here. */
+  /* The twin host's block-start bleed — see `cover.html` for the measurement
+     and why it is here rather than only in the shared mark sheet. */
+  :has(> span.mk-plain) { padding-block-start: max(var(--mk-twin-bleed, .22em), var(--mk-face-bleed, 0em)); }
+  .quote-text:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
+
+  /* Standing brand furniture. The brand head fragment (`buildBrandHeadHtml`)
+     restates both rules and lands AFTER this sheet, so a client with a kit
+     keeps its own placement; these defaults exist because a brandless render
+     otherwise lays the handle out in normal flow, on top of the quote. */
+  .brand-handle {
+    position: absolute; bottom: 34px; inset-inline-start: 44px; z-index: 6;
+    font-family: var(--f-mono); font-size: var(--t-micro); letter-spacing: 0.08em;
+    color: color-mix(in srgb, var(--fg) 55%, transparent);
+  }
+  /* The badge RULE outlives the badge SLOT: the `seriesBadge` slot is deleted
+     from this file's markup, but a CLIENT's own template may still carry it
+     (it is still in `KNOWN_SLOT_NAMES` and still a `LAYOUT_FIELD_KEY` for
+     exactly that reason), and a badge with no placement rule lays itself out
+     in normal flow over the copy. */
+  .brand-badge {
+    position: absolute; top: 36px; inset-inline-end: var(--mx); z-index: 6;
+    font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro);
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);
+  }
+  /* An @handle, a URL and a #hashtag are LTR strings, and a Hebrew or Arabic
+     slide lays them out inside an RTL paragraph: the leading `@` is a bidi
+     NEUTRAL, so it takes the paragraph embedding level and ends up on the
+     wrong side — every Hebrew slide in the tree shipped `karoslabs@`. The
+     `<bdi dir="ltr">` in the markup is the fix; `dir` on the DIV would also
+     have re-resolved its own `inset-inline-start` and moved the watermark to
+     the other corner. The extra :has() selector is what keeps an empty slot
+     hidden now that the div always has an element child. */
+  /* ── PHASE 5.5: THE PAGINATION INDEX. ──
+     One index, the same size in the same corner in all eight templates,
+     painted on every interior slide or on none
+     (`ClientVisualSystem.pagination`, frozen per client). It replaces the
+     460px `.ground-glyph` that existed in two of the eight files, which is
+     what the owner saw as *"על חלק מהשקופיות כתוב מספר ועל חלק לא"*. Hidden
+     unless switched on — the inversion this phase applies to every mark in
+     the set. See `slide.html` for the full note. */
+  .pg-index {
+    display: var(--fx-pagination, none);
+    position: absolute; inset-block-end: 40px; inset-inline-end: 44px; z-index: 6;
+    font-family: var(--f-mono); font-size: var(--t-micro); letter-spacing: 0.14em;
+    color: color-mix(in srgb, var(--fg) 45%, transparent);
+  }
+  .brand-badge:empty, .brand-handle:empty, .brand-handle:has(> bdi:empty) { display: none; }
+</style>
+</head>
+<body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}">
+  <div class="ground" aria-hidden="true"></div>
+  <!-- The `seriesBadge` slot was here and is deleted. It printed an INTERNAL
+       label ("BY THE NUMBERS", "{ FIELD NOTES }") in the same corner on every
+       slide of every post — a name for the pipeline's own format that a reader
+       cannot use, repeated eight times, which is the repetition a reader reads
+       as machine-made. On geektime it also collided with the brand logo disc
+       in that corner and clipped to `{ FIELD` on all eight plates. What
+       replaces it is this slide's OWN topical line (`kicker`, in the
+       composition where a label belongs), on the slides this run's visual
+       system allows one. -->
+  <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
+  <span class="pg-index" aria-hidden="true">{{slideIndex}}</span>
+  <div class="qc-head">
+>>>>>>> origin/main
     <div class="eyebrow">{{kicker}}</div>
   </div>
 
@@ -754,10 +1266,17 @@ body:not(:has(#quote > span:not(:empty))) .quote-block { background-image: none;
       <div class="quote-attr source-line">{{attribution}}</div>
     </div>
   </div>
+<<<<<<< HEAD
 
   <div class="zone-foot">
     <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
     <span class="pg-index" aria-hidden="true">{{slideIndex}}</span>
+=======
+  <!-- The attribution sits under the panel and CLOSE to it — see `.qc-foot`'s
+       rule for the measurement that put it back outside after a day inside. -->
+  <div class="qc-foot">
+    <div class="quote-attr">{{attribution}}</div>
+>>>>>>> origin/main
   </div>
 
   <script>

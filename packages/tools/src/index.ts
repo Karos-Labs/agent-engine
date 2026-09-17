@@ -22,6 +22,7 @@ export * from "@agent-engine/tool-karos-landing";
 export * from "@agent-engine/tool-karos-ledger";
 export * from "@agent-engine/tool-karos-media";
 export * from "@agent-engine/tool-karos-memory";
+export * from "@agent-engine/tool-karos-meta";
 export * from "@agent-engine/tool-karos-publish";
 export * from "@agent-engine/tool-karos-reputation";
 export * from "@agent-engine/tool-karos-research";
@@ -94,6 +95,16 @@ export * from "@agent-engine/tool-karos-video";
  * deployment has not enabled Google connectors" is a choice — the SEO/GEO
  * score is fully computable without any of them (Layer 2 is the validated
  * default).
+ *
+ * `meta.*` (`@agent-engine/tool-karos-meta`) is exported here and excluded
+ * from `createAllKarosTools()` on the same principle, sharper again: it
+ * reaches the Meta Graph API on Karos Labs' OWN shared Business Manager
+ * System User token (`META_SYSTEM_USER_TOKEN`), so a caller asking for "all
+ * karos tools" must not silently acquire that egress. `meta.publishInstagramPost`
+ * specifically is also double-gated on `META_PUBLISH_ENABLED` — see that
+ * package's README — because unlike every other bundle here, it can WRITE to
+ * a client's live Instagram account, not just read. `apps/agent-server` wires
+ * `createKarosMetaTools()` in explicitly, alongside `media.*`/`connectors.*`.
  *
  * `mediaStore` (Task 1, RFC-01's GCS media store) is optional, mirroring
  * `store`: wire it (via `GCS_MEDIA_BUCKET` at your composition root) to make

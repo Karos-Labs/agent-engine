@@ -24,6 +24,7 @@
     "@agent-engine/tool-karos-ledger": "^0.0.1",
     "@agent-engine/tool-karos-media": "^0.0.1",
     "@agent-engine/tool-karos-memory": "^0.0.1",
+    "@agent-engine/tool-karos-meta": "^0.0.1",
     "@agent-engine/tool-karos-publish": "^0.0.1",
     "@agent-engine/tool-karos-reputation": "^0.0.1",
     "@agent-engine/tool-karos-research": "^0.0.1",

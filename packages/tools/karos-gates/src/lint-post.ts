@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { GateVerdict } from "@agent-engine/core";
 import { defineTool, success } from "@agent-engine/tool-common";
 
-const TOOL_VERSION = "1.1.0";
+const TOOL_VERSION = "1.2.0"; // 1.2.0: X counts URLs as 23 and emoji as 2; hook, hashtag and mention caps (Craft 01 §5/§10/§11, D24)
 
 /**
  * Em dash, en dash, and a literal double ASCII hyphen (the typed stand-in for
@@ -103,7 +103,67 @@ const DEFAULT_BANNED_PHRASES = [
   "don't miss out",
   "limited time",
   "act now",
+  // The negative-parallelism tell, named by both Craft 01 §5 and Craft 02 §5
+  // and by Lola's LinkedIn findings. Written out in its common spellings
+  // rather than as a regex, because the phrase bank is a substring match and
+  // a regex here would be the only one in the list.
+  "not just a",
+  "not just an",
+  "not just about",
+  "it's not just",
+  "it isn't just",
+  "is not just",
 ];
+
+/**
+ * X counts a post's length its own way, and `String.length` is not it.
+ *
+ * Every URL counts as exactly 23 characters whatever its real length (X
+ * wraps them all in t.co), and every emoji counts as 2. Counting plainly
+ * meant a 275-character post carrying two links measured as 275 here and as
+ * 319 on X — it passed the gate and would have been refused on publish, or
+ * silently truncated by whatever posted it.
+ *
+ * Source: https://docs.x.com/resources/fundamentals/counting-characters.
+ *
+ * The emoji regex uses `Extended_Pictographic` and folds ZWJ sequences and
+ * variation selectors into one unit, because a family emoji is one glyph to
+ * a reader and one weighted pair to X, not seven code points.
+ */
+const URL_PATTERN = /https?:\/\/\S+/g;
+const EMOJI_PATTERN = /\p{Extended_Pictographic}(\uFE0F|\u200D\p{Extended_Pictographic})*/gu;
+const X_URL_WEIGHT = 23;
+const X_EMOJI_WEIGHT = 2;
+
+export function weightedLengthForX(text: string): number {
+  let count = 0;
+  const withoutUrls = text.replace(URL_PATTERN, () => {
+    count += X_URL_WEIGHT;
+    return "";
+  });
+  const withoutEmoji = withoutUrls.replace(EMOJI_PATTERN, () => {
+    count += X_EMOJI_WEIGHT;
+    return "";
+  });
+  return count + [...withoutEmoji].length;
+}
+
+/** True for the two platform keys that mean X. */
+function isX(platform: string): boolean {
+  return platform === "x" || platform === "twitter";
+}
+
+/**
+ * Craft 01 §5: the hook is what a scrolling reader sees, and everything that
+ * is not the claim costs them. 70 characters is the ceiling; an @, a #, a
+ * link or an emoji in it is a wasted first impression, and the craft page
+ * bans all four by name.
+ */
+const HOOK_MAX_CHARACTERS = 70;
+
+/** Craft 01 §11: at most one hashtag, at most two mentions, neither leading. */
+const X_MAX_HASHTAGS = 1;
+const X_MAX_MENTIONS = 2;
 
 const PLATFORM_MAX_LENGTH: Record<string, number> = {
   twitter: 280,
@@ -166,6 +226,17 @@ export const LintPostInputSchema = z.object({
     .describe(
       "Optional continuation posts (thread parts 2..N). Each is checked against the same platform length limit and anti-AI-tell rules as `text`; a failure names the part (part 1 is `text`).",
     ),
+  /**
+   * The draft's own hook field, when the platform has a rule about it.
+   *
+   * Passed separately rather than inferred from `text`'s first line because
+   * the hook IS a field on the draft — inferring it would let a model satisfy
+   * the rule in the field it reports and break it in the text it ships.
+   */
+  hook: z
+    .string()
+    .optional()
+    .describe("The draft's hook, checked on X against Craft 01 §5: at most 70 characters, and no @, #, link or emoji."),
 });
 export type LintPostInput = z.infer<typeof LintPostInputSchema>;
 
@@ -176,8 +247,14 @@ export const lintPost = defineTool<LintPostInput, GateVerdict>({
     "Basic hygiene (non-empty, within the platform's length limit, no unresolved markdown link syntax) plus a mechanical anti-AI-tell check.",
   version: TOOL_VERSION,
   inputSchema: LintPostInputSchema,
-  async execute({ text, platform, checkAntiSlop, maxExclamationMarks, bannedPhrases, parts }) {
+  async execute({ text, platform, checkAntiSlop, maxExclamationMarks, bannedPhrases, parts, hook }) {
     const options = { platform, checkAntiSlop, maxExclamationMarks, bannedPhrases };
+    // The hook is checked once, against the draft's own field, before the body
+    // — a post whose opening is wrong is wrong whatever the rest says.
+    if (hook !== undefined && isX(platform)) {
+      const hookVerdict = lintHookForX(hook);
+      if (hookVerdict !== undefined) return success<GateVerdict>(hookVerdict);
+    }
     const main = lintOne(text, options);
     if (main.verdict !== "pass") return success<GateVerdict>(main);
     for (const [index, part] of parts.entries()) {
@@ -195,7 +272,10 @@ export const lintPost = defineTool<LintPostInput, GateVerdict>({
     }
     return success<GateVerdict>({
       verdict: "pass",
-      evidence: [`within the ${platform} length limit (${text.length}/${PLATFORM_MAX_LENGTH[platform] ?? PLATFORM_MAX_LENGTH.generic!})`, ...(parts.length > 0 ? [`${parts.length} thread part(s) also within the limit`] : [])],
+      evidence: [
+      `within the ${platform} length limit (${isX(platform) ? weightedLengthForX(text) : text.length}/${PLATFORM_MAX_LENGTH[platform] ?? PLATFORM_MAX_LENGTH.generic!})`,
+      ...(parts.length > 0 ? [`${parts.length} thread part(s) also within the limit`] : []),
+    ],
       toolVersion: TOOL_VERSION,
     });
   },
@@ -221,13 +301,23 @@ function lintOne(text: string, { platform, checkAntiSlop, maxExclamationMarks, b
   }
 
   const limit = PLATFORM_MAX_LENGTH[platform] ?? PLATFORM_MAX_LENGTH.generic!;
-  if (text.length > limit) {
+  // On X the length is the WEIGHTED one (23 per URL, 2 per emoji), because
+  // that is the number the platform applies. Everywhere else a character is a
+  // character.
+  const measured = isX(platform) ? weightedLengthForX(text) : text.length;
+  if (measured > limit) {
+    const how = isX(platform) && measured !== text.length ? ` (weighted: URLs count 23, emoji count 2 — ${text.length} plain)` : "";
     return {
       verdict: "content_fail",
-      evidence: [`length ${text.length} exceeds the ${platform} limit of ${limit}`],
-      reason: `text exceeds the ${platform} length limit (${limit} characters)`,
+      evidence: [`length ${measured} exceeds the ${platform} limit of ${limit}${how}`],
+      reason: `text exceeds the ${platform} length limit (${limit} characters)${how}`,
       toolVersion: TOOL_VERSION,
     };
+  }
+
+  if (isX(platform)) {
+    const shape = lintShapeForX(text);
+    if (shape !== undefined) return shape;
   }
 
   const unresolvedLinkMatch = /\[[^\]]+\]\(\s*\)/.exec(text);
@@ -278,7 +368,87 @@ function lintOne(text: string, { platform, checkAntiSlop, maxExclamationMarks, b
 
   return {
     verdict: "pass",
-    evidence: [`within the ${platform} length limit (${text.length}/${limit})`],
+    evidence: [`within the ${platform} length limit (${measured}/${limit})`],
     toolVersion: TOOL_VERSION,
   };
+}
+
+/**
+ * Craft 01 §5, on the draft's `hook` field. Returns `undefined` when it passes.
+ */
+function lintHookForX(hook: string): GateVerdict | undefined {
+  const trimmed = hook.trim();
+  const length = weightedLengthForX(trimmed);
+  if (length > HOOK_MAX_CHARACTERS) {
+    return {
+      verdict: "content_fail",
+      evidence: [`hook is ${length} characters, limit is ${HOOK_MAX_CHARACTERS}`],
+      reason: `the hook is ${length} characters and the limit is ${HOOK_MAX_CHARACTERS}: it is the one line a scrolling reader sees, so it carries the claim and nothing else`,
+      toolVersion: TOOL_VERSION,
+    };
+  }
+  const offenders: string[] = [];
+  if (/@\w/.test(trimmed)) offenders.push("a mention");
+  if (/#\w/.test(trimmed)) offenders.push("a hashtag");
+  if (URL_PATTERN.test(trimmed)) offenders.push("a link");
+  URL_PATTERN.lastIndex = 0;
+  if (EMOJI_PATTERN.test(trimmed)) offenders.push("an emoji");
+  EMOJI_PATTERN.lastIndex = 0;
+  if (offenders.length > 0) {
+    return {
+      verdict: "content_fail",
+      evidence: [`hook contains ${offenders.join(", ")}`],
+      reason: `the hook contains ${offenders.join(", ")}: the first line is the claim, and every one of those spends the reader's attention before the claim arrives`,
+      toolVersion: TOOL_VERSION,
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Craft 01 §11's two counting rules, on the post body. Returns `undefined`
+ * when it passes.
+ *
+ * A hashtag or a mention is not banned — one of each can earn its place
+ * inside a sentence. What is banned is the block of five at the bottom and
+ * the tag chain, both of which read as reach-farming rather than as writing.
+ */
+function lintShapeForX(text: string): GateVerdict | undefined {
+  const hashtags = text.match(/(?<![\w&])#\w+/g) ?? [];
+  if (hashtags.length > X_MAX_HASHTAGS) {
+    return {
+      verdict: "content_fail",
+      evidence: hashtags,
+      reason: `${hashtags.length} hashtags, and the limit on X is ${X_MAX_HASHTAGS}: one that belongs inside a sentence is fine, a block at the bottom is not`,
+      toolVersion: TOOL_VERSION,
+    };
+  }
+  // A handle, not an email address: `@` must not be preceded by a word
+  // character, which is what tells "@acme" from "hi@acme.com".
+  const mentions = text.match(/(?<![\w.])@\w+/g) ?? [];
+  if (mentions.length > X_MAX_MENTIONS) {
+    return {
+      verdict: "content_fail",
+      evidence: mentions,
+      reason: `${mentions.length} mentions, and the limit on X is ${X_MAX_MENTIONS}: mention only the accounts the post actually discusses`,
+      toolVersion: TOOL_VERSION,
+    };
+  }
+  if (/^\s*@\w/.test(text)) {
+    return {
+      verdict: "content_fail",
+      evidence: [text.slice(0, 40)],
+      reason: "the post opens with a mention: X treats a leading @ as a reply and shows it to almost nobody, and a reader sees a handle before they see the point",
+      toolVersion: TOOL_VERSION,
+    };
+  }
+  if (/\*\*[^*]+\*\*|__[^_]+__/.test(text)) {
+    return {
+      verdict: "content_fail",
+      evidence: [(/\*\*[^*]+\*\*|__[^_]+__/.exec(text) ?? [""])[0]],
+      reason: "the post contains markdown bold, which X renders literally as asterisks: plain text only",
+      toolVersion: TOOL_VERSION,
+    };
+  }
+  return undefined;
 }

@@ -370,7 +370,22 @@ export async function resolveSocialMedia(
     };
 
     // ── Tier 1a: a screenshot of the cited page ──
-    if (brief.kind === "screenshot") {
+    //
+    // NOT on LinkedIn (06 Agent Improve, Lola, 2026-09-07, three rows). The
+    // agent shipped a capture of a third-party article as the post image: the
+    // publisher's logo and their ad were the focal point, the page was half
+    // rendered, most of the frame was browser chrome, the copy duplicated the
+    // post's own text, and a reader could not tell who had written it. The
+    // measured half is as bad: LinkedIn renders a feed image about 550px wide,
+    // so 14px body copy inside a 1200px capture is unreadable, and the capture
+    // is the wrong ratio for the slot either way (1200x627 or 1080x1350).
+    //
+    // A screenshot of a PRODUCT — a dashboard, a chart, the thing itself —
+    // is still right and still reachable: it arrives as client-attached media
+    // or as an article's own lead image, both of which clear the vision gate
+    // below. What is refused is pointing a browser at a URL and shipping
+    // whatever comes back.
+    if (brief.kind === "screenshot" && options.platform !== "linkedin") {
       const screenshot = tools["media.screenshotPage"];
       const url = brief.sourceUrl && options.sources.some((s) => s.url === brief.sourceUrl) ? brief.sourceUrl : options.sources[0]?.url;
       if (screenshot === undefined) attempts.push("screenshot: media.screenshotPage is not registered");
@@ -386,6 +401,10 @@ export async function resolveSocialMedia(
           attempts.push(`screenshot: ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}`);
         }
       }
+    }
+
+    if (brief.kind === "screenshot" && options.platform === "linkedin") {
+      attempts.push("screenshot: refused on LinkedIn — a web-page capture ships the publisher's chrome and is illegible at feed scale");
     }
 
     // ── Tier 1b: the cited articles' own lead images ──
