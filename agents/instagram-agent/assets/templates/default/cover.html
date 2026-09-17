@@ -842,7 +842,11 @@ body.ta-center .acc { margin-inline: auto; }
      object rather than a screen — but it YIELDS when the lockup needs the room.
      Rigid, it pushed the document past the canvas and `html`, `body` and
      `.plate` all reported as overflowing their own box. */
-  flex: 0 1 auto;
+  /* Rigid, and the LOCKUP is what yields. Letting the band shrink squeezed the
+     bounded object inside it until the device overflowed its own box; the fit
+     ladder already steps the type down when the plate does not fit, which is
+     the right thing to give up. */
+  flex: 0 0 auto;
   min-block-size: 0;
   display: flex;
   align-items: flex-end;
@@ -956,7 +960,8 @@ body:not(:has(#title > span:not(:empty))) .cov-field { background-image: none; }
 
 /* The lockup is one block: mark, title, subtitle, on one rhythm. */
 .lockup {
-  flex: none;
+  flex: 0 1 auto;
+  min-block-size: 0;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
