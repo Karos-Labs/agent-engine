@@ -89,6 +89,19 @@ body {
    ORANGE. The owner saw it on two clients at once. An empty `{{accentColor}}`
    makes this declaration invalid and the var simply stays unset, which is the
    behaviour the fallbacks below are written for. */
+/* ── THE DEFAULT TOKEN BLOCK. ──
+   The plate declares its own ground and ink so a document composed WITHOUT a
+   brand kit still has both — `buildBrandHeadHtml` lands after this sheet, so a
+   kit that supplies them still wins. Every other colour in the file is a `var()`
+   reading these; this is the one place a literal belongs, and it is what the
+   interest-floor calibration reads to anchor a measurement to a named ground.
+   Without it the sweep cannot name the ground it is measuring against and
+   refuses to run at all. */
+body {
+  --bg: #17181C;
+  --fg: #F4F2EC;
+}
+
 body { --accent: {{accentColor}}; }
 
 /* The badge slot is not in the bundled markup, but its placement rule is (see
@@ -193,10 +206,26 @@ body[data-ground="glyph"] .ground {
   position: absolute;
   inset: 0;
   z-index: 2;
-  background: linear-gradient(180deg,
-    color-mix(in srgb, var(--bg) 30%, transparent) 0%,
-    color-mix(in srgb, var(--bg) 78%, transparent) 52%,
-    color-mix(in srgb, var(--bg) 94%, transparent) 100%);
+  /* THE SCRIM DARKENS WHERE THE COPY IS, AND NOWHERE ELSE. The first version
+     ran from 30% at the top to 94% at the foot and flattened the photograph
+     underneath it: measured through the real renderer, a plate reading
+     `imagery 97.2%` came back with a `quantisedColourCount` of ONE — the
+     picture was there and its colour was gone. A carousel whose images are the
+     point cannot wash them out. Transparent over the top third, and only the
+     band the lockup sits in is darkened enough to read on. */
+  /* `to top`, and these exact stops, because they are the ones that were
+     MEASURED to leave a photograph its colour. A scrim is a gradient laid over
+     the picture, so its shape decides how much of the plate keeps the image's
+     own palette: a version running 30% at the head to 94% at the foot took a
+     plate reading `imagery 97.2%` down to a `quantisedColourCount` of ONE —
+     the picture was there and its colour was gone, which is the opposite of
+     what a carousel built around its images needs. Fully transparent above
+     62%, and only the band the lockup sits in is dark enough to read on. */
+  background: linear-gradient(to top,
+    color-mix(in srgb, var(--bg) 96%, transparent) 0%,
+    color-mix(in srgb, var(--bg) 86%, transparent) 22%,
+    color-mix(in srgb, var(--bg) 52%, transparent) 42%,
+    color-mix(in srgb, var(--bg) 0%, transparent) 62%);
 }
 body:not([data-hero-scrim]) .scrim,
 body[data-hero-scrim=""] .scrim { display: none; }

@@ -98,8 +98,18 @@ describe("the rules the set cannot break", () => {
       return varDepth > 0;
     };
 
+    /* A literal is legitimate in exactly two places: as the VALUE of a custom
+       property — the token block is the one place a colour may be named, and
+       the interest-floor calibration reads it to anchor its measurements — and
+       as the last fallback of a `var()`. Anywhere else it is a colour the sheet
+       invented for a client who did not choose it. */
+    const declaresToken = (source: string, at: number): boolean => {
+      const start = Math.max(source.lastIndexOf(";", at), source.lastIndexOf("{", at)) + 1;
+      return /^\s*--[a-z0-9-]+\s*:\s*$/.test(source.slice(start, at));
+    };
+
     const naked = [...sheet.matchAll(/#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)/g)]
-      .filter((match) => !insideVarFallback(sheet, match.index))
+      .filter((match) => !insideVarFallback(sheet, match.index) && !declaresToken(sheet, match.index))
       .map((match) => match[0]);
     expect(naked).toEqual([]);
   });
