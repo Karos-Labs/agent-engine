@@ -905,7 +905,31 @@ export function buildBrandHeadHtml(
   // `<link>` a non-default family needs. A client with no kit reaches none of
   // this and keeps the templates' own `--f-display`, which is the correct
   // degradation: the fleet default is a real face, just a shared one.
-  if (options.system !== undefined) css.push(clientVisualSystemCss(options.system, { script: options.script }));
+  if (options.system !== undefined) {
+    /* ── THE BRAND KIT'S OWN DISPLAY FACE WINS. ──
+     *
+     * This block lands AFTER the kit's `cssVars`, so its `--f-display` beat the
+     * client's on every run that had one: `thepitchbydeel` declares
+     * `'Inter', Georgia, serif` in its kit and rendered in Fraunces, because
+     * the register overwrote it. A client's typeface is part of the brand
+     * voice the setup agents derive — the owner's point exactly — and a
+     * variety axis has no business overriding it.
+     *
+     * The register is not pointless: it is what gives a client with NO display
+     * face of its own a face, and what keeps two such clients apart. So it
+     * fills a gap and never takes a decision that has already been made.
+     */
+    const kitNamesDisplayFace = tokens.cssVars["--f-display"] !== undefined && tokens.cssVars["--f-display"].trim() !== "";
+    const systemCss = clientVisualSystemCss(options.system, { script: options.script });
+    css.push(
+      kitNamesDisplayFace
+        ? systemCss
+            .split(/\r?\n/)
+            .filter((line) => !/^\s*--f-display:/.test(line))
+            .join("\n")
+        : systemCss,
+    );
+  }
   // ── ONE HEADLINE, ONE TYPEFACE, ON A SCRIPT THE REGISTER CANNOT SET. ──
   //
   // `clientVisualSystemCss` withholds the register's Latin face on such a run

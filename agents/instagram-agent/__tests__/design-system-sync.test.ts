@@ -63,6 +63,55 @@ describe("the rules the set cannot break", () => {
     expect(offScale).toEqual([]);
   });
 
+  it("invents no colour — every colour resolves to a kit token", () => {
+    /* THE DEFECT THIS EXISTS FOR, and the owner found it by eye on two clients
+       at once. `buildBrandHeadHtml` does NOT emit `--accent`; every template
+       declared `--accent: {{accentColor}}` itself, the rewrite dropped the
+       declaration, and the whole set fell through to a literal `#ff5a1f`. A
+       client whose brand colour is purple and one whose is lime both painted
+       ORANGE rules — on plates the system had deliberately left unmarked.
+
+       A literal is legitimate ONLY as the last fallback of a `var()`, so that
+       is what this allows and nothing else.
+
+       EVERYTHING IS LOCAL TO THIS TEST, deliberately. The first version read
+       the sheet at describe scope and kept the scanner there too; a break-it
+       run then measured positions from one copy of the string against another
+       read at a different moment, the offsets landed inside a `var()` by
+       coincidence, and the guard reported a naked `#ff0000` as legitimate. It
+       has been watched refusing that exact break since. */
+    const sheet = decomment(read("_design-system.css"));
+
+    const insideVarFallback = (source: string, at: number): boolean => {
+      const start = Math.max(source.lastIndexOf(";", at), source.lastIndexOf("{", at)) + 1;
+      let depth = 0;
+      let varDepth = 0;
+      for (let i = start; i < at; i++) {
+        if (source[i] === "(") {
+          depth += 1;
+          if (source.slice(Math.max(0, i - 3), i) === "var") varDepth = depth;
+        } else if (source[i] === ")") {
+          if (depth === varDepth) varDepth = 0;
+          depth -= 1;
+        }
+      }
+      return varDepth > 0;
+    };
+
+    const naked = [...sheet.matchAll(/#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)/g)]
+      .filter((match) => !insideVarFallback(sheet, match.index))
+      .map((match) => match[0]);
+    expect(naked).toEqual([]);
+  });
+
+  it("declares the brand accent, because nothing else does", () => {
+    /* `--bg`, `--fg`, the faces and the logo zone all arrive from the kit's own
+       head block. `--accent` does not: it has always entered through the
+       template. If this declaration goes, every accent in the set silently
+       becomes `currentColor`. */
+    expect(system).toMatch(/--accent:\s*\{\{accentColor\}\}/);
+  });
+
   it.each(PLATES)("%s paints no rule of its own — the accent is the only mark", (plate) => {
     /* A 984px `border-top` on a card reads to the eye exactly like a 984px
        hairline, which is why this checks borders and not just elements. The
