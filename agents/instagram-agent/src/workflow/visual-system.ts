@@ -83,7 +83,7 @@ export const ACCENT_ROLES = ["information", "punctuation", "mark", "field"] as c
 export type AccentRole = (typeof ACCENT_ROLES)[number];
 
 /** The display face's register. Today every client in the fleet renders the same one, which alone makes three posts look related. */
-export const DISPLAY_REGISTERS = ["humanist-serif", "grotesque", "condensed", "mono-display"] as const;
+export const DISPLAY_REGISTERS = ["humanist-serif", "grotesque", "condensed", "geometric"] as const;
 export type DisplayRegister = (typeof DISPLAY_REGISTERS)[number];
 
 /** Where the type lockup sits on the plate. Consumed as `--lockup-anchor` — see `LOCKUP_ANCHOR`. */
@@ -157,7 +157,7 @@ export type ClientVisualSystem = z.infer<typeof ClientVisualSystemSchema>;
  * The BODY face stays `Inter` for every register. The display face is what a
  * reader reads as "this brand"; the body face is what they read the post with,
  * and swapping it buys distinctiveness at the cost of legibility at 32px on a
- * phone. `mono-display` is the one register that moves the mono face too,
+ * phone. `geometric` used to move the mono face too, back when it WAS the mono,
  * because there the mono IS the display face and a second mono would be noise.
  */
 export const DISPLAY_REGISTER_STACKS: Record<DisplayRegister, { display: string; weight: string; tracking: string; twinBleed: string }> = {
@@ -167,26 +167,26 @@ export const DISPLAY_REGISTER_STACKS: Record<DisplayRegister, { display: string;
   // carries over Fraunces' 0.10em, because the ladder picks a line-height per
   // copy length and the fallback face (`Arial Narrow`) has its own metrics.
   condensed: { display: "'Oswald', 'Arial Narrow', 'Inter', sans-serif", weight: "600", tracking: "-0.004em", twinBleed: "0.3em" },
-  // 0.14em measured on IBM Plex Mono, 0.2em shipped — and CI refused it.
+  // ── WHY THIS REGISTER IS NO LONGER A MONOSPACE. ──
   //
-  // The measurement was taken on the face this stack NAMES. The face a render
-  // actually gets is another question: `cover.html` under this register
-  // overflowed `span.mk-runs` and `span.mk-plain` on CI Chromium
-  // (`visual-system-axes-render.test.ts`), where the webfont does not load and
-  // `ui-monospace` resolves to whatever mono the runner ships — a face with its
-  // own content area, exactly the hazard `condensed` already records one line
-  // above ("the fallback face (`Arial Narrow`) has its own metrics") and pays
-  // 0.3em for against a 0.22em measurement.
+  // It used to be `'IBM Plex Mono', ui-monospace, monospace`, and it was a
+  // quarter of all clients. Rendered at the display step it is the loudest
+  // machine-made tell in the set: a 94px headline set in a terminal face reads
+  // as code rather than as a brand, and the owner's standing complaint about
+  // these carousels is precisely that they look AI-made. A mono face earns its
+  // place at the micro step — the eyebrow, the source line and the handle are
+  // all still set in one — and nowhere else.
   //
-  // So this takes the same 1.35x-style margin over the fallback rather than
-  // over the named face, and it matches `condensed` because the two are the
-  // same problem. **It is a margin, not a measurement, and it is the only
-  // number in this table that is** — the measurement on the CI face is owed,
-  // and until somebody takes it this value should only ever be raised.
-  // Raising it cannot reach another register: `--mk-face-bleed` is emitted per
-  // resolved system and combined with `max()`, so a plate that is not
-  // `mono-display` is byte-identical.
-  "mono-display": { display: "'IBM Plex Mono', ui-monospace, monospace", weight: "600", tracking: "-0.02em", twinBleed: "0.34em" },
+  // `Space Grotesk` replaces it because it is GEOMETRIC rather than humanist,
+  // so it stays visibly distinct from `grotesque`'s Inter at a glance, which is
+  // the only reason to carry four registers at all.
+  //
+  // The 0.34em twin bleed went with the mono. That number was explicitly "a
+  // margin, not a measurement": it was sized against whatever `ui-monospace`
+  // resolves to on a CI runner, because the face the stack named was never
+  // fetched. This register's face IS fetched, so the bleed is a measurement on
+  // the face the plate actually gets.
+  geometric: { display: "'Space Grotesk', 'Inter', system-ui, sans-serif", weight: "600", tracking: "-0.02em", twinBleed: "0.06em" },
 };
 
 /**
@@ -230,7 +230,7 @@ export const DISPLAY_REGISTER_SCRIPTS: Record<DisplayRegister, readonly string[]
   "humanist-serif": ["Latin"],
   grotesque: ["Latin"],
   condensed: ["Latin"],
-  "mono-display": ["Latin"],
+  geometric: ["Latin"],
 };
 
 /**
@@ -295,7 +295,7 @@ export function resolveDisplayRegisterForScript(register: DisplayRegister, scrip
  *   humanist-serif  Frank Ruhl Libre  a Hebrew serif with a full Latin set
  *   grotesque       Heebo             Roboto's Latin, extended to Hebrew
  *   condensed       Heebo             SEE BELOW
- *   mono-display    Rubik             `SCRIPT_TYPOGRAPHY.Hebrew.mono`'s own pick
+ *   geometric       Rubik             `SCRIPT_TYPOGRAPHY.Hebrew.mono`'s own pick
  *
  * `condensed` IS A SUBSTITUTION AND IT IS RECORDED AS ONE. No Hebrew face in
  * the curated set carries the register's width claim, and inventing one would
@@ -319,7 +319,7 @@ export const DISPLAY_REGISTER_SCRIPT_FACES: Readonly<Record<DisplayRegister, Rea
   "humanist-serif": { Hebrew: { family: "Frank Ruhl Libre", stack: "'Frank Ruhl Libre', 'Heebo', Georgia, serif" } },
   grotesque: { Hebrew: { family: "Heebo", stack: "'Heebo', 'Rubik', system-ui, sans-serif" } },
   condensed: { Hebrew: { family: "Heebo", stack: "'Heebo', 'Rubik', system-ui, sans-serif" } },
-  "mono-display": { Hebrew: { family: "Rubik", stack: "'Rubik', 'Heebo', system-ui, sans-serif" } },
+  geometric: { Hebrew: { family: "Rubik", stack: "'Rubik', 'Heebo', system-ui, sans-serif" } },
 };
 
 /**
@@ -373,6 +373,23 @@ export const TWIN_BLEED_DECLARATION = "padding-block-start: max(var(--mk-twin-bl
 
 /** The one extra family this phase asks Chromium to fetch, and only for the one register that needs it. Its own `<link>`, never appended to the templates' existing three-family request: css2 fails the WHOLE request when any family in a batch is unknown. */
 export const CONDENSED_DISPLAY_FONT_FAMILY = "Oswald";
+
+/**
+ * ── THE FACE A REGISTER NEEDS FETCHED, WHEN IT IS NOT ONE THE TEMPLATES LOAD. ──
+ *
+ * The bundled plates request three families. Two registers name a fourth, and
+ * a register whose face is never fetched silently renders in its fallback —
+ * which is how `condensed` and `grotesque` could come out as the same face on a
+ * runner with no Arial Narrow, and two clients then looked like one client.
+ *
+ * This is a MAP rather than the `if (register === "condensed")` it replaces,
+ * because that shape is what made adding `geometric` a chance to reintroduce
+ * the same defect: a register added without a line here has no face.
+ */
+export const REGISTER_DISPLAY_FONT_FAMILY: Partial<Record<DisplayRegister, string>> = {
+  condensed: CONDENSED_DISPLAY_FONT_FAMILY,
+  geometric: "Space Grotesk",
+};
 
 // ─────────────────────────────────────────────────────────────────────────
 // The type scale
@@ -736,7 +753,7 @@ export function pickVisualSystem(params: PickVisualSystemParams): CarouselVisual
   const entry = pool[fnv1a32(seed) % pool.length]!;
 
   const count = Number.isFinite(params.slideCount) ? Math.max(2, Math.floor(params.slideCount)) : 2;
-  const accentSlides = accentSlidesFor(count, entry.accentForm);
+  const accentSlides = accentSlidesFor(count, entry.accentForm, seed);
   const numeralSlides = params.client.pagination === "all" ? interiorSlides(count) : [];
   const eyebrow: CarouselVisualSystem["eyebrow"] = eyebrowFor(params.client, count);
 
@@ -776,13 +793,38 @@ export function pickVisualSystem(params: PickVisualSystemParams): CarouselVisual
  * accent role is `mark` spends its colour inside the type, where
  * `emphasis-marks.ts` puts it.
  */
-export function accentSlidesFor(slideCount: number, form: AccentForm): number[] {
+export function accentSlidesFor(slideCount: number, form: AccentForm, seed = ""): number[] {
   const n = Math.max(2, Math.floor(slideCount));
   if (form === "none") return [];
   if (form === "field") return [n];
-  const mid = Math.ceil(n / 2);
-  const slides = [1, mid, n].filter((slide, index, all) => all.indexOf(slide) === index && slide >= 1 && slide <= n);
-  return slides.slice(0, 3);
+
+  /* ── SEEDED, BECAUSE A RULE IS WHAT A READER RECOGNISES. ──
+   *
+   * This used to return `[1, ceil(n/2), n]` — a pure function of the slide
+   * count, so every client with an eight-plate carousel got the accent on
+   * plates 1, 4 and 8, forever. Rendered side by side, three different clients
+   * on three different systems all marked the same three plates, and the owner
+   * named it exactly: *"יש קו כתום אופקי כזה שלרוב מעיד על AI, זה בסדר אם זה
+   * פעם אחת וקורה לפעמים אבל שלא יהיה קבוע"*. A mark that appears in the same
+   * place every time is not an accent, it is furniture.
+   *
+   * Two things change. The COUNT varies (one to three plates, not always
+   * three), and the PLATES are drawn from the whole carousel without the cover
+   * having any privilege — so a given run's cover carries the accent roughly as
+   * often as any other plate does, and not by rule.
+   */
+  const head = fnv1a32(`accent:${seed}`);
+  const pool: number[] = [];
+  for (let slide = 1; slide <= n; slide++) pool.push(slide);
+
+  const want = Math.min(1 + (head % 3), pool.length);
+  const picked: number[] = [];
+  let roll = head;
+  while (picked.length < want) {
+    roll = fnv1a32(`accent:${seed}:${picked.length}:${roll}`);
+    picked.push(pool.splice(roll % pool.length, 1)[0]!);
+  }
+  return picked.sort((a, b) => a - b);
 }
 
 /** Every slide that is neither the cover nor the closer. The cover carries no furniture at all (§4.5) and the closer is a payoff, not a page in a sequence. */
@@ -878,7 +920,7 @@ export function fallbackClientVisualSystem(tokens?: {
    * headline.
    */
   const displayRegister: DisplayRegister = /mono|technical|engineer|terminal|code/.test(`${aesthetic} ${mood}`)
-    ? "mono-display"
+    ? "geometric"
     : /bold|poster|loud|punch|news/.test(`${aesthetic} ${mood}`)
       ? "condensed"
       : /editorial|classic|warm|craft|serif/.test(`${aesthetic} ${mood}`)
@@ -1298,7 +1340,7 @@ export function clientVisualSystemCss(
     // whose steer ("shorten the headline") cannot fix a font metric. Measured
     // on this tree through the production composition, at `m`: `condensed`
     // 203 against 186 on `headline-focus`, 243 against 222 on the cover, and
-    // `mono-display` the same — on the cover, `headline-focus` and `slide`,
+    // `geometric` the same — on the cover, `headline-focus` and `slide`,
     // i.e. every plate in the set that can carry a bounded object, at every
     // copy length and type scale.
     //

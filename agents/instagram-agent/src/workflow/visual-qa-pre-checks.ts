@@ -423,6 +423,8 @@ export const LAYOUT_FIELD_KEYS: ReadonlySet<string> = new Set([
   // the device actually reached a slot, read by `07k`'s skeleton signature
   // and by `collectDeviceIssues`. None of them counts as content.
   "groundStyle",
+  "coverForm",
+  "accentForm",
   "slideIndex",
   "deviceFigures",
   "deviceKind",

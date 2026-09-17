@@ -74,6 +74,8 @@ export const KNOWN_SLOT_NAMES: ReadonlySet<string> = new Set([
   // doc comment promises. None is content: nothing that counts prose ever
   // sees them.
   "groundStyle",
+  "coverForm",
+  "accentForm",
   "slideIndex",
   "deviceFigures",
   "deviceKind",

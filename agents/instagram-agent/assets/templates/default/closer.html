@@ -4,1146 +4,745 @@
 <meta charset="utf-8" />
 <title>instagram-agent closer slide template</title>
 <!--
-  `closer` — the last slide. The save moment, and the only slide that gets to
-  ask the reader for something.
+  `closer` — the last plate: what to take away, what to do, and where.
 
-  The 2026-09-08 audit's finding 9 named three defects, and the third was
-  "closers with no call to action". The deeper version of that defect is a
-  closer that is near-empty: a line of thanks on a bare plate, which is the
-  cheapest slide in any carousel to get wrong because nobody is looking at it
-  when the copy is written. So this file, like `cover.html`, is built so the
-  empty version cannot be rendered:
+  REBUILT 2026-09-17 on the shared design system.
 
-    * a token-driven GROUND is always painted (a texture plus a full-measure
-      accent footer band, or a display-face numeral field — chosen per run by
-      the same seeded walk `paletteForSlide` uses, see `isVariationSlot`);
-    * a RECAP STRIP of two to four mini plates, built BY CODE from the
-      carousel's own earlier slides (`buildRecapFragment`) — never a second
-      draft of the post, every plate is a verbatim fragment of a slide the
-      reader has already seen;
-    * the takeaway in the display face, and a question or a CTA under an
-      accent rule.
+  THE CTA CAN NO LONGER PRINT ON THE @HANDLE. That was a standing blocker — on
+  the last slide of every carousel a schema-maximum call to action overprinted
+  the watermark, and the collision probe could not see it. It is now structural
+  rather than measured: `.zone-foot` is a reserved band and `.plate`'s padding
+  ends above it, so there is no copy length for which the two can meet.
 
-  ── 2026-09-11, the visual rework ──
+  THE FOUR RULES THIS PLATE PAINTED ARE GONE. `.cl-recap` drew a 984px
+  `border-top`, `.cl-ask` drew a 1048px one, and each of the three `.rc-plate`
+  cards drew its own 294px one — five rules on the plate that closes a carousel
+  whose accent is a single block. The recap cards are held by space and by their
+  numerals, which is what tells a reader they are a set.
 
-  The previous revision's standing graphic was a 380x230 tinted rectangle
-  pinned in the far bottom corner, with the copy optically centred somewhere
-  above it. It measured (14% of the frame, enough for clause E) and it read as
-  an accident: a brown box with no relationship to anything else on the plate.
-  It is now a FOOTER BAND running the full measure, and the ask sits ON it —
-  so the graphic is the thing the reader's eye lands on last, which is exactly
-  where a call to action wants to be. The band composes at any content length,
-  because the column above it is elastic and the band is not.
-
-  Two mechanical rules this file now keeps, both learned from the DOM probe
-  rather than from the pixels:
-
-    * every decoration is a BACKGROUND LAYER, never a positioned child. A
-      positioned decoration that leaves its parent's box makes that parent
-      report `scrollWidth > clientWidth`, which the renderer's probe reports
-      as an overflowing element — and clause B of the interest floor fails a
-      slide on `probe.overflow` alone. The old rotated accent rule did exactly
-      that, on every closer, for a decoration nobody could see.
-    * display type carries a small `padding-block-end` in `em`. A display
-      face's glyph box is taller than a sub-1.15 line box, so the block
-      reports `scrollHeight > clientHeight` and trips the same clause.
-
-  The 16px inset on `.ground-art` is the pixel half of the same care:
-  `clippedEdgeShare` counts ink inside an 8px bleed band and fails a slide
-  over 0.4%. `.ground`'s wash may bleed, because it stays below the ink
-  threshold at every stop.
-
-  Slots: `takeaway`, `cta`, `question`, `html:recap`, plus `eyebrow` and the
-  standing furniture. Exactly one of `cta`/`question` is filled per slide —
-  see `contentFor`: a question is set as an invitation, a CTA as a line, and
-  those are two different typographic jobs rather than one slot with two
-  meanings. `html:recap` carries the recap strip, or a slide-level number
-  device when there is no recap to build.
-
-  See `stat-callout.html`'s header for why the token block is duplicated.
+  NO SLIDE NUMERAL, like the cover. Every interior plate carries one and these
+  two do not; that is the all-or-none rule, and no plate decides for itself.
 -->
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg: #17181C;
-    --fg: #F4F2EC;
-    --accent: {{accentColor}};
-    /* THE WASH TONE, and it is a mix rather than the accent itself.
-       A ground wash has to land in the measurement's 12-18 band — visible
-       tone that is not a mark — for EVERY accent the palette walk admits,
-       and the accent alone cannot do that. The only gate on --accent is
-       ACCENT_GROUND_CONTRAST_FLOOR = 3 against the ground, so a dark accent
-       sits ~92 units from the bundled ground and a pale one ~159: the same
-       14% alpha that measures 12.9 on the first measures 22.3 on the second,
-       which is INK. Rendered with a pale kit every template in this
-       directory then put ink in the 8px bleed band (clippedEdgeShare 0.5-0.7%
-       against a 0.4% ceiling) and counted its own wash as content.
-       Mixing the accent halfway into the foreground compresses that spread:
-       the mix is ~170 units from the ground on a dark accent and ~195 on a
-       pale one, so 8% of it is 13.6 and 15.6 — inside the band on both, with
-       the accent's hue still in it. */
-    --wash: color-mix(in srgb, var(--accent) 45%, var(--fg));
-    --accent-ink: #141414;
-    /* 26%, which is what `comparison-card.html` and `list-takeaway.html` both
-       declare. This file said 28% — one structural tone in three files at two
-       values, so a carousel carrying a recap strip and a panel showed two
-       greys doing the same job. Nobody can see 2% of alpha; what a reader does
-       see is a set that agrees with itself. */
-    --line: color-mix(in srgb, var(--fg) 26%, transparent);
-    --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
-    --f-body: 'Inter', system-ui, -apple-system, sans-serif;
-    --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
-    --ts: 1;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  /* Reviewer typography controls (Phase 2) — see `stat-callout.html`'s note
-     on why these are classes and never a {{fontScale}} custom property. */
-  body.ts-s { --ts: 0.85; }
-  body.ts-l { --ts: 1.18; }
-  /* ── PHASE 5.5: THE ONE TYPE SCALE (`visual-system.ts`, `TYPE_SCALE_PX`). ──
-     Six steps for the whole archetype set, against the 45 distinct `font-size`
-     values the eight bundled templates declared between them. A plate picks a
-     step by ROLE rather than by which file the writer's layout landed on.
-     `visualSystemCssBlock` overrides these per run with the resolved system's
-     type flavour; these are the self-contained defaults a brandless render
-     uses.
+/* @ds:start */
+/* ============================================================================
+   THE DESIGN SYSTEM — one source of truth for all eight plates.
+   ----------------------------------------------------------------------------
+   This block is GENERATED into every template between the `@ds:start` and
+   `@ds:end` markers by `scripts/sync-design-system.ts`, and a test asserts the
+   eight copies are byte-identical to this file. Edit HERE, never in a plate.
 
-     ── ON `body`, NOT ON `:root`, AND THAT IS NOT A STYLE CHOICE. ──
-     A custom property's `var()` references are substituted AT THE ELEMENT THAT
-     DECLARES IT. `--ts` is `1` on `:root` and is overridden on `body.ts-s` /
-     `body.ts-l`, so a `--t-*` declared on `:root` resolves `var(--ts, 1)`
-     against the ROOT's value — always 1 — and then inherits down already
-     substituted. Declared there, the reviewer's whole type-scale control
-     silently stopped reaching every size that reads a step: measured, this
-     plate rendered its 300px figure at 300px at `ts-s`, where the literal it
-     replaced rendered 255px, and the calibration's own s-vs-l control pair
-     reported the two plates painting identical ink (0.4175 both). Declared
-     HERE the substitution happens on `body`, where `body.ts-s` is in force. */
-  body {
-    /* ── PHASE 5.5: THE PAGE MARGIN IS THE VISUAL SYSTEM'S `gutter` AXIS. ──
-       `--gutter` is emitted per run by `visualSystemCssBlock` (`wide` 64px,
-       `tight` 48px) and was read by nothing: every template hard-coded its own
-       margin, so two catalog entries that differ ONLY in gutter rendered the
-       same plate and the twelve-entry catalog was a variety claim a reader
-       could not see. The literal stays as the fallback, so a document composed
-       without the run sheet is byte-identical. */
-    --mx: var(--gutter, 64px);
-    --t-micro: calc(22px * var(--ts, 1));
-    --t-label: calc(32px * var(--ts, 1));
-    --t-lead: calc(46px * var(--ts, 1));
-    --t-statement: calc(84px * var(--ts, 1));
-    --t-display: calc(124px * var(--ts, 1));
-    --t-figure: calc(220px * var(--ts, 1));
-  }
-  body.ta-center { text-align: center; }
-  body.ta-end { text-align: end; }
-  html, body { width: 1080px; height: 1440px; }
-  body {
-    position: relative; overflow: hidden;
-    background: var(--bg); color: var(--fg); font-family: var(--f-body);
-    display: flex; flex-direction: column;
-    padding: 104px var(--mx) 16px;
-  }
+   WHY IT EXISTS. Before this file the scale, the ground, the brand zone and the
+   fit ladder were declared separately in all eight templates. Five different
+   authors edited "a template" and the set drifted: measured on the production
+   composition path, one carousel rendered 22-28 distinct type sizes against a
+   six-step scale, and 3 accent colours at 11 different widths. A reader reads
+   that as machine-made, and the owner did.
 
-  /* ── L1: the tonal wash, full bleed, inside the 12-18 band. ──
-     A pixel is GROUND within 12 of the ground colour and INK beyond 18; a
-     wash between the two is visible tone that is not a mark, so it may reach
-     the frame edge without putting ink in the bleed band, and it takes the
-     plate off "flat" — which is the honest way past clause D, a conjunction
-     of flat AND idle. One layer, never two overlapping: two 14-unit tones
-     that cross each other sum past 18 and stop being a ground. */
-  .ground {
-    position: absolute; inset: 0; z-index: 0;
-    background-image: linear-gradient(186deg, transparent 46%, color-mix(in srgb, var(--wash) var(--ground-texture-alpha, 8%), transparent) 100%);
-  }
-  /* ── L2: the texture and the accent geometry, ON THE TAKEAWAY'S FIELD. ──
+   THE THREE RULES THIS FILE ENFORCES.
+   1. TYPE COMES OFF THE SCALE OR NOT AT ALL. There are six steps. A long string
+      takes a SMALLER STEP, never a fraction of one. `calc(var(--t-x) * 0.8387)`
+      is how the set got to 25 sizes; there is not one multiplier in here.
+   2. ONE ACCENT, ONE FORM, ONE PLACE. `.acc` is the only mark on any plate. It
+      is one block, sized by the run's own `--fx-accent-w/h`, in one colour, and
+      it sits directly above the headline. Nothing else in the set paints a
+      rule, and no element in the set carries a decorative border — a 984px
+      `border-top` on a card reads to the eye exactly like a 984px hairline.
+   3. THE DECISION LAYER REACHES THE PIXELS. `--system-ground`, `--system-
+      grammar`, `--display-weight`, `--display-tracking` and `--logo-zone-*`
+      were all emitted by `visual-system.ts` / `brand-render-tokens.ts` and read
+      by NOTHING, which is why three clients rendered the same look and why the
+      brand mark printed over the eyebrow. Every one of them is consumed below.
+   ========================================================================== */
 
-     Both of these used to be full-bleed `<div>`s inset 16px, and that was the
-     defect this revision removes. A texture painting ink in every cell of the
-     plate makes `occupiedShare` and `largestEmptyRectShare` constants:
-     measured through `measureSlidePng` over real Chromium, this file's
-     previous revision reported the SAME 1.5% largest empty rectangle with the
-     full copy on it and with every slot empty, while carrying a visible
-     full-width void from the accent rule under the takeaway (y~53%) to the
-     top of the footer band (y~78%) that no clause could see.
+/* ---- canvas ------------------------------------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
 
-     So the rule stated in `cover.html`'s header applies here too: **tone may
-     paint anywhere, ink only inside a region the composition occupies, and
-     only when the content that justifies it is present.** `.cl-field` is that
-     region — it wraps the recap strip, the takeaway and the accent rule — and
-     its paint is switched off when there is no takeaway.
+body {
+  inline-size: 1080px;
+  block-size: 1350px;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg, #14151a);
+  color: var(--fg, #f4f2ee);
+  font-family: var(--f-body, system-ui, sans-serif);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
 
-     2px rules every 9px at 20% of the foreground: about 44 units of contrast,
-     a pinstripe a phone can actually resolve, where the pre-rework
-     1.5px/18px at 14% was half the duty at 31 units and reproduced as
-     nothing. The pitch is derived in `headline-focus.html`'s own note — a
-     measurement cell is 4 design px, so a 2px rule on a `p`px pitch marks
-     `(2+4)/p` of the cells it crosses, and the 14-16px pitches this set shipped
-     first marked under half of them. It stays a TEXTURE and not a device at
-     any pitch, because a 2px rule cannot fill three quarters of a 4px cell. */
-  /* ── THE FIELD IS A STACK OF BANDS, AND THAT IS THIS ARCHETYPE'S MARK. ──
-     The whole bundled set used to carry one 45-degree hairline field, so six
-     of the eight plates read as the same wallpaper with different words on it
-     — the owner's second complaint verbatim ("בנוסף בגלל שזה חזרתי זה נראה
-     AI"). Every archetype now spends a different MARK, and
-     `headline-focus.html`'s header lists the set and states why a mark is
-     needed at all rather than a flat tint or clean ground.
+/* The reviewer's type-scale request. Hebrew sets ~6% larger at the same step,
+   so the script sheet may override this; `script-fonts.ts` owns that. */
+body            { --ts: 1; }
+body.ts-s       { --ts: 0.85; }
+body.ts-l       { --ts: 1.18; }
 
-     A closer's mark is ARCHITECTURAL rather than fine: 6px bars on a 30px
-     pitch, which is banding a reader sees as geometry rather than a texture
-     they read as tone. That is the right register for the last slide — it
-     rhymes with the footer band the ask sits on and with the recap strip's
-     own plates, so the whole plate reads as a stack of horizontal masses. It
-     is the only mark in the directory whose individual marks are visible at
-     feed size, which is what a closer wants and what a hook slide does not.
+/* ---- the scale — SIX STEPS, AND NOTHING BETWEEN THEM -------------------- */
+body {
+  --t-micro:      calc(22px  * var(--ts, 1));
+  --t-label:      calc(32px  * var(--ts, 1));
+  --t-lead:       calc(46px  * var(--ts, 1));
+  --t-statement:  calc(66px  * var(--ts, 1));
+  --t-display:    calc(94px  * var(--ts, 1));
+  --t-figure:     calc(200px * var(--ts, 1));
 
-     THE PITCH IS MEASURED, not chosen. The first try was 6px on a 68px pitch
-     — genuinely architectural, and it marked only 15% of the cell rows it
-     crossed at an 8.8% duty cycle, so this plate went from 47.4% flat to
-     64.3% and a Hebrew closer to 66.4%, three points under clause D's 70%
-     ceiling on a slide carrying a full recap strip. A ground whose margin
-     against "flat and idle" is three points is a ground that will trip on the
-     next copy length. At 6px/30px the duty is 20% — the same order as the
-     22% of the 2px/9px hatch it replaces — and the bars are still individually
-     countable, which is the property that makes this a band stack and not a
-     texture.
+  /* rhythm. Every gap in the set is one of these — no ad-hoc margins. */
+  --sp:   28px;
+  --sp-2: 56px;
+  --sp-3: 84px;
 
-     It stays a rule system and not a drawn device because of the same cell
-     arithmetic every mark in this set answers to, applied to the RULE rather
-     than the pitch: a covered cell needs 48 of its 64 samples, so only the
-     cell rows a 6px bar spans outright can ever be covered — a third of the
-     rows it touches, and `imageryOrDeviceShare` here stays the ASK BAND's and
-     the recap strip's, which are the closer's real devices. The pitch also
-     bounds the largest empty rectangle inside the field to one 24px band,
-     against a 22% ceiling at the closer role.
+  /* the margin is the run's own gutter decision, not a per-plate number */
+  --mx: var(--gutter, 84px);
 
-     The TONE is the set's standing 20% of the foreground — the same weight
-     the hairline field it replaces carried — and deliberately not the 26% a
-     first pass reached for: at 26% a 6px bar competes with the takeaway it is
-     supposed to sit behind. Softening it costs nothing here, and that is
-     worth stating because it is not obvious: `flatBackgroundShare` counts
-     pixels within 12 units of the ground and a 20% bar is 44 units off it, so
-     the bars are INK at either tone, and every number this ground answers for
-     is the GEOMETRY's rather than the alpha's. 20% also keeps this mark
-     inside the 12-34% band the rest of the directory uses — the range that
-     still clears the ink line for a client whose derived neutrals sit closer
-     together than the bundled pair.
+  /* zones. `--logo-zone-block` comes from `planBrandLogoPlacement` via
+     `buildBrandHeadHtml`; before this file nothing read it, so the mark landed
+     on top of the eyebrow on six plates of eight.
+     `max()` because the zone has TWO jobs and the placement only sizes one of
+     them: it has to clear the mark, and it has to give the eyebrow a band to
+     sit in. Measured on the first render of this system, a kit whose placement
+     reports a short zone let the mark print over the device's label. */
+  --zone-mark: max(var(--logo-zone-block, 0px), 132px);
+  --zone-foot: 104px;
+}
 
-     The accent is spent on ONE solid rule capping the field's head, not on a
-     diagonal band: a diagonal band is `headline-focus.html`'s signature, and
-     two archetypes sharing a signature is the defect this pass removes. */
-  /* ── 2026-09-15: THE BAND RHYTHM IS DELETED, THE ACCENT CAP STAYS
-        (RFC-20 §11.4). ──
-     The paragraph above is the record of a texture that no longer exists,
-     kept because its arithmetic is still true and the next person to reach
-     for a field texture needs it. The 6px-every-30px ruling at 20% of `--fg`
-     covered the whole field, and the restraint reference's rule 1 is
-     *texture only at near-ground value, never a field you can read as a
-     pattern.* This one read as a pattern.
-     `slide.html` and `headline-focus.html` lost theirs in the same pass and
-     for the same three reasons; `slide.html`'s header block states them in
-     full. The short version is the third one: the clause that required the
-     ink is gone (PR #124 demoted clause D's occupancy limb to
-     reporting-only), so the texture was paying a bill nobody sends.
-     WHAT STAYS is the sentence the paragraph above ends on — *the accent is
-     spent on ONE solid rule capping the field's head* — which is now the
-     whole of this file's field paint. A 10px bar is punctuation; a ruling
-     over 1000x800px was a surface. */
-  /* The cap is SHORT — `headline-focus.html`'s `.hf-field` carries the
-     measurement — and since this phase its measure is the RUN's
-     (`--fx-accent-w`/`--fx-accent-h`) rather than a per-file literal, which is
-     the point: one accent width for the whole carousel. It is also this
-     plate's ONLY free-standing mark now; `.cl-rule` used to repeat it 30px
-     below and is deleted (see its note further down). */
-  /* ── PHASE 5.5: the cap's INK is conditional, its geometry is not. ──
-     `var(--fx-accent-ink, transparent)` — `visualSystemCssBlock` sets it on at
-     most three slides of a carousel, and the closer is always one of them
-     (`accentSlidesFor` always returns the last slide). So on a closer this
-     paints exactly as before; what changed is that it can no longer paint on a
-     plate the system did not choose. */
-  .cl-art {
-  /* THE CAP IS THE RUN'S RULE, AT THE RUN'S LENGTH AND ITS THICKNESS. It was a
-     240x10 literal, so a run whose `accentForm` publishes a 560px band or a
-     96px bracket still capped this field at 240 — the same mark in two sizes
-     inside one carousel, which is the length discipline `headline-focus.html`'s
-     `headline-focus.html`'s note describes. The literals stay as the var()
-     fallbacks, so a
-     document composed without the run sheet is byte-identical. */
-    background-image: linear-gradient(to bottom, var(--fx-accent-ink, transparent) 0 var(--fx-accent-h, calc(10px * var(--ts, 1))), transparent 0);
-    background-size: var(--fx-accent-w, calc(240px * var(--ts, 1))) 100%;
-    background-repeat: no-repeat;
-    background-position: var(--cap-x, 0) 0;
-  }
-  body[dir="rtl"], html[dir="rtl"] body { --cap-x: 100%; }
-  /* The alternative ground: a display-face numeral bleeding off the start
-     corner, over a TIGHTER band rhythm — 4px bars every 20px, so the two
-     closers differ in the weight and the count of their bands as well as in
-     whether a numeral is present. Finer here on purpose: the numeral is the
-     thing to see on this variant, and a 6px bar competes with it. This used to be the same 135-degree hatch
-     the grid variant ran at 45, which is one mark at two angles: two
-     consecutive slides wearing it still read as one wallpaper, which is the
-     defect the variant exists to break.
-     OUTLINE ONLY on the numeral — a filled numeral at any tint that reads is
-     a filled SHAPE, and every cell inside it then counts as a drawn device;
-     the budget goes into stroke CONTRAST instead, which costs no coverage at
-     all. */
-  /* The tighter band rhythm goes with the grid variant's — same three
-     reasons. The two closers now differ in WHERE the accent cap sits and in
-     whether the numeral is present, which is two axes of difference for one
-     mark instead of two wallpapers: the glyph variant caps the field's FOOT,
-     so the eye enters at the numeral and leaves at the rule rather than the
-     other way round. `slide.html` makes the same substitution, position for
-     texture, between its odd and even plates. */
-  body.gr-glyph .cl-art {
-    background-image: linear-gradient(to top, var(--fx-accent-ink, transparent) 0 var(--fx-accent-h, calc(10px * var(--ts, 1))), transparent 0);
-    background-position: var(--cap-x, 0) 100%;
-  }
-  /* The guards. No takeaway, no field; and furniture that paints ink answers
-     to the same rule, so the numeral goes with it.
+/* ---- ground ------------------------------------------------------------- */
+/* `--system-ground` is the run's ground decision. It was emitted and unread,
+   which is most of why three clients' carousels looked like one carousel. */
+.ground {
+  position: absolute;
+  inset: 0;
+  background: var(--bg, #14151a);
+  z-index: 0;
+}
+/* The vocabulary is the system catalogue's own — `flat | grid | glyph` — and it
+   arrives on every slide as `groundStyle`. All three are modulated: a single
+   flat fill is the "mostly grey screen" and no plate in the set paints one. */
 
-     BOTH ARE ASKED OF THE TAKEAWAY'S CHILDREN. `.headline` is a twin-slot pair
-     now (see the twin-slot block below), so `#takeaway` has two element
-     children on every render and can never match `:empty` again — written the
-     old way these two guards would have gone permanently silent and a closer
-     with nothing to say would have kept both the field paint and the 720px
-     numeral, which is the ink an empty plate must not acquire. */
-  body:not(:has(#takeaway > span:not(:empty))) .cl-art { background-image: none; }
-  /* ── PHASE 5.5: THE 460px GROUND NUMERAL IS RETIRED. ──
+/* FLAT — one soft tonal fall, lit from the lockup's corner. Quiet, not empty. */
+body[data-ground="flat"] .ground {
+  background:
+    radial-gradient(135% 95% at 8% 100%,
+      color-mix(in srgb, var(--fg) calc(var(--ground-texture-alpha, 0.10) * 55%), transparent),
+      transparent 58%),
+    var(--bg, #14151a);
+}
 
-     It lived in TWO of the eight bundled templates — this one and
-     `headline-focus.html` — so a carousel showed a giant outlined numeral on
-     two plates and nothing on the other six. The owner, judging the
-     2026-09-16 posts: *"על חלק מהשקופיות כתוב מספר ועל חלק לא"*. The brief
-     blamed `GROUND_VARIATION_MIX = 0.5`; that has been a constant since
-     2026-09-14 (`slides-data.ts` reads `isVariationSlot(1, ...)`, one ground
-     per post) and was never the cause. The template set was.
+/* GRID — a drawn field. The lines are ground, not furniture: they are uniform,
+   they never terminate next to text, and at this alpha they read as paper
+   rather than as a mark, which is the distinction the accent rule protects. */
+body[data-ground="grid"] .ground {
+  background:
+    repeating-linear-gradient(0deg,
+      color-mix(in srgb, var(--fg) calc(var(--ground-texture-alpha, 0.10) * 30%), transparent) 0 1px,
+      transparent 1px 90px),
+    repeating-linear-gradient(90deg,
+      color-mix(in srgb, var(--fg) calc(var(--ground-texture-alpha, 0.10) * 30%), transparent) 0 1px,
+      transparent 1px 90px),
+    var(--bg, #14151a);
+}
 
-     Within-carousel randomness is the wrong axis for this: a carousel is ONE
-     system. The axis moves up to `ClientVisualSystem.pagination` — all or
-     none, frozen per client — and down to a uniform 22px index in all eight
-     files, below. A designed large figure is still available where the
-     CONTENT has a number: `device: { kind: "figure" }`, which the copy model
-     authors and `slide-devices.ts` paints, bounded and labelled.
+/* GLYPH — one oversized accent form bled off a corner. No letterform: a text
+   glyph in the ground is the thing that read as a watermark on a template. */
+body[data-ground="glyph"] .ground {
+  background:
+    radial-gradient(58% 44% at 88% 12%,
+      color-mix(in srgb, var(--accent) calc(var(--ground-texture-alpha, 0.10) * 130%), transparent),
+      transparent 70%),
+    radial-gradient(90% 70% at 0% 100%,
+      color-mix(in srgb, var(--fg) calc(var(--ground-texture-alpha, 0.10) * 40%), transparent),
+      transparent 62%),
+    var(--bg, #14151a);
+}
 
-     The whole `.ground-glyph` rule set, its `gr-glyph` branch and its
-     -webkit-text-stroke watermark are deleted with it; the span is gone from
-     the markup below. `gr-glyph` survives as the ground's ACCENT GEOMETRY
-     (this file's `.cl-art` caps the field's foot under it and its head
-     otherwise), which is what that class was always worth. */
-  .pg-index {
-    display: var(--fx-pagination, none);
-    position: absolute; inset-block-end: 40px; inset-inline-end: 44px; z-index: 6;
-    font-family: var(--f-mono); font-size: var(--t-micro); letter-spacing: 0.14em;
-    color: color-mix(in srgb, var(--fg) 45%, transparent);
-  }
+/* ---- hero photograph ---------------------------------------------------- */
+.hero, .bg img {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+  z-index: 1;
+}
+.scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--bg) 30%, transparent) 0%,
+    color-mix(in srgb, var(--bg) 78%, transparent) 52%,
+    color-mix(in srgb, var(--bg) 94%, transparent) 100%);
+}
+body:not([data-hero-scrim]) .scrim,
+body[data-hero-scrim=""] .scrim { display: none; }
+.bg:empty ~ .scrim { display: none; }
 
-  /* The top anchor, the elastic column, and the ask that sits on the band. */
-  .cl-head { position: relative; z-index: 3; flex: 0 0 auto; }
-  /* ── THE LABEL'S RULE IS GONE, AND `.cl-art`'s CAP IS THIS PLATE'S MARK. ──
-     `headline-focus.html` carries the whole argument. In short: a neutral
-     952x2 hairline beside a 240px accent rule is two colours and two lengths
-     of one object inside one carousel, and re-colouring the hairline only
-     moved the defect — the field below already caps itself with the run's mark
-     (`--fx-accent-ink` on `.cl-art`), so an eyebrowed closer painted two
-     identical accent bars 30px apart. Rendered and looked at, not reasoned
-     about. One free-standing rule per plate, and on this archetype it is the
-     cap; the element goes with the rule, because a switched-off div in the
-     markup is not a composition.
+/* ---- the three bands ---------------------------------------------------- */
+/* A plate is: the mark band, the field, the foot band. Content lives in the
+   field and NEVER enters the other two — that reservation is the whole answer
+   to "the logo runs over the heading". */
+.plate {
+  position: relative;
+  z-index: 3;
+  block-size: 1350px;
+  padding: var(--zone-mark) var(--mx) var(--zone-foot);
+  display: flex;
+  flex-direction: column;
+  /* ANCHORING IS DONE WITH AUTO MARGINS, NOT `justify-content`, and the reason
+     is a bug this system shipped for exactly one render. With
+     `justify-content: flex-end`, content taller than the field overflows at the
+     START edge — it grows UP, straight through the reserved brand band, and the
+     first render of the new cover printed the eyebrow 5px into the headline
+     because of it. Worse, `scrollHeight` does not report overflow in that
+     direction, so the fit ladder could not see the thing it exists to prevent.
+     With `flex-start` plus the auto margin below, a stack that does not fit
+     grows DOWNWARD, which `scrollHeight` reports and the ladder then steps. */
+  justify-content: flex-start;
+  gap: var(--sp-2);
+  overflow: visible;
+}
+/* The run's composition grammar decides which edge the copy sits on. It arrives
+   as `data-anchor` on the body — a CSS custom property cannot be selected on,
+   which is half of why `--lockup-anchor` was emitted and read by nothing. */
+/* THE AUTO MARGIN IS ON THE FIRST CHILD, so the whole stack moves as ONE unit
+   and the free space becomes a top margin. Putting it on the last child instead
+   distributes the air BETWEEN the blocks: measured on the cover, that opened
+   300px between the figure and the headline it is evidence for, and the plate
+   read as two unrelated halves. A plate's blocks belong together; the air
+   belongs outside them. */
+.plate > :first-child          { margin-block-start: auto; }  /* bottom, default */
+body[data-anchor="top"]    .plate > :first-child { margin-block-start: 0; }
+body[data-anchor="top"]    .plate > :last-child  { margin-block-end: auto; }
+body[data-anchor="centre"] .plate > :first-child { margin-block-start: auto; }
+body[data-anchor="centre"] .plate > :last-child  { margin-block-end: auto; }
 
-     §11.5's finding about this file's head is answered by the composition it
-     asked for — the middle is `flex: 1 1 auto`, so a collapsed head is
-     absorbed rather than left as a hole for a rule to break up.
+/* ---- the brand band: mark on one side, eyebrow on the other ------------- */
+.zone-mark {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: var(--mx);
+  block-size: var(--zone-mark);
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  pointer-events: none;
+}
+/* `brandLogoCss` positions and sizes `img.brand-logo` from the placement; this
+   only reserves the opposite end of the band for the eyebrow so the two can
+   never meet. */
+.zone-mark .eyebrow { margin-inline-start: auto; }
 
-     WHAT `.cl-rail` WAS WORTH, A/B'd on this tree one object apart — the whole
-     table and the argument are in `headline-focus.html`: populated
-     `largestEmptyRectShare` 0.1055 without the rail against 0.0944 with it
-     (`inkShare` .3996 / .3833, measured with the recap fragment and the ask
-     filled), and the blank plate 1.0000 against 0.9083. The populated cost is
-     1.1 points against a 0.22 closer ceiling, so §11.5's own rectangle stays
-     closed without it.
+.eyebrow, .kicker {
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+  white-space: nowrap;
+}
+.eyebrow:empty, .kicker:empty { display: none; }
 
-     ONE OF THE TWO PANEL EDGES CHANGED WITH IT: `.cl-recap`'s is now neutral
-     and `.cl-ask`'s keeps the accent — see `.cl-recap`'s own rule for the
-     three-bars-at-three-lengths measurement that decided which is which. */
-  /* The field runs the full measure inside the 16px frame — wider than the
-     body's own 64px margin, so it reads as a field rather than as a
-     highlighted paragraph. The negative inline margin and the matching inline
-     padding cancel, so no glyph moves; 16px rather than 0 because
-     `clippedEdgeShare` counts ink inside an 8px bleed band.
+/* ---- the foot band: handle and numeral ---------------------------------- */
+.zone-foot {
+  position: absolute;
+  inset-block-end: 0;
+  inset-inline: var(--mx);
+  block-size: var(--zone-foot);
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+/* THE KIT PLACES THE HANDLE ABSOLUTELY, AND THE BAND IS A POSITIONED ANCESTOR.
+   `brandLogoCss` emits `.brand-handle { position: absolute; bottom: 44px;
+   inset-inline-start: 44px }` and lands AFTER the template's own sheet, so it
+   wins on a tie. Inside `.zone-foot` — which is itself positioned — that 44px
+   is measured from the BAND's edge rather than the plate's, and the handle came
+   out 44px inboard of everything else on the plate. The owner saw it
+   immediately: *"ה@username הוא לא בצד"*. Two class names beat one, so this
+   returns the handle to the band's own flow without the kit losing anything it
+   legitimately owns (face, size, tracking, colour). */
+.zone-foot .brand-handle,
+.zone-foot .pg-index,
+.zone-mark .eyebrow,
+.zone-mark .kicker { position: static; inset: auto; }
 
-     The takeaway is anchored to the field's FOOT, not centred in it. Centred,
-     the plate carried two ~25% bands of bare texture, one above the statement
-     and one between it and the footer band; anchored, the breathing room all
-     collects under the accent geometry at the top — where a designed plate
-     wants it — and the reading order (eyebrow, accent, takeaway, ask) is one
-     continuous run down to the band. */
-  /* ── PHASE 5.5: THE SLACK IS DISTRIBUTED, NOT POOLED. ──
-     `flex-end` was chosen while the 460px `.ground-glyph` filled the band
-     above the takeaway; with the glyph retired it pooled EVERY pixel of slack
-     into one rectangle under the head. Measured on this tree before the
-     change: `largestEmptyRect` 1080x384 at (0,164), share 0.2667 against the
-     closer's 0.22 ceiling — the plate the owner called empty, measuring
-     emptier than the one he called empty. `center` halves the band by putting
-     the same slack above AND below the statement; the ladder below is what
-     makes each half small rather than merely equal. */
-  /* ── PHASE 5.5: THE BAND IS THE ELASTIC ITEM, NOT THE FIELD. ──
-     The 460px `.ground-glyph` used to fill this plate's middle. With it
-     retired, an elastic FIELD meant every pixel of slack became BARE GROUND
-     between the head and the takeaway: `largestEmptyRect` 1080x384 at (0,164),
-     share 0.2667 against a 0.22 ceiling — the closer measuring emptier than
-     the one the owner called empty.
+.brand-handle {
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: var(--t-micro);
+  letter-spacing: 0.08em;
+  color: color-mix(in srgb, var(--fg) 46%, transparent);
+}
+/* The owner's "a number on some slides and not on others". `--fx-pagination`
+   is the run's all-or-none decision; the cover and the closer opt out in their
+   own markup, every interior plate shows it, and no plate decides for itself. */
+.pg-index {
+  display: var(--fx-pagination, block);
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: var(--t-micro);
+  letter-spacing: 0.16em;
+  color: color-mix(in srgb, var(--fg) 34%, transparent);
+}
 
-     Swapping which item is elastic answers it without adding a single mark.
-     The field takes its own content's height; the ASK — whose background IS
-     this archetype's drawn device, a 24-40% accent band that paints only when
-     there are words in it — grows into the slack instead. Slack that used to
-     be a hole is now the payoff surface, which is what a closer is for. The
-     band keeps a 300px floor and shrinks no further, so a long takeaway over a
-     four-plate recap still fits; measured, the worst case leaves 228px of the
-     773px the field can use.
+/* ---- THE ACCENT — the only mark in the set ------------------------------ */
+/* `--fx-accent` is the run's per-slide on/off switch and `data-accent` is its
+   FORM. The form axis was decided per run, held across runs, printed on the
+   payload — and read by no template, so five forms rendered as one bar at two
+   sizes. Each of these is a different shape, not a different measurement:
+   a reader can tell two posts apart by this alone.
 
-     `flex: 0 0 auto` also removes the shrink-below-content state entirely: a
-     CENTRED child of a box the flex algorithm shrank escapes at both ends, and
-     that is `probe.overflow` on `div.cl-field, div.cl-wrap` — clause B's hard
-     `clipped`, on a plate that fits. */
-  .cl-field {
-    position: relative; z-index: 3; flex: 0 0 auto;
-    display: flex; flex-direction: column; justify-content: center;
-    margin-inline: calc(16px - var(--mx)); padding-inline: calc(var(--mx) - 16px);
-    margin-block-start: calc(28px * var(--ts, 1));
-    padding-block: calc(40px * var(--ts, 1));
-  }
-  /* THE WRAP NEVER SHRINKS BELOW ITS OWN CONTENT, the same correctness rule
-     `headline-focus.html`'s `.copy` states at length and the one this file
-     was still breaking. With no `flex` declared it defaulted to `0 1 auto`,
-     so when `.cl-ask` grew the flex algorithm shrank this box under its
-     content and `.cl-field`'s `justify-content: flex-end` pushed the excess
-     out of the BLOCK-START edge — measured at `m` with the calibration's own
-     LONG body in the `cta` slot and a three-plate recap, the wrap rendered
-     105px above its own field; with that body in the `question` slot, 304px
-     above it, and `.cl-recap`, `.rc-strip`, `.rc-plate` and `.rc-n` all
-     rendered above y=0 (`.local/fx-cl-fit.mjs`).
+   None of them is a full-measure rule. A 952px hairline across a plate is the
+   thing the owner named as the AI tell, and no form here can produce one. */
+.acc {
+  display: var(--fx-accent, block);
+  inline-size: var(--fx-accent-w, 88px);
+  block-size: var(--fx-accent-h, 10px);
+  background: var(--fx-accent-ink, var(--accent, #ff5a1f));
+  flex: none;
+}
 
-     At `flex: 0 0 auto` the box is exactly its content, so the fit question
-     is answered by the ladders below rather than by silent clipping. What
-     residual overflow remains still leaves through the block-start edge —
-     `.cl-field` stays `flex-end`, because the breathing room collecting under
-     the accent geometry at the top is this plate's composition — and
-     `probePage`'s block-start limb is what reports it. Overflow that cannot
-     be designed away must at least be visible.
+/* RULE — a short horizontal block above the headline. */
+body[data-accent="rule"] .acc { border-radius: 1px; }
 
-     ── 2026-09-12: SAID PLAINLY — THIS DECLARATION IS BELT, THE LADDERS ARE
-        BRACES, AND ON EVERY CASE THIS TREE CAN PRODUCE THE BRACES HOLD
-        ALONE. ──
-     Removing `flex: 0 0 auto` from this rule and re-running the geometry
-     sweep (`.local/fx-cl-fit.mjs`: the LONG body in both slots x no/3/4-plate
-     recap x s/m/l, 27 combinations) changes not one measured value — same
-     field height, same wrap height, same clearance, no overflow anywhere —
-     because the ask ladders below now size the ask to fit before the flex
-     algorithm is ever asked to shrink anything. Neutering the takeaway ladder
-     instead (`.headline.small`/`.tiny` back to 100px) fails the calibration's
-     cover/closer case at the MEDIUM length straight away.
-     So: the sizes are what fix the plate, and this line is the correctness
-     rule that keeps a future ladder gap from clipping silently instead of
-     reporting. It is kept deliberately, and it is not the thing to point at
-     when explaining why the closer fits. */
-  .cl-wrap { flex: 0 0 auto; display: flex; flex-direction: column; justify-content: center; }
-  /* ── THE ASK, AND THE BAND UNDER IT. ──
-     The band is this archetype's drawn device: a filled, low-colour-count
-     region of about a fifth of the frame, which is what carries a closer over
-     clause E when there is no photograph to carry it. It used to be a
-     background layer on the full-bleed ground div, painted whether or not
-     there was anything to ask — so a closer with an empty ask still measured
-     as carrying a device. It is now the ASK'S OWN background and it paints
-     only when the ask has words in it, which is the same sentence the
-     archetype's doc comment has always made: the graphic is the thing the
-     reader's eye lands on last, and it is there because the call to action
-     is. */
-  .cl-ask {
-    position: relative; z-index: 3; flex: 1 1 auto; min-block-size: 300px;
-    /* ── AND CAPPED, WHICH IS THE OTHER HALF OF MAKING IT ELASTIC. ──
-       Uncapped, a closer whose takeaway came through EMPTY had no field at all
-       and the band took the whole plate: the hollow-middle guard measured
-       16.4% where it needs over 22%, i.e. the instrument that names *"some of
-       the slides are empty"* went blind on the one archetype this phase
-       recomposed. 780px is over the band's own tallest populated case
-       (measured: the worst leaves it 751px) and well under the plate, so a
-       plate with a takeaway is unchanged and a plate without one shows 421px
-       of bare ground and is refused for it. Scaled by `--ts` like the floor. */
-    max-block-size: calc(780px * var(--ts, 1));
-    display: flex; flex-direction: column; justify-content: center;
-    margin-inline: calc(16px - var(--mx)); padding-inline: calc(var(--mx) - 16px);
-    /* ── AND IT RESERVES THE FOOT STRIP THE STANDING MARKS OWN. ──
-       The ask is the only band in the set that reaches the plate's bottom
-       edge: `body`'s own `padding-block-end` is 16px, and `.cl-ask` is
-       `flex: 1 1 auto`, so its box ends 16px from the frame. `.brand-handle`
-       (`inset-block-end: 44px`) and `.pg-index` (`inset-block-end: 40px`) are
-       ABSOLUTE and are therefore invisible to that flow — nothing reserved
-       their strip, and the ask's last line was free to be set on top of them.
+/* BRACKET — the same weight stood on end, on the reading edge of the lockup.
+   Vertical, so it reads as a margin mark rather than as an underline. */
+body[data-accent="bracket"] .acc {
+  inline-size: var(--fx-accent-h, 10px);
+  block-size: var(--fx-accent-w, 88px);
+}
 
-       Measured on this tree before the fix: the karoslabs kit under
-       `mono-display` (IBM Plex Mono's advance width is wider than the three
-       other registers', which is why only that register showed it), an
-       eight-slide English carousel, CTA *"Open ChatGPT. Type the question
-       your buyer asks when evaluating options in your category. Screenshot
-       the answer."* — 108 characters, well inside `body`'s 600 maximum. The
-       third line, "the answer.", printed directly over "@karoslabs": two
-       strings interleaved, both legible, both ruined, on the LAST slide of
-       every carousel, which is the one carrying the call to action.
+/* BAND — the accent becomes the eyebrow's own plate. No free-standing mark at
+   all: the colour is carried by a label that was going to be there anyway,
+   which is the quietest way to use an accent and the least template-like. */
+body[data-accent="band"] .acc { display: none; }
+body[data-accent="band"] .eyebrow,
+body[data-accent="band"] .kicker {
+  background: var(--fx-accent-ink, var(--accent));
+  color: var(--bg);
+  padding: 6px 14px;
+  border-radius: 2px;
+}
 
-       The reservation is the strip's real geometry rather than a round
-       number: the handle's own inset (44px) less the plate's foot padding
-       (16px) is 28px of it, the mark's line box is `--t-micro` times its
-       leading, and 18px is the clearance that keeps a descender off the cap
-       height below it. `max()` against the ask's own 40px so a small type
-       scale never LOSES padding it had; every term rides `--ts`, because the
-       reviewer's scale grows the handle and the CTA together.
+/* FIELD — the accent is a colour area, not a mark. The plate gets a banner of
+   ground in the brand colour and the mark disappears entirely. */
+body[data-accent="field"] .acc { display: none; }
+body[data-accent="field"] .ground::after {
+  content: "";
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+  block-size: 34%;
+  background: var(--fx-accent-ink, var(--accent));
+  opacity: 0.92;
+}
+body[data-accent="field"] .eyebrow,
+body[data-accent="field"] .kicker { color: var(--bg); }
 
-       Padding rather than a shorter `max-block-size`: `* { box-sizing:
-       border-box }` is set at the top of this sheet, so the band's PAINTED
-       area is unchanged — clause E rests on that area (see the note above),
-       and a fix that shrank it would have traded a collision for a floor
-       failure. Only the copy inside it moves up. */
-    --brand-foot-strip: calc(28px + var(--t-micro) * 1.5 + 18px);
-    padding-block-start: calc(40px * var(--ts, 1));
-    padding-block-end: max(calc(40px * var(--ts, 1)), var(--brand-foot-strip));
-  }
-  /* Asked of the two slots' CHILDREN — both are twin-slot pairs now (see the
-     twin-slot block below), and a host with two element children is never
-     `:not(:empty)`-false. This is the guard whose failure mode is the loudest
-     in the set: written the old way the ask's band would paint on a closer
-     with no question and no CTA, and that band is this archetype's drawn
-     device — an empty ask would have cleared clause E on its own decoration. */
-  .cl-ask:has(.cl-question > span:not(:empty)), .cl-ask:has(.cl-cta > span:not(:empty)) {
-    /* ── THE BAND'S EDGE IS NEUTRAL, LIKE THE RECAP'S, AND FOR THE SAME
-          REASON. ──
-       This edge used to take `--fx-accent-ink`, on the argument in the
-       `.cl-recap` block below — *the ask's band is the payoff, so its edge
-       keeps the colour*. Rendered, that argument does not survive its own
-       plate. The closer is ALWAYS in `accentSlides`, so the ink is always
-       resolved here, and the plate therefore carried the accent at two
-       lengths at once: `div.cl-field::cap` at 77x14 … 283x12 (the run's own
-       `--fx-accent-w`) and `div.cl-ask::border-top` at 1048x4..7, in the same
-       hue, ~800px apart. Measured across all 36 closer renders of this tree's
-       probe sweep — 3 clients x {en, he} x {s, m, l} x {closer, closerLONG} —
-       it was 36 of 36, in every brand hue: rgb(89,56,183), rgb(196,85,47),
-       rgb(165,232,43). That is the owner's *"sometimes a long marker,
-       sometimes a short one"*, still measurable after the six rails came out.
-       `headline-focus.html`'s rule block is the set's own answer: *what stays
-       NEUTRAL is the EDGE of an object — a panel border, a row separator, a
-       picture's frame.* The ask's band IS an object; this line is its top
-       edge, not a mark. So it takes `--line`, exactly as `.cl-recap`'s edge
-       already does, and the plate is left with ONE accent length: the cap.
-       Nothing clause E reads moves — the clause rests on the band's painted
-       AREA, and `box-sizing: border-box` plus an unchanged border WIDTH means
-       that area is identical to the pixel. Only the line's hue changes. */
-    border-block-start: calc(6px * var(--ts, 1)) solid var(--line);
-    /* The ask's band is ruled HORIZONTALLY, on the same axis as the field's
-       band stack above it — this plate has one direction and everything on it
-       obeys it. Fine here rather than architectural: the band is only 400px
-       tall and a 68px rhythm inside it would read as two stripes. */
-    background-image:
-      linear-gradient(to top,
-        color-mix(in srgb, var(--accent) 40%, transparent) 0%,
-        color-mix(in srgb, var(--accent) 24%, transparent) 100%);
-  }
+/* NONE — the run decided the carousel carries no accent at all. */
+body[data-accent="none"] .acc { display: none; }
 
-  .eyebrow {
-    /* ── THE LABEL'S BOX IS ITS LABEL. ──
-       A block-level eyebrow spans the whole measure whatever it says, so its
-       BOX reaches the opposite corner of the plate even when its ink stops
-       after two words. `renderCarousel`'s reserved-zone probe reads boxes, so
-       a full-width label was reported as entering the brand mark's corner from
-       the other side of the frame — a finding about nothing, on the instrument
-       §7 F2 exists to make trustworthy. `fit-content` makes the two agree.
-       `stat-callout.html` has always been `inline-block` for the same reason. */
-    inline-size: fit-content; max-inline-size: 100%;
-    font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro);
-    letter-spacing: 0.22em; text-transform: uppercase; color: color-mix(in srgb, var(--fg) 84%, transparent);
-  }
-  .eyebrow:empty { display: none; }
+/* ---- type roles --------------------------------------------------------- */
+/* `--display-weight` and `--display-tracking` are the run's own display
+   register. Both were emitted and unread, so every kit-less client rendered in
+   the same face at the same weight. */
+.headline {
+  font-family: var(--f-display, var(--f-body, system-ui, sans-serif));
+  font-weight: var(--display-weight, 700);
+  letter-spacing: var(--display-tracking, -0.02em);
+  /* 1.12, NOT 1.06, AND NO COMPENSATING PADDING. A display face paints outside
+     its line box — Oswald by 0.3em, Space Grotesk by 0.06em, and the Hebrew
+     faces substituted for them by more again. The first attempt at this paid
+     for the overshoot in `padding-block`, which was wrong twice over: padding
+     grows the box and the reported overflow by the same amount, so it never
+     closed the gap, and it pushed the type down inside its own box — on a
+     Hebrew cover it opened 130px between the accent and the headline it is
+     supposed to sit on. A line box tall enough to contain the ink fixes the
+     geometry where the geometry is wrong, and costs the composition nothing. */
+  line-height: 1.06;
+  text-wrap: balance;
+  /* The ink a display face paints OUTSIDE its line box is closed by the fit
+     ladder, which measures it on the rendered plate rather than carrying a
+     constant per face. See `_ds-fit.js` — three attempts at a constant here
+     (a flat em value, the register's own `--mk-face-bleed`, and a `:lang(he)`
+     rule) each fixed one face and missed another, because the overshoot
+     depends on the face, the script, the step and the line height at once. */
+  margin: 0;
+  /* Display type set at 1.06 puts ink outside its own line box — ascenders at
+     the top line, descenders at the last. Measured on this system's first
+     render, the host reported 292px of content in a 289px box on a title with
+     no descenders at all. In `em` so it is one decision at every step, not a
+     pixel fudge per size: this is the optical padding the line height omits,
+     and without it the ladder steps a plate that fits.
 
-  /* ── The recap strip. Class names match `buildRecapFragment` exactly; the
-        plate title reuses `.item-title`, one of `script-fonts.ts`'s
-        DISPLAY_SELECTORS, so a Hebrew recap gets Hebrew leading. ── */
-  .cl-recap { position: relative; }
-  .cl-recap:empty { display: none; }
-  /* GRADED AND TEXTURED, never a flat swatch — the standing rule for every
-     large panel in this directory, and the one this file was still breaking.
-     `measureSlidePng` reads the slide's ground colour off the modal FLAT
-     cell, and a flat `color-mix(accent 26%, bg)` fill over a recap strip at
-     the reviewer's `l` type scale is the largest single flat region on the
-     plate: it won that vote, the brand ground was measured as brown, and
-     every dark pixel at the frame edge was then counted as clipped ink —
-     1.6% against a 0.4% ceiling, on a plate with (verified pixel by pixel
-     against the real `--bg`) exactly zero ink in the bleed band. */
-  .cl-recap:not(:empty) {
-    background-image:
-      linear-gradient(162deg,
-        color-mix(in srgb, var(--accent) 14%, transparent) 0%,
-        color-mix(in srgb, var(--accent) 8%, transparent) 100%);
-    padding: calc(34px * var(--ts, 1)) calc(30px * var(--ts, 1)) calc(28px * var(--ts, 1));
-    margin-block-end: calc(56px * var(--ts, 1));
-    /* ── EVERY PANEL EDGE ON THIS PLATE IS NEUTRAL. THE ONE ACCENT MARK IS
-          THE CAP. ──
-       Measured through the production composition at `m`, this plate carried
-       THREE accent-hue bars at three lengths: `div.cl-field::cap 96x18` (the
-       run's own mark), `div.cl-recap::border-top 952x6` and
-       `div.cl-ask::border-top 1048x6` — the top two 35px apart, which is
-       exactly the shape of the owner's *"there are these lines"*.
-       The first revision of this block demoted the recap's edge and kept the
-       ask's, on the argument that the ask is the payoff. That left TWO accent
-       lengths (the 96px cap and the 1048px rule) on every closer of every
-       carousel, which is the same defect one bar smaller — see the `.cl-ask`
-       block above for the 36-of-36 measurement that closed it.
-       Both edges are `--line` now. A panel's border is the outline of the
-       thing it belongs to and a reader reads it as its shape; the accent is
-       spent on the ONE free-standing mark this plate has. The panels' accent
-       TINTS are untouched: a surface may carry the hue, a rule has to earn
-       it. */
-    border-block-start: calc(6px * var(--ts, 1)) solid var(--line);
-  }
-  .rc-strip { display: flex; gap: calc(20px * var(--ts, 1)); }
-  .rc-plate {
-    flex: 1 1 0; border-block-start: 3px solid var(--line);
-    padding-block-start: calc(22px * var(--ts, 1));
-  }
-  .rc-n {
-    font-family: var(--f-mono); font-weight: 600; font-size: calc(var(--t-micro) * 0.8636);
-    letter-spacing: 0.16em; color: color-mix(in srgb, var(--fg) 62%, transparent);
-    margin-block-end: calc(16px * var(--ts, 1));
-  }
-  .rc-plate .item-title {
-    font-family: var(--f-display); font-weight: 500; font-size: calc(var(--t-lead) * 0.6739);
-    line-height: 1.25; letter-spacing: -0.01em; text-wrap: balance; padding-block-end: 0.14em;
-  }
-  /* FOUR PLATES IS A NARROWER COLUMN, so it is a smaller size. `.rc-strip`
-     divides the 952px content column evenly: three plates are ~304px wide and
-     four are ~223px, and `MAX_RECAP_PLATE_CHARS` is 40 either way. At 31px a
-     40-character title takes five lines in a 223px plate — the strip stops
-     being a glance, which is the exact thing `MAX_RECAP_PLATES`'s comment says
-     four plates must not do — and it took the strip to 345px of an 823px
-     field at `l`, which is what pushed the takeaway off the top of its own
-     box.
-     Every clearance quoted in this block and the next was measured with
-     `.cl-rail` still in flow — 2px plus a 24px top margin inside `.cl-head`.
-     The rail is deleted, so the head is 26px shorter (30px at `l`) and each of
-     those clearances is now that much LARGER. The numbers are therefore
-     conservative rather than stale, and the script's `over()` loops are what
-     hold the plate either way. */
-  .rc-strip:has(.rc-plate:nth-child(4)) .item-title {
-    font-size: calc(var(--t-label) * 0.8125); line-height: 1.22;
-  }
-  /* THE STRIP'S FURNITURE STOPS GROWING AT `l`. `--ts` is a request for
-     bigger TYPE; scaling a recap plate's padding and the gap under the strip
-     by the same 18% spends the field's elastic middle on air. The type inside
-     it still scales. Measured (`.local/cl-fit.mjs`): with a four-plate recap
-     and a 97-character takeaway at `l` the wrap sat 66px above its own field
-     and 33px on top of the eyebrow rail; with this, the four-plate title step
-     and the ladder's `tiny` step it sits 42px inside its field and 75px under
-     the rail. 42px is the thinnest margin in the sweep, and it is the case
-     that defines this block — a shorter takeaway or a three-plate strip has
-     between 54px and 434px. */
-  body.ts-l .cl-recap:not(:empty) {
-    padding: calc(24px * var(--ts, 1)) calc(26px * var(--ts, 1)) calc(20px * var(--ts, 1));
-    margin-block-end: calc(32px * var(--ts, 1));
-  }
-  /* ── THE RECAP'S COMPACT SETTING, AT ANY SCALE. ──
-     The `ts-l` block above is the same compaction applied for the same reason
-     — the strip takes 447-646px out of a middle that has to hold a display
-     takeaway as well — but `l` is not the only way to get there: a display
-     register with a wide advance (measured: `mono-display` at `m`) puts the
-     document 432px past the frame with the takeaway already on its smallest
-     rung. The script applies this class only after every type ladder has run
-     out, so a plate that fits never sees it. */
-  .cl-recap.rc-fit:not(:empty) {
-    padding: calc(24px * var(--ts, 1)) calc(26px * var(--ts, 1)) calc(20px * var(--ts, 1));
-    margin-block-end: calc(28px * var(--ts, 1));
-  }
-  .cl-recap.rc-fit .item-title { font-size: calc(var(--t-label) * 0.8125); line-height: 1.22; }
-  .cl-recap.rc-fit .rc-plate { padding-block-start: calc(16px * var(--ts, 1)); }
-  .cl-recap.rc-fit .rc-n { margin-block-end: calc(11px * var(--ts, 1)); }
-  body.ts-l .rc-plate { padding-block-start: calc(16px * var(--ts, 1)); }
-  body.ts-l .rc-n { margin-block-end: calc(11px * var(--ts, 1)); }
+     `--mk-face-bleed` is ADDED because the overshoot is a property of the face,
+     not of the design: the run's own display register already declares how far
+     its face paints outside the line box (0 for Fraunces and Inter, 0.3em for
+     Oswald, 0.06em for Space Grotesk). With a flat allowance the two humanist
+     registers were clean and every condensed cover reported 6-28px of overflow
+     — the same defect, at one register only, which is what a face constant is
+     for. Reading it here means a register added later brings its own number.
 
-  /* `.headline`, not a closer-specific name — a DISPLAY_SELECTOR, so the
-     takeaway picks up per-script leading. */
-  /* ── PHASE 5.5: THE LADDER KEEPS THE BLOCK'S HEIGHT, NOT THE TYPE'S SIZE. ──
-     A length ladder exists so that more characters do not make a taller block.
-     This one did the opposite of that job at the top end: a 24-character
-     takeaway — the strongest payoff a closer can have — was set at the same
-     100px as a 44-character one and occupied ONE line of a 858px field, which
-     is how a payoff plate came to measure as the emptiest plate in the set.
-     Every rung moves up and a `huge` rung is added under 30 characters, so the
-     statement block lands between ~500px and ~630px at every length. THE
-     STEPS ARE SCALE STEPS (§4.4), so the run's own `typeScale` flavour reaches
-     them: `display` renders these at 130/110/92, `condensed` 12% larger and
-     `editorial` 14% smaller, which is the axis that used to change nothing. */
-  .headline {
-    font-family: var(--f-display); font-weight: 600; font-size: calc(var(--t-display) * 1.05);
-    line-height: 1.12; letter-spacing: -0.018em; text-wrap: balance;
-    padding-block-end: max(0.22em, var(--mk-face-bleed, 0em));
-  }
-  .headline.huge { font-size: calc(var(--t-display) * 1.3); line-height: 1.06; }
-  .headline.small { font-size: calc(var(--t-display) * 0.8871); line-height: 1.14; }
-  /* The ladder's missing bottom step. `.cl-field` is the elastic middle
-     (`flex: 1 1 auto; min-block-size: 0`) anchored with `justify-content:
-     flex-end`, so when `.cl-wrap` outgrows it the excess leaves through the
-     BLOCK-START edge — invisibly, because `scrollHeight` only ever counts
-     overflow below the padding box. Measured at `l` (`.local/cl-fit.mjs`,
-     real Chromium): a 97-character takeaway over a three-plate recap put the
-     wrap 53px above its own field and 20px ON TOP of the eyebrow's rail; over
-     a four-plate recap, 73px and 40px. `probePage` now has a block-start limb
-     and reports both, but a template that needs the probe to catch it is
-     still a broken template — this step is what makes it fit. */
-  .headline.tiny { font-size: calc(var(--t-statement) * 1.0952); line-height: 1.16; }
-  /* ── AND THE PLATE THAT ALREADY HAS A SUBJECT KEEPS THE MEASURED LADDER. ──
-     The rungs above are for a closer whose only content is its takeaway —
-     the plate that measured 0.2667 empty. A closer carrying a RECAP STRIP is
-     a different composition: the strip takes 447-646px of the same field, so
-     the band the big rungs exist to fill is already filled, and setting a
-     24-character takeaway at 188px on top of it pushed `.cl-field` and
-     `.cl-wrap` out of their own boxes (`probe.overflow`, measured). This
-     restores exactly the sizes RFC-21 tuned around the strip, and it is the
-     right order of precedence: content first, then the ladder that fills what
-     the content left. */
-  body:has(.cl-recap:not(:empty)) .headline,
-  body:has(.cl-recap:not(:empty)) .headline.huge { font-size: calc(var(--t-display) * 1.05); line-height: 1.1; }
-  body:has(.cl-recap:not(:empty)) .headline.small { font-size: calc(var(--t-display) * 0.85); line-height: 1.14; }
-  body:has(.cl-recap:not(:empty)) .headline.tiny { font-size: calc(var(--t-statement) * 0.7619); line-height: 1.16; }
+     The base went 0.12/0.10 -> 0.18/0.14 on a measurement rather than a guess:
+     with the face constant in, the only plates still reporting were Hebrew
+     covers at 8-10px over, because `--mk-face-bleed` is the LATIN register's
+     number and the Hebrew face substituted for it has its own ascent. 0.18em
+     clears the largest of those with margin. */
+}
+.body-text {
+  font-family: var(--f-body, system-ui, sans-serif);
+  font-weight: 400;
+  line-height: 1.42;
+  max-inline-size: 22em;
+  color: color-mix(in srgb, var(--fg) 82%, transparent);
+  margin: 0;
+}
+.source-line, .note {
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: var(--t-micro);
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--fg) 48%, transparent);
+  margin: 0;
+}
+.source-line:empty, .note:empty { display: none; }
 
-  /* ── `.cl-rule` IS DELETED — RULE AND ELEMENT — AND THIS IS WHY IT HAD TO
-        GO RATHER THAN ACQUIRE ANOTHER GUARD. ──
-     ITS TWO GUARDS, QUOTED FROM THE FILE THEY WERE DELETED FROM
-     (`git show HEAD~:…/closer.html`, lines 685 and 694-695) — an earlier
-     revision of this block quoted a complementary PAIR on `#takeaway` and no
-     such pair was ever here:
-       `body:not(:has(#takeaway > span:not(:empty))) .cl-rule { display: none }`
-       `body:has(.cl-ask .cl-question > span:not(:empty)) .cl-rule,`
-       `body:has(.cl-ask .cl-cta      > span:not(:empty)) .cl-rule { display: none }`
-     Two DIFFERENT conditions, so nothing about the CSS made the bar
-     unpaintable. What made it unpaintable is the pipeline: `contentFor`'s
-     closer branch always emits `takeaway`, and always routes `body` into
-     exactly one of `question`/`cta` (`slides-data.ts`), so the second guard
-     matched on every closer this agent has ever assembled and the first was
-     never reached. A mark whose hiding condition the assembler guarantees is
-     as dead as one hidden by a tautology — it is just dead one file away,
-     where a reader of the stylesheet cannot see it.
-     Measured rather than reasoned about: `.local/cap-debug.mjs` on a fully
-     populated closer with the switch ON (`data-n=08`, `--fx-accent: block`,
-     `--fx-accent-w: calc(96px * 1)`) reported `.cl-rule` `display: none`, box
-     `0x0`.
-     The declaration was kept alive on purpose, because
-     `template-furniture.test.ts`'s switched-mark registry named it — a guard
-     reading the text of a rule with no pixel effect, which is a guard that
-     cannot fail. The registry now names `.cl-art`'s cap instead, which is the
-     mark this archetype actually paints, and it carries a rendered limb
-     (`the registry's marks paint a box`) that measures a rect rather than a
-     substring — that limb is what would have caught this, and the
-     source-level complementary-guard case beside it would NOT have: run its
-     regex over the pre-deletion file and the two conditions do not intersect.
-     Both are named here so the next reader does not mistake one for the
-     other.
-     This plate's mark is therefore exactly one object: the field's cap
-     (`.cl-art`, `--fx-accent-ink` at `--fx-accent-w`/`--fx-accent-h`). */
+/* role defaults, each exactly one step */
+.r-figure    { font-size: var(--t-figure); }
+.r-display   { font-size: var(--t-display); }
+.r-statement { font-size: var(--t-statement); }
+.r-lead      { font-size: var(--t-lead); }
+.r-label     { font-size: var(--t-label); }
+.r-micro     { font-size: var(--t-micro); }
 
-  /* ── THE ASK HAS A LADDER NOW, and it is the piece that was missing. ──
-     `.cl-ask` is `flex: 0 0 auto` with a 400px floor, so its height is its
-     copy's height and it takes that height from `.cl-field` — the elastic
-     middle holding the recap and the takeaway. Nothing bounded it.
-     `InstagramSlideCopySchema` puts no maximum on `body`, and
-     `slides-data.ts` routes a body with no '?' into `cta` and one with a '?'
-     into `question`, so the calibration's own 306-character LONG body is a
-     producible ask. Measured (`.local/fx-cl-fit.mjs`, real Chromium): it took
-     `.cl-ask` from 400px to 504px in the `cta` slot and to 989px in the
-     `question` slot at `l`, which left the field 234px for a 722px wrap.
-     Every other type block in this directory picks its size from its own
-     string's length; these two now do too, on the same `~15%` lower
-     thresholds at `l` that `quote-card.html`'s script explains. */
-  .cl-question {
-    font-family: var(--f-display); font-weight: 500; font-size: calc(var(--t-lead) * 1.1304);
-    line-height: 1.3; letter-spacing: -0.012em; text-wrap: balance; padding-block-end: max(0.16em, var(--mk-face-bleed, 0em));
-  }
-  .cl-question.small { font-size: calc(var(--t-lead) * 0.913); line-height: 1.32; }
-  .cl-question.tiny { font-size: calc(var(--t-lead) * 0.7391); line-height: 1.36; }
-  /* The ladder's bottom step, and the case that needs it is the worst one the
-     schema admits: a 306-character body with a '?' in it, so it routes to the
-     question slot, at `l`, over a four-plate recap. At `tiny` the ask still
-     came to 490px and the wrap escaped its field by 47px; at `micro` the ask
-     is back on its 400px floor and the wrap clears by 101px. */
-  .cl-question.micro { font-size: calc(var(--t-lead) * 0.6087); line-height: 1.4; }
-  .cl-question:not(:has(> span:not(:empty))) { display: none; }
-  .cl-cta {
-    font-family: var(--f-body); font-weight: 500; font-size: calc(var(--t-label) * 1.125);
-    line-height: 1.45; color: color-mix(in srgb, var(--fg) 94%, transparent);
-    max-inline-size: 860px; text-wrap: pretty;
-  }
-  .cl-cta.small { font-size: calc(var(--t-lead) * 0.6739); line-height: 1.45; }
-  .cl-cta.tiny { font-size: calc(var(--t-label) * 0.8438); line-height: 1.5; }
-  /* The CTA's own bottom step, and it exists for the same reason
-     `.cl-question.micro` does — the question slot got one and the CTA did not,
-     although the two take the SAME string and the CTA is the branch a body
-     with no '?' in it takes, i.e. the common one.
+/* ---- THE FIT LADDER — steps, not fractions ------------------------------ */
+/* `_ds-fit.js` measures the VISIBLE twin and sets `data-fit` on the host:
+   -1 short copy, take the next step UP (this is what stops a six-word headline
+   floating in an empty plate); 0 its own step; 1 and 2 step down. Every value
+   it can produce is a step of the scale above. */
+[data-fit="-1"].r-display   { font-size: var(--t-figure); }
+[data-fit="-1"].r-statement { font-size: var(--t-display); }
+[data-fit="-1"].r-lead      { font-size: var(--t-statement); }
 
-     The case: `body` is `.max(600)` and a 600-character CTA is producible.
-     Measured on this tree in real Chrome, `humanist-serif`, an eight-slide
-     English carousel over a four-plate recap: at `tiny` the CTA wrapped to ten
-     lines and its box left `.cl-ask` by 23px, `probe.overflow` reported
-     `div.cl-cta`, and the last two lines printed over `@karoslabs`. The strip
-     reservation above cannot help there — it reserves space INSIDE a box the
-     copy is already too tall for — which is why the fit loop below is the
-     other half of this fix and this rung is what it has to descend to. */
-  .cl-cta.micro { font-size: calc(var(--t-label) * 0.6875); line-height: 1.42; }
-  .cl-cta:not(:has(> span:not(:empty))) { display: none; }
+[data-fit="1"].r-figure     { font-size: var(--t-display); }
+[data-fit="1"].r-display    { font-size: var(--t-statement); }
+[data-fit="1"].r-statement  { font-size: var(--t-lead); }
+[data-fit="1"].r-lead       { font-size: var(--t-label); }
 
-  /* ── TWIN SLOTS: THE MARKED COPY AND ITS PLAIN FALLBACK (RFC-17 §5.4). ──
-     `cover.html`'s twin-slot block is the canonical note — why a pair rather
-     than a straight swap (`fillTemplate` erases an unfilled slot, so a run
-     resumed across a deploy would render an empty takeaway), why both twins
-     stay in the DOM on every render (`probePage` counts a text-bearing LEAF,
-     so wrapping one path and not the other moves `textBoxShare` and
-     `fontFamiliesUsed` between two renders of the same copy), and why every
-     `:empty` guard in this file had to be restated against the children.
+[data-fit="2"].r-figure     { font-size: var(--t-statement); }
+[data-fit="2"].r-display    { font-size: var(--t-lead); }
+[data-fit="2"].r-statement  { font-size: var(--t-label); }
+[data-fit="2"].r-lead       { font-size: var(--t-label); }
 
-     A NOTE ON HOW THE SLOT NAMES ARE SPELLED BELOW. `fillTemplate` is a
-     `replaceAll` over the LITERAL token, and it does not know this is a
-     comment: a raw-fragment token written out in full here is a SECOND
-     substitution site, and a fragment carrying a style element of its own
-     closes this stylesheet early and dumps the rest of this file onto the
-     plate as body copy. Measured, on all six mark-bearing templates. So every
-     slot named in prose in this file drops its braces — `html:takeawayRuns`,
-     not the token — and only the real slot down in the markup can ever match.
-     For the same reason no comment here spells a style tag out in full; see
-     `cover.html`'s canonical copy of this note.
+/* ---- the twin slot ------------------------------------------------------ */
+/* Marked renders carry the copy twice (`.mk-runs` with emphasis spans,
+   `.mk-plain` without). Exactly one is ever visible, and the fit ladder is
+   careful to measure the visible one — see `_ds-fit.js`.
 
-     THREE PAIRS HERE, THE MOST IN THE SET: `.headline` takes
-     `html:takeawayRuns` + `takeaway`, `.cl-question` takes
-     `html:questionRuns` + `question`, `.cl-cta` takes
-     `html:ctaRuns` + `cta`. The question and the CTA are already
-     mutually exclusive upstream, so at most two of the three ever carry copy
-     on one plate — which is why each needs its OWN collapse rule rather than
-     one rule over a shared ancestor: the rule has to name the host whose runs
-     span it is collapsing, or a filled takeaway would hide an unmarked CTA's
-     only copy. */
-  /* The twin host's block-start bleed — see `cover.html` for the measurement
-     and why it is here rather than only in the shared mark sheet. */
-  :has(> span.mk-plain) { padding-block-start: max(var(--mk-twin-bleed, .22em), var(--mk-face-bleed, 0em)); }
-  .headline:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
-  .cl-question:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
-  .cl-cta:has(.mk-runs:not(:empty)) .mk-plain { display: none; }
+   `display: contents`, so the twin generates NO BOX and the text becomes a
+   direct child of the host. The reason is measurable. As an inline span the
+   twin is sized by the FONT's ascent and descent rather than by `line-height`,
+   so on a Hebrew face with a tall ascent its rect sat above the headline's own
+   content box and every Hebrew cover reported an overflow with nothing visibly
+   wrong. Making it a block moved the same 3-27px report onto the block instead.
+   With no box there is nothing to overflow: the host carries the text, the host
+   carries the optical padding, and one geometric check covers both scripts. */
+.mk-runs  { display: contents; }
+.mk-plain { display: contents; }
+.mk-runs:empty { display: none; }
+.mk-runs:not(:empty) + .mk-plain { display: none; }
+/* `--mk-face-bleed` is the run's decision about whether an emphasis run may
+   change face. 0 keeps ONE face inside a headline, which is what stopped a
+   Hebrew line coming out in two typefaces. */
+.mk-runs em, .mk-runs b, .mk-runs strong {
+  font-style: normal;
+  font-weight: inherit;
+  font-family: inherit;
+  color: var(--fx-accent-ink, var(--accent, #ff5a1f));
+}
+body[data-face-bleed="1"] .mk-runs em { font-family: var(--f-display); }
 
-  /* Standing brand furniture. The brand head fragment (`buildBrandHeadHtml`)
-     restates both rules and lands AFTER this sheet, so a client with a kit
-     keeps its own placement; these defaults exist because a brandless render
-     otherwise lays the handle out in normal flow, on top of the copy. */
-  .brand-handle {
-    position: absolute; bottom: 44px; inset-inline-start: 44px; z-index: 6;
-    font-family: var(--f-mono); font-size: var(--t-micro); letter-spacing: 0.08em;
-    color: color-mix(in srgb, var(--fg) 62%, transparent);
-  }
-  /* The badge RULE outlives the badge SLOT: the `seriesBadge` slot is deleted from
-     this file's markup, but a CLIENT's own template may still carry the slot
-     (it is still in `KNOWN_SLOT_NAMES` and still a `LAYOUT_FIELD_KEY` for
-     exactly that reason), and a badge with no placement rule lays itself out
-     in normal flow over the copy. */
-  .brand-badge {
-    position: absolute; top: 56px; inset-inline-start: var(--mx); z-index: 6;
-    font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro);
-    letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);
-  }
-  /* An @handle, a URL and a #hashtag are LTR strings, and a Hebrew or Arabic
-     slide lays them out inside an RTL paragraph: the leading `@` is a bidi
-     NEUTRAL, so it takes the paragraph embedding level and ends up on the
-     wrong side — every Hebrew slide in the tree shipped `karoslabs@`. The
-     `<bdi dir="ltr">` in the markup is the fix; `dir` on the DIV would also
-     have re-resolved its own `inset-inline-start` and moved the watermark to
-     the other corner. The extra :has() selector is what keeps an empty slot
-     hidden now that the div always has an element child. */
-  .brand-badge:empty, .brand-handle:empty, .brand-handle:has(> bdi:empty) { display: none; }
+/* ---- the bounded object (device) ---------------------------------------- */
+.device:empty { display: none; }
+.dv-figure {
+  font-family: var(--f-display, var(--f-body, system-ui, sans-serif));
+  font-weight: var(--display-weight, 700);
+  font-size: var(--t-figure);
+  line-height: 0.88;
+  color: var(--dv-ink, var(--fg));
+}
+/* One step up from where it started. At `--t-label` against a 200px figure the
+   caption read as fine print — the owner's *"הטקסט מתחת ל90% הוא ממש קטן"* —
+   and a figure whose meaning is unreadable is a decoration, not evidence. */
+.dv-label {
+  font-family: var(--f-body, system-ui, sans-serif);
+  font-size: var(--t-lead);
+  line-height: 1.3;
+  color: var(--dv-quiet, color-mix(in srgb, var(--fg) 72%, transparent));
+}
+/* THE DEVICE STEPS WITH THE PLATE. The bounded object is the tallest thing on
+   the plates that carry one, so a plate that does not fit is usually the device
+   rather than the copy. Before these two rules the object simply overflowed —
+   at `ts-l` the cover's figure grew up through the reserved brand band and
+   printed under the mark. Both values are steps of the scale, so the object
+   shrinking cannot put an off-scale size on the plate. */
+[data-fit="1"] .dv-figure { font-size: var(--t-display); }
+[data-fit="2"] .dv-figure { font-size: var(--t-statement); }
+[data-fit="1"] .dv-label,
+[data-fit="2"] .dv-label  { font-size: var(--t-micro); }
+
+/* The device never paints a rule of its own. It is a figure and its label. */
+.device .dv-rule, .device .dv-accent { display: none; }
+
+/* ---- script direction --------------------------------------------------- */
+body.ta-start .plate, body.ta-start .zone-mark, body.ta-start .zone-foot { text-align: start; }
+body.ta-center .plate { text-align: center; }
+body.ta-center .plate > * { margin-inline: auto; }
+body.ta-center .acc { margin-inline: auto; }
+/* @ds:end-of-source */
+/* @ds:end */
+
+/* ---- closer ------------------------------------------------------------- */
+.cl-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp);
+}
+.cl-wrap .headline { max-inline-size: min(16ch, 100%); }
+
+.cl-recap {
+  margin-block-start: var(--sp-2);
+  inline-size: 100%;
+}
+.cl-recap:empty { display: none; }
+.rc-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--sp-2);
+  align-items: start;
+}
+.rc-plate {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rc-n {
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: var(--t-micro);
+  letter-spacing: 0.12em;
+  color: var(--fx-accent-ink, var(--accent));
+}
+.rc-plate .item-title {
+  font-size: var(--t-label);
+  line-height: 1.26;
+  color: color-mix(in srgb, var(--fg) 86%, transparent);
+}
+[data-fit="1"] .rc-plate .item-title,
+[data-fit="2"] .rc-plate .item-title { font-size: var(--t-micro); }
+
+.cl-ask {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp);
+}
+.cl-question { max-inline-size: min(22em, 100%); }
+.cl-cta { max-inline-size: min(30em, 100%); }
 </style>
 </head>
-<body class="ts-{{fontScale}} ta-{{textAlign}} gr-{{groundStyle}}" data-n="{{slideIndex}}">
+<body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-ground="{{groundStyle}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}">
   <div class="ground" aria-hidden="true"></div>
-  <!-- The 460px `.ground-glyph` and the `seriesBadge` slot were both here
-       and are both deleted — see their own notes in the sheet above. -->
-  <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
-  <span class="pg-index" aria-hidden="true">{{slideIndex}}</span>
-  <div class="cl-head">
+
+  <div class="zone-mark">
     <div class="eyebrow">{{eyebrow}}</div>
   </div>
-  <div class="cl-field cl-art">
+
+  <div class="plate closer">
     <div class="cl-wrap">
-      <div class="cl-recap">{{html:recap}}</div>
-      <div class="headline" id="takeaway"><span class="mk-runs">{{html:takeawayRuns}}</span><span class="mk-plain">{{takeaway}}</span></div>
+      <div class="acc" aria-hidden="true"></div>
+      <div class="headline r-display" id="takeaway" data-fitted="primary"><span class="mk-runs">{{html:takeawayRuns}}</span><span class="mk-plain">{{takeaway}}</span></div>
+      <div class="cl-recap" data-fitted="secondary">{{html:recap}}</div>
+    </div>
+    <div class="cl-ask">
+      <div class="cl-question body-text r-lead" data-fitted="secondary"><span class="mk-runs">{{html:questionRuns}}</span><span class="mk-plain">{{question}}</span></div>
+      <div class="cl-cta body-text r-label"><span class="mk-runs">{{html:ctaRuns}}</span><span class="mk-plain">{{cta}}</span></div>
     </div>
   </div>
-  <div class="cl-ask">
-    <div class="cl-question"><span class="mk-runs">{{html:questionRuns}}</span><span class="mk-plain">{{question}}</span></div>
-    <div class="cl-cta"><span class="mk-runs">{{html:ctaRuns}}</span><span class="mk-plain">{{cta}}</span></div>
+
+  <div class="zone-foot">
+    <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
   </div>
+
   <script>
-    // THE BREAKPOINTS MOVE WITH THE REVIEWER'S TYPE SCALE, for the reason
-    // `quote-card.html`'s script states and `headline-focus.html`'s repeats:
-    // the ladder picks a size from the string's length alone, so at `l`
-    // (`--ts` 1.18) every step it picks is 18% taller inside a plate that did
-    // not grow — and this archetype's middle is competing with a recap strip
-    // that grew by the same 18%. Measured (`.local/cl-fit.mjs`): a
-    // 97-character takeaway over a three-plate recap fits at `m` with 113px
-    // of clearance under the eyebrow rail and overlaps it by 20px at `l`.
-    // `s` keeps the `m` thresholds: a smaller scale never overflows.
-    //
-    // AND THEY MOVE WITH THE RECAP TOO, which is the second competitor for
-    // the same field. A recap strip takes 447-646px of the middle at `m`
-    // (`.local/fx-cl-fit.mjs`), so how much room the takeaway has depends on
-    // whether one is present as much as on the type scale. Measured: the
-    // 90-character takeaway took the `small` step (80px) and needed 798px of
-    // a 783px field with a three-plate recap under it — 15px over, on a plate
-    // every instrument in the tree called clean before `probePage` grew its
-    // block-start limb. One step down is 726px and fits.
-    //
-    // The ask's own two ladders are new here and are the same shape, on their
-    // own lengths. A long ask is what pushes the field down; a long takeaway
-    // is what fills it; both have to give.
-    (function () {
-      var big = document.body.classList.contains("ts-l");
-      var recap = document.querySelector(".cl-recap");
-      // The recap's factor is MULTIPLICATIVE on whatever the scale already
-      // asked for, and it is 0.85 rather than the scale's own step because it
-      // is a different quantity: `l` grows every glyph on the plate by 18%,
-      // while a recap takes a fixed 447-646px out of the middle.
-      var r = recap !== null && recap.textContent.trim() !== "" ? 0.85 : 1;
-      var at = function (m, l) { return Math.round((big ? l : m) * r); };
-      // THE LADDERS MEASURE THE VISIBLE TWIN, NOT BOTH OF THEM —
-      // `cover.html`'s script carries the full note. All three of the slots
-      // this helper is called on are twin-slot pairs, and `textContent` reads
-      // a `display: none` subtree too, so on a marked render each host holds
-      // its copy twice: measured naively a 46-character takeaway would score
-      // 92 and drop two steps, on a plate whose middle is already competing
-      // with the recap strip. Zero-width bidi controls are stripped for the
-      // reason stated there. `.cl-recap` is NOT a twin pair — it is a
-      // code-built `html:recap` fragment — and it keeps its own plain
-      // `textContent` read above.
-      var len = function (el) {
-        if (el === null) return 0;
-        var runs = el.querySelector(".mk-runs");
-        var src = runs !== null && runs.textContent.trim() !== "" ? runs : el.querySelector(".mk-plain");
-        var text = ((src === null ? el : src).textContent || "").replace(/[\u2066-\u2069\u200E\u200F]/g, "");
-        return text.trim().length;
-      };
+/* @ds:fit-start */
+/* ============================================================================
+   THE FIT LADDER — one for the whole set.
+   ----------------------------------------------------------------------------
+   Generated into every template between the `@ds:fit-start` / `@ds:fit-end`
+   markers by `scripts/sync-design-system.ts`. Edit HERE, never in a plate.
 
-      var t = document.getElementById("takeaway");
-      var q = document.querySelector(".cl-question");
-      var c = document.querySelector(".cl-cta");
-      var ask = document.querySelector(".cl-ask");
-      var TAKEAWAY_RUNGS = ["headline huge", "headline", "headline small", "headline tiny"];
-      var QUESTION_RUNGS = ["cl-question", "cl-question small", "cl-question tiny", "cl-question micro"];
-      var CTA_RUNGS = ["cl-cta", "cl-cta small", "cl-cta tiny", "cl-cta micro"];
+   WHAT IT REPLACES. Every template used to carry its own ladder that picked a
+   size from `textContent.length` against bespoke thresholds. Three problems,
+   all of them things the owner saw:
 
-      // ── AND THEN THE MEASURE HAS THE LAST WORD. ──
-      //
-      // A character-count ladder cannot see a FACE's advance width, and this
-      // phase gave the display face its own per-client axis: the same
-      // 24-character takeaway that fits at the poster rung in Inter is 1,043px
-      // wide in IBM Plex Mono inside a 952px measure, and a single word wider
-      // than its column cannot wrap — so the host overflows horizontally,
-      // `probe.overflow` fires and clause B refuses the plate as `clipped`
-      // with a steer ("shorten the headline") that cannot fix a font metric.
-      //
-      // So the ladder's pick is a STARTING POINT and the DOM decides: step
-      // down while the content is wider than the box. It costs one layout read
-      // per step on a plate that is already laid out, it is correct for every
-      // face and every script rather than for the two the rungs were measured
-      // against, and it can only ever make type smaller than the ladder asked
-      // for — never larger, so no plate gains size from it.
-      var fitToMeasure = function (el, rungs) {
-        if (el === null) return;
-        var from = rungs.indexOf(el.className);
-        for (var i = (from < 0 ? 0 : from); i < rungs.length; i++) {
-          el.className = rungs[i];
-          if (el.scrollWidth <= el.clientWidth + 1) return;
-        }
-      };
+   1. IT GUESSED. A character count does not know the face, the script, the
+      reviewer's `--ts`, or how wide the words are, so each ladder needed its
+      own thresholds AND a second set shifted ~15% for `ts-l`. Eight ladders,
+      sixteen threshold sets, and a long statement still printed over its own
+      kicker. This one MEASURES the laid-out box and steps until it fits, so
+      there is nothing to tune and nothing to keep in sync.
 
-      // ── AND THEN THE ASK IS MADE TO FIT THE BOX IT IS IN. ──
-      //
-      // The two ladders above pick a size from a STRING'S LENGTH, which is
-      // right for the faces they were measured against and a guess for every
-      // other one — `fitToMeasure` already says so about the takeaway's width.
-      // The ask needs the same correction on the block axis, and for a reason
-      // the takeaway does not have: how much room it gets is decided by the
-      // FIELD above it, which is holding a recap strip and a display-sized
-      // takeaway whose heights move with the face, the script and the copy. So
-      // the length ladder can pick a step that fits the plate in the abstract
-      // and does not fit THIS plate.
-      //
-      // What overflows here does not merely clip. `.cl-ask` ends 16px from the
-      // frame and `.brand-handle` / `.pg-index` are ABSOLUTE inside that strip,
-      // and `justify-content: center` spills a too-tall ask in BOTH directions
-      // — so the last line lands on the watermark. Measured on this tree before
-      // this pass existed, `mono-display` with a 108-character CTA: three lines,
-      // "the answer." printed on top of "@karoslabs", both strings legible and
-      // both ruined, on the last slide of every carousel.
-      //
-      // The box is `clientHeight` less its own padding, because the block-end
-      // padding is the reserved foot strip: the copy has to fit ABOVE the
-      // watermark, not merely inside the band that paints over it.
-      var askRoom = function () {
-        if (ask === null) return 0;
-        var cs = getComputedStyle(ask);
-        return ask.clientHeight - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0);
-      };
-      var askUsed = function () {
-        if (ask === null) return 0;
-        var total = 0;
-        for (var i = 0; i < ask.children.length; i++) total += ask.children[i].getBoundingClientRect().height;
-        return total;
-      };
-      var askFits = function () { return askUsed() <= askRoom() + 1; };
-      // ── AND THE PLATE ITSELF, WHICH `askFits` CANNOT SEE. ──
-      //
-      // `askRoom()` measures the box the ask WAS GIVEN, and on this archetype
-      // that box is what is left after a `flex: 0 0 auto` field holding a
-      // recap strip and a display-sized takeaway. When the field takes more
-      // than the plate has, the ask's own box is already off the bottom of the
-      // frame and every rung "fits" a box nobody can see: measured on this
-      // tree, `mono-display` at `m` with a 68-character takeaway put `html` at
-      // 1872 against 1440 and printed BOTH the question and the CTA over the
-      // `@handle` watermark — the round-1 blocker, reproduced. So the loops
-      // below ask the document as well as the box.
-      var over = function () {
-        var root = document.documentElement;
-        return root.scrollHeight > root.clientHeight + 1 || document.body.scrollHeight > document.body.clientHeight + 1;
-      };
-      var fitAsk = function (el, rungs) {
-        if (el === null || ask === null) return;
-        var from = rungs.indexOf(el.className);
-        for (var i = (from < 0 ? 0 : from); i < rungs.length; i++) {
-          el.className = rungs[i];
-          if (askFits()) return;
-        }
-      };
+   2. IT READ THE HIDDEN TWIN. `textContent` reads a `display: none` subtree, so
+      on a marked render the host counted its copy twice and a 30-character
+      headline scored 60 and took a step it did not need. Geometry only sees
+      the visible twin, so a marked and an unmarked render of the same copy now
+      set the same size.
 
-      /**
-       * ── THE WHOLE COLUMN IS FITTED ONCE, AND THE ASK HAS PRIORITY. ──
-       *
-       * Three ladders sharing one 1,320px column cannot each be right on their
-       * own: the takeaway's size decides how much of the field is left, and the
-       * field decides how much the ask gets. At the schema's own ceiling
-       * (`body` is `.max(600)`) the ask does not fit at its SMALLEST rung on a
-       * mono face over a four-plate recap — measured: 411px of copy into 252px
-       * of room, 80px of it below the band and straight onto the handle — and
-       * no amount of stepping the ask alone can recover that.
-       *
-       * So the takeaway gives up a step instead, which is what a designer does
-       * with a long call to action: the payoff line is still the largest thing
-       * on the plate, and the ask is the one element here that can land on the
-       * watermark. Bounded at four takeaway rungs x four ask rungs, and the ask
-       * is RESET to the length ladder's own pick on each takeaway step so it can
-       * go back UP when a smaller takeaway frees the room.
-       */
-      var layout = function () {
-        // Reset first, so the pass is IDEMPOTENT and the second one (below, once
-        // the web fonts have actually arrived) can choose a larger step than the
-        // first did. The length ladders' `else` branches leave the class alone,
-        // so without this a re-run could only ever ratchet downwards.
-        t.className = "headline";
-        if (q !== null) q.className = "cl-question";
-        if (c !== null) c.className = "cl-cta";
-        if (recap !== null) recap.className = "cl-recap";
+   3. IT ONLY EVER SHRANK. Short copy stayed at the role's own step and left the
+      plate mostly empty — the owner's "the first slide is relatively empty and
+      boring", and the near-blank interior plate. This ladder tries ONE STEP UP
+      first and keeps it when it fits.
 
-        // 90/44 and 46/30 are the measured pair this file already carried; only
-        // the recap factor is new.
-        //
-        // ── AND THEY WERE DERIVED WITH `.cl-rail` IN FLOW, WHICH IS GONE. ──
-        // The rail was 2px plus a `margin-block-start: calc(24px * var(--ts,1))`
-        // inside `.cl-head`, so every clearance this file's comments record was
-        // measured against a head 26px (30px at `l`) TALLER than the one it has
-        // now. The deficit runs in the safe direction by construction: a
-        // shorter head hands those pixels to `.cl-field`, so a breakpoint that
-        // fitted with the rail in flow fits with more room without it, and none
-        // of them can now overflow for want of the 26px.
-        // They are also no longer the last line of defence. `over()` below asks
-        // the DOCUMENT, and the ask ladder and the `rc-fit` compaction run
-        // until it answers no — so these numbers are the first guess and the
-        // loops are the correction, which is why re-deriving them is a
-        // measurement worth taking and not a defect to hold the phase for.
-        if (len(t) > at(90, 44)) t.className = "headline tiny";
-        else if (len(t) > at(46, 30)) t.className = "headline small";
-        // The rung a payoff plate was missing — see `.headline.huge`.
-        else if (len(t) <= at(30, 22)) t.className = "headline huge";
-        fitToMeasure(t, TAKEAWAY_RUNGS);
+   Every value it sets resolves to a step of the six-step scale. It cannot
+   produce a size that is not on the scale, which is the property that took a
+   carousel from 25 distinct sizes to the set the scale declares.
+   ========================================================================== */
+(function () {
+  var plate = document.querySelector('.plate');
+  if (!plate) { window.__CAROUSEL_READY__ = true; return; }
 
-        if (q !== null) {
-          if (len(q) > at(190, 160)) q.className = "cl-question micro";
-          else if (len(q) > at(120, 102)) q.className = "cl-question tiny";
-          else if (len(q) > at(60, 51)) q.className = "cl-question small";
-        }
-        if (c !== null) {
-          if (len(c) > at(200, 170)) c.className = "cl-cta tiny";
-          else if (len(c) > at(110, 94)) c.className = "cl-cta small";
-        }
-        var qBase = q === null ? "" : q.className;
-        var cBase = c === null ? "" : c.className;
+  var hosts = Array.prototype.slice.call(document.querySelectorAll('[data-fitted]'));
+  if (!hosts.length) { window.__CAROUSEL_READY__ = true; return; }
+  var primary = hosts.filter(function (h) { return h.getAttribute('data-fitted') === 'primary'; });
 
-        for (var k = Math.max(0, TAKEAWAY_RUNGS.indexOf(t.className)); k < TAKEAWAY_RUNGS.length; k++) {
-          t.className = TAKEAWAY_RUNGS[k];
-          if (q !== null) q.className = qBase;
-          if (c !== null) c.className = cBase;
-          fitAsk(q, QUESTION_RUNGS);
-          fitAsk(c, CTA_RUNGS);
-          if (askFits() && !over()) return;
-        }
-        // Every type ladder on the plate has run out and the document is still
-        // over the frame. The recap strip is the only thing left that can give
-        // room without cutting a word: it takes 447-646px of the middle and it
-        // is a REPEAT of copy the reader has already seen on earlier slides,
-        // while the question and the CTA are the only things on the plate that
-        // are new. So it compacts, and the ask is re-fitted in the room that
-        // frees. Nothing is dropped and no copy is cut at any point.
-        if (over() && recap !== null && recap.textContent.trim() !== "") {
-          recap.className = "cl-recap rc-fit";
-          fitAsk(q, QUESTION_RUNGS);
-          fitAsk(c, CTA_RUNGS);
-        }
-      };
+  /* EVERY ELEMENT ON THE PLATE, DEEPEST FIRST — not just the fitted hosts.
+     A host is where a STEP is applied; overflow happens wherever there is text.
+     Measured: `.me-title` in a list row and `.quote-attr` under a quotation are
+     neither of them fit hosts, and both reported — the attribution printed 15px
+     into the reserved foot band, on top of the @handle, which is the same class
+     of defect as the closer's CTA and was invisible for the same reason.
+     Deepest first so a child's ink is closed before its parent is measured,
+     otherwise a container inherits its children's overflow and pays twice. */
+  var content = Array.prototype.slice.call(plate.querySelectorAll('*'))
+    .filter(function (el) { return el.tagName !== 'IMG' && el.tagName !== 'BR'; })
+    .map(function (el) { var d = 0, n = el; while (n && n !== plate) { d++; n = n.parentElement; } return { el: el, depth: d }; })
+    .sort(function (a, b) { return b.depth - a.depth; })
+    .map(function (x) { return x.el; });
 
-      // ── AND IT IS RUN AGAIN ONCE THE REAL FACES HAVE ARRIVED. ──
-      //
-      // This script is inline at the end of the body, so it runs at parse time
-      // — BEFORE the Google Fonts `<link>`s resolve. Every measurement above is
-      // therefore taken against the FALLBACK face, and `renderCarousel` then
-      // awaits `document.fonts.ready` and screenshots the plate set in the real
-      // one. Measured here: the 601-character CTA fitted at `tiny` in the
-      // fallback (370px into 432px of room) and rendered at 411px into 252px in
-      // IBM Plex Mono, i.e. the ladder's whole job was done against a face that
-      // is not on the plate. That is the mechanism behind the CTA landing on the
-      // watermark, and no threshold in this file could have been chosen to
-      // survive it.
-      //
-      // The ready flag moves behind the font wait for the same reason: the
-      // renderer waits for the flag and THEN for `document.fonts.ready`, so
-      // deferring it costs nothing and guarantees the pixels it screenshots are
-      // the ones this pass measured. The timeout is the fail-open — a render
-      // sandbox with no network must still finish, laid out in the fallback,
-      // rather than hang on a font that is never coming.
-      layout();
-      var settled = false;
-      var settle = function () {
-        if (settled) return;
-        settled = true;
-        layout();
-        window.__CAROUSEL_READY__ = true;
-      };
-      if (document.fonts && document.fonts.ready && typeof document.fonts.ready.then === "function") {
-        document.fonts.ready.then(settle, settle);
-        setTimeout(settle, 4000);
-      } else {
-        settle();
+  /* Overflow means either of the two things a reader sees: the stack is taller
+     than the field between the brand band and the foot band, or a single
+     unbreakable line is wider than the measure. */
+  /* The field the copy is allowed to occupy: the plate's content box, which is
+     everything between the reserved brand band and the reserved foot band. */
+  function field() {
+    var r = plate.getBoundingClientRect();
+    var cs = getComputedStyle(plate);
+    return { top: r.top + parseFloat(cs.paddingTop), bottom: r.bottom - parseFloat(cs.paddingBottom) };
+  }
+
+  function overflows() {
+    if (plate.scrollHeight > plate.clientHeight + 1) return true;
+
+    /* GEOMETRY, NOT JUST `scrollHeight`. Content that overflows in the block-
+       START direction is invisible to `scrollHeight` — a flex item aligned to
+       the end, or an auto margin on an item taller than its track, grows UP and
+       reports nothing. That is how the cover's figure came to sit 132px above
+       its band, under the brand mark, on a plate the ladder called fitted.
+       This limb measures what the render check measures: is any fitted host
+       outside the field the plate reserved for it? */
+    var f = field();
+    for (var g = 0; g < content.length; g++) {
+      var box = content[g].getBoundingClientRect();
+      if (box.height === 0 || box.width === 0) continue;
+      if (box.top < f.top - 1 || box.bottom > f.bottom + 1) return true;
+    }
+
+    /* THE CANVAS ITSELF. A host that sets a `max-inline-size` in `ch` grows with
+       the step it is given, so at the top of the ladder a 15ch measure at the
+       figure step is wider than the plate — the first render of this system
+       widened the document to 1194px against a 1080px canvas. `body` clips, so
+       the host's own `scrollWidth` looks fine and only the document shows it. */
+    if (document.documentElement.scrollWidth > document.body.clientWidth + 1) return true;
+    for (var i = 0; i < hosts.length; i++) {
+      if (hosts[i].scrollWidth > hosts[i].clientWidth + 1) return true;
+    }
+    return false;
+  }
+
+  function set(list, value) {
+    for (var i = 0; i < list.length; i++) list[i].setAttribute('data-fit', String(value));
+  }
+
+  /* ── CLOSE THE INK THE LINE BOX DOES NOT CONTAIN. ──
+     A display face paints above its first line and below its last by an amount
+     that depends on the face, the script, the size and the line height all at
+     once. `scrollHeight` reports it, and clause B turns that report into
+     `clipped` — so a plate that looks perfect burns every redraft it is given.
+     Three constants were tried here and each fixed one face and missed the
+     next: a flat em value, the register's own `--mk-face-bleed` (which the
+     system emits as `0em` on the headline anyway), and a Hebrew-only rule.
+     Measuring is exact, needs no table, and costs one reflow per host. */
+  function closeInk() {
+    for (var i = 0; i < content.length; i++) content[i].style.paddingBlockEnd = '';
+    /* All of it on the END edge, not half on each. `scrollHeight` only ever
+       reports the overflow BELOW the content box — ink above the first line is
+       invisible to it — so splitting the correction in two closed half of the
+       gap and left the rest reported. Two rounds because adding padding can
+       reflow the host and change the number by a pixel or two. */
+    for (var round = 0; round < 2; round++) {
+      for (var j = 0; j < content.length; j++) {
+        var h = content[j];
+        var over = h.scrollHeight - h.clientHeight;
+        if (over <= 0) continue;
+        var current = parseFloat(h.style.paddingBlockEnd) || 0;
+        h.style.paddingBlockEnd = current + over + 'px';
       }
-    })();
+    }
+  }
+
+  function pass() {
+    /* Start every host at its own step. */
+    set(hosts, 0);
+    closeInk();
+
+    /* Grow: only the primary host, only one step, only if it still fits. A plate
+       whose copy is short should read as a deliberate large statement rather
+       than as a small thing adrift in a grey field. */
+    if (!overflows() && primary.length) {
+      set(primary, -1);
+      closeInk();
+      if (overflows()) { set(primary, 0); closeInk(); }
+    }
+
+    /* Shrink: everything together, so the relationship between the headline and
+       its lede survives the step. Two steps is the floor — a third would take a
+       display line below the lede's own size and invert the hierarchy, and a
+       plate that still does not fit at step 2 is a copy-length problem that the
+       content-weight floor should refuse rather than something type can hide. */
+    var step = 0;
+    while (overflows() && step < 2) {
+      step += 1;
+      set(hosts, step);
+      closeInk();
+    }
+
+    /* Leave the outcome on the body so a render check, the interest floor and a
+       failing test can all see which rung was used without re-deriving it. */
+    document.body.setAttribute('data-fit-step', String(step));
+  }
+
+  /* TWO PASSES, AND THE FLAG GOES UP AFTER THE SECOND. The first pass measures
+     the fallback face; a web font with different metrics can turn a line that
+     fitted into one that does not, so the answer is only true once the fonts
+     the plate actually uses have loaded. `render-carousel.ts` waits on
+     `__CAROUSEL_READY__`, so raising it before the second pass would screenshot
+     a layout the ladder had not seen. */
+  pass();
+  var done = function () { pass(); window.__CAROUSEL_READY__ = true; };
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(done, done);
+  else done();
+})();
+/* @ds:fit-end */
   </script>
 </body>
 </html>

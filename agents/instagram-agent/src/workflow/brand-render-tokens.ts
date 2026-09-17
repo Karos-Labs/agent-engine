@@ -12,6 +12,7 @@ import {
   BRAND_MARK_ZONE,
   clientVisualSystemCss,
   CONDENSED_DISPLAY_FONT_FAMILY,
+  REGISTER_DISPLAY_FONT_FAMILY,
   displayFaceForScript,
   resolveDisplayRegisterForScript,
   type ClientVisualSystem,
@@ -795,12 +796,15 @@ export function buildBrandHeadHtml(
   // Oswald cannot set, `clientVisualSystemCss` withholds the face, so fetching
   // it would be one more css2 round trip in the render sandbox for a family no
   // selector names.
+  const registerFamily =
+    options.system !== undefined ? REGISTER_DISPLAY_FONT_FAMILY[options.system.displayRegister] : undefined;
   if (
-    options.system?.displayRegister === "condensed" &&
-    resolveDisplayRegisterForScript("condensed", options.script).covers &&
-    !families.includes(CONDENSED_DISPLAY_FONT_FAMILY)
+    registerFamily !== undefined &&
+    options.system !== undefined &&
+    resolveDisplayRegisterForScript(options.system.displayRegister, options.script).covers &&
+    !families.includes(registerFamily)
   ) {
-    families.push(CONDENSED_DISPLAY_FONT_FAMILY);
+    families.push(registerFamily);
   }
   // ── AND THE FACE THE REGISTER SETS WHEN ITS OWN CANNOT SET THE SCRIPT. ──
   // The other side of the same rule: on a script the register's Latin family
