@@ -103,7 +103,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #17181C;
@@ -767,7 +767,22 @@
        §7 F2 exists to make trustworthy. `fit-content` makes the two agree.
        `stat-callout.html` has always been `inline-block` for the same reason. */
     inline-size: fit-content; max-inline-size: 100%;
-    font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro);
+    font-family: var(--f-mono);
+    /* ── 700, BECAUSE THE INSTRUMENT MEASURES THE STROKE, NOT THE DECLARATION. ──
+       At 600 over the ramp head the sampled glyph core came back #dad1ca
+       against a full-strength `--fg` declaration — 4.47:1, three hundredths under the bar
+       (CI Chromium, `interest-floor-calibration.test.ts`). That gap is the
+       stroke: 22px of mono at 0.24em tracking has very little ink per glyph,
+       and every edge pixel of it is a blend with the ground, so a thin cut
+       never reaches the colour it was given. Two things make it reach:
+       `--fg` at full strength (above), and a heavier stem.
+       The `<link>` in the head is what makes the cut real rather than
+       synthesised — it asked for 400;500;600 and now asks for 700 as well —
+       and where the webfont does not load at all (a CI runner with no network
+       takes `ui-monospace`) 700 is the one weight every system mono actually
+       ships. The type scale does not move: §4.4 gives this label `t-micro`
+       and weight is not a step on that ladder. */
+    font-weight: 700; font-size: var(--t-micro);
     letter-spacing: 0.24em; text-transform: uppercase;
     /* ── FULL `--fg`, AND THE 8% IT USED TO GIVE AWAY IS WHY. ──
        This read `color-mix(in srgb, var(--fg) 92%, transparent)` — the same

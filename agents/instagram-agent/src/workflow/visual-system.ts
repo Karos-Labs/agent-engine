@@ -167,9 +167,26 @@ export const DISPLAY_REGISTER_STACKS: Record<DisplayRegister, { display: string;
   // carries over Fraunces' 0.10em, because the ladder picks a line-height per
   // copy length and the fallback face (`Arial Narrow`) has its own metrics.
   condensed: { display: "'Oswald', 'Arial Narrow', 'Inter', sans-serif", weight: "600", tracking: "-0.004em", twinBleed: "0.3em" },
-  // 0.14em measured — EXACTLY `--mk-twin-bleed`, i.e. a zero-margin pass that
-  // the next line-height change would break. Declared rather than left to luck.
-  "mono-display": { display: "'IBM Plex Mono', ui-monospace, monospace", weight: "600", tracking: "-0.02em", twinBleed: "0.2em" },
+  // 0.14em measured on IBM Plex Mono, 0.2em shipped — and CI refused it.
+  //
+  // The measurement was taken on the face this stack NAMES. The face a render
+  // actually gets is another question: `cover.html` under this register
+  // overflowed `span.mk-runs` and `span.mk-plain` on CI Chromium
+  // (`visual-system-axes-render.test.ts`), where the webfont does not load and
+  // `ui-monospace` resolves to whatever mono the runner ships — a face with its
+  // own content area, exactly the hazard `condensed` already records one line
+  // above ("the fallback face (`Arial Narrow`) has its own metrics") and pays
+  // 0.3em for against a 0.22em measurement.
+  //
+  // So this takes the same 1.35x-style margin over the fallback rather than
+  // over the named face, and it matches `condensed` because the two are the
+  // same problem. **It is a margin, not a measurement, and it is the only
+  // number in this table that is** — the measurement on the CI face is owed,
+  // and until somebody takes it this value should only ever be raised.
+  // Raising it cannot reach another register: `--mk-face-bleed` is emitted per
+  // resolved system and combined with `max()`, so a plate that is not
+  // `mono-display` is byte-identical.
+  "mono-display": { display: "'IBM Plex Mono', ui-monospace, monospace", weight: "600", tracking: "-0.02em", twinBleed: "0.34em" },
 };
 
 /**
