@@ -4,6 +4,7 @@ import { createBlogAgentWorkflow } from "../src/workflow/create-blog-agent-workf
 import { BLOG_MAX_WORD_COUNT } from "../src/tools/render-preview.js";
 import type { BlogJsonLd } from "../src/tools/json-ld.js";
 import { fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { deliveredPost } from "./test-helpers.js";
 
 const baseParams = { clientSlug: "acme", productId: "blog-agent", runKind: "recurring" as const };
 
@@ -81,7 +82,7 @@ describe("Blog agent length floor + FAQ + canonical URL (RFC-02 §5 migration au
     await env.cleanup();
   });
 
-  it("holds a draft under the 600-word minimum at step 12, distinct from the upper-ceiling reasons", async () => {
+  it("DELIVERS a draft under the 600-word minimum, flagged — deletion cannot lengthen an article", async () => {
     const promptStore = makePromptStore();
     const shortBody = "## A header\n\nThis article is much too short to count as a real long-form piece for this client.";
     const router = fakeRouterSequence([
@@ -92,18 +93,25 @@ describe("Blog agent length floor + FAQ + canonical URL (RFC-02 §5 migration au
         }),
       ),
     ]);
-    const workflowFn = createBlogAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createBlogAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "blog_run_under_floor" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/words.*below.*minimum/i);
+    // A short article is the one length problem no mechanical repair can fix,
+    // and the redraft that could fix it is unavailable here (one turn only).
+    // So it ships FLAGGED: a 900-word piece a reviewer can read and extend
+    // beats no article at all, and the flag is what keeps that honest.
+    expect(result.status).toBe("completed");
+
+    const post = await deliveredPost(env, "blog_run_under_floor");
+    expect(post["contentRepairs"]).toContainEqual(
+      expect.objectContaining({ check: "blog-length", action: "unresolved", detail: expect.stringMatching(/below.*minimum/i) }),
+    );
   });
 
-  it("holds a draft over the word-count ceiling at step 12, distinct from the under-floor reason", async () => {
+  it("DELIVERS a draft over the word-count ceiling, flagged with the ceiling reason and not the floor one", async () => {
     const promptStore = makePromptStore();
     // Deliberately generic, repetitive filler — this fixture exists purely to push
     // the mechanical word count past BLOG_MAX_WORD_COUNT (3,000) while staying
@@ -120,16 +128,24 @@ describe("Blog agent length floor + FAQ + canonical URL (RFC-02 §5 migration au
         }),
       ),
     ]);
-    const workflowFn = createBlogAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createBlogAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "blog_run_over_ceiling" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(new RegExp(`over the ${BLOG_MAX_WORD_COUNT}-word target ceiling`, "i"));
-    expect(result.reason).not.toMatch(/below.*minimum/i);
+    // Truncating a long-form article mid-argument is worse than delivering it
+    // long, so the mechanical floor deliberately refuses to cut the body. The
+    // redraft is the real fix and is unavailable here, so this ships flagged.
+    expect(result.status).toBe("completed");
+
+    const post = await deliveredPost(env, "blog_run_over_ceiling");
+    const repairs = post["contentRepairs"] as Array<{ check: string; detail: string }>;
+    const lengthNote = repairs.find((r) => r.check === "blog-length");
+    expect(lengthNote?.detail).toMatch(new RegExp(`over the ${BLOG_MAX_WORD_COUNT}-word target ceiling`, "i"));
+    // The two length reasons stay distinguishable, which is what this test
+    // has always really been about.
+    expect(lengthNote?.detail).not.toMatch(/below.*minimum/i);
   });
 
   it("persists a populated faqItems block into the deliverable, and a matching FAQPage JSON-LD block", async () => {

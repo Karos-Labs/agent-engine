@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createBlogAgentWorkflow } from "../src/workflow/create-blog-agent-workflow.js";
-import { fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { allProse, deliveredPost, fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 
 const baseParams = { clientSlug: "acme", productId: "blog-agent", runKind: "recurring" as const };
 
@@ -59,7 +59,8 @@ const shorterRevisionBody =
   "deadline gets tight, while a team that inherits the reasoning behind the checklist is far more likely to adapt it sensibly " +
   "instead of quietly abandoning it.";
 
-describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
+
+describe("content gate failures are REPAIRED, never held (RFC-02 §5 steps 09-14r)", () => {
   let env: TestEnvironment;
 
   beforeEach(async () => {
@@ -70,7 +71,7 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     await env.cleanup();
   });
 
-  it("an unsourced numeric claim fails gate.numbersSourced at step 10 -> held", async () => {
+  it("an unsourced numeric claim is removed from the article, which still ships", async () => {
     const promptStore = makePromptStore();
     const title = "What happened after we restructured onboarding";
     const bodyMarkdown = "## A header\n\nTeams using structured onboarding saw ramp time fall 43% this quarter.";
@@ -83,24 +84,32 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
         text: `${title}\n\n${bodyMarkdown}`,
       }),
     ]);
-    const workflowFn = createBlogAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createBlogAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "blog_run_gate_numbers" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/numbers not sourced/i);
+    // The old contract was `held`: the run ended and the client got an error
+    // message instead of the article. The gate's authority over what may be
+    // PUBLISHED is unchanged and asserted below; what it lost is the authority
+    // to end the run.
+    expect(result.status).toBe("completed");
 
-    const stepRecords = await durableStore.listSteps("blog_run_gate_numbers");
-    const ids = stepRecords.map((s) => s.stepId);
-    expect(ids).toContain("09-draft-post");
+    const post = await deliveredPost(env, "blog_run_gate_numbers");
+    expect(allProse(post)).not.toContain("43%");
+    // ...and the repair is on the record rather than silent.
+    expect(post["contentRepairs"]).toBeDefined();
+
+    // Every later check still ran, on the repaired article.
+    const ids = (await durableStore.listSteps("blog_run_gate_numbers")).map((s) => s.stepId);
     expect(ids).toContain("10-verify-numbers-sourced");
-    expect(ids).not.toContain("11-verify-brand-compliance");
+    expect(ids).toContain("11-verify-brand-compliance");
+    expect(ids).toContain("14r-repair-post");
+    expect(ids).toContain("16-persist-deliverable");
   });
 
-  it("a forbidden brand term fails gate.brandCompliance at step 11 -> held", async () => {
+  it("a forbidden brand term is removed from the article, which still ships", async () => {
     const promptStore = makePromptStore();
     const title = "Our results after switching schedules";
     const bodyMarkdown = "## A header\n\nThis approach is guaranteed to work for every team, every time.";
@@ -113,20 +122,20 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
         text: `${title}\n\n${bodyMarkdown}`,
       }),
     ]);
-    const workflowFn = createBlogAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createBlogAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "blog_run_gate_brand" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/brand compliance failed/i);
+    expect(result.status).toBe("completed");
 
-    const stepRecords = await durableStore.listSteps("blog_run_gate_brand");
-    const ids = stepRecords.map((s) => s.stepId);
+    const post = await deliveredPost(env, "blog_run_gate_brand");
+    expect(allProse(post)).not.toContain("guaranteed");
+
+    const ids = (await durableStore.listSteps("blog_run_gate_brand")).map((s) => s.stepId);
     expect(ids).toContain("11-verify-brand-compliance");
-    expect(ids).not.toContain("12-render-preview-check");
+    expect(ids).toContain("12-render-preview-check");
   });
 
   it("an over-limit first draft triggers a single self-critique revision, then completes", async () => {
@@ -161,7 +170,7 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     expect(stepRecords.map((s) => s.stepId)).toContain("18-commit-and-record");
   });
 
-  it("a title over the 120-char limit is caught at step 12, distinct from meta/body limits", async () => {
+  it("a title over the 120-char limit is TRIMMED to fit rather than holding the run", async () => {
     const promptStore = makePromptStore();
     const tooLongTitle = "This is a title. ".repeat(10); // > 120 chars
     const bodyMarkdown = "## A header\n\nA short, reasonable body.";
@@ -180,12 +189,14 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "blog_run_gate_title_limit" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/title exceeds the 120-character limit/i);
+    expect(result.status).toBe("completed");
+
+    const post = await deliveredPost(env, "blog_run_gate_title_limit");
+    expect((post["title"] as string).length).toBeLessThanOrEqual(120);
+    expect(post["contentRepairs"]).toContainEqual(expect.objectContaining({ action: "trimmed" }));
   });
 
-  it("a metaDescription over the 160-char limit is caught at step 12, distinct from title/body limits", async () => {
+  it("a metaDescription over the 160-char limit is TRIMMED to fit rather than holding the run", async () => {
     const promptStore = makePromptStore();
     const title = "A reasonable title";
     const bodyMarkdown = "## A header\n\nA short, reasonable body.";
@@ -199,12 +210,13 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "blog_run_gate_meta_limit" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/metaDescription exceeds the 160-character SEO limit/i);
+    expect(result.status).toBe("completed");
+
+    const post = await deliveredPost(env, "blog_run_gate_meta_limit");
+    expect((post["metaDescription"] as string).length).toBeLessThanOrEqual(160);
   });
 
-  it("an unresolved template placeholder fails gate.noPlaceholder at step 13 -> held, before step 14 ever runs", async () => {
+  it("an unresolved template placeholder is removed, and the leak check still runs after it", async () => {
     const promptStore = makePromptStore();
     const title = "A reasonable title";
     // shorterRevisionBody already clears steps 09-12 (lintPost self-critique, numbers,
@@ -220,17 +232,17 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "blog_run_gate_placeholder" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/unresolved placeholder found/i);
+    expect(result.status).toBe("completed");
 
-    const stepRecords = await durableStore.listSteps("blog_run_gate_placeholder");
-    const ids = stepRecords.map((s) => s.stepId);
+    const post = await deliveredPost(env, "blog_run_gate_placeholder");
+    expect(allProse(post)).not.toContain("{{client_support_email}}");
+
+    const ids = (await durableStore.listSteps("blog_run_gate_placeholder")).map((s) => s.stepId);
     expect(ids).toContain("13-verify-no-placeholder");
-    expect(ids).not.toContain("14-verify-no-leak");
+    expect(ids).toContain("14-verify-no-leak");
   });
 
-  it("a leaked local file path fails gate.leakCheck at step 14 -> held, before the human review gate ever runs", async () => {
+  it("a leaked local file path is removed before the article reaches a human", async () => {
     const promptStore = makePromptStore();
     const title = "A reasonable title";
     const bodyMarkdown = `${shorterRevisionBody}\n\nThe original retrospective notes live at /Users/jane/Documents/internal-retro-notes.md for anyone who wants the raw detail.`;
@@ -243,14 +255,16 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "blog_run_gate_leak" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/leak check failed/i);
+    expect(result.status).toBe("completed");
 
-    const stepRecords = await durableStore.listSteps("blog_run_gate_leak");
-    const ids = stepRecords.map((s) => s.stepId);
-    expect(ids).toContain("13-verify-no-placeholder");
+    // The credential-shaped string is gone from EVERY field, not just the one
+    // the gate reads — this is the assertion that would catch a repair that
+    // fixed `text` and shipped `bodyMarkdown` unredacted.
+    const post = await deliveredPost(env, "blog_run_gate_leak");
+    expect(allProse(post)).not.toContain("/Users/jane/Documents/internal-retro-notes.md");
+
+    const ids = (await durableStore.listSteps("blog_run_gate_leak")).map((s) => s.stepId);
     expect(ids).toContain("14-verify-no-leak");
-    expect(ids).not.toContain("15-batch-review-r0");
+    expect(ids).toContain("15-batch-review-r0");
   });
 });

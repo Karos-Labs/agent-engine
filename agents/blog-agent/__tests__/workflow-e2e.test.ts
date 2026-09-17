@@ -38,6 +38,11 @@ const ALL_19_STEP_IDS = [
   "12-render-preview-check",
   "13-verify-no-placeholder",
   "14-verify-no-leak",
+  // The repair step. Always present, even on a clean article: it asks what
+  // the checks above objected to and returns the draft untouched when the
+  // answer is nothing, so its presence says the repair path ran — not that
+  // anything was rewritten.
+  "14r-repair-post",
   // Revision-scoped: `-r0` is the first review round. A `revise` decision
   // registers `-r1` after re-drafting.
   "15-batch-review-r0",
