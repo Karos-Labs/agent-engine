@@ -117,10 +117,19 @@ export class WorkflowConcurrentRunError extends Error {
  * `pubsub-21543515035218714` sat wedged in exactly this state at
  * `06c-vet-scrape-attempt-2` for hours.
  *
- * Uncaught here on purpose: it reaches `WorkflowEngine.run()`'s generic
- * catch-all exactly like any other tooling failure and resolves the run to
- * `degraded` — which *is* resumable, so a retry can actually happen instead
- * of requiring someone to notice and hand-fix the Firestore doc. The
+ * NO LONGER thrown out of `runStepAgent` for a single step (AU72). It is
+ * caught there and converted into a returned `tooling_error`
+ * `AgentExecutionResult`, so one slow step takes the workflow author's own
+ * degradation path instead of killing the run — see `runStepAgent`'s doc
+ * comment for the run that forced this. It is still thrown, unchanged, once a
+ * run exceeds `MAX_ABSORBED_STEP_TIMEOUTS`: at that point the evidence is a
+ * systemic wedge rather than one flaky call, and absorbing further timeouts
+ * would burn ten minutes each to deliver nothing. That throw reaches
+ * `WorkflowEngine.run()`'s generic catch-all exactly like any other tooling
+ * failure and resolves the run to `degraded` — which *is* resumable, so a
+ * retry can actually happen instead of requiring someone to notice and
+ * hand-fix the Firestore doc.
+ *
  * As of AU5 / SCRUM-316 the engine also ABORTS the step's `AbortSignal` with
  * this error as the abort reason, and hands that signal to the agent on
  * `AgentContext.metadata` (`stepAbortSignal(ctx)`). Read that for what it is:

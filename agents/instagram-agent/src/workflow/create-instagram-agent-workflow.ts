@@ -298,6 +298,7 @@ import {
   // Phase 5.5 (spec §5 D1) — the three-way setup outcome, so a TOOLING failure
   // stops costing the client 30 days of the empty-setup cooldown.
   SETUP_FAILURE_STATUSES,
+  STUDIO_DESIGN_STEP_TIMEOUT_MS,
   type SetupAttemptOutcome,
   type SetupFailureStatus,
   studioNote,
@@ -3051,6 +3052,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               `00c4-design-template-${planned.archetypeId}`,
               designerAgent,
               buildDesignerInput({ planned, brief: designBrief, bundle }),
+              // Measured, not guessed — see STUDIO_DESIGN_STEP_TIMEOUT_MS. A
+              // designer turn's observed p99 sits ABOVE the engine default,
+              // so on the default this step's own bound was the likeliest
+              // reason for it to fail.
+              { timeoutMs: STUDIO_DESIGN_STEP_TIMEOUT_MS },
             );
             setupSpend(`00c4-design-template-${planned.archetypeId}`, designExec.totalCostUsd, SETUP_STEP_COST_ESTIMATES_USD.templateDesign);
             if (designExec.status !== "completed" || designExec.finalOutput === undefined || designExec.finalOutput === null) {
@@ -3149,6 +3155,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 bundle,
                 repair: { findings, previous: { bodyHtml: candidate.draft.bodyHtml, css: candidate.draft.css } },
               }),
+              // Same agent, same shape of work, same bound.
+              { timeoutMs: STUDIO_DESIGN_STEP_TIMEOUT_MS },
             );
             setupSpend(`00c7-repair-template-${candidate.planned.archetypeId}`, repairExec.totalCostUsd, SETUP_STEP_COST_ESTIMATES_USD.templateRepair);
             if (repairExec.status !== "completed" || repairExec.finalOutput === undefined || repairExec.finalOutput === null) {

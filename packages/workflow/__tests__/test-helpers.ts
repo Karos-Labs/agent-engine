@@ -3,17 +3,25 @@ import { z } from "zod";
 import { MockAgent, type AgentStepConfig, type BaseAgentRuntime, type CompletionResult, type ModelRouter } from "@agent-engine/core";
 
 /** A router whose `.complete()` always returns a "final" turn with the given output — one call, one draft, no tool use. */
-export function fakeRouterAlwaysFinal(output: unknown, opts: { model?: string; inputTokens?: number; outputTokens?: number } = {}): ModelRouter {
+export function fakeRouterAlwaysFinal(
+  output: unknown,
+  opts: { model?: string; inputTokens?: number; outputTokens?: number; delayMs?: number } = {},
+): ModelRouter {
   const model = opts.model ?? "claude-sonnet-4-6";
   return {
-    complete: vi.fn(
-      async (): Promise<CompletionResult<unknown>> => ({
+    complete: vi.fn(async (): Promise<CompletionResult<unknown>> => {
+      // `delayMs` is for the step-timeout tests: a call that is SLOW but
+      // finishes is a different case from one that never settles, and it is
+      // the only way to show a per-call `timeoutMs` actually raising a bound
+      // rather than the step merely never reaching it.
+      if (opts.delayMs !== undefined) await new Promise((resolve) => setTimeout(resolve, opts.delayMs));
+      return {
         output: { type: "final", output },
         modelUsed: model,
         inputTokens: { cached: 0, uncached: opts.inputTokens ?? 100 },
         outputTokens: opts.outputTokens ?? 50,
-      }),
-    ),
+      };
+    }),
     completeAlias: vi.fn(async () => {
       throw new Error("fakeRouterAlwaysFinal: completeAlias not used in these tests");
     }),
