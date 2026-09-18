@@ -74,6 +74,7 @@ import { TikTokTopicScoutAgent } from "../agent/tiktok-topic-scout-agent.js";
 import { bestLegalWindow, boundsFromTranscript, sentenceBoundedWords, type TranscriptWordLike } from "./clip-bounds.js";
 import { checkDraftLanguage, isJudgeableLanguage, languageRedraftDirective, resolveTargetLanguage, type ResolvedTargetLanguage } from "./target-language.js";
 import { parseShapeMemory, shapeRepeatDirective, skeletonEntry, skeletonOf, stockClipEntry } from "./shape-memory.js";
+import { scoreMoment } from "./moment-floor.js";
 import { alignScriptToTimings, beatHoldsFromTimings, buildPhraseCues, buildPhraseGroups, cuesToSrt, scriptWords } from "./captions.js";
 import {
   CLIP_DURATION_MAX_SECONDS,
@@ -1525,6 +1526,10 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
      * they are watching.
      */
     let momentFallback: string | undefined;
+    /** Set when the cut is under the watchability floor and nothing in the transcript scored better. */
+    let momentFloorNote: string | undefined;
+    /** Observations the floor made that never decided anything — carried to the reviewer, never acted on. */
+    const momentFloorNotes: string[] = [];
 
     if (intake.sourceTier === "stock") {
       // An original short has no speech to mine and no moment to pick. The
@@ -1674,7 +1679,45 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         }
         return result;
       });
-      bounds = { startSeconds: cut.startSeconds, endSeconds: cut.endSeconds, words: cut.words, text: cut.text, needsCut: true };
+      // ── 04b: the moment FLOOR (2026-09-18) ──
+      //
+      // `04-cut-bounds` proves the window is LEGAL. Nothing until now asked
+      // whether it was worth watching, and the 2026-09-08 audit's clips
+      // included forty seconds of someone clearing their throat.
+      //
+      // Blocking measures only — density and a filler opening, both counted
+      // rather than judged. A refused window is RE-PICKED, never held: the
+      // deterministic picker already sorts by density, so it is the natural
+      // second opinion, and it is taken only when it genuinely scores better.
+      // A model that chose a sparse window for a reason code cannot see keeps
+      // its choice when nothing better exists.
+      const floor = await wf.step.code("04b-moment-floor", async () => {
+        const first = scoreMoment(words, cut.startSeconds, cut.endSeconds);
+        if (first.ok) return { ...first, replaced: null as null | { startSeconds: number; endSeconds: number; text: string; words: TranscriptWordLike[] } };
+        const alternative = bestLegalWindow(words, { minSeconds: CLIP_DURATION_MIN_SECONDS, maxSeconds: CLIP_DURATION_MAX_SECONDS });
+        if (alternative === undefined || !alternative.ok) return { ...first, replaced: null };
+        const second = scoreMoment(words, alternative.startSeconds, alternative.endSeconds);
+        if (!second.ok || second.wordsPerSecond <= first.wordsPerSecond) return { ...first, replaced: null };
+        return {
+          ...second,
+          replaced: { startSeconds: alternative.startSeconds, endSeconds: alternative.endSeconds, text: alternative.text, words: alternative.words },
+        };
+      });
+      if (floor.replaced !== null) {
+        momentFallback =
+          `the picked moment was under the watchability floor (${floor.failures.join("; ")}); ` +
+          `the densest legal run of whole sentences was cut instead (${floor.wordsPerSecond.toFixed(2)} words a second)`;
+        bounds = { startSeconds: floor.replaced.startSeconds, endSeconds: floor.replaced.endSeconds, words: floor.replaced.words, text: floor.replaced.text, needsCut: true };
+      } else {
+        if (!floor.ok) {
+          // Nothing better existed. The clip ships and the reviewer is told
+          // exactly what is wrong with it, which is more than they had before.
+          momentFloorNote = floor.failures.join("; ");
+          console.warn(`04b-moment-floor: ${momentFloorNote}; nothing in this transcript scores better, shipping flagged`);
+        }
+        bounds = { startSeconds: cut.startSeconds, endSeconds: cut.endSeconds, words: cut.words, text: cut.text, needsCut: true };
+      }
+      if (floor.notes.length > 0) momentFloorNotes.push(...floor.notes);
       }
     }
 
@@ -3557,6 +3600,10 @@ ${credit}`,
           ...(draft.visualQa?.passed === false || (draft.repairs?.length ?? 0) > 0 ? { flagged: true } : {}),
           // Set when the cut was chosen by code rather than by the picker.
           ...(momentFallback !== undefined ? { momentFallback } : {}),
+          // What the moment floor OBSERVED but did not act on — a window with
+          // no figure and no contrast connective may still be the best thirty
+          // seconds in the episode, and that call is the reviewer's.
+          ...(momentFloorNotes.length > 0 ? { momentNotes: momentFloorNotes } : {}),
           // Which language this short is in and where that came from. Shown
           // always, not only on a failure: "we assumed English because nobody
           // configured anything" is exactly the thing a reviewer of a Hebrew
@@ -3656,6 +3703,13 @@ ${credit}`,
     const contentRepairs: ContentRepair[] = [...(review.output.repairs ?? [])];
     if (momentFallback !== undefined) {
       contentRepairs.push({ check: "moment-selection", action: "substituted", detail: momentFallback });
+    }
+    if (momentFloorNote !== undefined) {
+      contentRepairs.push({
+        check: "moment-floor",
+        action: "unresolved",
+        detail: `${momentFloorNote} — and no other run of whole sentences in this recording scores better, so the clip ships for a person to judge`,
+      });
     }
     // An ASSUMED language is deliberately NOT a repair.
     //
