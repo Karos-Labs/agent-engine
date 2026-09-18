@@ -449,7 +449,24 @@ body[data-anchor="split"] .plate { justify-content: space-between; }
    A reader could not see it. Full strength costs the composition nothing at
    this size and buys the only thing the line is there for. */
 body:has(.hero) .eyebrow,
-body:has(.hero) .kicker { color: var(--fg); }
+body:has(.hero) .kicker {
+  color: var(--fg);
+  /* ── AND IT CARRIES ITS OWN GROUND. ──
+     Full ink alone measured 4.29:1 against the 4.5 floor, and that number is
+     not a property of the label: it is a property of whatever pixel the
+     photograph happens to put behind it (measured glyph #eee5df on ground
+     #b24948, a mid-tone red). A rule that passes on one picture and fails on
+     the next is not a rule. The chip is a local scrim sized to the LABEL
+     rather than to the band, so legibility stops depending on the image while
+     the picture keeps its colour everywhere the label is not — which is the
+     whole reason the scrim is transparent across the top third in the first
+     place. Mixed against `--bg` rather than a flat black, so a light brand kit
+     gets a light chip and the pair stays the kit's own. */
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  padding-block: 2px;
+  padding-inline: 8px;
+  border-radius: 2px;
+}
 
 .eyebrow, .kicker {
   font-family: var(--f-mono, ui-monospace, monospace);
@@ -701,11 +718,21 @@ body[data-accent="none"] .acc { display: none; }
 [data-fit="1"].r-display    { font-size: var(--t-statement); }
 [data-fit="1"].r-statement  { font-size: var(--t-lead); }
 [data-fit="1"].r-lead       { font-size: var(--t-label); }
+/* ── `.r-label` HAS RUNGS TOO, AND THE GAP WAS NOT THEORETICAL. ──
+   Every register but this one could step down, so a host set in `--t-label`
+   was unshrinkable no matter what the ladder decided. Measured on the closer
+   at the reviewer's `l` scale: `.cl-cta` came out 434px in a 1204px field,
+   the ladder went to its floor at step 2 with the CTA untouched, and the plate
+   overflowed by 55px — `clipped`, on a plate whose only problem was one line
+   of type that had nowhere to go. `--t-micro` is the step below, and it is the
+   same step `.dv-label` already takes at these rungs. */
+[data-fit="1"].r-label      { font-size: var(--t-micro); }
 
 [data-fit="2"].r-figure     { font-size: var(--t-statement); }
 [data-fit="2"].r-display    { font-size: var(--t-lead); }
 [data-fit="2"].r-statement  { font-size: var(--t-label); }
 [data-fit="2"].r-lead       { font-size: var(--t-label); }
+[data-fit="2"].r-label      { font-size: var(--t-micro); }
 
 /* ---- the twin slot ------------------------------------------------------ */
 /* Marked renders carry the copy twice (`.mk-runs` with emphasis spans,

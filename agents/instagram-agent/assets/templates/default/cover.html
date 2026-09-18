@@ -484,7 +484,24 @@ body[data-anchor="split"] .plate { justify-content: space-between; }
    A reader could not see it. Full strength costs the composition nothing at
    this size and buys the only thing the line is there for. */
 body:has(.hero) .eyebrow,
-body:has(.hero) .kicker { color: var(--fg); }
+body:has(.hero) .kicker {
+  color: var(--fg);
+  /* ── AND IT CARRIES ITS OWN GROUND. ──
+     Full ink alone measured 4.29:1 against the 4.5 floor, and that number is
+     not a property of the label: it is a property of whatever pixel the
+     photograph happens to put behind it (measured glyph #eee5df on ground
+     #b24948, a mid-tone red). A rule that passes on one picture and fails on
+     the next is not a rule. The chip is a local scrim sized to the LABEL
+     rather than to the band, so legibility stops depending on the image while
+     the picture keeps its colour everywhere the label is not — which is the
+     whole reason the scrim is transparent across the top third in the first
+     place. Mixed against `--bg` rather than a flat black, so a light brand kit
+     gets a light chip and the pair stays the kit's own. */
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  padding-block: 2px;
+  padding-inline: 8px;
+  border-radius: 2px;
+}
 
 .eyebrow, .kicker {
   font-family: var(--f-mono, ui-monospace, monospace);
@@ -736,11 +753,21 @@ body[data-accent="none"] .acc { display: none; }
 [data-fit="1"].r-display    { font-size: var(--t-statement); }
 [data-fit="1"].r-statement  { font-size: var(--t-lead); }
 [data-fit="1"].r-lead       { font-size: var(--t-label); }
+/* ── `.r-label` HAS RUNGS TOO, AND THE GAP WAS NOT THEORETICAL. ──
+   Every register but this one could step down, so a host set in `--t-label`
+   was unshrinkable no matter what the ladder decided. Measured on the closer
+   at the reviewer's `l` scale: `.cl-cta` came out 434px in a 1204px field,
+   the ladder went to its floor at step 2 with the CTA untouched, and the plate
+   overflowed by 55px — `clipped`, on a plate whose only problem was one line
+   of type that had nowhere to go. `--t-micro` is the step below, and it is the
+   same step `.dv-label` already takes at these rungs. */
+[data-fit="1"].r-label      { font-size: var(--t-micro); }
 
 [data-fit="2"].r-figure     { font-size: var(--t-statement); }
 [data-fit="2"].r-display    { font-size: var(--t-lead); }
 [data-fit="2"].r-statement  { font-size: var(--t-label); }
 [data-fit="2"].r-lead       { font-size: var(--t-label); }
+[data-fit="2"].r-label      { font-size: var(--t-micro); }
 
 /* ---- the twin slot ------------------------------------------------------ */
 /* Marked renders carry the copy twice (`.mk-runs` with emphasis spans,
@@ -1114,6 +1141,48 @@ body:not(:has(#title > span:not(:empty))) .cov-field { background-image: none; }
       var box = content[g].getBoundingClientRect();
       if (box.height === 0 || box.width === 0) continue;
       if (box.top < f.top - 1 || box.bottom > f.bottom + 1) return true;
+    }
+
+    /* ── A BOX ESCAPING ITS OWN PARENT, WHICH THE PLATE'S FIELD CANNOT SEE. ──
+       The limb above asks whether anything left the field the PLATE reserved.
+       That is not the same question the render check asks: `render-carousel`'s
+       probe compares each element against ITS OWN PARENT, so a box that grows
+       out of its container while staying inside the plate is `clipped` to the
+       interest floor and invisible here.
+
+       Measured on this tree: the cover's figure device is 359px in a band whose
+       content box came out 254px, and the band aligns its item to the block-end
+       — so the excess went out of the TOP of the band, 49px above it, while
+       still sitting 7px below the plate's own content edge. The ladder reported
+       `data-fit-step=0` (nothing to fix) and the render check reported one
+       element overflowing its own box. Both were right about their own
+       question; only one of them was asked.
+
+       The three exclusions are the probe's, for the probe's reasons: a parent
+       that is not `overflow: visible` has already declared what happens to
+       content leaving it, an absolutely positioned child is placed rather than
+       laid out, and a 2px tolerance covers a display face whose glyph box sits
+       a subpixel or two above its line box. Same question, same answer — which
+       is the only way the ladder can fix what the check will report. */
+    for (var k = 0; k < content.length; k++) {
+      var child = content[k];
+      var owner = child.parentElement;
+      if (!owner || owner === plate) continue;
+      var childBox = child.getBoundingClientRect();
+      if (childBox.height === 0 || childBox.width === 0) continue;
+      var childStyle = getComputedStyle(child);
+      if (childStyle.position === 'absolute' || childStyle.position === 'fixed') continue;
+      /* An INLINE box's rect is the union of its line fragments, sized by the
+         face's ascent and descent rather than by `line-height` — it starts a
+         few px above the block that contains it at every size, which is
+         typography rather than escape. The probe excludes it for the same
+         reason; the two have to agree or the ladder shrinks type to chase a
+         finding that is never reported. */
+      if (childStyle.display === 'inline' || childStyle.display === 'contents') continue;
+      if (getComputedStyle(owner).overflow !== 'visible') continue;
+      var ownerBox = owner.getBoundingClientRect();
+      if (ownerBox.height === 0) continue;
+      if (childBox.top < ownerBox.top - 2) return true;
     }
 
     /* THE CANVAS ITSELF. A host that sets a `max-inline-size` in `ch` grows with
