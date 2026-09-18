@@ -863,6 +863,50 @@ export function buildListRows(items: readonly { title: string; note?: string | u
     .join("");
 }
 
+
+/**
+ * Where a BOUNDED picture sits on this plate.
+ *
+ * ## Why this exists
+ *
+ * There were exactly two placements in the whole system: a full-bleed ground
+ * on `cover` and `photo`, and `.sc-figure-band` on the four panels, which is
+ * 300px tall and the full width of the field, at the top, every time. Every
+ * picture in the three prep carousels of 2026-09-18 was one of those two, and
+ * the owner read the result exactly right: *"the positions and the sizes can
+ * change, it can appear at the side sometimes, it can be next to the text.
+ * Think about it as a CMO."*
+ *
+ * ## Why it is a function of the slide number
+ *
+ * Because the property being bought is VARIETY ACROSS ONE CAROUSEL, and the
+ * slide number is the only thing that varies across one carousel and is stable
+ * across the three renders an attempt can take (`07c`, the typographic
+ * fallback at `08a`, the free re-layout's re-render at `08a1c`). A random
+ * choice would give a different plate on the re-render than the one the
+ * interest floor measured.
+ *
+ * The rotation is offset so that two ADJACENT panels never share a shape, and
+ * it starts on `side` rather than `band` because `band` is what the whole set
+ * did already.
+ *
+ * ## What still gets the plain band
+ *
+ * A plate with no picture, and the two archetypes where the photograph IS the
+ * plate. On those the attribute is inert: `cover` and `slide` paint a ground,
+ * and a plate with no picture has its band collapsed by the stylesheet, which
+ * also drops the grid so the type does not sit in a two-column layout with an
+ * empty first track.
+ */
+const FIGURE_ROTATION = ["side", "inset", "tall", "side-end", "bleed", "band"] as const;
+export type FigurePlacement = (typeof FIGURE_ROTATION)[number];
+
+export function figurePlacementFor(layout: InstagramSlideLayout, n: number, hasPicture: boolean): FigurePlacement {
+  if (!hasPicture) return "band";
+  if (FULL_BLEED_IMAGE_LAYOUTS.has(layout)) return "band";
+  return FIGURE_ROTATION[Math.abs(n) % FIGURE_ROTATION.length]!;
+}
+
 /**
  * One recap plate's text: the shortest true thing the slide already said.
  *
@@ -2682,7 +2726,11 @@ export function assembleSlidesData(params: {
     return {
       n: slide.n,
       template: inverted ? invertedTemplateFileName(primaryTemplate) : primaryTemplate,
-      fields: { ...fields, ...imageTreatmentFields({ treatment: params.imageTreatment ?? "none" }) },
+      fields: {
+        ...fields,
+        ...imageTreatmentFields({ treatment: params.imageTreatment ?? "none" }),
+        figurePlacement: figurePlacementFor(layout, slide.n, imagePath !== undefined),
+      },
       images: imagePath ? { hero: imagePath } : {},
       htmlFragments,
     };

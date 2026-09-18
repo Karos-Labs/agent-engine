@@ -279,6 +279,104 @@ body[data-hero-scrim=""] .scrim { display: none; }
    `figure-band-collapse.test.ts` exists because this shipped once already. */
 .sc-figure-band:not(:has(img[src]:not([src=""]))) { display: none; }
 
+/* ---- WHERE THE BOUNDED PICTURE SITS ------------------------------------- */
+/* ── ONE SHAPE IS A TEMPLATE. FIVE ARE A DESIGN SYSTEM. ──
+   The band above is the default and is unchanged: full width of the field,
+   300px, at the top. It was also the ONLY bounded placement in the set, so
+   every picture on every panel plate in every carousel had the same size and
+   the same position, and the owner read the result exactly right on
+   2026-09-18: *"the positions and the sizes can change, it can appear at the
+   side sometimes, it can be next to the text."*
+
+   `data-figure` carries the choice. `band` is the default and is what a
+   template renders when nothing sets it, so a plate that opts out of this is
+   byte-identical to the one that shipped.
+
+   EVERY VARIANT IS GRID, and that is not a style preference. `.plate` is a
+   flex column whose anchoring is done with auto margins (see the note on
+   `.plate` above, and the overflow bug that made it necessary). A float would
+   need `display: block` and would take that anchoring with it. Grid keeps the
+   band in its own track and auto-places every other child of the plate into
+   the second one, which needs no change to any template's markup. */
+
+/* SIDE — the picture is a column beside the type, full height of the field.
+   The half-and-half split a magazine opens a feature with. */
+body[data-figure="side"] .plate {
+  display: grid;
+  grid-template-columns: 44% 1fr;
+  column-gap: 40px;
+  align-content: start;
+}
+body[data-figure="side"] .sc-figure-band {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  block-size: 100%;
+  min-block-size: 0;
+}
+body[data-figure="side"] .plate > *:not(.sc-figure-band) { grid-column: 2; }
+
+/* SIDE-END — the same, mirrored. Alternating these two across a carousel is
+   what stops a run of side plates becoming its own repetition. */
+body[data-figure="side-end"] .plate {
+  display: grid;
+  grid-template-columns: 1fr 44%;
+  column-gap: 40px;
+  align-content: start;
+}
+body[data-figure="side-end"] .sc-figure-band {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  block-size: 100%;
+  min-block-size: 0;
+}
+body[data-figure="side-end"] .plate > *:not(.sc-figure-band) { grid-column: 1; }
+
+/* INSET — a smaller block in the upper corner with the type beside it, and the
+   rest of the plate free. The quietest of the five, and the one that reads
+   most like a page rather than a slide. */
+body[data-figure="inset"] .plate {
+  display: grid;
+  grid-template-columns: 38% 1fr;
+  column-gap: 32px;
+  align-content: start;
+}
+body[data-figure="inset"] .sc-figure-band {
+  grid-column: 1;
+  grid-row: 1;
+  block-size: 320px;
+  min-block-size: 0;
+}
+body[data-figure="inset"] .plate > *:not(.sc-figure-band) { grid-column: 2; }
+
+/* TALL — the band keeps its position and takes half the plate. Same shape,
+   different weight, which is the cheapest variation in the set and the one
+   that carries a photograph worth looking at. */
+body[data-figure="tall"] .sc-figure-band {
+  block-size: 620px;
+  min-block-size: 420px;
+}
+
+/* BLEED — the band runs past the field's own gutter to the frame edge. The
+   plate keeps its margins; the picture does not. Negative inline margins
+   rather than a wider element, so nothing about the flex column changes. */
+body[data-figure="bleed"] .sc-figure-band {
+  margin-inline: calc(var(--mx) * -1);
+  inline-size: calc(100% + var(--mx) * 2);
+  block-size: 440px;
+  border-radius: 0;
+}
+
+/* The collapse rule is written against the band itself, so it holds for every
+   variant above. A `side` plate with no picture is a one-column plate, because
+   a `display: none` grid item leaves its track empty rather than reserving it:
+   `grid-template-columns` still declares two, so the type stays in the second
+   and the first is 44% of nothing. That would be a hole, so the grid itself is
+   dropped when the band is. */
+body[data-figure]:not([data-figure="band"]) .plate:not(:has(.sc-figure-band img[src]:not([src=""]))) {
+  display: flex;
+  grid-template-columns: none;
+}
+
 /* ---- the three bands ---------------------------------------------------- */
 /* A plate is: the mark band, the field, the foot band. Content lives in the
    field and NEVER enters the other two — that reservation is the whole answer
