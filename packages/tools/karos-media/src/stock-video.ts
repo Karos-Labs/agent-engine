@@ -36,7 +36,9 @@ import { DEFAULT_VISION_MODEL, stripCodeFence, type VisionAnalysisClient, type V
 // scene twice (two clocks, two empty classrooms): same title words, other
 // id. Now a candidate whose title shares 60% or more of its words with the
 // first shot's is skipped, so the second shot is a different picture.
-const TOOL_VERSION = "1.2.2";
+// 1.3.0: the clip-relevance read is billed against the gemini-3.8-flash SKUs
+// now that the vision model moved a generation.
+const TOOL_VERSION = "1.3.0";
 
 /** Two Pexels titles this alike (Jaccard on content words) are the same scene shot twice. */
 export const NEAR_TWIN_TITLE_SIMILARITY = 0.6;
@@ -463,8 +465,8 @@ export function createFindStockClip(options: StockVideoOptions = {}) {
       // `media.inspectImages` bills against (a miss after scoring still
       // returns content_fail without them — that outcome carries no usage).
       return success<FindStockClipResult>(result, [
-        { model: "gemini-2.5-flash-vision-analysis-input-token", unit: "input-token", quantity: usageTokens.prompt },
-        { model: "gemini-2.5-flash-vision-analysis-output-token", unit: "output-token", quantity: usageTokens.output },
+        { model: "gemini-3.8-flash-vision-analysis-input-token", unit: "input-token", quantity: usageTokens.prompt },
+        { model: "gemini-3.8-flash-vision-analysis-output-token", unit: "output-token", quantity: usageTokens.output },
       ]);
     },
   });

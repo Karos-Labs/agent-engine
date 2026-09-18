@@ -529,6 +529,61 @@ describe("gate.numbersSourced", () => {
     expect(verdict.verdict).toBe("pass");
   });
 
+  it("verifies a MAGNITUDE range the draft quotes faithfully ($5M-$30M)", async () => {
+    // 2026-09-17, prep run pubsub-21854296073980161 (intel-report-agent,
+    // karoslabs): the research pull carried "non-technical mid-market B2B
+    // teams ($5M-$30M ARR)" and the draft quoted that range back verbatim as
+    // "$5M–$30M ARR". `NUMERIC_RANGE_PATTERN` allowed a percent, an "x" or
+    // a "×" on a range endpoint but no magnitude suffix, so "$5M–$30M" was
+    // not recognised as a range at all; the claim fell through to the bare
+    // "$30M", which the range-fragment lookbehind then correctly rejected.
+    // The run was held, the client got nothing, and $0.46 of drafting was
+    // thrown away over a figure that is in the source verbatim.
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "Okara targets non-technical mid-market B2B teams at $5M–$30M ARR.",
+      sources: ["Best fit: non-technical mid-market B2B teams ($5M-$30M ARR) with $5K-$30K monthly marketing budget."],
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+
+  it("verifies a magnitude range written out in words against an abbreviated source", async () => {
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "The category is worth $2 billion-$5 billion today.",
+      sources: ["Analysts size it at $2B-$5B."],
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+
+  it("verifies a magnitude range from its LEFT endpoint too", async () => {
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "Budgets in this band run $5K-$30K monthly.",
+      sources: ["...teams with $5K-$30K monthly marketing budget."],
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+
+  it("STILL fails a cherry-picked MAGNITUDE endpoint asserted as the value", async () => {
+    // The property the magnitude-range fix must not cost: quoting "$5M-$30M"
+    // is sourced; asserting "they are $30M companies" from that same source
+    // is not.
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "Its customers are $30M ARR companies.",
+      sources: ["Best fit: non-technical mid-market B2B teams ($5M-$30M ARR)."],
+    });
+    expect(verdict.verdict).toBe("content_fail");
+    expect(verdict["evidence"]).toEqual(["$30M"]);
+  });
+
+  it("does not read a magnitude letter out of an ordinary word next to a dash", async () => {
+    // "[kmbt]" without a word boundary would let "5 mark-up" parse as the
+    // magnitude "5m" and widen into a range that is not one.
+    const verdict = await verdictOf("gate.numbersSourced", {
+      text: "A 5 mark-up rule applied.",
+      sources: ["No figures here at all."],
+    });
+    expect(verdict.verdict).toBe("pass");
+  });
+
   it("STILL fails a cherry-picked endpoint asserted as the value, even when the source has the range", async () => {
     // The property the range fix must not cost: quoting "$500-$2,000" is
     // sourced; asserting "customers pay $2,000" from that same source is not.
@@ -818,7 +873,7 @@ describe("every gate registers with the expected toolVersion", () => {
   it("pins gate.numbersSourced at the currency-code-aware version", async () => {
     // Named explicitly so reverting the range fix without reverting the version
     // — or the reverse — is caught here rather than in telemetry months later.
-    expect(gates["gate.numbersSourced"]!.version).toBe("1.5.0");
+    expect(gates["gate.numbersSourced"]!.version).toBe("1.6.0");
   });
 });
 

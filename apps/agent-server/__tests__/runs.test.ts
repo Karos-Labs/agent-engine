@@ -87,7 +87,7 @@ describe("POST /api/v1/runs/start", () => {
     // (it named 22 steps; the workflow runs 27 on this path, gate included —
     // 29 since the C7 learning loop added 01b-read-learning-context and
     // 21-write-run-state).
-    expect(resumeRes.body.report.steps).toHaveLength(29);
+    expect(resumeRes.body.report.steps).toHaveLength(30); // +1: 14r-repair-post
     // Phase 2.5 fix-batch regression check: a genuinely completed/delivered
     // run's own review-gate step must report as done/approved, never as
     // "failed: step did not run" (the report-serializer gate-status bug).

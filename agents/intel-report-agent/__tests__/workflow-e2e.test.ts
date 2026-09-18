@@ -214,7 +214,7 @@ describe("end-to-end: the Intel Report agent workflow (RFC-05 §3)", () => {
     expect(env.tools["ledger.feedbackAppend"]).toBeUndefined();
   });
 
-  it("rejects the batch review with a reason -> held, and nothing is persisted", async () => {
+  it("rejects the batch review with a reason -> the report is KEPT and marked, not discarded", async () => {
     const promptStore = makePromptStore();
     const router = goodReportRouter();
     const workflowFn = createIntelReportAgentWorkflow({ tools: env.tools, promptStore, router });
@@ -231,16 +231,23 @@ describe("end-to-end: the Intel Report agent workflow (RFC-05 §3)", () => {
     });
 
     const result = await engine.run(workflowFn, params);
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/review rejected/i);
-    expect(result.reason).toMatch(/dimension scores look inflated this run/);
-
-    const readReport = await env.tools["intel.getReport"]!.execute({}, { ctx: { ...params, runId: "verify", metadata: {} } });
-    expect(readReport.status).toBe("not_available");
+    // intel-report shares `runReviewCycle`, so it inherits the same change the
+    // six converted agents got: a reject no longer ends the run. The report is
+    // persisted carrying the reviewer's decision, so the analysis survives for
+    // them to act on instead of existing nowhere afterwards. Nothing publishes
+    // it — an intel report is an internal document a human reads.
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+    // The reviewer's own words ride on the report, which is where they are
+    // useful. The run status no longer carries them, because the run no
+    // longer ends on them.
+    expect(result.output.reviewOutcome).toMatchObject({
+      outcome: "rejected",
+      detail: expect.stringContaining("dimension scores look inflated this run"),
+    });
 
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
-    expect(deliverables).toHaveLength(0);
+    expect(deliverables).toHaveLength(1);
   });
 
   // SCRUM-306 (AU23): the lost signal this ticket is about. Before this, a
@@ -269,7 +276,9 @@ describe("end-to-end: the Intel Report agent workflow (RFC-05 §3)", () => {
     });
 
     const result = await engine.run(workflowFn, params);
-    expect(result.status).toBe("held");
+    // A reject no longer ends the run: the analysis is kept, marked with the
+    // reviewer's decision, and the feedback pipeline below is unchanged.
+    expect(result.status).toBe("completed");
 
     const readOutcome = await env.tools["memory.readFeedback"]!.execute(
       { productId: "intel-report-agent", limit: 10 },

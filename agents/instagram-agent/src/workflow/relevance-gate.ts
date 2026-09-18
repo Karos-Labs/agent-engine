@@ -248,7 +248,7 @@ export async function runRelevanceJudge(
       // Pinned Flash on the Gemini vendor, same as the vetting and visual-QA
       // judges in this agent — the commodity tier the brief mandates for new
       // judges. `resolveModelPolicy` keeps the per-step env override path.
-      modelPolicy: resolveModelPolicy("instagram-relevance-judge", { policy: "pinned", model: "gemini-2.5-flash", vendor: "gemini" }),
+      modelPolicy: resolveModelPolicy("instagram-relevance-judge", { policy: "pinned", model: "gemini-3.8-flash", vendor: "gemini" }),
       maxSteps: 1,
     },
     buildRelevanceSystemPrompt(),

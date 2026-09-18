@@ -23,7 +23,21 @@ export interface NewsletterTopicReservation {
   topics: string[];
 }
 
-export type NewsletterCandidateSource = "requested" | "reserved" | "research";
+export type NewsletterCandidateSource =
+  | "requested"
+  | "reserved"
+  | "research"
+  /**
+   * Nothing cleared selection and the run fell back to the client's own
+   * configured strategy — a content pillar and a target keyword they set
+   * themselves.
+   *
+   * Not an invented topic: it is the client's own statement of what they want
+   * to be known for, which is the most defensible thing to write about when
+   * research and the catalog both came up empty. Surfaced as its own source so
+   * a reviewer can tell a strategy-derived edition from a researched one.
+   */
+  | "client-strategy";
 
 export interface NewsletterSelectedCandidates {
   mainStory: string;

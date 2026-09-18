@@ -23,6 +23,12 @@ import {
   persistReviewFeedbackToMemory,
   revisionDirective,
   runReviewCycle,
+  runCheckWithRepair,
+  redactSentencesCarrying,
+  localContentFail,
+  localPass,
+  spansFromEvidence,
+  type ContentRepair,
 } from "@agent-engine/workflow";
 import {
   GEO_READINESS_BUCKETS,
@@ -202,6 +208,17 @@ function toSeoGeoCell(cell: {
 }
 
 /** Numeric strings the Phase 8 narrative's `gate.numbersSourced` check will accept — every one is a value the workflow itself already computed, never something the narrative agent could have invented. */
+/**
+ * What the summary says when every one of its sentences carried a figure the
+ * gate could not trace to the scoring inputs.
+ *
+ * Reachable only on a summary short enough that one sentence was the whole
+ * thing. It exists because the alternative at that point is falling back to
+ * the unredacted text — which republishes the very figure the gate refused.
+ */
+const NARRATIVE_WITHHELD =
+  "This summary is not reported: every figure it rested on was one the model derived rather than measured, and derived figures are withheld rather than published.";
+
 function buildNarrativeSources(scoring: SeoGeoScoringResult, firedCount: number, measuredFacts: readonly string[] = []): string[] {
   const sources: string[] = [
     `${scoring.seoScore.score}`,
@@ -885,17 +902,31 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
     // unavailable input 0 and excludes it from `dataCoveragePct`, so the
     // numbers themselves aren't fabricated — but nothing stopped the run
     // persisting and delivering a client-facing report whose every input was
-    // absent. Holding is the correct terminal state: it is recoverable, it
-    // spends no further model budget on fix-drafting and narrative, and it
-    // surfaces the disconnected fuel line instead of formatting it.
+    // absent, and a client reading a GEO score of 0 cannot tell "you scored
+    // badly" from "we did not measure you".
     //
-    // This is a stopgap for the missing capture layer, not a fix for it.
-    if (visibilityCapture.measuredCount === 0) {
-      throw new WorkflowHeld(
-        `AI-visibility capture measured nothing: ${visibilityCapture.capturedCount} of ${visibilityCapture.attemptedCount} cells captured, all "UNAVAILABLE". ` +
-          `Refusing to score or deliver a report with no measured data behind it.`,
-      );
-    }
+    // That second sentence is still the whole risk, and it is what this now
+    // guards against instead of holding. The TECHNICAL half of this report is
+    // separately measured by a real crawl, and refusing to deliver it because
+    // the AI-visibility half came back empty punishes the client for a
+    // disconnected fuel line on our side. So the run continues and the
+    // unmeasured half is made impossible to misread:
+    //
+    //   - `visibilityUnmeasured` rides on the report, so the portal and any
+    //     reader can see the state directly rather than inferring it from a
+    //     zero;
+    //   - `geoMeasuredBasisScore` is already `null` when nothing was measured
+    //     (`evaluate-scores.ts`), which is the honest field, and the narrative
+    //     is told in as many words not to characterise AI visibility at all;
+    //   - the repair ledger carries the same statement to the deliverable.
+    //
+    // No number is invented and no score is presented as measured. This is
+    // still a stopgap for the missing capture layer, not a fix for it.
+    const visibilityUnmeasured = visibilityCapture.measuredCount === 0;
+    const visibilityUnmeasuredNote = visibilityUnmeasured
+      ? `AI-visibility capture measured nothing: ${visibilityCapture.capturedCount} of ${visibilityCapture.attemptedCount} cells captured, all "UNAVAILABLE". ` +
+        "The GEO half of this report is NOT MEASURED — its score is not a low score, it is an absent one. The technical SEO half was measured normally."
+      : undefined;
 
     // ── 09: deterministic scoring (RFC-04 §2 Phase 4) — the N vs N_e dual-freeze (§4) ──
     const scoring = await wf.step.code("09-compute-scores", async (): Promise<SeoGeoScoringResult> => {
@@ -1046,6 +1077,9 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
      * ever showed a human what the report's own prose actually says before
      * shipping it.
      */
+    /** What each drafting round had to repair in the narrative. Empty on the normal path. */
+    const narrativeRepairsByRevision = new Map<number, ContentRepair[]>();
+
     const draftOnce = async (revision: number, notes: readonly RevisionNote[]): Promise<DraftResult> => {
       /** Revision 0 keeps the ORIGINAL ids, so a first-pass trace is unchanged. */
       const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
@@ -1095,11 +1129,36 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         // the site rather than only about the audit. Every number in these
         // lines is also in the gate's sources.
         measuredFacts: technicalPhase.measuredFacts.slice(0, 10),
+        // When nothing was captured, the summary must not characterise AI
+        // visibility at all — not even to call it weak. An absent measurement
+        // is not a finding, and letting the model narrate one would turn a
+        // disconnected capture layer into a claim about the client.
+        ...(visibilityUnmeasuredNote !== undefined
+          ? {
+              visibilityUnmeasured: true,
+              visibilityUnmeasuredNote,
+              craftDirective:
+                "AI visibility was NOT MEASURED for this run. Do not describe, score, rank or characterise the client's AI visibility in any way, including calling it low, weak or absent — say only that it was not measured this cycle, and write the rest of the summary about the technical findings, which were measured.",
+            }
+          : {}),
         ...(directive !== undefined ? { revisionRequest: directive } : {}),
       };
-      const narrativeResult = await wf.step.agent(rev("14-draft-narrative"), narrativeAgent, narrativeInput);
+      const firstNarrative = await wf.step.agent(rev("14-draft-narrative"), narrativeAgent, narrativeInput);
+      // A narrative that came back unusable gets ANOTHER draft, not a held run:
+      // `content_fail` here means the turn returned no parseable structured
+      // output, which is a coin flip rather than a verdict on the report.
+      const narrativeResult =
+        firstNarrative.status === "content_fail"
+          ? await wf.step.agent(rev("14z-regenerate-narrative"), narrativeAgent, narrativeInput)
+          : firstNarrative;
       if (narrativeResult.status === "content_fail") {
-        throw new WorkflowHeld(`narrative did not clear its own output validation: ${narrativeResult.status}`);
+        // Twice is no longer a coin flip. Nothing was written, so there is
+        // nothing to repair and nothing to annotate. `degraded` rather than
+        // `held`: `held` means "we looked and decided not to publish", a
+        // content verdict nobody made here. Neither status is auto-retried
+        // (the queue consumer acks every terminal status); this is about
+        // classifying the failure honestly.
+        throw new WorkflowToolingFailure("the narrative did not produce a parseable summary on two consecutive attempts");
       }
       if (narrativeResult.status !== "completed") {
         throw new WorkflowToolingFailure(`narrative step resolved to "${narrativeResult.status}"`);
@@ -1131,15 +1190,45 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         return redraft.finalOutput;
       });
 
-      // ── gate the narrative against fabricated numbers (RFC-04 §2 Phase 8's own recommendation) ──
-      await wf.step.code(rev("15-verify-narrative-numbers"), async () => {
-        const verdict = await runGate(tools, "gate.numbersSourced", { text: narrative.summary, sources }, ctx);
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
-        if (verdict.verdict === "content_fail") throw new WorkflowHeld(`narrative numbers not sourced: ${verdict.reason}`);
-        return verdict;
-      });
+      // ── 15: gate the narrative against fabricated numbers, then REPAIR ──
+      //
+      // (RFC-04 §2 Phase 8's own recommendation.) This step used to
+      // `throw new WorkflowHeld(...)`, which ended a run that had already paid
+      // for a full technical crawl, an AI-visibility capture, a scoring pass,
+      // a fix-generation review and two human gates — over one derived figure
+      // in one sentence of a summary. 14b above is the model's attempt at it;
+      // what follows is the deterministic floor.
+      //
+      // The gate keeps its full authority over what may be PUBLISHED: no
+      // unsourced figure survives this step. It loses the authority to end the
+      // run. `tooling_error` still throws.
+      const verified = await wf.step.code(
+        rev("15-verify-narrative-numbers"),
+        async (): Promise<{ summary: string; repairs: ContentRepair[] }> => {
+          const outcome = await runCheckWithRepair({
+            check: "gate.numbersSourced",
+            value: narrative.summary,
+            verify: async (summary) => runGate(tools, "gate.numbersSourced", { text: summary, sources }, ctx),
+            attempts: [
+              {
+                action: "redacted",
+                maxPasses: 3,
+                run: (summary, verdict) => {
+                  const redacted = redactSentencesCarrying(summary, spansFromEvidence(verdict.evidence), NARRATIVE_WITHHELD).text;
+                  return redacted === summary ? undefined : redacted;
+                },
+              },
+            ],
+            describeUnresolved: (verdict) => `${verdict.reason} — delivered with this noted rather than withheld`,
+          });
+          return { summary: outcome.value, repairs: outcome.repairs };
+        },
+      );
+      // Outside the step body: a checkpointed step is replayed from its stored
+      // value on resume and its body never runs again.
+      narrativeRepairsByRevision.set(revision, verified.repairs);
 
-      return { fixDrafts, narrative: narrative.summary };
+      return { fixDrafts, narrative: verified.summary };
     };
 
     // ── 16: human batch-review gate — nothing ships without a real review of what will actually ship ──
@@ -1191,14 +1280,44 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       },
     });
     const { fixDrafts, narrative: narrativeSummary } = review.output;
+    /**
+     * The repairs made to the round that was APPROVED — not the last round
+     * attempted. Omitted from the report when empty, so a clean run produces
+     * the bytes it always did.
+     */
+    const contentRepairs = narrativeRepairsByRevision.get(review.revision) ?? [];
+    if (visibilityUnmeasuredNote !== undefined) {
+      contentRepairs.push({ check: "ai-visibility-capture", action: "unresolved", detail: visibilityUnmeasuredNote });
+    }
+    // A reviewer who ran out of rounds, or who rejected outright, is recorded
+    // ON the deliverable rather than ending the run: the work survives for
+    // them to act on, and the marker is what makes their decision unmissable.
+    // Nothing here publishes anything — every deliverable still waits on a
+    // human — so this changes what a reviewer KEEPS, not what ships.
+    if (review.outcome !== undefined && review.outcome !== "approved") {
+      contentRepairs.push({
+        check: "human-review",
+        action: "unresolved",
+        detail: review.outcomeDetail ?? review.outcome,
+      });
+    }
 
     // ── 17: assemble the one merged report object ──
     const report = await wf.step.code("17-assemble-report", (): SeoGeoReport => ({
       seoScore: scoring.seoScore,
       geoReadiness: scoring.geoReadiness,
       visibility: {
-        byN: scoring.visibilityByN,
-        byNe: scoring.visibilityByNe,
+        // NULLED when nothing was captured, and this is the line that makes
+        // delivering such a run defensible at all.
+        //
+        // The index is computed from the response set, so with every cell
+        // UNAVAILABLE it still resolves to a NUMBER — 7, on the fixture that
+        // caught this — and a client reading "AI visibility index: 7" has been
+        // handed a measurement nobody took. A banner elsewhere on the report
+        // does not undo that; the number itself has to be absent. This is the
+        // difference between delivering a partial report and fabricating one.
+        byN: visibilityUnmeasured ? null : scoring.visibilityByN,
+        byNe: visibilityUnmeasured ? null : scoring.visibilityByNe,
         // SCRUM-390: was a hardcoded "pending, blockingOn: Daniel" literal —
         // a client-visible artefact advertising an open decision over an
         // engine that had already resolved it. Reads the frozen record now.
@@ -1224,6 +1343,12 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       firedRecommendations: recommendations,
       fixDrafts,
       narrative: narrativeSummary,
+      // Structural, not prose: a reader (and the portal) can tell an absent
+      // GEO measurement from a bad one without parsing the summary.
+      ...(visibilityUnmeasured ? { visibilityUnmeasured: true } : {}),
+      // Present only when the narrative had to be repaired to get here, so a
+      // reader sees what was removed instead of a silently edited summary.
+      ...(contentRepairs.length > 0 ? { contentRepairs } : {}),
       // The observed facts and where each family of inputs came from — so a
       // reader can tell "the site failed this check" from "this check could
       // not run", and the portal can show the site's real standing next to

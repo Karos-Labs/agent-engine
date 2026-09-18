@@ -99,17 +99,22 @@ describe("the draft step's turn budget (x-agent 10-draft-post)", () => {
     expect(redraftPrompt).toContain("AT MOST once");
   });
 
-  it("a second exhaustion holds the run — never fails it — with the step's own account as the reason", async () => {
+  it("a second exhaustion DEGRADES the run — not held — with the step's own account as the reason", async () => {
     const router = fakeRouterSequence([...anExhaustedDraft(), ...anExhaustedDraft()]);
     const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
 
     const result = await new WorkflowEngine(durableStore).run(workflowFn, { ...baseParams, runId: "x_run_held" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/^draft ran out of turns without returning a post: budget_exceeded after 9 turn\(s\), \$\d+\.\d\d; tool calls: gate\.lintPost ×9 \(8 pass\); /);
-    expect(result.reason).toMatch(/refused, not executed$/);
+    // `degraded`, not `held`. Nothing was drafted, so there is no content to
+    // repair and nothing to annotate — but `held` means "we looked at this and
+    // decided not to publish", a content verdict nobody made here. A model
+    // that ran out of turns is a malfunction (RFC-01 §6). The account of what
+    // the step actually did is unchanged and still the reason.
+    expect(result.status).toBe("degraded");
+    if (result.status !== "degraded") throw new Error("unreachable");
+    expect(result.failureReason).toMatch(/^draft ran out of turns without returning a post: budget_exceeded after 9 turn\(s\), \$\d+\.\d\d; tool calls: gate\.lintPost ×9 \(8 pass\); /);
+    expect(result.failureReason).toMatch(/refused, not executed$/);
 
     const ids = (await durableStore.listSteps("x_run_held")).map((s) => s.stepId);
     expect(ids).toContain("10-draft-post");

@@ -786,12 +786,19 @@ describe("original short: script → plates → voice → captions → sequence 
   }, 20_000);
 
   it("a plan priced over the ceiling goes back to the writer with the numbers, and the cheaper plan ships (one continuous run, no hold)", async () => {
-    // Three voiced beats with three worst-case stills price at about $0.15;
-    // a fourteen-cent ceiling cannot hold that, but the same three beats
-    // silent ($0.12 of stills at worst, plus QA) can. The writer is handed
-    // the breakdown and the target, answers with the silent script, and the
-    // run carries on.
-    const h = stubTools({ maxRunCostUsd: 0.14 });
+    // Three voiced beats with three worst-case stills price at $0.2321; a
+    // twenty-two-cent ceiling cannot hold that, but the same three beats
+    // silent ($0.201 of stills at worst, plus QA, = $0.2125) can. The writer
+    // is handed the breakdown and the target, answers with the silent script,
+    // and the run carries on.
+    //
+    // The numbers moved on 2026-09-17 with the image model: a worst-case still
+    // is `gemini-3.1-flash-image` at $0.067, not `gemini-2.5-flash-image` at
+    // $0.039, so the same two plans price $0.08 higher and the ceiling that
+    // separates them moved with them. The PROPERTY under test is unchanged and
+    // is the reason the ceiling is not just raised out of the way: it sits
+    // between the two plans, so the first is refused and the second ships.
+    const h = stubTools({ maxRunCostUsd: 0.22 });
     const prompts: string[] = [];
     const result = await run(h, "run-os-replan", [VOICED_SCRIPT, CHEAP_SCRIPT], prompts);
 
@@ -801,12 +808,12 @@ describe("original short: script → plates → voice → captions → sequence 
     expect(prompts).toHaveLength(2);
     expect(prompts[0]).not.toContain("budgetFeedback");
     expect(prompts[1]).toContain("budgetFeedback");
-    expect(prompts[1]).toMatch(/priced at \$0\.1\d against a \$0\.14 ceiling/);
-    expect(prompts[1]).toContain("lands under $0.11");
+    expect(prompts[1]).toMatch(/priced at \$0\.23 against a \$0\.22 ceiling/);
+    expect(prompts[1]).toContain("lands under $0.17");
     // The cheaper plan is the one that shipped, stills still permitted, nothing held (three beats, two of them long enough for a second shot).
     expect(h.stockArgs).toHaveLength(5);
     expect(h.calls).not.toContain("video.synthesizeVoice");
-    expect(h.deliverables[0]).toMatchObject({ budgetPlan: "replan", replans: 1, voiceover: false, maxCostUsd: 0.14 });
+    expect(h.deliverables[0]).toMatchObject({ budgetPlan: "replan", replans: 1, voiceover: false, maxCostUsd: 0.22 });
     expect(h.calls).not.toContain("topics.release");
   }, 20_000);
 

@@ -68,13 +68,23 @@ export class StructuredOutputValidationError extends Error {
 
 /**
  * The output ceiling the engine will raise a truncated step to, and the hard
- * stop on that raise. 32k is what `intel-report-agent` already asks for and
- * gets from both vendors in production, so it is a ceiling with a precedent
- * rather than a guess; a step that truncates at 32k has a schema problem, not
- * a budget problem, and is allowed to fail loudly.
+ * stop on that raise.
+ *
+ * The ceiling used to be 32,000, reasoned from `intel-report-agent` already
+ * asking for and getting exactly that in production. But a ceiling set to the
+ * fleet's LARGEST step is a ceiling that step cannot use: `raisedOutputLimit`
+ * returns `undefined` the moment `attempted >= ceiling`, so the one agent
+ * ranked the fleet's highest truncation risk had no recovery at all — the
+ * layer existed and could never fire for it. Raised to 64,000 so the raise is
+ * a real step above any step's own budget, and so growing a schema does not
+ * silently re-create that state.
+ *
+ * 64,000 is well inside the models' own limits (Sonnet 4.6 and the Opus family
+ * accept up to 128K output) and the adapter streams whenever the client
+ * exposes `messages.stream`, so a large ceiling does not risk an HTTP timeout.
  */
 export const OUTPUT_LIMIT_RETRY_FLOOR = 16_384;
-export const OUTPUT_LIMIT_RETRY_CEILING = 32_000;
+export const OUTPUT_LIMIT_RETRY_CEILING = 64_000;
 
 /**
  * The one raise a truncated turn is allowed, or `undefined` when the attempt

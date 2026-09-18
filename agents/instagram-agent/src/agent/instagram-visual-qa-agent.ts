@@ -90,7 +90,7 @@ export class InstagramVisualQaAgent extends BaseAgent<VisualQaVerdict> {
       "Judge a rendered carousel attempt's structured slide data (fields/images, never actual pixels) against the frozen style config's check:'render' rules plus the elevated composition/font-hierarchy/brand-asset-integration/colour-harmony criteria, and report pass/fail with per-rule findings.",
     allowedTools: [],
     outputSchema: VisualQaVerdictSchema,
-    modelPolicy: resolveModelPolicy("instagram-visual-qa", { policy: "pinned", model: "gemini-2.5-pro", vendor: "gemini" }),
+    modelPolicy: resolveModelPolicy("instagram-visual-qa", { policy: "pinned", model: "gemini-3.1-pro-preview", vendor: "gemini" }),
     // Pinned to "5" (2026-09-16): @5 re-centres the rubric on five POST-LEVEL
     // questions (would a reader stop and swipe; does the post pull forward or
     // repeat itself; is this one visual system or furniture on eight plates;

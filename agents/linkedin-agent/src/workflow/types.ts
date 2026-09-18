@@ -125,6 +125,17 @@ export type LinkedInCandidateSource = "requested" | "reserved" | "trend" | "stra
 export interface LinkedInSelectedCandidate {
   topic: string;
   source: LinkedInCandidateSource;
+  /**
+   * Set when a topic someone explicitly ASKED for was refused because it sits
+   * on the client's never-list, and this run wrote about something else
+   * instead.
+   *
+   * The refusal is the point and it is never silent: the requested subject is
+   * not written about, and the substitution is recorded on the deliverable so
+   * whoever asked finds out that their request was declined and why — rather
+   * than the run ending and nobody learning anything.
+   */
+  refusedRequest?: string;
   /** Present when `source === "trend"`: the scouted candidate, with its angle, hook, why-now and brand-fit bridge. */
   trend?: TrendCandidate;
   /** Present when `source === "strategy"`: the strategy-map row this run took, so the subject row can name it (C7 §3.1 `strategyRowId`). */

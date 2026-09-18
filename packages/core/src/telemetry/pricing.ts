@@ -62,8 +62,18 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "claude-3-haiku-20240307": { inputPer1M: 0.25, outputPer1M: 1.25 },
   "gpt-4o-mini": { inputPer1M: 0.15, outputPer1M: 0.6 },
   "gpt-4o": { inputPer1M: 2.5, outputPer1M: 10.0 },
+  // Kept after the 3.x migration (2026-09-17), not because anything pins them
+  // any more, but because a run recorded before it still has to price: these
+  // ids appear in stored telemetry, and `pricingForModel` has no time axis.
   "gemini-2.5-flash": { inputPer1M: 0.3, outputPer1M: 2.5 },
   "gemini-2.5-pro": { inputPer1M: 1.25, outputPer1M: 10.0 },
+  // The 2.5 generation's replacement for every flash-tier Gemini step
+  // (ai.google.dev/gemini-api/docs/pricing, "Gemini 3.8 Flash", checked
+  // 2026-09-17). NOTE the dated rate: the page prices it at $0.75/$3.75
+  // "through December 31, 2026" and $1.50/$7.50 from January 1, 2027 — this
+  // table has no time axis, so the row will UNDERSTATE by 2x from that date
+  // until someone edits it. That is the promotional price, not a typo.
+  "gemini-3.8-flash": { inputPer1M: 0.75, outputPer1M: 3.75 },
   // ai.google.dev/gemini-api/docs/pricing, "Gemini 3.1 Pro Preview", prompts <= 200k tokens (checked 2026-09-05).
   "gemini-3.1-pro-preview": { inputPer1M: 2.0, outputPer1M: 12.0 },
   // Anthropic's dateless 5 generation (see
@@ -280,6 +290,14 @@ export const UNIT_PRICING: Record<string, UnitPricing> = {
   // run's window (both response_code=200), and Google's published rate is
   // 1290 output tokens per image at $30/1M.
   "gemini-2.5-flash-image": { unit: "image", usdPerUnit: 0.039, source: "ai.google.dev/gemini-api/docs/pricing — 1290 output tokens/image at $30/1M (checked 2026-08-27)" },
+  // What `image.generate` actually calls since the 3.x migration
+  // (2026-09-17). Dearer per picture than the 2.5 row above and worth it only
+  // because 2.5 is on its way out: the Developer API already answers 404 "no
+  // longer available to new users" for the 2.5 TEXT models, and this engine
+  // would rather move a generation early than discover the image id has
+  // followed them. The rate is the page's own per-image equivalent at 1K, the
+  // size `generate-image.ts` asks for.
+  "gemini-3.1-flash-image": { unit: "image", usdPerUnit: 0.067, source: "ai.google.dev/gemini-api/docs/pricing — Gemini 3.1 Flash Image, $60/1M output tokens = $0.067 per 1K image (checked 2026-09-17)" },
 
   // SCRUM-391: `media.ingestVisualPatterns`' vision-analysis step
   // (`packages/tools/karos-media/src/visual-patterns.ts`) calls
@@ -307,6 +325,20 @@ export const UNIT_PRICING: Record<string, UnitPricing> = {
     usdPerUnit: MODEL_PRICING["gemini-2.5-flash"]!.outputPer1M / 1_000_000,
     source: "Derived from MODEL_PRICING[\"gemini-2.5-flash\"].outputPer1M (ai.google.dev/gemini-api/docs/pricing, checked 2026-08-29), expressed per-token instead of per-1M so a real captured candidatesTokenCount can be billed exactly.",
   },
+  // The same two SKUs on the model the vision steps call since the 3.x
+  // migration. The 2.5 rows above stay: a stored run priced through them still
+  // has to price, and deleting a SKU id is how a historical report starts
+  // throwing.
+  "gemini-3.8-flash-vision-analysis-input-token": {
+    unit: "input-token",
+    usdPerUnit: MODEL_PRICING["gemini-3.8-flash"]!.inputPer1M / 1_000_000,
+    source: "Derived from MODEL_PRICING[\"gemini-3.8-flash\"].inputPer1M (ai.google.dev/gemini-api/docs/pricing, checked 2026-09-17), expressed per-token instead of per-1M so a real captured promptTokenCount can be billed exactly.",
+  },
+  "gemini-3.8-flash-vision-analysis-output-token": {
+    unit: "output-token",
+    usdPerUnit: MODEL_PRICING["gemini-3.8-flash"]!.outputPer1M / 1_000_000,
+    source: "Derived from MODEL_PRICING[\"gemini-3.8-flash\"].outputPer1M (ai.google.dev/gemini-api/docs/pricing, checked 2026-09-17), expressed per-token instead of per-1M so a real captured candidatesTokenCount can be billed exactly.",
+  },
 
   // `video.visualQaGate` (packages/tools/karos-media/src/visual-qa-gate.ts)
   // watches the FINISHED clip with `gemini-2.5-flash` and is billed by token
@@ -322,6 +354,16 @@ export const UNIT_PRICING: Record<string, UnitPricing> = {
     unit: "output-token",
     usdPerUnit: MODEL_PRICING["gemini-2.5-flash"]!.outputPer1M / 1_000_000,
     source: "Derived from MODEL_PRICING[\"gemini-2.5-flash\"].outputPer1M (ai.google.dev/gemini-api/docs/pricing, checked 2026-09-05), per-token so the captured candidatesTokenCount bills exactly.",
+  },
+  "gemini-3.8-flash-video-qa-input-token": {
+    unit: "input-token",
+    usdPerUnit: MODEL_PRICING["gemini-3.8-flash"]!.inputPer1M / 1_000_000,
+    source: "Derived from MODEL_PRICING[\"gemini-3.8-flash\"].inputPer1M (ai.google.dev/gemini-api/docs/pricing, checked 2026-09-17), per-token so the captured promptTokenCount (video frames included) bills exactly.",
+  },
+  "gemini-3.8-flash-video-qa-output-token": {
+    unit: "output-token",
+    usdPerUnit: MODEL_PRICING["gemini-3.8-flash"]!.outputPer1M / 1_000_000,
+    source: "Derived from MODEL_PRICING[\"gemini-3.8-flash\"].outputPer1M (ai.google.dev/gemini-api/docs/pricing, checked 2026-09-17), per-token so the captured candidatesTokenCount bills exactly.",
   },
 
   // ── Video generation (Veo 3.1), billed PER SECOND of generated video ──

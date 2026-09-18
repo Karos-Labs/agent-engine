@@ -82,3 +82,23 @@ export async function setupTestEnvironment(
     cleanup: () => fs.rm(rootDir, { recursive: true, force: true }),
   };
 }
+
+/**
+ * The blog post as the client actually receives it.
+ *
+ * Reads the persisted deliverable rather than the workflow's return value on
+ * purpose: `bodyMarkdown` is what a reader gets, and a repair that fixed only
+ * the gated `text` would pass every re-check and still publish the unredacted
+ * article. Assertions built on this catch that; assertions built on `text`
+ * alone do not.
+ */
+export async function deliveredPost(env: TestEnvironment, runId: string): Promise<Record<string, unknown>> {
+  const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", runId, "_"]);
+  if (deliverables.length !== 1) throw new Error(`expected exactly one deliverable for ${runId}, found ${deliverables.length}`);
+  return (deliverables[0] as { data: { deliverable: Record<string, unknown> } }).data.deliverable;
+}
+
+/** Every prose field of a delivered post, concatenated — title and FAQ answers included. */
+export function allProse(post: Record<string, unknown>): string {
+  return JSON.stringify([post["title"], post["metaDescription"], post["excerpt"], post["text"], post["bodyMarkdown"], post["faqItems"]]);
+}

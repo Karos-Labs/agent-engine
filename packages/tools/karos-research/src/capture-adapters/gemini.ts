@@ -11,7 +11,7 @@ const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 // gemini-1.5-flash, and inventing a rate is precisely what that table exists to
 // prevent. 2.5-flash is priced from a checked source, is currently listed, and is
 // the id every other Gemini default in this repo already uses.
-const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_MODEL = "gemini-3.8-flash";
 
 export interface GeminiAdapterOptions {
   apiKey: string;

@@ -25,7 +25,12 @@ import { MEDIA_CACHE_PREFIX, type FindImagesCandidate } from "./find-images.js";
 // set of `toContain`s. But when a list IS non-empty the standing constraint
 // line changes shape, and the tool-version gate on main exists precisely so a
 // prompt change is legible in the version.
-const TOOL_VERSION = "1.2.0";
+// 1.3.0: the default model moved from gemini-2.5-flash-image to
+// gemini-3.1-flash-image (a different generation, a different per-image rate),
+// and the client's Vertex location moved to `global` because that is the only
+// endpoint serving it. Both change what a call does, so a telemetry record
+// from before must not read as one from after.
+const TOOL_VERSION = "1.3.0";
 
 /**
  * The image-generation call, narrowed to what this tool uses so the package
@@ -35,9 +40,12 @@ const TOOL_VERSION = "1.2.0";
  * `generateImages` ("will be removed in the next major release… use the
  * generateContent method with image models instead"), and the Imagen publisher
  * models it targets are not available in this deployment at all — every
- * `imagen-*` id returns 404 for `karoscmo-prep`, while `gemini-2.5-flash-image`
- * answers on both `global` and `us-central1`. Probed directly before this was
- * written rather than assumed.
+ * `imagen-*` id returns 404 for `karoscmo-prep` — re-probed 2026-09-17, still
+ * true for imagen-4.0, imagen-4.0-fast and imagen-3.0. The model that answers
+ * is a Gemini image id, today `gemini-3.1-flash-image`, and ONLY on the
+ * `global` endpoint: unlike the outgoing `gemini-2.5-flash-image`, which
+ * served both, every 3.x id 404s at `us-central1`. Probed directly, as the
+ * worker's own service account, before this was written rather than assumed.
  */
 export interface ImageGenerationClient {
   models: {
@@ -169,7 +177,7 @@ export interface GenerateImageResult {
 }
 
 /** The default. Verified reachable in prep; every `imagen-*` id 404s there. */
-export const DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image";
+export const DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image";
 
 /**
  * Whether a `generateContent` failure is quota/availability noise rather than

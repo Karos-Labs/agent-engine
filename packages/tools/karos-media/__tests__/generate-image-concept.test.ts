@@ -107,7 +107,7 @@ const DESCRIPTION_1_1_0_TAIL = "no third-party copyright, no watermark, no ident
 
 describe("image.generate 1.2.0 — the permit is absent for the whole fleet", () => {
   it("declares 1.2.0, because the brief it composes changes shape when a permit names something", () => {
-    expect(schemaOnly().version).toBe("1.2.0");
+    expect(schemaOnly().version).toBe("1.3.0");
   });
 
   it("buildBrief is BYTE-IDENTICAL to 1.1.0 when no permit names anything", async () => {

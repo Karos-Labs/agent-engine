@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { OUTPUT_LIMIT_RETRY_CEILING, raisedOutputLimit } from "@agent-engine/core";
 import type { AgentContext, BaseAgentRuntime, CompletionResult, ModelRouter, RouterCompleteOptions } from "@agent-engine/core";
 import { DIMENSION_KEYS, type IntelReportOutput } from "@agent-engine/tool-karos-intel";
-import { IntelReportDraftAgent } from "../src/agent/intel-report-draft-agent.js";
+import { INTEL_REPORT_DRAFT_MAX_TOKENS, IntelReportDraftAgent } from "../src/agent/intel-report-draft-agent.js";
 
 // SCRUM-291 (AU14): "no agent in the fleet sets maxTokens" was true on
 // unmodified code — this fails against `git stash` / main and passes once
@@ -67,5 +68,24 @@ describe("IntelReportDraftAgent maxTokens", () => {
     const opts = complete.mock.calls[0]![3] as RouterCompleteOptions | undefined;
     expect(opts?.maxTokens).toBeDefined();
     expect(opts?.maxTokens).toBeGreaterThan(16_384);
+  });
+
+  /**
+   * This step is the fleet's largest budget AND (AUDIT-2026-08-25 §3.2) its
+   * highest truncation risk, so it is the step that most needs the engine's
+   * one automatic raise — and the step that had none. `OUTPUT_LIMIT_RETRY_CEILING`
+   * was set to 32,000 by reading this very constant, so the two met exactly
+   * and `raisedOutputLimit` returned `undefined`: the layer existed and could
+   * never fire here.
+   *
+   * The assertion lives in this package rather than in `core`'s own suite
+   * because core is the lower layer and must not import an agent to test
+   * itself. It is asserted from the constants, not from 48,000 and 64,000
+   * written out again, so growing this schema's budget back into the stop
+   * fails here instead of silently restoring the dead end.
+   */
+  it("leaves the engine's automatic raise somewhere to go", () => {
+    expect(INTEL_REPORT_DRAFT_MAX_TOKENS).toBeLessThan(OUTPUT_LIMIT_RETRY_CEILING);
+    expect(raisedOutputLimit(INTEL_REPORT_DRAFT_MAX_TOKENS)).toBe(OUTPUT_LIMIT_RETRY_CEILING);
   });
 });

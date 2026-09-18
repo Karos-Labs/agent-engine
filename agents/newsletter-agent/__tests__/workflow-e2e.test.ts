@@ -48,6 +48,10 @@ const ALL_20_STEP_IDS = [
   // the editor's verdict (an AI step). A failed gate or a `revise` verdict
   // redrafts under `-round-N` ids; a first-time-clean run has none.
   "15b-editorial-lint",
+  // The repair step. Always present, even on a clean edition: it asks what
+  // the round's gates objected to and returns the draft untouched when the
+  // answer is nothing, so its presence says the repair path ran.
+  "15r-repair-edition",
   "15c-editor-verdict",
   // Revision-scoped: `-r0` is the first review round. A `revise` decision
   // registers `-r1` after re-drafting.
@@ -199,7 +203,7 @@ describe("end-to-end: the Newsletter agent workflow (29 first-pass steps)", () =
     expect(gateStep?.output).toMatchObject({ decision: "approve", actor: "jane@karoslabs.com" });
   });
 
-  it("rejects the batch review with a reason -> held, and the deliverable never ships", async () => {
+  it("rejects the batch review with a reason -> the work is KEPT and marked rejected, not discarded", async () => {
     const promptStore = makePromptStore();
     const router = goodDraftRouter();
     const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router });
@@ -216,13 +220,13 @@ describe("end-to-end: the Newsletter agent workflow (29 first-pass steps)", () =
     });
 
     const result = await engine.run(workflowFn, params);
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    // `runReviewCycle` is generic across agents, so the wording is
-    // "review rejected" rather than anything channel-specific.
-    expect(result.reason).toMatch(/review rejected/i);
-
-    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
-    expect(deliverables).toHaveLength(0);
+    // This reverses a deliberate earlier decision, and the reversal is the
+    // point: a reject used to end the run, so a drafted post a reviewer had
+    // opinions about existed nowhere afterwards and the next run started from
+    // scratch. The gate still says no — the rejection rides on the deliverable
+    // where nobody can miss it, and no caller treats a rejected deliverable as
+    // shippable. What changed is that the reviewer keeps the work and the
+    // reason attached to it.
+    expect(result.status).toBe("completed");
   });
 });

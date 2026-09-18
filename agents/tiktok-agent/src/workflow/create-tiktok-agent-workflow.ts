@@ -315,7 +315,7 @@ export function estimateOriginalShortCost(input: {
   const round = (n: number) => Math.round(n * 1_000_000) / 1_000_000;
   const voiceUsd = input.voiceover ? input.narrationChars * unitPriceUsd("elevenlabs-tts-multilingual-v2") : 0;
   const transcribeUsd = input.voiceover ? (input.narrationChars / NARRATION_CHARS_PER_SECOND) * unitPriceUsd("elevenlabs-scribe") : 0;
-  const stillsWorstCaseUsd = input.stillsAllowed ? input.beats * unitPriceUsd("gemini-2.5-flash-image") : 0;
+  const stillsWorstCaseUsd = input.stillsAllowed ? input.beats * unitPriceUsd("gemini-3.1-flash-image") : 0;
   const visualQaUsd = input.visualQaRegistered ? VISUAL_QA_ESTIMATE_USD : 0;
   return {
     estimatedTotalUsd: round(input.spentSoFarUsd + voiceUsd + transcribeUsd + stillsWorstCaseUsd + visualQaUsd),
@@ -2965,6 +2965,19 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       await releaseReservation();
       throw error;
     });
+    /**
+     * A reviewer who ran the cycle out of rounds, or who rejected outright,
+     * recorded ON the deliverable rather than ending the run.
+     *
+     * This agent shares `runReviewCycle` with the rest, so it inherits the
+     * same behaviour. Nothing here publishes anything — the clip still waits
+     * on a human — so what changes is that the reviewer keeps the work and the
+     * reason attached to it, instead of a rendered clip existing nowhere.
+     */
+    const reviewOutcome =
+      review.outcome !== undefined && review.outcome !== "approved"
+        ? { outcome: review.outcome, detail: review.outcomeDetail ?? review.outcome }
+        : null;
     const { commentary: copy, script, voiceover, renderedPath, durationSeconds, uploaded } = review.output;
 
     /**
@@ -3051,8 +3064,16 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
 
     // ── 13: LOG — burn the topic only now that a clip actually shipped ──
     await wf.step.code("13-commit-and-record", async () => {
+      // A topic is only CONSUMED by a post a reviewer approved. Before this PR
+      // a reject threw before ever reaching here; now it returns, so the guard
+      // has to be explicit or a rejected post would burn the topic it was
+      // built from and no future run could use it.
       if (intake.reservationKey) {
-        await callTool(tools, "topics.commit", { reservationKey: intake.reservationKey }, ctx);
+        if (reviewOutcome !== null) {
+          await releaseReservation();
+        } else {
+          await callTool(tools, "topics.commit", { reservationKey: intake.reservationKey }, ctx);
+        }
       }
       // The write half of the anti-repetition loop — best-effort, on delivery only.
       try {
@@ -3081,6 +3102,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       platform: "tiktok",
       deliverable: {
         kind: "tiktok-clip",
+        ...(reviewOutcome ? { reviewOutcome } : {}),
         goal: goalLine.goal,
         ...(goalLine.audience !== undefined ? { audience: goalLine.audience } : {}),
         whyNow: goalLine.whyNow,

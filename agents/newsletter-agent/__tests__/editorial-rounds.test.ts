@@ -2,6 +2,7 @@ import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createNewsletterAgentWorkflow } from "../src/workflow/create-newsletter-agent-workflow.js";
 import {
+  deliveredEdition,
   approvingEditorVerdict,
   fakeRouterSequence,
   finalTurn,
@@ -82,18 +83,26 @@ describe("editorial rounds", () => {
     expect(ids).not.toContain("15c-editor-verdict");
   });
 
-  it("a generated-prose tell holds the run only after three drafts still carry it", async () => {
+  it("a generated-prose tell that survives three drafts ships FLAGGED, not held", async () => {
     const telling = draft({ body: "Ramp time fell after the rollout. That is the tell. The window is narrowing for teams that wait." });
     const router = fakeRouterSequence([finalTurn(goodEditionPlan()), finalTurn(telling), finalTurn(telling), finalTurn(telling)]);
     const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(
       createNewsletterAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true }),
       { ...params, runId: "nl_rounds_tell" },
     );
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toContain("editorial lint");
-    expect(result.reason).toContain("that is the tell");
-    expect(router.complete).toHaveBeenCalledTimes(4);
+    // The editorial lint is style advice, not a publishable/unpublishable
+    // verdict, so it is REPORTED on the edition rather than used to withhold
+    // it: a human reads the note and decides. Three drafts still carry the
+    // tell, and the fourth thing to happen is delivery, not a hold.
+    expect(result.status).toBe("completed");
+
+    const edition = await deliveredEdition(env, "nl_rounds_tell");
+    const repairs = edition["contentRepairs"] as Array<{ check: string; action: string; detail: string }>;
+    expect(repairs).toContainEqual(
+      expect.objectContaining({ check: "newsletter-editorial-lint", action: "unresolved", detail: expect.stringContaining("that is the tell") }),
+    );
+    // Plan + 3 drafts + the editor.
+    expect(router.complete).toHaveBeenCalledTimes(5);
   });
 
   it("the editor's revise verdict redrafts with its notes quoted, and the approved redraft ships clean", async () => {

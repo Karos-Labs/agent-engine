@@ -24,7 +24,11 @@ import { assertToolPath, probeDuration } from "./clip-compose.js";
 // ends the audio chain with an EBU R128 `loudnorm` to -16 LUFS: a TTS voice
 // arrives at whatever level the vendor chose, and a short that is quieter
 // than the one before it in a feed is a short that gets scrolled.
-const TOOL_VERSION = "1.2.0";
+//
+// 1.2.1: the loudnorm tail pins its channel layout (see LOUDNORM_FILTER). The
+// 1.2.0 graph passed every string test and failed inside ffmpeg on the first
+// real voiced render; nothing else in the graph changes.
+const TOOL_VERSION = "1.2.1";
 
 /** Total zoom of a `move` over the hold: 1.0 → 1.06. Light on purpose: a viewer should feel it, not see it. */
 export const MOVE_ZOOM_SPAN = 0.06;
@@ -38,8 +42,27 @@ export const MAX_STRETCH = 1.35;
 /** A shortfall under this many seconds is not worth re-timing a plate over; the frozen tail is shorter than a frame is noticed. */
 const MIN_STRETCH_SHORTFALL_SECONDS = 0.15;
 const OUTPUT_FPS = 30;
-/** The loudness target for a finished short: streaming platforms normalise to about -14 LUFS; -16 with a -1.5 dBTP ceiling leaves headroom for a music bed laid on top afterwards. */
-export const LOUDNORM_FILTER = "loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000";
+/**
+ * The loudness target for a finished short: streaming platforms normalise to
+ * about -14 LUFS; -16 with a -1.5 dBTP ceiling leaves headroom for a music bed
+ * laid on top afterwards.
+ *
+ * The trailing `aformat` is not decoration. `loudnorm` runs at 192 kHz
+ * internally and hands the next filter a link whose channel layout the
+ * ffmpeg 5.1 that ships in `node:22-slim` (Debian bookworm) leaves
+ * unconstrained. `aresample=48000` on its own propagates that and the encoder's
+ * output format then has nothing to choose from, and the whole render dies
+ * with `Cannot select channel layout for the link between filters
+ * Parsed_aresample_N and format_out_0_1` -- which is exactly how the first real
+ * voiced content-design short on prep failed (run pubsub-21890159642627765,
+ * 17.9.2026), $0.13 spent, nothing to deliver. Every leg BEFORE `amix` was
+ * already pinned to stereo by `AUDIO_FORMAT`; the one leg after `loudnorm` was
+ * not. Pinning it gives the negotiator a single answer on every ffmpeg version.
+ * The unit tests pin this string against the exact graph; they cannot catch a
+ * negotiation failure, because they never run ffmpeg -- see the render-fixture
+ * test below for the one that does.
+ */
+export const LOUDNORM_FILTER = "loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo";
 
 /**
  * How a plate of `probed` seconds is fitted to `hold`: the slow-down factor

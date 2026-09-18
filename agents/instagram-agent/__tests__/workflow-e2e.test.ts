@@ -565,7 +565,7 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     expect(deliverables.map((d) => d.id)).toEqual(["instagram-carousel"]);
   }, 60000);
 
-  it("rejects the batch review with a reason -> held, and no deliverable ships", async () => {
+  it("rejects the batch review with a reason -> the work is KEPT and marked, not discarded", async () => {
     const promptStore = makePromptStore();
     const router = happyRouter();
     const workflowFn = createInstagramAgentWorkflow({
@@ -589,14 +589,19 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     });
 
     const result = await engine.run(workflowFn, { ...params, runId });
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    // `runReviewCycle` is generic across agents, so the wording is
-    // "review rejected" rather than anything carousel-specific.
-    expect(result.reason).toMatch(/review rejected/i);
+    // instagram shares `runReviewCycle`, so it inherits the change the six
+    // converted agents got: a reject no longer ends the run. The work is kept
+    // and marked with the reviewer's decision, and the topic reservation is
+    // RELEASED rather than committed — a rejected post must not burn the topic
+    // it was built from. Nothing publishes: the carousel still waits on a human.
+    expect(result.status).toBe("completed");
 
+    // The carousel IS persisted now — keeping the work is the whole point —
+    // and it carries the reviewer's decision where nobody can miss it.
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", runId, "_"]);
-    expect(deliverables).toHaveLength(0);
+    expect(deliverables).toHaveLength(1);
+    const carousel = (deliverables[0] as { data: { deliverable: Record<string, unknown> } }).data.deliverable;
+    expect(carousel["reviewOutcome"]).toMatchObject({ outcome: "rejected" });
   }, 60000);
 
   it("09b writes all THREE belief keys in ONE memory.updateBeliefs diff, and the gate payload carries the skeleton", async () => {
