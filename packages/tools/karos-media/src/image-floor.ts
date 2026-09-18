@@ -18,6 +18,36 @@
  * picture DEPICTS and stays where it was — with the vetting agent, which can
  * see the image.
  *
+ * ## Size is measured. Size is not a refusal.
+ *
+ * It was one, briefly, and the owner overruled it on 2026-09-18 after two
+ * prep runs showed what it actually did: a generated 896x1200 frame was
+ * refused six times across the two runs, each refusal AFTER the image charge
+ * had been paid, and in one run the retries walked into a 429. The slide
+ * ended up with no photograph at all. Against a 1080 canvas, 896 is a 1.21x
+ * enlargement — a difference nobody sees on a phone, traded for a picture
+ * nobody gets.
+ *
+ * The owner's own framing is the rule now: a mark, a logo or a figure sitting
+ * in part of the plate never needed 1080 in the first place, because it is
+ * never asked to cover 1080. So what the measurement decides is PLACEMENT,
+ * not admission. `placementFor` answers "how large a job can this image
+ * hold", and the answer is always at least `accent` — there is no size at
+ * which this function throws the picture away.
+ *
+ * ## What still refuses
+ *
+ * Two things, neither of them a size.
+ *
+ * **Unreadable bytes.** Not an image at all: an HTML error page served as
+ * image/jpeg, a truncated download, something we should not be decoding.
+ * Placing it would mean inventing its dimensions.
+ *
+ * **A CMYK profile.** A print separation renders with shifted, often
+ * inverted colour in a browser, and every renderer's conversion is a guess.
+ * That is a broken slide rather than a soft one, and a broken slide is the
+ * one case where no picture is the better outcome.
+ *
  * ## What "no upscaling" can honestly mean here
  *
  * It cannot mean "this file was never enlarged by whoever made it". That is
@@ -25,34 +55,70 @@
  * re-encoded is, byte for byte, a 2000px photo. Claiming to detect it would
  * be a guess wearing a measurement's clothes.
  *
- * What it does mean is that **this pipeline never enlarges one**. An image
- * below the floor is refused here rather than stretched to fill a plate,
- * which is the only point in the path where an upscale was ever going to
- * happen and the only one we control. `belowFloor` is therefore the
- * no-upscale rule, enforced where it is enforceable.
- *
- * ## Refusal, not repair
- *
- * A verdict never rewrites anything. It reports, with the measured number in
- * the reason string, and the caller decides — which in practice means the
- * candidate becomes an `unmet` entry naming its real size, so the next
- * provider in the chain gets a turn. A silent drop would leave a slide
- * picture-less with no way to find out why, which is how "there are no
- * images" happened in the first place.
+ * What it now means is that the pipeline never enlarges one PAST
+ * `MAX_UPSCALE`, and where it enlarges at all it says so — `fullBleedUpscale`
+ * travels on the facts, so a reviewer reads "1.21x" rather than guessing why
+ * one slide looks softer than the rest.
  */
 
 import { readImageSize, type ImageColourSpace, type ImageFormat } from "@agent-engine/tool-common";
 
 /**
- * The short side an image must reach.
+ * The canvas an image is measured against.
  *
- * 1080 is the platform's own floor and also, not coincidentally, the width of
- * the plate: an image narrower than the canvas cannot fill it without being
- * enlarged. Deliberately NOT scaled by the render's 2x device ratio — the
- * platform states its floor against canvas pixels, and holding sources to
- * 2160 would refuse most of the correctly-licensed photography that exists.
+ * 1080 is the platform's own number and also the width of the plate.
+ * Deliberately NOT scaled by the render's 2x device ratio: the platform
+ * states its floor against canvas pixels, and holding sources to 2160 would
+ * disqualify most of the correctly-licensed photography that exists from
+ * covering a frame it covers perfectly well.
  */
-export const MIN_IMAGE_SHORT_SIDE_PX = 1080;
+export const CANVAS_SHORT_SIDE_PX = 1080;
+
+/**
+ * Retained under its old name because the platform's published floor is still
+ * a real number worth reporting against. It no longer gates anything.
+ */
+export const MIN_IMAGE_SHORT_SIDE_PX = CANVAS_SHORT_SIDE_PX;
+
+/**
+ * How far this pipeline will enlarge a picture before the softness is worth
+ * mentioning rather than ignoring.
+ *
+ * 1.4 is a judgement, and it is the honest kind: below roughly 1.4x on a
+ * phone-sized frame the resampling is not visible at arm's length, and above
+ * it the edges start to smear. It is not a refusal threshold — nothing here
+ * refuses on size — it is where `placementFor` stops calling an image good
+ * for the whole frame and starts calling it good for part of one.
+ */
+export const MAX_UPSCALE = 1.4;
+
+/**
+ * The largest job an image's pixels can hold.
+ *
+ * `full-bleed` covers the plate. `inset` fills a card, a figure or a panel,
+ * which the layouts size at roughly 45% of the frame. `accent` is a mark, a
+ * logo or a badge — the owner's case, and the reason there is no rung below
+ * it: an image that has survived download and measurement always has a job.
+ */
+export type ImagePlacement = "full-bleed" | "inset" | "accent";
+
+/** The share of the frame an inset is laid out against. */
+export const INSET_FRAME_SHARE = 0.45;
+
+export const FULL_BLEED_MIN_SHORT_SIDE_PX = Math.ceil(CANVAS_SHORT_SIDE_PX / MAX_UPSCALE);
+export const INSET_MIN_SHORT_SIDE_PX = Math.ceil((CANVAS_SHORT_SIDE_PX * INSET_FRAME_SHARE) / MAX_UPSCALE);
+
+/**
+ * The largest role these pixels can carry without visible enlargement.
+ *
+ * Total, by construction: every size maps to a placement and the lowest rung
+ * has no lower bound. A caller can always place what it is handed.
+ */
+export function placementFor(shortSide: number): ImagePlacement {
+  if (shortSide >= FULL_BLEED_MIN_SHORT_SIDE_PX) return "full-bleed";
+  if (shortSide >= INSET_MIN_SHORT_SIDE_PX) return "inset";
+  return "accent";
+}
 
 /** What was measured, flattened onto a candidate so the decision is auditable after the fact. */
 export interface ImagePixelFacts {
@@ -62,6 +128,13 @@ export interface ImagePixelFacts {
   shortSide: number;
   colourSpace: ImageColourSpace;
   profileName?: string;
+  /** The largest job these pixels can hold. Never absent: see `placementFor`. */
+  placement: ImagePlacement;
+  /**
+   * What covering the whole frame would cost in enlargement, to two decimals.
+   * At or below 1 the image is being reduced, which is free.
+   */
+  fullBleedUpscale: number;
 }
 
 /**
@@ -101,12 +174,12 @@ export type ImageFloorVerdict =
 /**
  * Measure an encoded image and decide whether it may be placed.
  *
- * An unreadable container is refused. That is deliberate and it is the
- * conservative direction: this pipeline downloads from open image search, and
- * bytes that no standard container parser recognises are either corrupt, an
- * error page served with an image content type, or something we should not be
- * decoding. A caller that genuinely wants to keep an unreadable file can look
- * at `facts === undefined` and decide for itself.
+ * An unreadable container is refused, and so is a CMYK separation. Size is
+ * not consulted for the decision at all — it sets `facts.placement`, which is
+ * advice about where the picture goes, not permission for it to exist.
+ *
+ * A caller that genuinely wants to keep an unreadable file can look at
+ * `facts === undefined` and decide for itself.
  */
 export function assessImageFloor(bytes: Uint8Array): ImageFloorVerdict {
   const size = readImageSize(bytes);
@@ -120,6 +193,7 @@ export function assessImageFloor(bytes: Uint8Array): ImageFloorVerdict {
     };
   }
 
+  const placement = placementFor(size.shortSide);
   const facts: ImagePixelFacts = {
     format: size.format,
     width: size.width,
@@ -127,14 +201,19 @@ export function assessImageFloor(bytes: Uint8Array): ImageFloorVerdict {
     shortSide: size.shortSide,
     colourSpace: size.colourSpace,
     ...(size.profileName === undefined ? {} : { profileName: size.profileName }),
+    placement,
+    fullBleedUpscale: Math.round((CANVAS_SHORT_SIDE_PX / size.shortSide) * 100) / 100,
   };
 
   const reasons: string[] = [];
   const warnings: string[] = [];
 
-  if (size.shortSide < MIN_IMAGE_SHORT_SIDE_PX) {
-    reasons.push(
-      `${size.width}x${size.height} — the short side is ${size.shortSide}px, under the ${MIN_IMAGE_SHORT_SIDE_PX}px floor; placing it would mean enlarging it`,
+  // Recorded, never refused. The warning exists so a reviewer looking at a
+  // soft slide finds the number instead of guessing, and so the sourcing
+  // step has something to PREFER on when it holds several candidates.
+  if (placement !== "full-bleed") {
+    warnings.push(
+      `${size.width}x${size.height} — too small to cover the frame without a ${facts.fullBleedUpscale}x enlargement, so it is placed as ${placement} rather than full-bleed`,
     );
   }
 
