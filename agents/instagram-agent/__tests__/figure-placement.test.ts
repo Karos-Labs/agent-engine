@@ -34,6 +34,20 @@ describe("figurePlacementFor", () => {
     expect(seen.size, `eight panels drew ${seen.size} distinct shapes`).toBeGreaterThan(3);
   });
 
+  it("does NOT select the two side shapes, which the fit ladder cannot size type for yet", () => {
+    // The stylesheet declares them and they render correctly. The calibration
+    // sweep refused every archetype that was offered a 56% column, because
+    // `_ds-fit.js` sizes type against the FIELD and a side variant changes the
+    // field's width without telling it. This keeps the two in sync: the day
+    // the ladder learns, this test is what says the rotation may change.
+    const drawn = new Set(
+      (["stat_callout", "quote_card", "comparison_card", "list_takeaway"] as const).flatMap((layout) =>
+        Array.from({ length: 12 }, (_, i) => figurePlacementFor(layout, i + 1, true)),
+      ),
+    );
+    expect([...drawn].sort()).toEqual(["band", "bleed", "foot", "tall"]);
+  });
+
   it("never gives two ADJACENT slides the same shape", () => {
     for (let n = 1; n < 12; n++) {
       expect(figurePlacementFor("list_takeaway", n, true), `slides ${n} and ${n + 1}`).not.toBe(
@@ -60,7 +74,7 @@ describe("figurePlacementFor", () => {
 
 describe("the stylesheet carries every shape the code can ask for", () => {
   it("declares a rule for each placement, or the code names a shape nothing paints", () => {
-    for (const placement of ["side", "side-end", "inset", "tall", "bleed"]) {
+    for (const placement of ["side", "side-end", "foot", "tall", "bleed"]) {
       expect(DS, placement).toContain(`body[data-figure="${placement}"]`);
     }
   });
@@ -70,6 +84,10 @@ describe("the stylesheet carries every shape the code can ask for", () => {
     expect(DS).toMatch(/body\[data-figure="side-end"\] \.plate \{[^}]*grid-template-columns: 1fr 44%/u);
     // `tall` and `bleed` are about weight, so they must actually change it.
     expect(DS).toMatch(/body\[data-figure="tall"\] \.sc-figure-band \{[^}]*block-size: 620px/u);
+    // `foot` fills by construction: it sorts last and an auto margin pushes it
+    // to the bottom, which is what `.plate` already does for everything else.
+    expect(DS).toMatch(/body\[data-figure="foot"\] \.sc-figure-band \{[^}]*order: 2/u);
+    expect(DS).toMatch(/body\[data-figure="foot"\] \.sc-figure-band \{[^}]*margin-block-start: auto/u);
     expect(DS).toMatch(/body\[data-figure="bleed"\] \.sc-figure-band \{[^}]*margin-inline: calc\(var\(--mx\) \* -1\)/u);
   });
 

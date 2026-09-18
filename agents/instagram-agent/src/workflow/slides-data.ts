@@ -898,8 +898,30 @@ export function buildListRows(items: readonly { title: string; note?: string | u
  * also drops the grid so the type does not sit in a two-column layout with an
  * empty first track.
  */
-const FIGURE_ROTATION = ["side", "inset", "tall", "side-end", "bleed", "band"] as const;
-export type FigurePlacement = (typeof FIGURE_ROTATION)[number];
+/**
+ * The shapes the rotation actually selects.
+ *
+ * ## Four, and why not the six the stylesheet declares
+ *
+ * `side` and `side-end` give the type a 56% column, and the interest-floor
+ * calibration sweep refused every archetype that was offered one. It is the
+ * right instrument and it was consistent: `stat_callout @ side-end` reported
+ * *"3 element(s) overflow their own box"* because a figure set at `--t-figure`
+ * does not fit a column that narrow; `comparison_card` is two columns of its
+ * own, so half a plate is four columns on a 1080px frame; and `quote_card` at
+ * a long copy length overflowed too.
+ *
+ * The fault is not the CSS, which renders correctly. It is that `_ds-fit.js`
+ * sizes type against the FIELD, and a side variant changes the field's width
+ * without telling it. Wiring that is real work and it is not this change.
+ *
+ * So the two side shapes stay in the stylesheet, correct and tested, and
+ * nothing selects them until the fit ladder knows about them. What ships is
+ * four shapes against the one this set had before, and every one of them uses
+ * the full width and fills the plate by construction.
+ */
+const FIGURE_ROTATION = ["tall", "foot", "bleed", "band"] as const;
+export type FigurePlacement = (typeof FIGURE_ROTATION)[number] | "side" | "side-end";
 
 export function figurePlacementFor(layout: InstagramSlideLayout, n: number, hasPicture: boolean): FigurePlacement {
   if (!hasPicture) return "band";

@@ -299,17 +299,38 @@ body[data-hero-scrim=""] .scrim { display: none; }
    band in its own track and auto-places every other child of the plate into
    the second one, which needs no change to any template's markup. */
 
+/* ── THE TWO SIDE SHAPES ARE DECLARED AND NOT YET SELECTED. ──
+   `figurePlacementFor` does not return them. The interest-floor calibration
+   sweep refused every archetype that was offered a 56% column: a figure set at
+   `--t-figure` overflows one, `comparison_card` is already two columns, and a
+   long quote overflows too. The CSS is not the fault. `_ds-fit.js` sizes type
+   against the FIELD and a side variant changes the field's width without
+   telling it, so enabling these means teaching the fit ladder about the
+   narrower column first. Kept here, correct and tested, for when it does. */
+
 /* SIDE — the picture is a column beside the type, full height of the field.
    The half-and-half split a magazine opens a feature with. */
+/* `space-between` and not `start`, and the interest floor is why. `.plate` is a
+   flex column whose auto margins push its content across the whole field; a
+   grid with `align-content: start` packs the rows at the top instead, and the
+   calibration sweep measured the result immediately: `quote_card @ first
+   (cover)` left an empty rectangle over 34% of the plate against a 22%
+   ceiling. The rows spread now, which is what the flex column was doing. */
 body[data-figure="side"] .plate {
   display: grid;
   grid-template-columns: 44% 1fr;
   column-gap: 40px;
-  align-content: start;
+  align-content: space-between;
 }
 body[data-figure="side"] .sc-figure-band {
   grid-column: 1;
-  grid-row: 1 / -1;
+  /* `span 99` and not `1 / -1`. `-1` names the last line of the EXPLICIT
+     grid, and these variants declare only `grid-template-columns`, so every
+     row is implicit and `1 / -1` resolves to a single row. The band then sat
+     in row 1 at content height and the rest of its column was a hole: the
+     calibration sweep read `comparison_card @ last (closer)` as a 520x1212
+     dead rectangle down the right of the plate. */
+  grid-row: 1 / span 99;
   block-size: 100%;
   min-block-size: 0;
 }
@@ -321,32 +342,42 @@ body[data-figure="side-end"] .plate {
   display: grid;
   grid-template-columns: 1fr 44%;
   column-gap: 40px;
-  align-content: start;
+  align-content: space-between;
 }
 body[data-figure="side-end"] .sc-figure-band {
   grid-column: 2;
-  grid-row: 1 / -1;
+  /* `span 99` and not `1 / -1`. `-1` names the last line of the EXPLICIT
+     grid, and these variants declare only `grid-template-columns`, so every
+     row is implicit and `1 / -1` resolves to a single row. The band then sat
+     in row 1 at content height and the rest of its column was a hole: the
+     calibration sweep read `comparison_card @ last (closer)` as a 520x1212
+     dead rectangle down the right of the plate. */
+  grid-row: 1 / span 99;
   block-size: 100%;
   min-block-size: 0;
 }
 body[data-figure="side-end"] .plate > *:not(.sc-figure-band) { grid-column: 1; }
 
-/* INSET — a smaller block in the upper corner with the type beside it, and the
-   rest of the plate free. The quietest of the five, and the one that reads
-   most like a page rather than a slide. */
-body[data-figure="inset"] .plate {
-  display: grid;
-  grid-template-columns: 38% 1fr;
-  column-gap: 32px;
-  align-content: start;
+/* FOOT — the picture closes the plate instead of opening it.
+   This replaces an `inset` variant that put a 38% block in the upper corner
+   with the type beside it. It looked right and measured wrong twice: a grid
+   column that ends after one row leaves the rest of that column empty, and the
+   calibration sweep read `list_takeaway @ first (cover)` as a 456x988 dead
+   rectangle, then as 8.5% imagery against a 10% floor. A shape that can only
+   be made to fill by knowing how many children the plate has is a shape this
+   system cannot carry.
+
+   `order` and an auto margin instead, which is what `.plate` already uses to
+   anchor everything else: the band sorts last and is pushed to the foot, so
+   the plate fills by construction whatever the archetype puts above it. A
+   picture at the bottom is a genuinely different read from one at the top,
+   which is the variety this set was short of. */
+body[data-figure="foot"] .sc-figure-band {
+  order: 2;
+  margin-block-start: auto;
+  block-size: 420px;
+  min-block-size: 300px;
 }
-body[data-figure="inset"] .sc-figure-band {
-  grid-column: 1;
-  grid-row: 1;
-  block-size: 320px;
-  min-block-size: 0;
-}
-body[data-figure="inset"] .plate > *:not(.sc-figure-band) { grid-column: 2; }
 
 /* TALL — the band keeps its position and takes half the plate. Same shape,
    different weight, which is the cheapest variation in the set and the one
