@@ -512,3 +512,82 @@ describe("the delivery review is a cycle, not a one-way door (2026-09-18)", () =
     expect(gate!.timeout).toMatchObject({ duration: "1h", onTimeout: "hold" });
   });
 });
+
+/**
+ * The cost bound this agent did not have (2026-09-18).
+ *
+ * `image.generate` is billed once per plate cutaway and the plate COUNT is a
+ * model's decision, so until now the only thing between a client and an
+ * arbitrary bill was how many cutaways the graphics planner felt like
+ * proposing. Clipping and content design have been priced before the first
+ * purchase since 2026-09-09.
+ */
+describe("the plates are priced before any are bought", () => {
+  let env: TestEnvironment;
+
+  afterEach(async () => {
+    await env.cleanup();
+  });
+
+  it("buys every plate on an ordinary plan, and records no budget repair", async () => {
+    env = await setupTestEnvironment();
+    const promptStore = makePromptStore();
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFn, { ...params, runId: "branded_shorts_run_budget_ok" });
+
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+    const repairs = (result.output as { contentRepairs?: Array<{ check: string }> }).contentRepairs ?? [];
+    expect(repairs.map((r) => r.check)).not.toContain("run-budget");
+  });
+
+  it("drops the plates it cannot afford, keeps every free burst, and still delivers", async () => {
+    // A dispatcher budget tight enough that the plan's plates do not fit. The
+    // short keeps the client's own footage, its captions, its overlays and
+    // every burst built from stills they already own — a plainer short, not a
+    // dead run, with the arithmetic on the deliverable.
+    env = await setupTestEnvironment();
+    // A deployment that CAN generate plates — otherwise `validateGraphicsPlan`
+    // refuses them before the budget is ever consulted, and the test would
+    // pass for the wrong reason.
+    env.tools["image.generate"] = {
+      name: "image.generate",
+      version: "1.0.0",
+      inputSchema: { safeParse: (v: unknown) => ({ success: true as const, data: v }) },
+      async execute(args: unknown) {
+        const needs = (args as { needs: Array<{ n: number }> }).needs;
+        return { status: "success" as const, result: { candidates: needs.map((need) => ({ path: `n${need.n}-gen1.png` })), unmet: [] } };
+      },
+    } as (typeof env.tools)[string];
+    const promptStore = makePromptStore();
+    const router = smartFakeRouter([
+      goodHighlights(),
+      {
+        overlays: [],
+        cutaways: [
+          { kind: "plate", phrase: "the first hire", start: 1.0, end: 2.5, wordSrcStart: 1.0, prompt: "an empty desk at dawn" },
+          { kind: "plate", phrase: "month six", start: 4.0, end: 5.5, wordSrcStart: 4.0, prompt: "a whiteboard wiped clean" },
+        ],
+      },
+    ]);
+    const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFn, {
+      ...params,
+      runId: "branded_shorts_run_budget_tight",
+      // $0.0015 of model calls leaves room for exactly one plate ($0.067), not two.
+      budget: { maxTotalCostUsd: 0.08 },
+    });
+
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+    expect(result.output.cutawayCount).toBe(1);
+    const trimmed = ((result.output as { contentRepairs?: Array<{ check: string; action: string; detail: string }> }).contentRepairs ?? []).find(
+      (r) => r.check === "run-budget",
+    );
+    expect(trimmed?.action).toBe("trimmed");
+    expect(trimmed?.detail).toContain("ceiling");
+  });
+});
