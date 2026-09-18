@@ -901,8 +901,25 @@ body.ta-center .acc { margin-inline: auto; }
      empty; it SHRINKS to the floor when the copy is long, so a long cover can
      never clip; and the floor is the height at which it is still an object the
      interest floor can see. Nothing in the fit ladder has to intervene. */
-  flex: 1 1 0;
-  min-block-size: 220px;
+  /* ── THE FLOOR IS A BASIS, NOT A MINIMUM, AND THAT IS THE DIFFERENCE
+        BETWEEN A BAND THAT YIELDS AND A PLATE THAT CLIPS. ──
+     `min-block-size: 220px` does not yield: a minimum beats flex shrink, so
+     the band held 220px whatever the copy needed, the plate went 220px into
+     negative free space, and the only item with any shrink left was the
+     LOCKUP. Measured on CI 35302640252 at `fontScale l`: *"1 element(s)
+     overflow their own box (div.lockup)"* — a hard `clipped` on the cover, on
+     a plate with no photograph, because the decoration outranked the words.
+     The fit ladder cannot win that argument either; every step it frees is a
+     step the band takes back.
+
+     As a BASIS the same 220px is the height the band asks for and gets
+     whenever the plate has the room, and gives up — all of it, in order —
+     when the copy does not leave it. The object is still declared, still
+     bounded by `--cover-band` above (`max-block-size`), and no longer able to
+     push a word off the plate. On the cover, air is negotiable and the
+     sentence is not. */
+  flex: 1 1 220px;
+  min-block-size: 0;
   display: flex;
   align-items: flex-end;
   justify-content: flex-start;
@@ -1016,8 +1033,14 @@ body:not(:has(#title > span:not(:empty))) .cov-field { background-image: none; }
 
 /* The lockup is one block: mark, title, subtitle, on one rhythm. */
 .lockup {
-  flex: 0 1 auto;
-  min-block-size: 0;
+  /* `flex-shrink: 0`, and the band above is why. A shrinkable lockup with
+     `min-block-size: 0` is a box that flex is allowed to make SHORTER THAN ITS
+     OWN TEXT, and the overflow then belongs to the lockup rather than to the
+     plate — which is the one place neither the fit ladder nor the plate's own
+     field was looking. Sized by its content, it can still be too tall for the
+     plate, and that is a `clipped` the ladder sees and fixes by stepping the
+     type down. The same defect, moved to where something is watching it. */
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -1027,7 +1050,25 @@ body:not(:has(#title > span:not(:empty))) .cov-field { background-image: none; }
    ladder hands the host, so at the top of the ladder a bare `15ch` is wider
    than the canvas. The cap keeps the measure a typographic decision without
    letting it become a horizontal overflow. */
-.lockup .headline { max-inline-size: min(15ch, 100%); }
+/* ── THE MEASURE WAS MAKING THE HOLE IT WAS BLAMED FOR. ──
+   At `15ch` the title set as a tall narrow column in a 1080px frame, and the
+   air did not sit above the type — it sat BESIDE it. CI 35302640252 prints the
+   rectangle and it is not full-width: `rect 536,452 544x620` at `fontScale s`
+   and `424,408 656x508` at `l` — a bare column half the plate wide and 500-620
+   tall, 21.7% and 21.4% against a ceiling of 22% and a swept limb of 19.1%.
+   Every earlier attempt read those shares as a band that was too short and
+   grew the plinth, which is why it oscillated: the plinth was full-width
+   already and the hole was never above it.
+
+   `19ch` is still a display measure — the reference accounts set 3-4 element
+   groups on a line this long — and it works on the cause from both ends: the
+   same words take FEWER lines, so the lines reach further into the frame and
+   the bare column narrows, and the lockup gets shorter, so the band above has
+   room to grow toward its `--cover-band` ceiling and the column shortens too.
+   The two forms that set their own tighter measures (`portrait` at 13ch over a
+   photograph, `typographic-poster` at 11ch where the sentence IS the
+   composition) are deliberate and untouched. */
+.lockup .headline { max-inline-size: min(19ch, 100%); }
 .lockup .body-text { max-inline-size: min(26em, 100%); }
 
 /* The title is the largest thing on the plate and the subtitle is plainly
