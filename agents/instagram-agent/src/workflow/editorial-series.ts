@@ -617,24 +617,74 @@ export const MAX_CLIENT_LIBRARY = 5;
 export const LIBRARY_ANCHOR: EditorialSeriesId = "the_breakdown";
 
 /**
- * Which series a segment leans towards.
+ * The owner's industry table, as a closed set of NAMED segments (item C4).
  *
- * Read off the owner's own industry table, which pairs each segment with the
- * formats and the proof rules that suit it: a regulated business leads with
- * figures and rules because that is what it is allowed to say; an agency or a
- * creator leads with what people said and what happened, because their proof
- * IS the account. The affinity is a NUDGE of one point, deliberately smaller
- * than any evidence signal in `selectSeries`, because a client's segment
- * should decide which shapes are available and never which shape a particular
- * story takes.
+ * It was a list of anonymous regular expressions. That worked and could not
+ * be referred to, and a segment that has a name is a fact the run can carry:
+ * onto the gate payload so a reviewer sees which row was applied, into the
+ * performance store so Phase 6 can cut by it, and into the copy prompt, where
+ * the rest of the specification's table belongs (tone, proof rules, and the
+ * hard constraints each row imposes).
+ *
+ * `unknown` is a member rather than a failure. A brief that names no industry
+ * is the ordinary state of a client onboarded from a website, and the honest
+ * answer there is that nothing is known — not a guess at the commonest row.
  */
-const SEGMENT_AFFINITY: ReadonlyArray<{ readonly match: RegExp; readonly prefers: readonly EditorialSeriesId[] }> = [
-  { match: /\b(financ|bank|insur|invest|legal|complian|regulat|health|medic|pharma)/i, prefers: ["by_the_numbers", "the_playbook"] },
-  { match: /\b(saas|software|platform|b2b|api|developer|infrastructur|cloud)/i, prefers: ["head_to_head", "the_breakdown"] },
-  { match: /\b(agenc|consult|studio|creator|coach|freelanc|marketing)/i, prefers: ["in_their_words", "field_notes"] },
-  { match: /\b(restaurant|hospitality|retail|shop|local|clinic|salon|gym|hotel)/i, prefers: ["field_notes", "in_their_words"] },
-  { match: /\b(ecommerce|dtc|consumer|brand|product|cpg)/i, prefers: ["head_to_head", "by_the_numbers"] },
+export const CLIENT_SEGMENTS = ["regulated", "b2b-saas", "agency-creator", "local-service", "consumer-dtc", "unknown"] as const;
+export type ClientSegment = (typeof CLIENT_SEGMENTS)[number];
+
+/**
+ * Which series each segment leans towards.
+ *
+ * Read off the owner's own table: a regulated business leads with figures and
+ * rules because that is what it is permitted to state; an agency or a creator
+ * leads with what people said and what happened, because their proof IS the
+ * account. The affinity is a NUDGE of one point, deliberately smaller than any
+ * evidence signal in `selectSeries`, because a segment decides which shapes are
+ * AVAILABLE to a client and never which shape a particular story takes.
+ *
+ * ORDER MATTERS, and `regulated` is first on purpose: a healthcare SaaS reads
+ * as regulated rather than as SaaS. That is the direction a misreading should
+ * run, because the constraint is the expensive half to get wrong.
+ */
+const SEGMENT_TABLE: ReadonlyArray<{
+  readonly segment: Exclude<ClientSegment, "unknown">;
+  readonly match: RegExp;
+  readonly prefers: readonly EditorialSeriesId[];
+}> = [
+  { segment: "regulated", match: /\b(financ|bank|insur|invest|lend|mortgag|legal|complian|regulat|health|medic|pharma|clinic)/i, prefers: ["by_the_numbers", "the_playbook"] },
+  { segment: "b2b-saas", match: /\b(saas|software|platform|b2b|api|developer|infrastructur|cloud|devops|analytics)/i, prefers: ["head_to_head", "the_breakdown"] },
+  { segment: "agency-creator", match: /\b(agenc|consult|studio|creator|coach|freelanc|marketing|design)/i, prefers: ["in_their_words", "field_notes"] },
+  { segment: "local-service", match: /\b(restaurant|hospitality|retail|shop|local|salon|gym|hotel|bakery|plumb|garage)/i, prefers: ["field_notes", "in_their_words"] },
+  { segment: "consumer-dtc", match: /\b(ecommerce|e-commerce|dtc|consumer|cpg|apparel|beauty|skincare)/i, prefers: ["head_to_head", "by_the_numbers"] },
 ];
+
+export interface SegmentReading {
+  readonly segment: ClientSegment;
+  /** The words in the brief that decided it, so the reading is checkable rather than asserted. */
+  readonly matched: readonly string[];
+}
+
+/**
+ * Which segment this client is, from the words their own brief carries.
+ *
+ * Deterministic and free, and it returns `unknown` rather than guessing.
+ * Every consumer reads `unknown` as "no opinion", which is the posture this
+ * workflow takes everywhere towards data a client may not have.
+ */
+export function readClientSegment(segments: readonly string[] | undefined): SegmentReading {
+  const haystack = (segments ?? []).join(" ");
+  for (const row of SEGMENT_TABLE) {
+    const hit = row.match.exec(haystack);
+    if (hit !== null) return { segment: row.segment, matched: [hit[0].toLowerCase()] };
+  }
+  return { segment: "unknown", matched: [] };
+}
+
+/** The series a segment leans towards. Empty for `unknown`, which leans nowhere. */
+export function seriesPreferredBy(segment: ClientSegment): readonly EditorialSeriesId[] {
+  return SEGMENT_TABLE.find((row) => row.segment === segment)?.prefers ?? [];
+}
 
 /**
  * A small stable hash of a string. Not cryptographic and does not need to be:
@@ -659,6 +709,8 @@ export interface ClientLibraryInput {
 
 export interface ClientLibrary {
   readonly series: readonly EditorialSeries[];
+  /** Which row of the industry table this client read as, `unknown` included. */
+  readonly segment: ClientSegment;
   /** One sentence for the gate payload: which shapes this client runs, and on what basis. */
   readonly rule: string;
 }
@@ -671,15 +723,8 @@ export interface ClientLibrary {
  * be paid to make.
  */
 export function seriesLibraryFor(input: ClientLibraryInput, catalogue: readonly EditorialSeries[] = BUNDLED_SERIES): ClientLibrary {
-  const haystack = (input.segments ?? []).join(" ");
-  const preferred = new Set<EditorialSeriesId>();
-  const matchedSegments: string[] = [];
-  for (const row of SEGMENT_AFFINITY) {
-    const hit = row.match.exec(haystack);
-    if (hit === null) continue;
-    matchedSegments.push(hit[0].toLowerCase());
-    for (const id of row.prefers) preferred.add(id);
-  }
+  const reading = readClientSegment(input.segments);
+  const preferred = new Set<EditorialSeriesId>(seriesPreferredBy(reading.segment));
 
   const seed = stableHash(input.clientSlug);
   // Three, four or five, from the slug: the SIZE varies per client too, so two
@@ -703,9 +748,10 @@ export function seriesLibraryFor(input: ClientLibraryInput, catalogue: readonly 
 
   return {
     series,
+    segment: reading.segment,
     rule:
-      matchedSegments.length > 0
-        ? `${series.length} series for this client, from a brief naming ${matchedSegments.join(", ")}: ${series.map((s) => s.id).join(", ")}`
-        : `${series.length} series for this client; the brief named no segment this recognises, so the set is stable per client rather than steered: ${series.map((s) => s.id).join(", ")}`,
+      reading.segment === "unknown"
+        ? `${series.length} series for this client; the brief named no segment this recognises, so the set is stable per client rather than steered: ${series.map((s) => s.id).join(", ")}`
+        : `${series.length} series for a ${reading.segment} client, from "${reading.matched.join(", ")}" in the brief: ${series.map((s) => s.id).join(", ")}`,
   };
 }

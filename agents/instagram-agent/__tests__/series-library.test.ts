@@ -4,8 +4,11 @@ import {
   LIBRARY_ANCHOR,
   MAX_CLIENT_LIBRARY,
   MIN_CLIENT_LIBRARY,
+  CLIENT_SEGMENTS,
+  readClientSegment,
   selectSeries,
   seriesLibraryFor,
+  seriesPreferredBy,
 } from "../src/workflow/editorial-series.js";
 
 /**
@@ -141,5 +144,45 @@ describe("a library is a catalogue selectSeries can actually run on", () => {
     const choice = selectSeries({ angleId: "wrong-assumption", comparedEntities: 2, restsOnKinds: [] }, without);
     expect(choice.series.id).not.toBe("head_to_head");
     expect(BUNDLED_SERIES.map((s) => s.id)).toContain(choice.series.id);
+  });
+});
+
+describe("readClientSegment (item C4) — the industry table has names now", () => {
+  it("reads each row off words a brief actually carries", () => {
+    expect(readClientSegment(["consumer lending compliance"]).segment).toBe("regulated");
+    expect(readClientSegment(["b2b saas analytics platform"]).segment).toBe("b2b-saas");
+    expect(readClientSegment(["a design studio"]).segment).toBe("agency-creator");
+    expect(readClientSegment(["neighbourhood bakery"]).segment).toBe("local-service");
+    expect(readClientSegment(["skincare ecommerce"]).segment).toBe("consumer-dtc");
+  });
+
+  it("reads a healthcare SaaS as REGULATED, because the constraint is the expensive half to get wrong", () => {
+    expect(readClientSegment(["medical records saas platform"]).segment).toBe("regulated");
+  });
+
+  it("says UNKNOWN rather than guessing, which is the ordinary state of a client onboarded from a website", () => {
+    expect(readClientSegment(undefined).segment).toBe("unknown");
+    expect(readClientSegment([]).segment).toBe("unknown");
+    expect(readClientSegment(["we help teams do better work"]).segment).toBe("unknown");
+  });
+
+  it("names the word that decided it, so the reading is checkable rather than asserted", () => {
+    const reading = readClientSegment(["insurance brokerage"]);
+    expect(reading.matched).toEqual(["insur"]);
+    expect(readClientSegment(["nothing recognisable"]).matched).toEqual([]);
+  });
+
+  it("every segment but `unknown` leans somewhere, and `unknown` leans nowhere", () => {
+    for (const segment of CLIENT_SEGMENTS) {
+      const prefers = seriesPreferredBy(segment);
+      if (segment === "unknown") expect(prefers, segment).toEqual([]);
+      else expect(prefers.length, segment).toBeGreaterThan(0);
+    }
+  });
+
+  it("carries the segment onto the library, so a reviewer sees which row was applied", () => {
+    expect(seriesLibraryFor({ clientSlug: "acme", segments: ["insurance"] }).segment).toBe("regulated");
+    expect(seriesLibraryFor({ clientSlug: "acme" }).segment).toBe("unknown");
+    expect(seriesLibraryFor({ clientSlug: "acme", segments: ["insurance"] }).rule).toContain("regulated");
   });
 });
