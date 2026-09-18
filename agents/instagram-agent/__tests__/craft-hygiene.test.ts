@@ -314,15 +314,23 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       await env.cleanup();
     });
 
-    it("blocks a draft with an em dash on attempt 1, then succeeds on attempt 2 with a clean revision", async () => {
+    // ── THIS USED TO BUY A REDRAFT. IT REPAIRS INSTEAD. ──
+    //
+    // The old test asserted that an em dash on attempt 1 refused the draft and
+    // attempt 2 fixed it. True, and roughly $0.40 a run: an eight-slide
+    // carousel rewritten from nothing over one character, and the new draft is
+    // a new random draw that on the prep runs of 2026-09-18 usually broke
+    // something else.
+    //
+    // `repairMechanicalTells` replaces the dash with a comma before any gate
+    // sees it. The gate is untouched and its own unit tests above still prove
+    // it refuses a dash; the dash just stops arriving.
+    it("REPAIRS an em dash before the gate sees it, and no second attempt is bought", async () => {
       const promptStore = makePromptStore();
       const emDashCopy = copyWith("Teams saved time — every single week, without fail.");
-      const cleanCopy = goodCopyOutput();
       const router = fakeRouterSequence([
         finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
         finalTurn(emDashCopy),
-        finalTurn(goodImageVettingOutput()),
-        finalTurn(cleanCopy),
         finalTurn(goodImageVettingOutput()),
         finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
       ]);
@@ -342,11 +350,20 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       expect(result.status).toBe("completed");
       const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
       expect(stepIds).toContain("07b-craft-hygiene-attempt-1");
-      expect(stepIds).toContain("05-write-copy-attempt-2");
-      expect(stepIds).toContain("07b-craft-hygiene-attempt-2");
+      // THE POINT: no redraft.
+      expect(stepIds).not.toContain("05-write-copy-attempt-2");
 
+      // THE PREMISE: the gate ran and PASSED, so this is not passing because
+      // the gate was skipped.
       const hygiene1 = (await durableStore.getStep(params.runId, "07b-craft-hygiene-attempt-1")) as { output: { ok: boolean } };
-      expect(hygiene1.output.ok).toBe(false);
+      expect(hygiene1.output.ok, "the gate did not pass, so the repair did not do its job").toBe(true);
+
+      // And the repair is in the trace, or a reviewer finds a comma nobody wrote.
+      const repair = (await durableStore.getStep(params.runId, "05m-repair-mechanical-tells-attempt-1")) as
+        | { output: { repaired: number; fields: string[] } }
+        | undefined;
+      expect(repair?.output.repaired).toBeGreaterThan(0);
+      expect(repair?.output.fields.join(" ")).toMatch(/slide|caption/);
     }, 60000);
 
     /**
@@ -423,7 +440,8 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       expect(craft!["step"]).toBe("07b-craft-hygiene-attempt-3");
 
       // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
-      expect(router.complete).toHaveBeenCalledTimes(14);
+      // 2026-09-18: +1 per RETRY for `05r-revise-copy`, which every attempt after the first buys instead of a full redraft.
+      expect(router.complete).toHaveBeenCalledTimes(16);
     }, 60000);
 
     /**
@@ -465,7 +483,7 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       expect(deliverables[0]!.data.deliverable?.selfCheck).toBeUndefined();
     }, 60000);
 
-    it("is unconditional: a client style config with NO banned_chars still refuses an em dash, and the post still ships degraded", async () => {
+    it("is unconditional on BOTH sides: a client that configures nothing still gets the dash repaired, and ships clean", async () => {
       // goodStyleConfig()'s default banned_chars is [] -- if craft hygiene were
       // driven by client config instead of unconditional, this em dash would
       // sail through untouched and `07b` would report `ok: true`. The
@@ -498,17 +516,40 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       const result = await engine.run(workflowFn, { ...params, runId });
 
       expect(result.status).toBe("completed");
-      for (const attempt of [1, 2, 3]) {
-        const hygiene = (await durableStore.getStep(runId, `07b-craft-hygiene-attempt-${attempt}`)) as { output: { ok: boolean; reason?: string } };
-        expect(hygiene.output.ok, `attempt ${attempt}`).toBe(false);
-        expect(hygiene.output.reason).toMatch(/em dash/);
-      }
 
-      const deliverables = await env.store.listJson<{ deliverable?: { selfCheck?: { checks: Array<Record<string, unknown>> } } }>(
+      // ── THE PROPERTY IS STILL UNCONDITIONAL. WHAT CHANGED IS WHO ACTS. ──
+      //
+      // This used to assert the GATE refused on all three attempts and the post
+      // shipped degraded. The gate is untouched and the unit tests at the top
+      // of this file still prove it refuses an em dash with no `banned_chars`
+      // configured. What changed is that `repairMechanicalTells` removes the
+      // dash first, and it too reads no client config: a run that configures
+      // nothing gets the repair exactly as one that configures everything.
+      //
+      // So the assertion is the same shape with the opposite sign. The gate
+      // PASSES on every attempt, because nothing was left for it to refuse.
+      const hygiene = (await durableStore.getStep(runId, "07b-craft-hygiene-attempt-1")) as { output: { ok: boolean } };
+      expect(hygiene.output.ok, "the gate did not pass, so the repair did not run on a client that configures nothing").toBe(true);
+      expect(await durableStore.getStep(runId, "05-write-copy-attempt-2"), "a dash bought a redraft").toBeUndefined();
+
+      const repair = (await durableStore.getStep(runId, "05m-repair-mechanical-tells-attempt-1")) as { output: { repaired: number } } | undefined;
+      expect(repair?.output.repaired).toBeGreaterThan(0);
+
+      // And the post the client receives really has no dash in it.
+      const deliverables = await env.store.listJson<{
+        deliverable?: { post?: { caption?: string; slides?: Array<Record<string, unknown>> }; selfCheck?: { checks: Array<Record<string, unknown>> } };
+      }>(
         "acme",
         ["ledger", "deliverables", runId, "_"],
       );
-      expect(deliverables[0]!.data.deliverable?.selfCheck?.checks.some((c) => c["gate"] === "craft")).toBe(true);
+      // The POST's own copy, not the whole envelope: the deliverable also
+      // carries engine prose (`selfCheck.reason`, `skeleton.warnings`, the
+      // topic weighting sentence) which this repo writes for a human to read
+      // and which is not held to the copy guide's punctuation rules.
+      const post = deliverables[0]!.data.deliverable?.post;
+      expect(post?.caption ?? "").not.toContain("\u2014");
+      expect(JSON.stringify(post?.slides ?? [])).not.toContain("\u2014");
+      expect(deliverables[0]!.data.deliverable?.selfCheck?.checks.some((c) => c["gate"] === "craft")).not.toBe(true);
     }, 60000);
   });
 });

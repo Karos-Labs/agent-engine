@@ -222,6 +222,7 @@ describe("05-write-copy: a truncated attempt in the middle of the redraft loop",
     // first at the step's ceiling, the second at the engine's raise) +
     // attempt 3's five (copy, vetting, relevance, value, QA) + 1 packager.
     // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
-    expect(router.complete).toHaveBeenCalledTimes(14);
+    // 2026-09-18: +1 per RETRY for `05r-revise-copy`, which every attempt after the first now buys instead of a full redraft.
+    expect(router.complete).toHaveBeenCalledTimes(15);
   }, 120000);
 });

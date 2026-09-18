@@ -429,6 +429,12 @@ export const LAYOUT_FIELD_KEYS: ReadonlySet<string> = new Set([
   "slideIndex",
   "deviceFigures",
   "deviceKind",
+  // 2026-09-18: WHERE the bounded picture sits (`band` / `side` / `inset` /
+  // `tall` / `side-end` / `bleed`). Layout metadata in the same sense as the
+  // six above and for the same reason it must be listed here: a slide whose
+  // only other field is a headline would otherwise read as two elements and
+  // pass the two-elements rule on a word no reader ever sees.
+  "figurePlacement",
   // Phase 4, RFC-15 §7.2. The document's BCP-47 `lang` attribute — layout
   // metadata in the strictest sense: it is read by Chromium's font fallback
   // and by nothing else. It must not be counted by the two-elements rule (a

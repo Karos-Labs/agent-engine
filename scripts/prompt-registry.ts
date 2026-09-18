@@ -166,11 +166,16 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   // copy), it names no `gate.*`, and every figure it can touch is copied
   // verbatim out of a fact card the research already sourced.
   { promptId: "instagram-concept", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
+  // `instagram-copy-revise` (2026-09-18): the retry that EDITS instead of rewriting. It names no
+  // `gate.*` and reads no tool; every figure it can touch was already in the draft the gates read,
+  // and `applyCopyEdits` refuses any path the draft does not carry, so it cannot grow a post by a
+  // slide nobody wrote.
+  { promptId: "instagram-copy-revise", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
   {
     promptId: "instagram-copy",
     agent: "instagram-agent",
-    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24"],
-    latestVersion: "24",
+    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25"],
+    latestVersion: "25",
     // `requires` is UNCHANGED at @16. §23 makes `languageBrief` binding when it is present, but §1 is
     // demoted rather than deleted, so the `languageDirective` marker — which looks for the literal
     // `clientVoiceContext` — is still satisfied, and an English run reads identically to @15.
@@ -265,7 +270,7 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   // but @1 was never told any of it existed — so on `08c2` the judge had only `"caption"`/`"slide:N"` to
   // write, and every correction it produced was correctly dropped as cross-context. Prompt-only: no new
   // step, no code change, no re-price beyond the file's own growth.
-  { promptId: "instagram-native-editor", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
+  { promptId: "instagram-native-editor", agent: "instagram-agent", versions: ["1", "2", "3"], latestVersion: "3" },
   // Phase 2, item N. The Template Studio's three setup-time prompts. None of
   // them carries `requires` flags, for the same reason `instagram-brief` and
   // `instagram-angle` do not: they receive the resolved `targetLanguage`

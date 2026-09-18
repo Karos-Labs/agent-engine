@@ -119,6 +119,10 @@ describe("DEFAULT_RENDER_RULES + resolveRenderRules — Phase 0 item D's rule so
       "deviceFigures",
       "deviceKind",
       "dir",
+      // 2026-09-18: WHERE the bounded picture sits on the plate. Layout
+      // metadata for the same reason `groundStyle` is: nobody writes it, and a
+      // slide carrying only these has no prose.
+      "figurePlacement",
       "fontScale",
       "groundStyle",
       // Phase 4 (RFC-15 §7.2). The BCP-47 tag every template now writes into

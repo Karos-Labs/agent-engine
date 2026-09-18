@@ -275,7 +275,8 @@ describe("SCRUM-301/AU17: step 07's banned-word/char + compliance checks now cal
       expect(selfCheck?.checks[0]?.["detail"]).toBe(selfCheck3.output.reason);
 
       // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
-      expect(router.complete).toHaveBeenCalledTimes(14);
+      // 2026-09-18: +1 per RETRY for `05r-revise-copy`, which every attempt after the first buys instead of a full redraft.
+      expect(router.complete).toHaveBeenCalledTimes(16);
     }, 60000);
 
     /**

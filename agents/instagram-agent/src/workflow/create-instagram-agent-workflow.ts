@@ -34,6 +34,8 @@ import { InstagramBriefAgent } from "../agent/instagram-brief-agent.js";
 // Phase 4, RFC-16 — the one model step the concept mode adds (`04m`).
 import { InstagramConceptAgent, type ConceptOutput } from "../agent/instagram-concept-agent.js";
 import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
+// The retry that EDITS the previous draft. Attempts 2 and 3 buy this instead of a whole new carousel.
+import { InstagramCopyReviseAgent } from "../agent/instagram-copy-revise-agent.js";
 // Phase 5.5 (spec §3 B3) — `05f`, the markup half of a custom archetype,
 // hoisted out of the copy schema so a markup mistake costs one $0.030 call
 // instead of a whole drafting attempt.
@@ -369,7 +371,9 @@ import {
   type RecognisedEntity,
 } from "./entity-imagery.js";
 import { gradePictureSet, heroScrimCssBlock, imageTreatmentCssBlock, resolveGenerationStyle, type GenerationStyle } from "./style-lock.js";
-import { planImageBackfill, resolveRescuedSelection } from "./image-density.js";
+import { literalIllustrationOf, planImageBackfill, registerFor, resolveRescuedSelection } from "./image-density.js";
+import { describeRepairs, repairMechanicalTells } from "./mechanical-repair.js";
+import { addressableFields, applyCopyEdits, describeRevision, type CopyRevision } from "./copy-revision.js";
 
 /** One slide the picture floor wants filled, and whether it is a slide that ASKED and failed or one that never asked. */
 interface FloorGap {
@@ -5513,6 +5517,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // agent here; whether it is ever CALLED is `04l`'s decision alone.
     const conceptAgent = new InstagramConceptAgent({ router: options.router, tools, promptStore: options.promptStore });
     const copyAgent = new InstagramCopyAgent({ router: options.router, tools, promptStore: options.promptStore });
+    const copyReviseAgent = new InstagramCopyReviseAgent({ router: options.router, tools, promptStore: options.promptStore });
     // Phase 5.5 (spec §3 B3) — `05f`. Constructed unconditionally like every
     // other agent here; whether it is ever CALLED is the writer's decision,
     // expressed as a `customArchetypeBrief` on some slide of the draft.
@@ -6986,6 +6991,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       /** The `08a4` half: the slidesData signature the last rendered-slide inspection ran against, and its result. */
       let renderedInspectionCache: { signature: string; inspections: Array<Record<string, unknown>> } | undefined;
 
+    /** The draft the LAST attempt finished with, so the next one can EDIT it instead of writing a new post. */
+    let previousDraft: InstagramCopyOutput | undefined;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       /**
        * Is this the last draft this run will ever get?
@@ -7046,7 +7053,51 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // are statements about the ROUND (how many attempts a value refusal has cost it, and what the last
       // draft scored), and the third is a fact about a fact card, which no redraft changes.
       valueVerdictForAttempt = undefined;
-      const copyExec = await wf.step.agent(rev(`05-write-copy-attempt-${attempt}`), copyAgent, {
+      // ── ATTEMPTS 2 AND 3 EDIT THE DRAFT. THEY DO NOT WRITE A NEW ONE. ──
+      //
+      // Three prep runs on 2026-09-18 each spent their whole attempt budget:
+      // $1.14 of a $2.39 run, answering findings like a banned em dash and
+      // *"slides 4, 5, 8 all open with the word the"* by rewriting an
+      // eight-slide carousel from nothing.
+      //
+      // The price is the smaller half. A rewrite is a NEW RANDOM DRAW, and in
+      // two of those three runs the second draft fixed the finding and broke
+      // something else, and the third fixed that and broke a third thing. The
+      // loop was resampling, not converging, which is why it always reached
+      // three. An edit cannot regress what it does not touch.
+      //
+      // The full redraft is still behind this and runs whenever a revision
+      // errors, is declined, or lands no edit at all: some findings really do
+      // say "this post argues the wrong thing", and no edit answers those.
+      let revisedDraft: InstagramCopyOutput | undefined;
+      if (attempt > 1 && previousDraft !== undefined && (priorFindings !== undefined || priorValueSteer !== undefined)) {
+        const reviseExec = await wf.step.agent(rev(`05r-revise-copy-attempt-${attempt}`), copyReviseAgent, {
+          draft: addressableFields(previousDraft),
+          findings: [priorFindings, priorValueSteer].filter((f): f is string => f !== undefined),
+          ...(targetLanguage !== undefined ? { targetLanguage } : {}),
+        });
+        spend(rev(`05r-revise-copy-attempt-${attempt}`), reviseExec.totalCostUsd, STEP_COST_ESTIMATES_USD.copyRevise);
+        if (reviseExec.status === "completed" && reviseExec.finalOutput != null) {
+          const revised = applyCopyEdits(previousDraft, reviseExec.finalOutput as CopyRevision);
+          if (revised.applied.length > 0) {
+            revisedDraft = revised.copy;
+            selfCheckFindings.push({
+              gate: "draft",
+              step: rev(`05r-revise-copy-attempt-${attempt}`),
+              kind: "revised",
+              detail: describeRevision(revised, reviseExec.finalOutput as CopyRevision),
+              remedy: "repaired",
+            });
+          }
+        }
+      }
+
+      // Shaped like a completed execution so every line below reads the same
+      // whether the draft was written or edited. `totalCostUsd: 0` is honest:
+      // the revision's dollars were booked on its own step above.
+      const copyExec = revisedDraft !== undefined
+        ? { status: "completed" as const, finalOutput: revisedDraft, totalCostUsd: 0 }
+        : await wf.step.agent(rev(`05-write-copy-attempt-${attempt}`), copyAgent, {
         ...runDirectionField(runDirection),
         topic: topicClaim.topic,
         // ── C7: what the platform has learned, as INSTRUCTIONS (D41) ──
@@ -7198,7 +7249,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       spend(
         rev(`05-write-copy-attempt-${attempt}`),
         copyExec.totalCostUsd,
-        STEP_COST_ESTIMATES_USD.copyAttempt + (languageBriefForCopy !== undefined ? STEP_COST_ESTIMATES_USD.copyLanguageBrief : 0),
+        // Zero when this attempt was a REVISION: `spend` books
+        // `max(measured, estimate)`, so the drafting estimate here would
+        // charge the meter $0.32 for a step that did not run and would hide
+        // the whole saving from the ladder that reads it.
+        revisedDraft !== undefined
+          ? 0
+          : STEP_COST_ESTIMATES_USD.copyAttempt + (languageBriefForCopy !== undefined ? STEP_COST_ESTIMATES_USD.copyLanguageBrief : 0),
       );
       // Phase 5.5, item G1 — one row per drafting attempt, for `GateVerdict`.
       //
@@ -7289,6 +7346,50 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         recordSalvage(attempt, 1, copy);
       }
 
+      // ── A DASH IS NOT WORTH A REDRAFT. ──
+      //
+      // The three prep runs of 2026-09-18 each bought THREE copy attempts, and
+      // $1.14 of a $2.39 run went on them. One of the rejections that paid for
+      // a whole new eight-slide carousel was, verbatim: *"caption failed the
+      // mechanical craft-hygiene gate: text contains a banned em dash, en dash,
+      // or double hyphen"*.
+      //
+      // That is a one-character edit, and a model that emitted the dash meant
+      // nothing by it. Repairing it here costs nothing and cannot introduce a
+      // new violation elsewhere in the post, which a redraft demonstrably can:
+      // in two of the three runs attempt 2 fixed the finding and broke
+      // something else, which is why every run spends its whole budget. The
+      // loop was resampling, not converging.
+      //
+      // Narrow on purpose. Only what has one correct answer that needs no
+      // reading of the argument: "three slides open with the word the" is
+      // writing and stays with the writer.
+      const mechanical = repairMechanicalTells(copy);
+      if (mechanical.repairs.length > 0) {
+        copy = mechanical.copy;
+        recordSalvage(attempt, 1, copy);
+        // ── A REPAIR IS NOT A FINDING, AND THE DIFFERENCE IS LOAD-BEARING. ──
+        //
+        // The first version of this pushed onto `selfCheckFindings`, which is
+        // what builds the DEGRADE marker. Every run that had ever contained a
+        // dash then shipped `degraded`, and `09f-auto-promote-templates` never
+        // fired because it counts CLEAN ships. Six tests said so.
+        //
+        // They were right. A degrade marker asks a reviewer to weigh something
+        // the post got wrong; this cost nothing, changed punctuation the guide
+        // already bans, and is the reason no redraft was bought. It belongs in
+        // the trace, which is what a step checkpoint is.
+        await wf.step.code(rev(`05m-repair-mechanical-tells-attempt-${attempt}`), () => ({
+          repaired: mechanical.repairs.length,
+          note: describeRepairs(mechanical.repairs),
+          fields: mechanical.repairs.map((r) => r.field),
+        }));
+      }
+      // Whatever this attempt finished with is what the NEXT one edits. Set
+      // after the repair so a revision starts from repaired text and cannot
+      // reintroduce the dash this run already paid code to remove.
+      previousDraft = copy;
+
       // ── THE SCENE-BRIEF GUARDS (Phase 5.5, item A3) ──
       //
       // karoslabs' one photo slide asked for *"a server infrastructure
@@ -7314,8 +7415,29 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // `concept-direction.ts`, which imports half of it.
         illustrationDeclared: sceneDeclaresIllustration,
       });
-      if (sceneBriefFindings.length > 0 && !isFinalAttempt) {
-        sceneSteer = sceneBriefFindings.map((f) => `slide ${f.slide} · ${f.ruleId}: ${f.reason}`).join("\n");
+      // ── AND THE ONE THE THREE CAROUSELS OF 2026-09-18 ALL FAILED. ──
+      //
+      // Every picture in them illustrated a WORD from its own headline. "Two
+      // clocks run your marketing" got a photograph of a pocket watch;
+      // "buyers open their window" got a photograph of a lit doorway; "on a
+      // publishing schedule" got a photograph of a watch on a desk. It is the
+      // oldest failure in stock photography, and this pipeline causes it: the
+      // brief demands a noun a photo library would index, so the model returns
+      // the most concrete noun in the sentence. The rule was written to stop
+      // abstract nouns and over-corrected into literalism.
+      //
+      // A NOTE, never a refusal, for the standing reason: a slide about a real
+      // conference genuinely is about a stage, and no matcher tells that apart
+      // from a slide about a metaphor. Code proves a word is present, not that
+      // a picture is wrong.
+      const literalFindings = copy.slides.flatMap((slide) => {
+        const finding = literalIllustrationOf(normaliseVisualNeed(slide).subject.noun, slide.headline);
+        return finding === undefined ? [] : [{ slide: slide.n, ruleId: "scene:literal-illustration", reason: finding }];
+      });
+      if (sceneBriefFindings.length + literalFindings.length > 0 && !isFinalAttempt) {
+        sceneSteer = [...sceneBriefFindings, ...literalFindings]
+          .map((f) => `slide ${f.slide}: ${f.ruleId}: ${f.reason}`)
+          .join("\n");
       }
 
       // ── 05f: THE MARKUP HALF OF A CUSTOM ARCHETYPE (Phase 5.5, spec §3 B3) ──
@@ -8783,8 +8905,27 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             const slide = copy.slides.find((sl) => sl.n === n);
             return slide === undefined ? [] : [{ n, prompt: generationPromptFor(normaliseVisualNeed(slide)), backfilled: false }];
           });
+        // ── THE REGISTER, AND THE REAL THINGS THE POST NAMES. ──
+        //
+        // Both carry the owner's 2026-09-18 correction. A made frame used to
+        // be abstract geometry every time, because the exclusion list banned
+        // every real subject and abstraction was the only thing left: *"AI
+        // generic images are boring, mostly because it is repetitive"*.
+        //
+        // The register is seeded on the RUN, so this carousel is coherent with
+        // itself and next week's does not look like it. The entities are the
+        // ones `04b3` already grounded against a fact card, and they may
+        // appear because the register makes the frame unmistakably a drawing.
+        // A named person or company also makes photorealism unavailable, which
+        // `photorealAllowed` decides and the prompt then enforces.
+        const drawnSubjects = postEntities
+          .filter((e) => e.salience >= 3)
+          .slice(0, 2)
+          .map((e) => ({ name: e.name, kind: e.kind, ...(e.isPublicFigure ? { isPublicFigure: true } : {}) }));
         const backfilled: FloorGap[] = planImageBackfill(copy, withPictureNs, want - fromFailed.length, {
           ...(frozenStyle.treatment !== undefined ? { treatment: frozenStyle.treatment } : {}),
+          register: registerFor(ctx.runId),
+          ...(drawnSubjects.length > 0 ? { subjects: drawnSubjects } : {}),
         }).map((candidate) => ({ n: candidate.n, prompt: candidate.prompt, backfilled: true }));
         const gaps = [...fromFailed, ...backfilled];
         const blocked = clientMediaOnly

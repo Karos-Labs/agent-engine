@@ -85,6 +85,6 @@ export class InstagramNativeEditorAgent extends BaseAgent<NativeEditorVerdict> {
     //
     // Both prices this prompt feeds are re-derived in `run-budget.ts` in this commit. Correcting the
     // delta also surfaced a standing error in both derivations — see `nativeJudge`'s comment there.
-    skillRef: "instagram-native-editor@2",
+    skillRef: "instagram-native-editor@3",
   };
 }

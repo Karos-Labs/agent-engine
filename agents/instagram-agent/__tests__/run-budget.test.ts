@@ -1019,6 +1019,8 @@ describe("the estimate table", () => {
         "concept",
         "copyAttempt",
         "copyAttemptWarm",
+        // 2026-09-18: attempts 2 and 3 buy a REVISION of the draft instead of a whole new carousel.
+        "copyRevise",
         "copyLanguageBrief",
         "customArchetype",
         "entityExtract",

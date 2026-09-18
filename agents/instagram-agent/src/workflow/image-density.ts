@@ -34,13 +34,32 @@
  * and asks for the thing the owner asked for on 2026-09-18: a made image that
  * carries an idea, not a stock photograph of an office.
  *
- * ## What it refuses to draw, and why that is in the prompt rather than a gate
+ * ## What it refuses to draw, and where the line actually is
  *
- * No people, no logos, no brands, no products, no screens with text. That is
- * the standing rule that a generated frame never depicts an identifiable real
- * person, customer, result or product, and it belongs in the prompt because a
- * gate downstream can only throw the image away after it has been paid for —
- * which is the exact shape of waste the picture floor was just fixed to stop.
+ * The first version of this banned people, logos, brands and products
+ * outright. That is why every generated frame came back as "geometric forms,
+ * layered planes and connective lines": with every real subject excluded, the
+ * only thing left to draw is abstraction, and eight slides of it look like one
+ * slide eight times. The owner read the result and named it exactly:
+ * *"תמונות גנריות עם AI זה משעמם לרוב שזה חזרתי"*.
+ *
+ * The line is not the subject. It is **whether the image could be read as a
+ * record of something that happened.**
+ *
+ * An illustrated figure, in a declared register, standing in a conceptual
+ * scene, is commentary. Every serious publication runs one every week. A
+ * photorealistic frame of the same person is a fabricated photograph of a real
+ * human being, and that is the thing that gets a brand into trouble and the
+ * thing Meta's AI disclosure exists for.
+ *
+ * So: `ALWAYS_EXCLUDED` holds what no treatment makes acceptable, and
+ * `PHOTOREAL_ONLY_EXCLUDED` holds what stops being a problem the moment the
+ * frame is openly an illustration. `registerFor` picks which illustration, and
+ * varies it per run, because one house style repeated IS the repetition.
+ *
+ * It all lives in the prompt rather than a gate because a gate downstream can
+ * only throw an image away after it has been paid for, which is the exact
+ * shape of waste the picture floor was just fixed to stop.
  */
 
 import type { InstagramCopyOutput, InstagramSlideCopy } from "./types.js";
@@ -63,17 +82,96 @@ export function sceneDescribesAPicture(scene: string): boolean {
   return scene.trim().length > 0 && !SCENE_IS_AN_ARGUMENT.test(scene);
 }
 
-/** Words a generated frame may never be asked for. The standing likeness and brand rule, stated where it costs nothing. */
-export const GENERATION_EXCLUSIONS =
-  "No text, letters, numbers or words anywhere in the image. " +
-  "No people, no faces, no hands. No logos, brand marks, product packaging or recognisable real products. " +
-  "No screenshots and no user interfaces.";
+/**
+ * What no treatment makes acceptable.
+ *
+ * Text is here because image models cannot spell and a slide with invented
+ * letters on it is unusable. The other two are the real rules: an image that
+ * stages an event is a fabricated record whatever style it is drawn in, and
+ * nothing this agent makes mocks a real person.
+ */
+export const ALWAYS_EXCLUDED =
+  "No text, letters, numbers, words or signage anywhere in the image. " +
+  "Do not stage an event as though it happened: no signing, no handshake, no announcement, no podium, no stage moment, no dated scene. " +
+  "Nothing mocking, degrading or unflattering to anyone depicted.";
+
+/**
+ * What stops being a problem the moment the frame is openly an illustration.
+ *
+ * A photorealistic frame of a real person is a fabricated photograph of them.
+ * The same person in cut paper is a drawing, which is what commentary looks
+ * like. The same reasoning covers a brand mark, with a second practical edge:
+ * an image model renders a trademark as a smeared near-miss, so a photoreal
+ * brief that asks for one produces a wrong logo AND a fake photograph.
+ */
+export const PHOTOREAL_ONLY_EXCLUDED =
+  "No identifiable real person, and no real company logo, brand mark or product packaging.";
+
+/** The exclusions in force for a frame of this kind. */
+export function exclusionsFor(photoreal: boolean): string {
+  return photoreal ? `${ALWAYS_EXCLUDED} ${PHOTOREAL_ONLY_EXCLUDED}` : ALWAYS_EXCLUDED;
+}
+
+/**
+ * The illustration registers, and why there is a list rather than a style.
+ *
+ * One house style applied to every generated frame is the repetition the owner
+ * named. A register is chosen per RUN, so a carousel is coherent with itself
+ * and the next week's post does not look like this week's.
+ *
+ * Every one of them is unmistakably a drawing at a glance, which is the whole
+ * requirement: the register is what signals "this is commentary" and therefore
+ * what licenses a real subject to appear in it.
+ */
+export const ILLUSTRATION_REGISTERS = [
+  { id: "cut-paper", phrase: "layered cut-paper collage, visible paper edges, soft drop shadows, flat colour" },
+  { id: "isometric", phrase: "clean isometric diagram, flat planes, precise geometry, no perspective distortion" },
+  { id: "risograph", phrase: "risograph print, two spot inks, visible grain and slight misregistration" },
+  { id: "clay", phrase: "soft 3D clay render, matte rounded surfaces, single studio key light" },
+  { id: "blueprint", phrase: "technical blueprint, fine luminous linework on a deep ground, drafting marks" },
+  { id: "collage", phrase: "editorial collage, halftone textures, hard-cut shapes, one bold field of colour" },
+  { id: "wireframe", phrase: "glowing wireframe forms in dark space, thin neon lines, long falloff" },
+] as const;
+export type IllustrationRegisterId = (typeof ILLUSTRATION_REGISTERS)[number]["id"];
+
+/**
+ * Which register this run draws in.
+ *
+ * Seeded on the run, so it is stable inside one carousel and different in the
+ * next. Deterministic, so a resumed run does not change style halfway.
+ */
+export function registerFor(seed: string): (typeof ILLUSTRATION_REGISTERS)[number] {
+  let hash = 0;
+  for (const ch of seed) hash = (hash * 31 + ch.codePointAt(0)!) % 1_000_003;
+  return ILLUSTRATION_REGISTERS[hash % ILLUSTRATION_REGISTERS.length]!;
+}
+
+/** A real thing the post names, as the generator needs to know about it. */
+export interface NamedSubject {
+  readonly name: string;
+  readonly kind: string;
+  readonly isPublicFigure?: boolean;
+}
+
+/**
+ * Whether a frame carrying these subjects may be photorealistic.
+ *
+ * A person or an organisation makes it an illustration, full stop. Everything
+ * else (a place, a work, an event's SETTING rather than the event) is free.
+ */
+export function photorealAllowed(subjects: readonly NamedSubject[] = []): boolean {
+  return !subjects.some((s) => s.kind === "person" || s.kind === "company" || s.kind === "organisation" || s.kind === "product");
+}
 
 export interface ConceptualPromptOptions {
   /** The run's frozen treatment, so a backfilled frame sits in the same world as the sourced ones. */
   readonly treatment?: string;
   /** The client's stated visual style, when the brand kit names one. */
   readonly aesthetic?: string;
+  /** This run's illustration register. Absent means the caller wants the default abstract shape. */
+  readonly register?: (typeof ILLUSTRATION_REGISTERS)[number];
+  /** The real things the post names, which the frame may show ILLUSTRATED. */
+  readonly subjects?: readonly NamedSubject[];
 }
 
 /**
@@ -104,14 +202,70 @@ export function conceptualPromptFor(slide: InstagramSlideCopy, options: Conceptu
     .filter((part) => part.length > 0)
     .join(", ");
 
+  const subjects = (options.subjects ?? []).filter((s) => s.name.trim().length > 0);
+  // A named subject forces the illustration, and it is the register that makes
+  // that safe rather than a promise in the prompt. With no register to draw in
+  // there is nothing to license the subject, so the frame goes back to being
+  // about the idea alone.
+  const register = options.register;
+  const showsSubjects = subjects.length > 0 && register !== undefined;
+  // With no declared register there is nothing signalling commentary, so the
+  // stricter list applies whatever the subjects are. The claim itself can name
+  // a person, and a frame drawn from it would otherwise be free to render one.
+  const unillustrated = register === undefined;
+
   return [
-    `An abstract editorial illustration carrying this idea: ${claim}`,
-    "Geometric forms, layered planes and connective lines. Generous negative space. One accent colour against a dark ground.",
+    register === undefined
+      ? "An abstract editorial illustration."
+      : `An editorial illustration, drawn in this register: ${register.phrase}.`,
+    showsSubjects
+      ? `It shows ${subjects.map((s) => s.name).join(" and ")}, drawn in that register and never photographically, carrying this idea: ${claim}`
+      : `It carries this idea: ${claim}`,
+    "Composition reads at a glance: one clear focal mass, generous negative space, no clutter.",
     world.length > 0 ? `Treatment: ${world}.` : "",
-    GENERATION_EXCLUSIONS,
+    exclusionsFor(unillustrated),
   ]
     .filter((part) => part.length > 0)
     .join(" ");
+}
+
+/**
+ * Whether a briefed subject noun is an illustration of a WORD in the headline
+ * rather than a picture of what the slide is about.
+ *
+ * The three prep carousels of 2026-09-18 all did this. *"Two clocks run your
+ * marketing"* was given a photograph of a pocket watch. *"Buyers open their
+ * window when they are ready"* was given a photograph of a lit doorway.
+ * *"…on a publishing schedule"* was given a photograph of a watch on a desk.
+ *
+ * It is the oldest failure in stock photography, and this pipeline causes it:
+ * the brief demands "a concrete noun phrase a photo library would index", so
+ * the model hands back the most concrete noun in the sentence. The rule was
+ * written to stop abstract nouns and over-corrected into literalism.
+ *
+ * Reported as a NOTE and never a refusal: a slide about a real conference
+ * genuinely is about a stage, and no matcher can tell that from a slide about
+ * a metaphor. Code proves a word is present, not that a picture is wrong.
+ */
+const HEADLINE_STOPWORDS = new Set([
+  "the", "a", "an", "and", "or", "but", "of", "to", "in", "on", "for", "from", "with", "at", "by", "as", "is", "are", "was", "were",
+  "your", "our", "their", "you", "we", "they", "it", "its", "this", "that", "these", "those", "not", "no", "only", "most", "more",
+  "one", "two", "three", "when", "what", "who", "how", "why", "run", "runs", "make", "makes",
+]);
+
+export function literalIllustrationOf(subjectNoun: string, headline: string): string | undefined {
+  const words = (text: string): string[] =>
+    text
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((w) => w.length > 3 && !HEADLINE_STOPWORDS.has(w));
+  const inHeadline = new Set(words(headline));
+  const echoed = words(subjectNoun).filter((w) => inHeadline.has(w) || inHeadline.has(`${w}s`) || (w.endsWith("s") && inHeadline.has(w.slice(0, -1))));
+  if (echoed.length === 0) return undefined;
+  return (
+    `the picture's subject repeats "${echoed.join('", "')}" from the headline, which is usually a picture of a WORD ` +
+    `rather than of what the slide is about. A photograph of a clock under "two clocks run your marketing" is the shape to avoid`
+  );
 }
 
 export interface BackfillCandidate {

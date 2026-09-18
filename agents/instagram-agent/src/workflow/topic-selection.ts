@@ -237,6 +237,55 @@ function rankAlternatives(alternatives: readonly TopicAlternative[]): TopicAlter
 
 /** A candidate in this run's content mode is worth 15% more — the rotation is a steer with a price, not a wall (`selectTrendCandidate` keeps the same posture). */
 export const MODE_BONUS = 1.15;
+
+/**
+ * How much a candidate's age moves its score.
+ *
+ * ## Why this exists at all
+ *
+ * `publishedAt` used to appear exactly once in this module: in the
+ * comparator, as the last tie-break after the score and `hasNumbers`. Two
+ * candidates with different scores never reached it, so recency had no effect
+ * on any real ranking. The three prep carousels of 2026-09-18 all opened on
+ * evergreen abstractions, and the owner read the result as topics that were
+ * boring.
+ *
+ * ## The shape, and why undated is neutral rather than punished
+ *
+ * A candidate with no date is the ordinary state of a good evergreen idea, and
+ * an absent date is not evidence of age. Punishing it would be guessing. It
+ * sits at 1.0 and anything genuinely fresh passes it, which is the direction
+ * that was missing.
+ *
+ * Over a month old is the one penalty, and it is small. A news peg that is
+ * five weeks old is not news; it is an evergreen topic with a date on it, and
+ * it should compete as one rather than be dropped.
+ */
+export const FRESHNESS_STEPS: ReadonlyArray<{ readonly withinDays: number; readonly factor: number }> = [
+  { withinDays: 3, factor: 1.35 },
+  { withinDays: 7, factor: 1.25 },
+  { withinDays: 14, factor: 1.12 },
+  { withinDays: 30, factor: 1.0 },
+];
+
+/** The factor for an undated candidate, and for anything inside thirty days. */
+export const FRESHNESS_NEUTRAL = 1.0;
+/** Older than the last step. A month-old peg competes as the evergreen idea it has become. */
+export const FRESHNESS_STALE = 0.9;
+
+export function freshnessBonus(publishedAt: string | undefined, now: Date = new Date()): number {
+  if (publishedAt === undefined || publishedAt.trim().length === 0) return FRESHNESS_NEUTRAL;
+  const at = Date.parse(publishedAt);
+  // An unparseable date is an absent one. It is never read as "very old",
+  // because a malformed field is a fact about the harvester, not the story.
+  if (Number.isNaN(at)) return FRESHNESS_NEUTRAL;
+  const days = (now.getTime() - at) / 86_400_000;
+  // A date in the FUTURE is a clock skew or a scheduled post, not a scoop.
+  // Treated as today rather than rewarded for being ahead of the calendar.
+  const age = Math.max(0, days);
+  for (const step of FRESHNESS_STEPS) if (age <= step.withinDays) return step.factor;
+  return FRESHNESS_STALE;
+}
 /** How much a peer post's own engagement can lift a candidate the reference-accounts engine produced: at most +25%, and only with a measured score. */
 export const REFERENCE_ENGAGEMENT_BONUS = 0.25;
 /** The client's own case study or data point is worth 50% more WHEN there is an offer for it to lead to; without one it is just another story. */
@@ -251,6 +300,8 @@ export interface RankComponents {
   distance: number;
   modeBonus: number;
   engineBonus: number;
+  /** How much the candidate's age moved it. 1 for an undated one, which is neutral by design. */
+  freshness: number;
   engine: TopicEngine;
 }
 
@@ -289,6 +340,8 @@ export interface RankTopicOptions {
   signals?: TopicSignalsForScout | undefined;
   /** Overridable only for tests; production uses the shared `MIN_BRAND_FIT`. */
   minBrandFit?: number;
+  /** Overridable only for tests, so a freshness assertion is not a function of the day it runs. */
+  now?: Date;
 }
 
 /** The strongest measured engagement among the peer posts this candidate cites, in [0,1]; 0 when it cites none. */
@@ -363,15 +416,21 @@ export function rankTopicCandidates(candidates: readonly TrendCandidate[], optio
     const distance = candidateDistance(candidate, options.recentExcerpts);
     const modeBonus = candidate.mode === options.mode ? MODE_BONUS : 1;
     const bonus = engineBonus(candidate, options);
+    // Recency, as a term in the score rather than as the last tie-break after
+    // it. See `freshnessBonus`: two candidates with different scores never
+    // reached the comparator, so this factor is the whole of what "sometimes
+    // trendy or about something new" needed.
+    const freshness = freshnessBonus(candidate.publishedAt, options.now);
     ranked.push({
       candidate,
-      score: round3(candidate.brandFit * candidate.interest * distance * modeBonus * bonus),
+      score: round3(candidate.brandFit * candidate.interest * distance * modeBonus * bonus * freshness),
       components: {
         brandFit: candidate.brandFit,
         interest: candidate.interest,
         distance: round3(distance),
         modeBonus,
         engineBonus: round3(bonus),
+        freshness,
         engine: candidateEngine(candidate),
       },
     });

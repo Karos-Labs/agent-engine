@@ -16,7 +16,7 @@
  *   - `2020-2024`            reads back to front next to Hebrew words
  *
  * The fix is one isolate per ADJACENT RUN of Latin/digit tokens, never one
- * per token — see `foreignRunPattern` for why per-token isolation is worse
+ * per token — see `markedOrForeignPattern` for why per-token isolation is worse
  * than no isolation at all.
  *
  * None of that is a font problem, a template problem or a copy problem — the
@@ -115,8 +115,35 @@ const FOREIGN_TOKEN = String.raw`[A-Za-z0-9](?:[A-Za-z0-9.,@/&+#'’_-]*[A-Za-z0
  * carries `lastIndex` across calls, which is a classic source of
  * every-other-call misses (`visual-qa-pre-checks.ts` records the same rule).
  */
-function foreignRunPattern(): RegExp {
-  return new RegExp(`${FOREIGN_TOKEN}(?: ${FOREIGN_TOKEN})*`, "gu");
+
+/**
+ * A marked token: a hashtag or a handle, in ANY script.
+ *
+ * ## The defect
+ *
+ * Geektime's prep cover of 2026-09-18 printed `#תוכן מקודם הוא לא פרט שולי.`
+ * with the `#` at the far LEFT of the line, detached from the word it marks.
+ * `#` is a bidi NEUTRAL: it has no direction of its own and takes one from
+ * whatever sits around it, which at a line boundary is not the word it belongs
+ * to.
+ *
+ * Every template already wraps the `@handle` slot in a `<bdi>` and its comment
+ * says why, in these words: *"an @handle, a URL and a #hashtag are LTR strings
+ * whose leading character is a bidi neutral"*. The handle is a slot and got
+ * the fix. A hashtag arrives inside the COPY and never did.
+ *
+ * ## Why FSI and not LRI
+ *
+ * The comment above is half right: a hashtag is not always an LTR string.
+ * `#תוכן` is a Hebrew word with a marker in front of it, and forcing it LTR
+ * would reverse the word in order to fix the marker. FSI takes the direction
+ * from the token's own first strong character, so `#RoadToIPO` stays LTR and
+ * `#תוכן` stays RTL, and in both cases the marker travels with its word.
+ */
+const MARKED_TOKEN = String.raw`[#@][\p{L}\p{N}_][\p{L}\p{N}_.\u2019'-]*`;
+
+function markedOrForeignPattern(): RegExp {
+  return new RegExp(`${MARKED_TOKEN}|${FOREIGN_TOKEN}(?: ${FOREIGN_TOKEN})*`, "gu");
 }
 
 /**
@@ -140,7 +167,16 @@ const MIN_ISOLATED_RUN_CHARS = 2;
 export function isolateForeignRuns(text: string, dir: "rtl" | "ltr"): string {
   if (dir !== "rtl") return text;
   if (text.length === 0) return text;
-  return text.replace(foreignRunPattern(), (run) => (run.length >= MIN_ISOLATED_RUN_CHARS ? `${FSI}${run}${PDI}` : run));
+  // ONE pass, with the marked token as the first alternative. Two passes do
+  // not work and the first draft of this proved it: the marked pass wraps
+  // `#RoadToIPO`, and the foreign pass then matches `RoadToIPO` inside it and
+  // wraps it again, which produces a nested isolate around a marker that is
+  // now separated from its word by an isolate boundary. The same defect,
+  // moved. A single alternation cannot double-wrap because a match consumes
+  // its own text.
+  return text.replace(markedOrForeignPattern(), (match) =>
+    /^[#@]/u.test(match) || match.length >= MIN_ISOLATED_RUN_CHARS ? `${FSI}${match}${PDI}` : match,
+  );
 }
 
 /** Strip every isolate this module inserts — for a test, a log line or a trace that wants the model's own bytes back. */

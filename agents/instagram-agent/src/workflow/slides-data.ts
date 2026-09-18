@@ -863,6 +863,72 @@ export function buildListRows(items: readonly { title: string; note?: string | u
     .join("");
 }
 
+
+/**
+ * Where a BOUNDED picture sits on this plate.
+ *
+ * ## Why this exists
+ *
+ * There were exactly two placements in the whole system: a full-bleed ground
+ * on `cover` and `photo`, and `.sc-figure-band` on the four panels, which is
+ * 300px tall and the full width of the field, at the top, every time. Every
+ * picture in the three prep carousels of 2026-09-18 was one of those two, and
+ * the owner read the result exactly right: *"the positions and the sizes can
+ * change, it can appear at the side sometimes, it can be next to the text.
+ * Think about it as a CMO."*
+ *
+ * ## Why it is a function of the slide number
+ *
+ * Because the property being bought is VARIETY ACROSS ONE CAROUSEL, and the
+ * slide number is the only thing that varies across one carousel and is stable
+ * across the three renders an attempt can take (`07c`, the typographic
+ * fallback at `08a`, the free re-layout's re-render at `08a1c`). A random
+ * choice would give a different plate on the re-render than the one the
+ * interest floor measured.
+ *
+ * The rotation is offset so that two ADJACENT panels never share a shape, and
+ * it starts on `side` rather than `band` because `band` is what the whole set
+ * did already.
+ *
+ * ## What still gets the plain band
+ *
+ * A plate with no picture, and the two archetypes where the photograph IS the
+ * plate. On those the attribute is inert: `cover` and `slide` paint a ground,
+ * and a plate with no picture has its band collapsed by the stylesheet, which
+ * also drops the grid so the type does not sit in a two-column layout with an
+ * empty first track.
+ */
+/**
+ * The shapes the rotation actually selects.
+ *
+ * ## Four, and why not the six the stylesheet declares
+ *
+ * `side` and `side-end` give the type a 56% column, and the interest-floor
+ * calibration sweep refused every archetype that was offered one. It is the
+ * right instrument and it was consistent: `stat_callout @ side-end` reported
+ * *"3 element(s) overflow their own box"* because a figure set at `--t-figure`
+ * does not fit a column that narrow; `comparison_card` is two columns of its
+ * own, so half a plate is four columns on a 1080px frame; and `quote_card` at
+ * a long copy length overflowed too.
+ *
+ * The fault is not the CSS, which renders correctly. It is that `_ds-fit.js`
+ * sizes type against the FIELD, and a side variant changes the field's width
+ * without telling it. Wiring that is real work and it is not this change.
+ *
+ * So the two side shapes stay in the stylesheet, correct and tested, and
+ * nothing selects them until the fit ladder knows about them. What ships is
+ * four shapes against the one this set had before, and every one of them uses
+ * the full width and fills the plate by construction.
+ */
+const FIGURE_ROTATION = ["tall", "foot", "bleed", "band"] as const;
+export type FigurePlacement = (typeof FIGURE_ROTATION)[number] | "side" | "side-end";
+
+export function figurePlacementFor(layout: InstagramSlideLayout, n: number, hasPicture: boolean): FigurePlacement {
+  if (!hasPicture) return "band";
+  if (FULL_BLEED_IMAGE_LAYOUTS.has(layout)) return "band";
+  return FIGURE_ROTATION[Math.abs(n) % FIGURE_ROTATION.length]!;
+}
+
 /**
  * One recap plate's text: the shortest true thing the slide already said.
  *
@@ -2682,7 +2748,11 @@ export function assembleSlidesData(params: {
     return {
       n: slide.n,
       template: inverted ? invertedTemplateFileName(primaryTemplate) : primaryTemplate,
-      fields: { ...fields, ...imageTreatmentFields({ treatment: params.imageTreatment ?? "none" }) },
+      fields: {
+        ...fields,
+        ...imageTreatmentFields({ treatment: params.imageTreatment ?? "none" }),
+        figurePlacement: figurePlacementFor(layout, slide.n, imagePath !== undefined),
+      },
       images: imagePath ? { hero: imagePath } : {},
       htmlFragments,
     };

@@ -69,7 +69,7 @@ function rankedWith(rows: Array<{ candidate: TrendCandidate; score: number }>): 
   return {
     ranked: rows.map((r) => ({
       ...r,
-      components: { brandFit: r.candidate.brandFit, interest: r.candidate.interest, distance: 1, modeBonus: 1, engineBonus: 1, engine: "niche-news" as const },
+      components: { brandFit: r.candidate.brandFit, interest: r.candidate.interest, distance: 1, modeBonus: 1, engineBonus: 1, freshness: 1, engine: "niche-news" as const },
     })),
     ...(rows[0] !== undefined ? { chosen: rows[0].candidate } : {}),
     alternatives: [],

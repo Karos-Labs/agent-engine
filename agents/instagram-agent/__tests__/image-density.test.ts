@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   conceptualPromptFor,
-  GENERATION_EXCLUSIONS,
+  ALWAYS_EXCLUDED,
+  exclusionsFor,
+  ILLUSTRATION_REGISTERS,
+  literalIllustrationOf,
+  photorealAllowed,
+  registerFor,
   planImageBackfill,
   resolveRescuedSelection,
   sceneDescribesAPicture,
@@ -93,12 +98,10 @@ describe("conceptualPromptFor", () => {
     expect(prompt).not.toContain("typed checklist");
   });
 
-  it("carries the standing likeness and brand exclusions, in the prompt rather than in a gate downstream", () => {
+  it("carries the exclusions in the prompt rather than in a gate downstream", () => {
     // A gate can only throw the frame away AFTER it is paid for, which is the
     // waste the floor was fixed to stop in the first place.
-    const prompt = conceptualPromptFor(slide(2));
-    for (const forbidden of ["No people", "No logos", "No text"]) expect(prompt).toContain(forbidden);
-    expect(prompt).toContain(GENERATION_EXCLUSIONS);
+    expect(conceptualPromptFor(slide(2))).toContain(ALWAYS_EXCLUDED);
   });
 
   it("puts the run's frozen treatment in, so a made frame sits in the same world as a sourced one", () => {
@@ -197,5 +200,90 @@ describe("resolveRescuedSelection", () => {
     // …and on that path the helper is consulted, not bypassed: a verdict it
     // calls unfillable loses even when it carries a path.
     expect(resolveRescuedSelection({ placeholder: refused, vetted: filled, wasBackfilled: false, isUnfillable: () => true })).toBe(refused);
+  });
+});
+
+/**
+ * The owner's correction of 2026-09-18, after reading three carousels whose
+ * generated frames were all abstract geometry: *"תמונות גנריות עם AI זה משעמם
+ * לרוב שזה חזרתי"*. He is right about the cause. The first exclusion list
+ * banned every real subject, so abstraction was the only thing left to draw.
+ *
+ * The line is not the subject. It is whether the frame could be read as a
+ * record of something that happened.
+ */
+describe("exclusions, in two tiers", () => {
+  it("keeps what no treatment makes acceptable", () => {
+    for (const photoreal of [true, false]) {
+      const rules = exclusionsFor(photoreal);
+      expect(rules, String(photoreal)).toContain("No text");
+      // A staged event is a fabricated record whatever style it is drawn in.
+      expect(rules, String(photoreal)).toContain("Do not stage an event");
+      expect(rules, String(photoreal)).toContain("Nothing mocking");
+    }
+  });
+
+  it("lifts the person and brand ban the moment the frame is openly an illustration", () => {
+    expect(exclusionsFor(true)).toContain("No identifiable real person");
+    expect(exclusionsFor(false)).not.toContain("No identifiable real person");
+  });
+
+  it("refuses photorealism for a person, a company or a product, and allows it elsewhere", () => {
+    expect(photorealAllowed([{ name: "Sam Altman", kind: "person", isPublicFigure: true }])).toBe(false);
+    expect(photorealAllowed([{ name: "OpenAI", kind: "company" }])).toBe(false);
+    expect(photorealAllowed([{ name: "Tel Aviv", kind: "place" }])).toBe(true);
+    expect(photorealAllowed([])).toBe(true);
+  });
+});
+
+describe("illustration registers", () => {
+  it("is a list, because one house style repeated IS the repetition", () => {
+    expect(ILLUSTRATION_REGISTERS.length).toBeGreaterThanOrEqual(5);
+    expect(new Set(ILLUSTRATION_REGISTERS.map((r) => r.id)).size).toBe(ILLUSTRATION_REGISTERS.length);
+    for (const r of ILLUSTRATION_REGISTERS) expect(r.phrase.length, r.id).toBeGreaterThan(30);
+  });
+
+  it("is stable inside one run and varies across runs", () => {
+    expect(registerFor("run_a").id).toBe(registerFor("run_a").id);
+    const seen = new Set(Array.from({ length: 40 }, (_, i) => registerFor(`run_${i}`).id));
+    expect(seen.size, "forty runs drew fewer than three distinct registers").toBeGreaterThan(2);
+  });
+
+  it("lets a NAMED REAL SUBJECT into the frame, drawn, which is the whole correction", () => {
+    const prompt = conceptualPromptFor(slide(2, { headline: "The money behind the models", body: "Capital decides which models ship." }), {
+      register: ILLUSTRATION_REGISTERS[0],
+      subjects: [{ name: "Sam Altman", kind: "person", isPublicFigure: true }],
+    });
+    expect(prompt).toContain("Sam Altman");
+    expect(prompt).toContain(ILLUSTRATION_REGISTERS[0]!.phrase);
+    expect(prompt).toContain("never photographically");
+    // …and the photoreal-only ban is lifted, because the register replaced it.
+    expect(prompt).not.toContain("No identifiable real person");
+  });
+
+  it("will not put a named subject in a frame with no register to draw it in", () => {
+    // Without a declared illustration there is nothing signalling commentary,
+    // so the subject is dropped rather than rendered photorealistically.
+    const prompt = conceptualPromptFor(slide(2), { subjects: [{ name: "Sam Altman", kind: "person" }] });
+    expect(prompt).not.toContain("Sam Altman");
+    expect(prompt).toContain("No identifiable real person");
+  });
+});
+
+describe("literalIllustrationOf", () => {
+  it("catches the three shapes that shipped on 2026-09-18", () => {
+    expect(literalIllustrationOf("a gold pocket clock", "Two clocks run your marketing. Only one catches the buyer.")).toContain("clock");
+    expect(literalIllustrationOf("a lit window in a wall", "Buyers open their window when they are ready. Not when you post.")).toContain("window");
+    expect(literalIllustrationOf("a watch and a phone on a schedule board", "Most B2B funnels respond to buyer signals on a publishing schedule")).toBeDefined();
+  });
+
+  it("says nothing about a picture of the SITUATION rather than of a word", () => {
+    expect(literalIllustrationOf("a founder alone at a kitchen table late at night", "Buyers open their window when they are ready")).toBeUndefined();
+    expect(literalIllustrationOf("a crowded conference hall", "Two clocks run your marketing")).toBeUndefined();
+  });
+
+  it("ignores the words every headline has", () => {
+    // Only stopwords overlap, so there is no echo to report.
+    expect(literalIllustrationOf("a quiet workshop", "The most that your people can do when they are ready")).toBeUndefined();
   });
 });

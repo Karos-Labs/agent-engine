@@ -31,10 +31,54 @@ export function makePromptStore(): FilePromptStore {
 }
 
 /** A router whose `.complete()` replays a fixed sequence of turns in order (mirrors `linkedin-agent`'s test helper exactly). */
+/**
+ * Does this prompt belong to `05r-revise-copy`?
+ *
+ * By the prompt's own `stepId`, for the reason `copyTurnInputs` states two
+ * functions down: a fixture keyed on call INDEX breaks every time an
+ * unconditional turn is added anywhere in the workflow, and that churn is what
+ * `turns.ts` exists to stop. `stepId` is what `BaseAgent` puts at the top of
+ * every prompt it sends, so this cannot drift with an input's shape.
+ */
+function isReviseTurn(promptArg: unknown): boolean {
+  if (typeof promptArg !== "string") return false;
+  try {
+    const parsed = JSON.parse(promptArg) as { stepId?: string };
+    return parsed.stepId === "instagram-copy-revise";
+  } catch {
+    return false;
+  }
+}
+
 export function fakeRouterSequence(turns: Array<() => CompletionResult<unknown>>): ModelRouter {
   const queue = [...turns];
   return {
-    complete: vi.fn(async () => {
+    complete: vi.fn(async (prompt: unknown) => {
+      // ── A FIXTURE WITH NO REVISER DECLINES, AND DOES NOT EAT A TURN. ──
+      //
+      // `05r-revise-copy` was added on 2026-09-18 so attempts 2 and 3 edit the
+      // previous draft instead of rewriting it. This queue is POSITIONAL, so
+      // the new step took the turn the next redraft was meant to get, and
+      // fourteen retry fixtures started asserting against copy they never
+      // configured.
+      //
+      // Returning an empty `edits` array is a truthful model of this fixture:
+      // it has no reviser. The schema requires at least one edit, so the step
+      // ends non-completed and the workflow falls through to the full redraft
+      // with the queue exactly where it was. A fixture that WANTS to exercise
+      // the revise path queues its own turn and asserts on the result; see
+      // `copy-revision.test.ts` for the unit half and `revise-loop.test.ts`
+      // for the workflow half.
+      if (isReviseTurn(prompt)) {
+        return finalTurn({
+          // Schema-VALID and deliberately inapplicable: `applyCopyEdits`
+          // resolves every path against the draft that exists, refuses this
+          // one, and the workflow falls through to the full redraft with the
+          // queue untouched.
+          edits: [{ path: "fixture.has.no.reviser", text: "unchanged", fixes: "this fixture configured no reviser" }],
+          kept: "everything: this fixture configured no reviser",
+        })();
+      }
       const next = queue.shift();
       if (!next) throw new Error("fakeRouterSequence: exhausted configured turns");
       return next();

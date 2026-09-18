@@ -462,7 +462,8 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     //   after the loop: packager + the package's native round                 = 2
     //                                                                     total 12
     // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
-    expect(router.complete).toHaveBeenCalledTimes(13);
+    // 2026-09-18: +1 per RETRY for `05r-revise-copy`, which every attempt after the first buys instead of a full redraft.
+    expect(router.complete).toHaveBeenCalledTimes(15);
 
     // It rendered and it was delivered — the two things the hold used to prevent.
     expect(stepIds).toContain("08-render-carousel-attempt-3");
@@ -878,7 +879,8 @@ describe("07e/07f — the language-compliance gate in the instagram self-check l
     //   after the loop: packager + the package's native round                 = 2
     //                                                                     total 15
     // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
-    expect(router.complete).toHaveBeenCalledTimes(16);
+    // 2026-09-18: +1 per RETRY for `05r-revise-copy`, which every attempt after the first buys instead of a full redraft.
+    expect(router.complete).toHaveBeenCalledTimes(18);
 
     // And the order is the one the comment claims, measured on the checkpoints rather than asserted in prose.
     expect(stepIds.indexOf("07e-language-script-attempt-1")).toBeLessThan(stepIds.indexOf("07e2-native-conventions-attempt-1"));

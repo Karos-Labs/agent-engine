@@ -70,7 +70,8 @@ describe("08b-visual-qa: post-render visual QA runs and retries through the SAME
     // scout + research + angle + 2 x (copy + vet + relevance + QA).
     expect(result.status).toBe("completed");
     // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
-    expect(router.complete).toHaveBeenCalledTimes(15);
+    // 2026-09-18: +1 per RETRY for `05r-revise-copy`, which every attempt after the first now buys instead of a full redraft.
+    expect(router.complete).toHaveBeenCalledTimes(16);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("08b-visual-qa-attempt-1");
@@ -157,7 +158,8 @@ describe("08b-visual-qa: post-render visual QA runs and retries through the SAME
     //   after the loop: packager                                              = 1
     //                                                                     total 19
     // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
-    expect(router.complete).toHaveBeenCalledTimes(20);
+    // 2026-09-18: +1 per RETRY for `05r-revise-copy`, which every attempt after the first now buys instead of a full redraft.
+    expect(router.complete).toHaveBeenCalledTimes(22);
 
     // And the client receives it, with the truth attached rather than a 404.
     const deliverables = await env.store.listJson<{ deliverable: { selfCheck?: { reason: string } } }>(

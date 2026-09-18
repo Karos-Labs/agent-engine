@@ -306,6 +306,135 @@ body[data-hero-scrim=""] .scrim { display: none; }
    `figure-band-collapse.test.ts` exists because this shipped once already. */
 .sc-figure-band:not(:has(img[src]:not([src=""]))) { display: none; }
 
+/* ---- WHERE THE BOUNDED PICTURE SITS ------------------------------------- */
+/* ── ONE SHAPE IS A TEMPLATE. FIVE ARE A DESIGN SYSTEM. ──
+   The band above is the default and is unchanged: full width of the field,
+   300px, at the top. It was also the ONLY bounded placement in the set, so
+   every picture on every panel plate in every carousel had the same size and
+   the same position, and the owner read the result exactly right on
+   2026-09-18: *"the positions and the sizes can change, it can appear at the
+   side sometimes, it can be next to the text."*
+
+   `data-figure` carries the choice. `band` is the default and is what a
+   template renders when nothing sets it, so a plate that opts out of this is
+   byte-identical to the one that shipped.
+
+   EVERY VARIANT IS GRID, and that is not a style preference. `.plate` is a
+   flex column whose anchoring is done with auto margins (see the note on
+   `.plate` above, and the overflow bug that made it necessary). A float would
+   need `display: block` and would take that anchoring with it. Grid keeps the
+   band in its own track and auto-places every other child of the plate into
+   the second one, which needs no change to any template's markup. */
+
+/* ── THE TWO SIDE SHAPES ARE DECLARED AND NOT YET SELECTED. ──
+   `figurePlacementFor` does not return them. The interest-floor calibration
+   sweep refused every archetype that was offered a 56% column: a figure set at
+   `--t-figure` overflows one, `comparison_card` is already two columns, and a
+   long quote overflows too. The CSS is not the fault. `_ds-fit.js` sizes type
+   against the FIELD and a side variant changes the field's width without
+   telling it, so enabling these means teaching the fit ladder about the
+   narrower column first. Kept here, correct and tested, for when it does. */
+
+/* SIDE — the picture is a column beside the type, full height of the field.
+   The half-and-half split a magazine opens a feature with. */
+/* `space-between` and not `start`, and the interest floor is why. `.plate` is a
+   flex column whose auto margins push its content across the whole field; a
+   grid with `align-content: start` packs the rows at the top instead, and the
+   calibration sweep measured the result immediately: `quote_card @ first
+   (cover)` left an empty rectangle over 34% of the plate against a 22%
+   ceiling. The rows spread now, which is what the flex column was doing. */
+body[data-figure="side"] .plate {
+  display: grid;
+  grid-template-columns: 44% 1fr;
+  column-gap: 40px;
+  align-content: space-between;
+}
+body[data-figure="side"] .sc-figure-band {
+  grid-column: 1;
+  /* `span 99` and not `1 / -1`. `-1` names the last line of the EXPLICIT
+     grid, and these variants declare only `grid-template-columns`, so every
+     row is implicit and `1 / -1` resolves to a single row. The band then sat
+     in row 1 at content height and the rest of its column was a hole: the
+     calibration sweep read `comparison_card @ last (closer)` as a 520x1212
+     dead rectangle down the right of the plate. */
+  grid-row: 1 / span 99;
+  block-size: 100%;
+  min-block-size: 0;
+}
+body[data-figure="side"] .plate > *:not(.sc-figure-band) { grid-column: 2; }
+
+/* SIDE-END — the same, mirrored. Alternating these two across a carousel is
+   what stops a run of side plates becoming its own repetition. */
+body[data-figure="side-end"] .plate {
+  display: grid;
+  grid-template-columns: 1fr 44%;
+  column-gap: 40px;
+  align-content: space-between;
+}
+body[data-figure="side-end"] .sc-figure-band {
+  grid-column: 2;
+  /* `span 99` and not `1 / -1`. `-1` names the last line of the EXPLICIT
+     grid, and these variants declare only `grid-template-columns`, so every
+     row is implicit and `1 / -1` resolves to a single row. The band then sat
+     in row 1 at content height and the rest of its column was a hole: the
+     calibration sweep read `comparison_card @ last (closer)` as a 520x1212
+     dead rectangle down the right of the plate. */
+  grid-row: 1 / span 99;
+  block-size: 100%;
+  min-block-size: 0;
+}
+body[data-figure="side-end"] .plate > *:not(.sc-figure-band) { grid-column: 1; }
+
+/* FOOT — the picture closes the plate instead of opening it.
+   This replaces an `inset` variant that put a 38% block in the upper corner
+   with the type beside it. It looked right and measured wrong twice: a grid
+   column that ends after one row leaves the rest of that column empty, and the
+   calibration sweep read `list_takeaway @ first (cover)` as a 456x988 dead
+   rectangle, then as 8.5% imagery against a 10% floor. A shape that can only
+   be made to fill by knowing how many children the plate has is a shape this
+   system cannot carry.
+
+   `order` and an auto margin instead, which is what `.plate` already uses to
+   anchor everything else: the band sorts last and is pushed to the foot, so
+   the plate fills by construction whatever the archetype puts above it. A
+   picture at the bottom is a genuinely different read from one at the top,
+   which is the variety this set was short of. */
+body[data-figure="foot"] .sc-figure-band {
+  order: 2;
+  margin-block-start: auto;
+  block-size: 420px;
+  min-block-size: 300px;
+}
+
+/* TALL — the band keeps its position and takes half the plate. Same shape,
+   different weight, which is the cheapest variation in the set and the one
+   that carries a photograph worth looking at. */
+body[data-figure="tall"] .sc-figure-band {
+  block-size: 620px;
+  min-block-size: 420px;
+}
+
+/* BLEED — the band runs past the field's own gutter to the frame edge. The
+   plate keeps its margins; the picture does not. Negative inline margins
+   rather than a wider element, so nothing about the flex column changes. */
+body[data-figure="bleed"] .sc-figure-band {
+  margin-inline: calc(var(--mx) * -1);
+  inline-size: calc(100% + var(--mx) * 2);
+  block-size: 440px;
+  border-radius: 0;
+}
+
+/* The collapse rule is written against the band itself, so it holds for every
+   variant above. A `side` plate with no picture is a one-column plate, because
+   a `display: none` grid item leaves its track empty rather than reserving it:
+   `grid-template-columns` still declares two, so the type stays in the second
+   and the first is 44% of nothing. That would be a hole, so the grid itself is
+   dropped when the band is. */
+body[data-figure]:not([data-figure="band"]) .plate:not(:has(.sc-figure-band img[src]:not([src=""]))) {
+  display: flex;
+  grid-template-columns: none;
+}
+
 /* ---- the three bands ---------------------------------------------------- */
 /* A plate is: the mark band, the field, the foot band. Content lives in the
    field and NEVER enters the other two — that reservation is the whole answer
@@ -982,7 +1111,7 @@ body:not(:has(#takeaway > span:not(:empty))) .cl-panel { background-image: none;
 .cl-question:not(:has(> span:not(:empty))) { display: none; }
 </style>
 </head>
-<body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-ground="{{groundStyle}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}" data-anchor="{{compositionAnchor}}">
+<body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-ground="{{groundStyle}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}" data-anchor="{{compositionAnchor}}" data-figure="{{figurePlacement}}">
   <div class="ground" aria-hidden="true"></div>
 
   <div class="zone-mark">
