@@ -39,6 +39,53 @@ const VOICED_SCRIPT = {
   language: "en-US",
 };
 
+/**
+ * The same piece written in Hebrew, for the two tests about a Hebrew client's
+ * FONTS.
+ *
+ * They exist to prove the caption and furniture are set in a Hebrew face
+ * rather than assembled from fallback glyphs — so the script they run has to
+ * be in Hebrew. Before the target-language check (2026-09-18) they passed an
+ * English script under `voiceLanguage: "he-IL"` and nothing minded, which is
+ * exactly the defect that check exists to catch: the font was right and the
+ * words were in the wrong language.
+ *
+ * `stockQuery`/`visualBrief` stay in English on purpose — they are a stock
+ * library's search terms, the library indexes in English, and the language
+ * check deliberately does not read them.
+ */
+const HEBREW_VOICED_SCRIPT = {
+  hook: "אף אחד לא מספר לך שהעובד הראשון הוא זה שתפטר.",
+  beats: [
+    {
+      narration: "אף אחד לא מספר לך שהעובד הראשון הוא זה שתפטר.",
+      onScreenText: "העובד הראשון הוא הימור",
+      visualBrief: "Empty office at dawn, one desk lamp on, slow push-in across a row of dark monitors.",
+      seconds: 4 as const,
+    },
+    {
+      narration: "אתה מגייס לחברה שיש לך. בחודש שש זו כבר חברה אחרת לגמרי.",
+      onScreenText: "חודש שש משנה הכל",
+      visualBrief: "Whiteboard being wiped clean, marker residue catching window light, handheld drift.",
+      seconds: 6 as const,
+    },
+    {
+      narration: "אז תכתוב את התפקיד לחברה שאתה הופך להיות.",
+      onScreenText: "תכתוב למי שתהיה",
+      visualBrief: "City street at blue hour, storefront lights coming on one by one, wide static frame.",
+      seconds: 6 as const,
+    },
+  ],
+  caption:
+    "העובד הראשון הוא הימור על חברה שלא תהיה קיימת בעוד חצי שנה.",
+  about:
+    "שורט שטוען שצריך לכתוב תפקידים מוקדמים לחברה העתידית.",
+  format: "footage" as const,
+  voiceover: true,
+  voiceoverRationale: "קול נושא את המפנה בביט השלישי.",
+  language: "he-IL",
+};
+
 /** The same piece as a text-led short: every beat is its line on the brand ground, no footage searched. */
 const TEXT_LED_SCRIPT = { ...VOICED_SCRIPT, format: "text-led" as const, formatRationale: "Three blunt claims; the words are the picture.", voiceover: false };
 
@@ -71,6 +118,8 @@ function sequentialFakeRouter(candidates: readonly unknown[], prompts: string[] 
 
 interface Harness {
   tools: AgentToolRegistry;
+  /** The shared used-media ledger, so a test can read back what a run recorded. */
+  usedMedia: string[];
   calls: string[];
   musicArgs: Array<Record<string, unknown>>;
   textArgs: Array<Record<string, unknown>>;
@@ -100,7 +149,12 @@ function stubTools(
     /** The client's own ceiling on a run, in USD. */
     maxRunCostUsd?: number;
     /** The client's content language (BCP-47); default en-GB. */
-    voiceLanguage?: string;
+    /** `null` means the client configured NO language, as opposed to the harness's own default. */
+    voiceLanguage?: string | null;
+    /** What PREVIOUS runs left in this client's shared used-media ledger. */
+    usedMedia?: string[];
+    /** The brand kit's declared content language; `null` means the brand kit declares none either. */
+    brandLanguage?: string | null;
     /** A music track URL in the client's config; registers video.mixMusic too. */
     music?: string;
   } = {},
@@ -137,7 +191,7 @@ function stubTools(
         tiktokClips: {
           mode: "original",
           voiceover: opts.voiceoverPolicy ?? "auto",
-          voiceLanguage: opts.voiceLanguage ?? "en-GB",
+          ...(opts.voiceLanguage === null ? {} : { voiceLanguage: opts.voiceLanguage ?? "en-GB" }),
           voiceName: "en-GB-Chirp3-HD-Charon",
           voiceSpeakingRate: 1.1,
           ...(opts.music !== undefined ? { musicTrackUri: opts.music, musicGainDb: -18 } : {}),
@@ -150,7 +204,9 @@ function stubTools(
     ),
     "client.getProfile": tool("client.getProfile", () => ok({ name: "Acme", industry: "founder programs" })),
     "client.getVoiceRules": tool("client.getVoiceRules", () => ok({ tone: "direct" })),
-    "client.getBrand": tool("client.getBrand", () => ok({ forbiddenTerms: [], colors: { neutralDark: "#101418", neutralLight: "#F2F0EA" }, handle: "acmeco", language: "en" })),
+    "client.getBrand": tool("client.getBrand", () =>
+      ok({ forbiddenTerms: [], colors: { neutralDark: "#101418", neutralLight: "#F2F0EA" }, handle: "acmeco", ...(opts.brandLanguage === null ? {} : { language: opts.brandLanguage ?? "en" }) }),
+    ),
     "client.getStrategy": tool("client.getStrategy", () => ok({ markdown: "" })),
     "topics.reserve": tool("topics.reserve", () => ok({ reservationKey: "res-1", topics: ["the first hire"] })),
     "topics.commit": tool("topics.commit", () => ok({ committed: true })),
@@ -229,6 +285,20 @@ function stubTools(
     excerpts.push(args as Record<string, unknown>);
     return ok({ recorded: true, total: excerpts.length });
   });
+  // The used-media ledger, client-scoped and shared across agents and runs —
+  // `opts.usedMedia` lets a test hand one run what a PREVIOUS run left behind.
+  const usedMedia: string[] = [...(opts.usedMedia ?? [])];
+  tools["ledger.listUsedImages"] = tool("ledger.listUsedImages", () => ok({ imagePaths: [...usedMedia] }));
+  tools["ledger.recordUsedImages"] = tool("ledger.recordUsedImages", (args) => {
+    let added = 0;
+    for (const entry of (args as { imagePaths: string[] }).imagePaths) {
+      if (!usedMedia.includes(entry)) {
+        usedMedia.push(entry);
+        added++;
+      }
+    }
+    return ok({ added, total: usedMedia.length });
+  });
   if (opts.music !== undefined) {
     tools["video.mixMusic"] = tool(
       "video.mixMusic",
@@ -300,7 +370,7 @@ function stubTools(
       VisualQaGateInputSchema,
     );
   }
-  return { tools: tools as unknown as AgentToolRegistry, calls, musicArgs, textArgs, excerpts, imageArgs, stillArgs, stockArgs, composeArgs, voiceArgs, transcribedPaths, frameArgs, qaArgs, deliverables };
+  return { tools: tools as unknown as AgentToolRegistry, calls, usedMedia, musicArgs, textArgs, excerpts, imageArgs, stillArgs, stockArgs, composeArgs, voiceArgs, transcribedPaths, frameArgs, qaArgs, deliverables };
 }
 
 /** A silent version of the script (the schema's three-beat floor stands): what a writer told to cut cost would hand back. */
@@ -866,7 +936,7 @@ describe("original short: script → plates → voice → captions → sequence 
 
   it("a Hebrew client's text plates are set in the Hebrew face", async () => {
     const h = stubTools({ maxRunCostUsd: 0.05, stock: "miss", voiceLanguage: "he-IL" });
-    const result = await run(h, "run-os-text-hebrew", [VOICED_SCRIPT, VOICED_SCRIPT, VOICED_SCRIPT]);
+    const result = await run(h, "run-os-text-hebrew", [HEBREW_VOICED_SCRIPT, HEBREW_VOICED_SCRIPT, HEBREW_VOICED_SCRIPT]);
     expect(result.status).toBe("completed");
     // Three beat plates and the cold open, all in the Hebrew face.
     expect(h.textArgs).toHaveLength(4);
@@ -1069,7 +1139,7 @@ describe("original short: real footage, then a still, never generated video (202
 
   it("a Hebrew client's captions and furniture are set in a Hebrew face, so the frame is not assembled from fallback glyphs", async () => {
     const h = stubTools({ voiceLanguage: "he-IL" });
-    const result = await run(h, "run-os-hebrew");
+    const result = await run(h, "run-os-hebrew", [HEBREW_VOICED_SCRIPT, HEBREW_VOICED_SCRIPT]);
     expect(result.status).toBe("completed");
     expect(h.voiceArgs[0]!["language"]).toBe("he-IL");
     expect(h.frameArgs[0]!["captionStyle"]).toEqual({ fontName: "Noto Sans Hebrew" });
@@ -1207,4 +1277,128 @@ describe("expectedHoldSeconds (v10: a beat's shots follow how long it is SPOKEN)
     expect(expectedHoldSeconds(long, true)).toBeCloseTo(23 / 2.6, 5);
     expect(expectedHoldSeconds(long, true)).toBeGreaterThan(6);
   });
+});
+
+/**
+ * The target language, end to end (2026-09-18).
+ *
+ * The resolver and the check are unit-tested in `target-language.test.ts`.
+ * What is pinned here is what the WORKFLOW does with them: one redraft with
+ * the evidence, then a delivery that names the failure rather than a run that
+ * dies of it.
+ */
+describe("target language", () => {
+  it("sends a wrong-language draft back ONCE with the evidence, and ships the corrected one clean", async () => {
+    const h = stubTools({ voiceLanguage: "he-IL" });
+    const prompts: string[] = [];
+    // English first, Hebrew on the redraft — the ordinary recovery.
+    const result = await run(h, "run-os-lang-recovers", [VOICED_SCRIPT, HEBREW_VOICED_SCRIPT], prompts);
+
+    expect(result.status).toBe("completed");
+    expect(prompts).toHaveLength(2);
+    // The note carries what went wrong, not just the instruction the model
+    // already had and did not follow.
+    expect(prompts[1]).toContain("he-IL");
+    expect(prompts[1]).toContain("Hebrew");
+    // A recovered draft is a clean deliverable: nothing was left unrepaired.
+    const repairs = (h.deliverables[0]?.["contentRepairs"] as Array<{ check: string }> | undefined) ?? [];
+    expect(repairs.map((r) => r.check)).not.toContain("target-language");
+  }, 20_000);
+
+  it("ships flagged, never held, when the writer will not write the language twice", async () => {
+    const h = stubTools({ voiceLanguage: "he-IL" });
+    const result = await run(h, "run-os-lang-persists", [VOICED_SCRIPT, VOICED_SCRIPT]);
+
+    // A second wrong-language draft is a model that cannot write this language
+    // today; a third attempt buys another at the same odds. The reviewer is
+    // the one who can tell "wrong language" from "loanword-heavy and correct".
+    expect(result.status).toBe("completed");
+    const repairs = h.deliverables[0]?.["contentRepairs"] as Array<{ check: string; action: string; detail: string }>;
+    const failure = repairs.find((r) => r.check === "target-language");
+    expect(failure?.action).toBe("unresolved");
+    expect(failure?.detail).toContain("he-IL");
+  }, 20_000);
+
+  it("carries the language and its provenance to the reviewer on every run, clean or not", async () => {
+    const h = stubTools({ voiceLanguage: "he-IL" });
+    await run(h, "run-os-lang-payload", [HEBREW_VOICED_SCRIPT, HEBREW_VOICED_SCRIPT]);
+
+    expect(h.deliverables[0]?.["targetLanguage"]).toMatchObject({ tag: "he-IL", source: "client-config", assumed: false });
+  }, 20_000);
+
+  it("does not flag an assumed language as a repair, because most clean runs assume one", async () => {
+    // `assumed` is visible on the payload either way. Pushing a repair for it
+    // would attach a degrade marker to the majority of perfectly good runs,
+    // which is the "shouting at every clean post until nobody reads it"
+    // failure the repair ledger exists to avoid.
+    const h = stubTools({ voiceLanguage: null, brandLanguage: null });
+    const result = await run(h, "run-os-lang-assumed");
+
+    expect(result.status).toBe("completed");
+    expect(h.deliverables[0]?.["targetLanguage"]).toMatchObject({ source: "default", assumed: true });
+    const repairs = (h.deliverables[0]?.["contentRepairs"] as Array<{ check: string }> | undefined) ?? [];
+    expect(repairs.map((r) => r.check)).not.toContain("target-language");
+  }, 20_000);
+});
+
+/**
+ * What this account has already MADE, across runs (2026-09-18).
+ *
+ * The unit behaviour is in `shape-memory.test.ts`. What is pinned here is the
+ * loop closing: a run reads what previous runs left in the shared used-media
+ * ledger, and writes its own back only once a human has approved the short.
+ */
+describe("shape memory across runs", () => {
+  it("excludes library clips this client's PREVIOUS shorts already used", async () => {
+    // `usedStockIds` was run-scoped, so the exclusion reset every run. Pexels'
+    // results for a query like "office desk" are stable, so two shorts a week
+    // apart on adjacent topics opened on the same footage and both passed
+    // every gate, because neither knew about the other.
+    const h = stubTools({ usedMedia: ["tiktok:stock:4242", "tiktok:stock:4243", "media/instagram/run-9/cover.png"] });
+    await run(h, "run-os-shape-excludes", [VOICED_SCRIPT, VOICED_SCRIPT]);
+
+    expect(h.stockArgs.length).toBeGreaterThan(0);
+    for (const args of h.stockArgs) {
+      const excluded = args["excludeIds"] as number[];
+      expect(excluded).toEqual(expect.arrayContaining([4242, 4243]));
+    }
+  }, 20_000);
+
+  it("records this short's clips and its skeleton once a human has approved it", async () => {
+    const h = stubTools();
+    const result = await run(h, "run-os-shape-records", [VOICED_SCRIPT, VOICED_SCRIPT]);
+
+    expect(result.status).toBe("completed");
+    // The library clips, so no future short reuses them…
+    expect(h.usedMedia.some((e) => e.startsWith("tiktok:stock:"))).toBe(true);
+    // …and the structural fingerprint, so no future short is built the same way.
+    const shapes = h.usedMedia.filter((e) => e.startsWith("tiktok:shape:"));
+    expect(shapes).toHaveLength(1);
+    expect(shapes[0]).toContain("beats");
+    // Namespaced, because instagram's photograph paths live in this same list.
+    expect(h.usedMedia.every((e) => e.startsWith("tiktok:"))).toBe(true);
+  }, 20_000);
+
+  it("remembers nothing from a short nobody approved", async () => {
+    // The used-media ledger's own rule — "an image that never shipped was
+    // never used". A rejected short never reached a feed, so it cannot have
+    // made the account look repetitive.
+    const h = stubTools();
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+    const workflow = createTikTokAgentWorkflow({
+      tools: h.tools,
+      promptStore: new FilePromptStore(PROMPTS_ROOT),
+      router: sequentialFakeRouter([VOICED_SCRIPT, VOICED_SCRIPT]),
+      repoRoot: os.tmpdir(),
+      fetchImpl: fakeAudioFetch,
+    });
+    const runId = "run-os-shape-rejected";
+
+    expect((await engine.run(workflow, { ...PARAMS, runId, input: {} })).status).toBe("awaiting_gate");
+    await engine.resolveGate(runId, "11-clip-review-r0", { decision: "reject", actor: "jane@karoslabs.com", reason: "not this one", at: new Date().toISOString() });
+    await engine.run(workflow, { ...PARAMS, runId, input: {} });
+
+    expect(h.usedMedia.filter((e) => e.startsWith("tiktok:"))).toHaveLength(0);
+  }, 20_000);
 });

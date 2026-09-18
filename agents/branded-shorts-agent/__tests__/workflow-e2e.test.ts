@@ -1,4 +1,5 @@
 import { describe, expect, it, afterEach } from "vitest";
+import { z } from "zod";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
@@ -94,7 +95,9 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     const result = await engine.run(workflowFn, { ...params, runId: "branded_shorts_run_derived_style" });
 
     expect(result.status).toBe("awaiting_gate");
-    const gate = await durableStore.getGate("branded_shorts_run_derived_style__10-delivery-review");
+    // `-r0`: the delivery gate became a `runReviewCycle` on 2026-09-18, and
+    // that primitive names each round `<gateId>-r<n>`.
+    const gate = await durableStore.getGate("branded_shorts_run_derived_style__10-delivery-review-r0");
     expect(gate).toBeDefined();
     expect(gate!.payload).toMatchObject({ styleSource: "derived", flagged: true });
     expect((gate!.payload as { setupNotes: string[] }).setupNotes.join(" ")).toContain("no style was ever locked");
@@ -253,9 +256,18 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     const engine = new WorkflowEngine(durableStore);
     const result = await engine.run(workflowFn, { ...params, runId: "branded_shorts_run_cut_fail" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toContain("DENSITY");
+    // The owner's always-deliver rule (2026-09-17). The cut list is DERIVED,
+    // not drafted — `deriveCutSegments` crops the ends and drops filler by
+    // rule — so a gate objecting to it is objecting to that rule's output on
+    // this transcript. There is no second cut to fall back to and no writer to
+    // send it back to, and the reviewer can watch the result either way, so the
+    // short is built and the objection travels with it.
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+    const repairs = (result.output as { contentRepairs?: Array<{ check: string; action: string; detail: string }> }).contentRepairs ?? [];
+    const flagged = repairs.find((r) => r.check === "video.cutGate");
+    expect(flagged?.action).toBe("unresolved");
+    expect(flagged?.detail).toContain("DENSITY");
   });
 
   it("retries the graphics/cutaway plan once after a gate failure, then succeeds on the second attempt", async () => {
@@ -333,7 +345,12 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     expect(stepIds).toContain("08b-render-and-gate-attempt-2");
   });
 
-  it("resolves to held, never renders anything, when every attempt keeps using unapproved archetypes", async () => {
+  it("drops the unapproved archetypes and builds the rest, rather than ending the run over them", async () => {
+    // The closed-vocabulary invariant is NOT relaxed: an unapproved archetype
+    // is a graphic the client never signed off on, and none of them reaches the
+    // screen. What changed on 2026-09-18 is which thing is discarded — the
+    // offending ITEMS, not the transcript, the cut, the grade, the base render
+    // and every overlay in the same plan that was legal.
     env = await setupTestEnvironment();
     const router = fakeRouterSequence([
       finalTurn(goodHighlights()),
@@ -347,11 +364,18 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     const engine = new WorkflowEngine(durableStore);
     const result = await engine.run(workflowFn, { ...params, runId: "branded_shorts_run_bad_archetype_always" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toContain("Confetti Pop");
-    // No full composite was ever rendered; only 07b's plan-independent base timeline.
-    expect(env.runnerCalls.filter((c) => path.basename(c.args[0] ?? "") === "build_short.py" && !c.args.includes("--until"))).toHaveLength(0);
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+    const output = result.output as { overlayCount: number; contentRepairs?: Array<{ check: string; action: string; detail: string }> };
+    // Every overlay in the plan was illegal, so the short is the client's own
+    // footage with none of them — and says so.
+    expect(output.overlayCount).toBe(0);
+    const dropped = (output.contentRepairs ?? []).find((r) => r.check === "video.graphicsPlan");
+    expect(dropped?.action).toBe("redacted");
+    expect(dropped?.detail).toContain("Confetti Pop");
+    // A composite WAS rendered — that is the point — but only after the
+    // illegal items were out of the plan.
+    expect(env.runnerCalls.filter((c) => path.basename(c.args[0] ?? "") === "build_short.py" && !c.args.includes("--until"))).toHaveLength(1);
   });
 
   it("surfaces build_short.py's caption-density warning in the final result, never silently dropping it (P0#3)", async () => {
@@ -413,5 +437,162 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
 
     expect(result.status).toBe("completed");
     expect(capturedCutawayArgs).toContain("--allow-count");
+  });
+});
+
+/**
+ * The reviewer's revise loop, and the gate timeout that depends on it.
+ *
+ * Until 2026-09-18 this agent's delivery gate was a bare `wf.step.gate` whose
+ * only two outcomes were "approve" and a dead run, and it auto-approved an
+ * unanswered review after an hour with no quality signal whatsoever — the exact
+ * shape that shipped two 3/10 prep clips by `system:gate-timeout` on
+ * 2026-09-08. Clipping and content design fixed both that week; this agent did
+ * not, and these are the tests that say so out loud.
+ */
+describe("the delivery review is a cycle, not a one-way door (2026-09-18)", () => {
+  let env: TestEnvironment;
+  const at = () => new Date().toISOString();
+
+  afterEach(async () => {
+    await env.cleanup();
+  });
+
+  it("re-plans the graphics in-run when a reviewer asks for a change, reusing the transcript and the cut", async () => {
+    env = await setupTestEnvironment();
+    const promptStore = makePromptStore();
+    // Four turns: highlights + plan for round 0, then the same again for the
+    // revise round. A revision that could not re-plan would consume only two.
+    const router = fakeRouterSequence([
+      finalTurn(goodHighlights()),
+      finalTurn(goodGraphicsPlan()),
+      finalTurn(goodHighlights()),
+      finalTurn(goodGraphicsPlan()),
+    ]);
+    const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router });
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+    const runId = "branded_shorts_run_revise";
+
+    const r0 = await engine.run(workflowFn, { ...params, runId });
+    expect(r0.status).toBe("awaiting_gate");
+
+    await engine.resolveGate(runId, "10-delivery-review-r0", {
+      decision: "revise",
+      actor: "jane@karoslabs.com",
+      feedback: "The third graphic sits over the speaker's face — move it or drop it.",
+      at: at(),
+    });
+
+    const r1 = await engine.run(workflowFn, { ...params, runId });
+    expect(r1.status).toBe("awaiting_gate");
+
+    // The expensive, revision-independent work ran ONCE across both rounds:
+    // the client's footage did not change, so neither did its transcript or
+    // its derived cut. That is what makes a revise round cheap enough to offer.
+    expect(env.runnerCalls.filter((c) => path.basename(c.args[0] ?? "") === "cut_check.py")).toHaveLength(1);
+    // …and the planning DID run again, under its own revision-scoped step id.
+    expect(await durableStore.getGate(`${runId}__10-delivery-review-r1`)).toBeDefined();
+  }, 30_000);
+
+  it("holds an unanswered gate rather than auto-approving when the visual QA never watched the short", async () => {
+    // `video.visualQaGate` is not registered in this environment, so the round
+    // records the QA as SKIPPED — which is not the same as passed, and is
+    // exactly the distinction the timeout now turns on.
+    env = await setupTestEnvironment();
+    const promptStore = makePromptStore();
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router });
+
+    const durableStore = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durableStore).run(workflowFn, { ...params, runId: "branded_shorts_run_timeout" });
+
+    expect(result.status).toBe("awaiting_gate");
+    const gate = await durableStore.getGate("branded_shorts_run_timeout__10-delivery-review-r0");
+    expect(gate!.timeout).toMatchObject({ duration: "1h", onTimeout: "hold" });
+  });
+});
+
+/**
+ * The cost bound this agent did not have (2026-09-18).
+ *
+ * `image.generate` is billed once per plate cutaway and the plate COUNT is a
+ * model's decision, so until now the only thing between a client and an
+ * arbitrary bill was how many cutaways the graphics planner felt like
+ * proposing. Clipping and content design have been priced before the first
+ * purchase since 2026-09-09.
+ */
+describe("the plates are priced before any are bought", () => {
+  let env: TestEnvironment;
+
+  afterEach(async () => {
+    await env.cleanup();
+  });
+
+  it("buys every plate on an ordinary plan, and records no budget repair", async () => {
+    env = await setupTestEnvironment();
+    const promptStore = makePromptStore();
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFn, { ...params, runId: "branded_shorts_run_budget_ok" });
+
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+    const repairs = (result.output as { contentRepairs?: Array<{ check: string }> }).contentRepairs ?? [];
+    expect(repairs.map((r) => r.check)).not.toContain("run-budget");
+  });
+
+  it("drops the plates it cannot afford, keeps every free burst, and still delivers", async () => {
+    // A dispatcher budget tight enough that the plan's plates do not fit. The
+    // short keeps the client's own footage, its captions, its overlays and
+    // every burst built from stills they already own — a plainer short, not a
+    // dead run, with the arithmetic on the deliverable.
+    env = await setupTestEnvironment();
+    // A deployment that CAN generate plates — otherwise `validateGraphicsPlan`
+    // refuses them before the budget is ever consulted, and the test would
+    // pass for the wrong reason.
+    env.tools["image.generate"] = {
+      name: "image.generate",
+      description: "Generates the cutaway plates this plan asks for.",
+      version: "1.0.0",
+      // `z.any()` rather than a hand-rolled `{ safeParse }`: the real registry
+      // types `inputSchema` as a `ZodSchema`, and a structural fake only looks
+      // assignable until the root typecheck reads it.
+      inputSchema: z.any(),
+      async execute(args: unknown) {
+        const needs = (args as { needs: Array<{ n: number }> }).needs;
+        return { status: "success" as const, result: { candidates: needs.map((need) => ({ path: `n${need.n}-gen1.png` })), unmet: [] } };
+      },
+    } as unknown as (typeof env.tools)[string];
+    const promptStore = makePromptStore();
+    const router = smartFakeRouter([
+      goodHighlights(),
+      {
+        overlays: [],
+        cutaways: [
+          { kind: "plate", phrase: "the first hire", start: 1.0, end: 2.5, wordSrcStart: 1.0, prompt: "an empty desk at dawn" },
+          { kind: "plate", phrase: "month six", start: 4.0, end: 5.5, wordSrcStart: 4.0, prompt: "a whiteboard wiped clean" },
+        ],
+      },
+    ]);
+    const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFn, {
+      ...params,
+      runId: "branded_shorts_run_budget_tight",
+      // $0.0015 of model calls leaves room for exactly one plate ($0.067), not two.
+      budget: { maxTotalCostUsd: 0.08 },
+    });
+
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+    expect(result.output.cutawayCount).toBe(1);
+    const trimmed = ((result.output as { contentRepairs?: Array<{ check: string; action: string; detail: string }> }).contentRepairs ?? []).find(
+      (r) => r.check === "run-budget",
+    );
+    expect(trimmed?.action).toBe("trimmed");
+    expect(trimmed?.detail).toContain("ceiling");
   });
 });

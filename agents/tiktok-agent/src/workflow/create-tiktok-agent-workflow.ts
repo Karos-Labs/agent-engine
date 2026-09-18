@@ -53,6 +53,16 @@ import {
   runReviewCycle,
   runTopicGuardrail,
   toAgentContext,
+  // The owner's always-deliver rule (2026-09-17), as the fleet's shared
+  // primitives rather than a local re-invention: six agents already repair
+  // where they used to hold, and this family was the last that did not.
+  runCheckWithRepair,
+  redactSentencesCarrying,
+  stripSpansFrom,
+  spansFromEvidence,
+  localContentFail,
+  localPass,
+  type ContentRepair,
   type RevisionNote,
   type WorkflowContext,
 } from "@agent-engine/workflow";
@@ -61,7 +71,10 @@ import { TikTokCommentaryAgent } from "../agent/tiktok-commentary-agent.js";
 import { TikTokMomentAgent } from "../agent/tiktok-moment-agent.js";
 import { TikTokScriptAgent } from "../agent/tiktok-script-agent.js";
 import { TikTokTopicScoutAgent } from "../agent/tiktok-topic-scout-agent.js";
-import { boundsFromTranscript, sentenceBoundedWords, type TranscriptWordLike } from "./clip-bounds.js";
+import { bestLegalWindow, boundsFromTranscript, sentenceBoundedWords, type TranscriptWordLike } from "./clip-bounds.js";
+import { checkDraftLanguage, isJudgeableLanguage, languageRedraftDirective, resolveTargetLanguage, type ResolvedTargetLanguage } from "./target-language.js";
+import { parseShapeMemory, shapeRepeatDirective, skeletonEntry, skeletonOf, stockClipEntry } from "./shape-memory.js";
+import { scoreMoment } from "./moment-floor.js";
 import { alignScriptToTimings, beatHoldsFromTimings, buildPhraseCues, buildPhraseGroups, cuesToSrt, scriptWords } from "./captions.js";
 import {
   CLIP_DURATION_MAX_SECONDS,
@@ -72,6 +85,9 @@ import {
   modeForVariant,
   type TikTokVariant,
   MAX_RUN_COST_USD,
+  TARGET_RUN_SPEND_USD,
+  VOICE_AND_QA_RESERVE_USD,
+  type BudgetRung,
   MomentSelectionSchema,
   ShortScriptSchema,
   TikTokClipConfigSchema,
@@ -1019,6 +1035,27 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     // as much as drafting does: a scout that cannot see what the client just
     // published proposes it again.
     const outputHistory = await readOutputHistoryForDedup(wf, tools, ctx, "tiktok-agent", "read-output-history");
+    /**
+     * What this account has already MADE — the library clips its shorts have
+     * used and the skeletons they were built on.
+     *
+     * The other half of anti-repetition, beside `outputHistory`'s "what has it
+     * already said". Read here with the rest, best-effort: a deployment with no
+     * ledger tool gets a run with no structural memory, never a failed one.
+     */
+    const shapeMemory = await wf.step.code("01e-read-shape-memory", async () => {
+      const list = tools["ledger.listUsedImages"];
+      if (list === undefined) return { usedStockIds: [], skeletons: [] };
+      try {
+        const outcome = await list.execute({}, { ctx });
+        if (outcome.status !== "success") return { usedStockIds: [], skeletons: [] };
+        return parseShapeMemory((outcome.result as { imagePaths?: string[] }).imagePaths ?? []);
+      } catch (error) {
+        console.error("01e-read-shape-memory: could not read what this account has already made", error);
+        return { usedStockIds: [], skeletons: [] };
+      }
+    });
+    const shapeDirective = shapeRepeatDirective(shapeMemory.skeletons);
     const recentPostsDirective = dedupeDirective(outputHistory);
     const clientIntelContext = await readClientIntelContext(wf, tools, ctx, "read-intel-context");
     const pastFeedback = await readPastFeedback(wf, tools, ctx, "read-past-feedback");
@@ -1436,6 +1473,15 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
      * client's own `maxRunCostUsd`, and by a dispatcher budget tighter than both.
      */
     const costCapUsd = Math.min(MAX_RUN_COST_USD, config.maxRunCostUsd ?? MAX_RUN_COST_USD, wf.budget?.maxTotalCostUsd ?? MAX_RUN_COST_USD);
+    /**
+     * What the run PLANS against, as opposed to what it may never exceed.
+     *
+     * Clamped to the ceiling so a client whose own `maxRunCostUsd` is below the
+     * fleet target still plans against their number: a target above the wall
+     * would have the ladder decide nothing until the wall stopped it, which is
+     * the pre-2026-09-18 behaviour under a new name.
+     */
+    const targetSpendUsd = Math.min(TARGET_RUN_SPEND_USD, costCapUsd);
 
 
     /**
@@ -1472,6 +1518,18 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     let topic = intake.topic;
     let moment: MomentSelection;
     let bounds: ClipPlan;
+    /**
+     * Set when the cut was chosen by code rather than by the picker - a picker
+     * that returned nothing schema-valid, or a window that would not snap into
+     * a legal clip. Carried to the reviewer and onto the deliverable, because a
+     * clip nobody CHOSE is exactly the thing a person at the gate should know
+     * they are watching.
+     */
+    let momentFallback: string | undefined;
+    /** Set when the cut is under the watchability floor and nothing in the transcript scored better. */
+    let momentFloorNote: string | undefined;
+    /** Observations the floor made that never decided anything — carried to the reviewer, never acted on. */
+    const momentFloorNotes: string[] = [];
 
     if (intake.sourceTier === "stock") {
       // An original short has no speech to mine and no moment to pick. The
@@ -1556,8 +1614,30 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           durationMax: CLIP_DURATION_MAX_SECONDS,
         });
         if (exec.status === "content_fail") {
-          await releaseReservation();
-          throw new WorkflowHeld("moment selection did not clear its own output validation");
+          // The picker produced nothing schema-valid. The transcript is still
+          // in hand and demonstrably contains speech, so the densest legal run
+          // of whole sentences in it is the clip: a worse moment than a model
+          // would have chosen, and a clip rather than a dead run. The reviewer
+          // is told which it is, at the gate, beside the play button.
+          const fallback = bestLegalWindow(words, { minSeconds: CLIP_DURATION_MIN_SECONDS, maxSeconds: CLIP_DURATION_MAX_SECONDS });
+          if (fallback === undefined || !fallback.ok) {
+            // No run of whole sentences fits between the floor and the
+            // ceiling. There is genuinely nothing clippable in this recording,
+            // which is the carve-out's "no material", not a quality event.
+            await releaseReservation();
+            throw new WorkflowHeld(
+              "moment selection did not clear its own output validation, and no run of whole sentences in the transcript is a legal clip " +
+                `(${CLIP_DURATION_MIN_SECONDS}-${CLIP_DURATION_MAX_SECONDS}s) to fall back to`,
+            );
+          }
+          momentFallback = "the moment picker returned nothing usable; the densest legal run of whole sentences in the transcript was cut instead";
+          return {
+            startSeconds: fallback.startSeconds,
+            endSeconds: fallback.endSeconds,
+            hookLine: fallback.text.split(/(?<=[.!?])\s+/)[0]?.slice(0, 200) ?? intake.topic,
+            hookType: "sharp-one-liner" as const,
+            rationale: "chosen in code: the moment picker produced nothing schema-valid, so the densest run of complete sentences was taken",
+          };
         }
         if (exec.status !== "completed") {
           await releaseReservation();
@@ -1580,12 +1660,64 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           maxSeconds: CLIP_DURATION_MAX_SECONDS,
         });
         if (!result.ok) {
-          await releaseReservation();
-          throw new WorkflowHeld(`selected moment is not clippable: ${result.reason}`);
+          // The model's window does not snap into a legal clip - it collapsed,
+          // ran past the ceiling, or fell under the floor. That is a bad
+          // proposal, not an unusable recording: the same transcript almost
+          // always holds a legal run of whole sentences, and taking it is
+          // strictly better than ending a run that has already paid for the
+          // transcription. `boundsFromTranscript` still refuses to CLAMP the
+          // model's window - shipping the first 120s of a 200s answer would
+          // drop the payoff the moment was picked for - so the fallback picks
+          // a whole window of its own rather than truncating this one.
+          const widened = bestLegalWindow(words, { minSeconds: CLIP_DURATION_MIN_SECONDS, maxSeconds: CLIP_DURATION_MAX_SECONDS });
+          if (widened === undefined || !widened.ok) {
+            await releaseReservation();
+            throw new WorkflowHeld(`selected moment is not clippable (${result.reason}) and no run of whole sentences in the transcript is a legal clip either`);
+          }
+          momentFallback = `the picked moment was not clippable (${result.reason}); the densest legal run of whole sentences was cut instead`;
+          return widened;
         }
         return result;
       });
-      bounds = { startSeconds: cut.startSeconds, endSeconds: cut.endSeconds, words: cut.words, text: cut.text, needsCut: true };
+      // ── 04b: the moment FLOOR (2026-09-18) ──
+      //
+      // `04-cut-bounds` proves the window is LEGAL. Nothing until now asked
+      // whether it was worth watching, and the 2026-09-08 audit's clips
+      // included forty seconds of someone clearing their throat.
+      //
+      // Blocking measures only — density and a filler opening, both counted
+      // rather than judged. A refused window is RE-PICKED, never held: the
+      // deterministic picker already sorts by density, so it is the natural
+      // second opinion, and it is taken only when it genuinely scores better.
+      // A model that chose a sparse window for a reason code cannot see keeps
+      // its choice when nothing better exists.
+      const floor = await wf.step.code("04b-moment-floor", async () => {
+        const first = scoreMoment(words, cut.startSeconds, cut.endSeconds);
+        if (first.ok) return { ...first, replaced: null as null | { startSeconds: number; endSeconds: number; text: string; words: TranscriptWordLike[] } };
+        const alternative = bestLegalWindow(words, { minSeconds: CLIP_DURATION_MIN_SECONDS, maxSeconds: CLIP_DURATION_MAX_SECONDS });
+        if (alternative === undefined || !alternative.ok) return { ...first, replaced: null };
+        const second = scoreMoment(words, alternative.startSeconds, alternative.endSeconds);
+        if (!second.ok || second.wordsPerSecond <= first.wordsPerSecond) return { ...first, replaced: null };
+        return {
+          ...second,
+          replaced: { startSeconds: alternative.startSeconds, endSeconds: alternative.endSeconds, text: alternative.text, words: alternative.words },
+        };
+      });
+      if (floor.replaced !== null) {
+        momentFallback =
+          `the picked moment was under the watchability floor (${floor.failures.join("; ")}); ` +
+          `the densest legal run of whole sentences was cut instead (${floor.wordsPerSecond.toFixed(2)} words a second)`;
+        bounds = { startSeconds: floor.replaced.startSeconds, endSeconds: floor.replaced.endSeconds, words: floor.replaced.words, text: floor.replaced.text, needsCut: true };
+      } else {
+        if (!floor.ok) {
+          // Nothing better existed. The clip ships and the reviewer is told
+          // exactly what is wrong with it, which is more than they had before.
+          momentFloorNote = floor.failures.join("; ");
+          console.warn(`04b-moment-floor: ${momentFloorNote}; nothing in this transcript scores better, shipping flagged`);
+        }
+        bounds = { startSeconds: cut.startSeconds, endSeconds: cut.endSeconds, words: cut.words, text: cut.text, needsCut: true };
+      }
+      if (floor.notes.length > 0) momentFloorNotes.push(...floor.notes);
       }
     }
 
@@ -1625,6 +1757,27 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         ...(language !== undefined ? { language } : {}),
       };
     });
+
+    /**
+     * The run's language, decided ONCE by code (2026-09-18).
+     *
+     * Everything downstream reads `targetLanguage.tag` and nothing reads a
+     * `??` chain any more. The old chain ended in the model's own
+     * `script.language`, which is the writer telling us what it chose to
+     * write — the very thing the check below exists to verify — so a draft in
+     * the wrong language used to mark its own homework, and the caption font,
+     * the voice and the QA model's expectations were each resolved separately
+     * from it.
+     */
+    const targetLanguage: ResolvedTargetLanguage = await wf.step.code("02d-resolve-target-language", () =>
+      resolveTargetLanguage({
+        ...(config.voiceLanguage !== undefined ? { configuredLanguage: config.voiceLanguage } : {}),
+        ...(videoBrand.language !== undefined ? { brandLanguage: videoBrand.language } : {}),
+        // The client's own words about themselves. A Hebrew client whose
+        // config nobody filled in still gets a Hebrew short out of this.
+        clientProse: [profile.description, profile.name, clientIntelContext].filter((v) => typeof v === "string" && v.length > 0).join("\n"),
+      }),
+    );
 
     /**
      * The logo, downloaded fresh for a render (any failure = no logo, never a
@@ -1741,6 +1894,35 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       plateStockIds?: Array<{ beat: number; ids: number[] }>;
       /** How this round was produced: the words rewritten, or only the footage re-sourced under the approved words (2026-09-10). Absent on round 0. */
       revisionKind?: "rewrite" | "footage-only";
+      /**
+       * What this round had to repair on its way to a clip, in the order it
+       * did — a redacted sentence, an appended source credit, a beat whose
+       * footage nothing could serve, a check nothing could satisfy.
+       *
+       * The owner's always-deliver rule (2026-09-17) is only honest with this
+       * attached: a run that repairs silently is worse than one that holds,
+       * because the client cannot tell the difference between a clean clip and
+       * a salvaged one. Empty on the normal path and omitted from the
+       * deliverable entirely, so a clean run produces the bytes it always did.
+       */
+      repairs?: ContentRepair[];
+    }
+
+    /**
+     * A drafting step's result: the draft itself, and what producing it had to
+     * adapt around.
+     *
+     * The repairs travel INSIDE the step's return value rather than in an
+     * array the closure pushes to, and that is the whole point of the type. A
+     * `wf.step.code` result is checkpointed; a side effect on a captured array
+     * is not. On a replay - which every run that waits at a human gate performs
+     * - the step short-circuits on its checkpoint, the push never happens, and
+     * a deliverable that WAS assembled by the deterministic fallback would come
+     * back claiming a writer wrote it.
+     */
+    interface Drafted<T> {
+      value: T;
+      repairs: ContentRepair[];
     }
 
     /**
@@ -1777,20 +1959,118 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       throw new WorkflowToolingFailure("the de-duplication redraft loop ended without a draft");
     };
 
-    /** The deterministic text gates every caption clears before anything is rendered. */
-    const runTextGates = async (text: string): Promise<void> => {
-      for (const [gate, args] of [
-        ["gate.lintPost", { text }],
-        ["gate.brandCompliance", { text }],
-        ["gate.noPlaceholder", { text }],
-        ["gate.leakCheck", { text }],
-      ] as const) {
-        const verdict = await runGate(tools, gate, args, ctx);
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`${gate}: ${verdict.reason}`);
-        if (verdict.verdict === "content_fail") {
-          throw new WorkflowHeld(`${gate} failed: ${verdict.reason}`);
+    /**
+     * One field the compliance pass may rewrite.
+     *
+     * `shape` decides which floor applies, and getting it wrong is how a
+     * repair quietly destroys a field: `prose` (a caption, an `about`, a
+     * beat's narration) loses the whole SENTENCE carrying a flagged span,
+     * which is right for a paragraph and catastrophic for a three-word title
+     * card. `line` (`onScreenText`, a hook) loses the SPAN and keeps the line.
+     */
+    interface GatedField {
+      key: string;
+      text: string;
+      shape: "prose" | "line";
+    }
+
+    /**
+     * The deterministic text gates every caption clears before anything is
+     * rendered — and, since the owner's rule of 2026-09-17, the place they
+     * REPAIR rather than hold.
+     *
+     * Until now each of these four threw `WorkflowHeld`, so one forbidden
+     * superlative in one sentence of an `about` cost the client the entire
+     * clip: the transcript, the moment, the cut, every plate and the render
+     * that had already been paid for. None of those four is a fault — they
+     * are quality events, and RFC-19's carve-out is explicit that a quality
+     * event must still hand the client something, marked.
+     *
+     * All four are span-flagging gates that report the offending literal as
+     * it appears in the draft, which is exactly the shape
+     * `redactSentencesCarrying` / `stripSpansFrom` are the deterministic floor
+     * for. The four run as ONE verdict rather than four sequential holds,
+     * because `runCheckWithRepair` keeps a repair only when strictly fewer
+     * pieces of evidence remain — scored gate by gate, fixing the lint problem
+     * while a brand-compliance problem stood would look like no progress and
+     * be discarded.
+     *
+     * A field that would be emptied entirely keeps its original text and the
+     * failure is recorded `unresolved`. A caption is a required field: a clip
+     * that ships with a flagged sentence AND the flag beside it is honest,
+     * where a clip with no caption is broken.
+     *
+     * `tooling_error` still throws. A gate that could not RUN has made no
+     * judgment, and treating that as a pass would ship precisely what the gate
+     * exists to catch.
+     */
+    const runTextGates = async (fields: readonly GatedField[]): Promise<{ text: Record<string, string>; repairs: ContentRepair[] }> => {
+      const RULE = "tiktok-text-gates";
+      const asRecord = (list: readonly GatedField[]): Record<string, string> => Object.fromEntries(list.map((f) => [f.key, f.text]));
+
+      const verify = async (value: readonly GatedField[]) => {
+        const text = value
+          .map((f) => f.text)
+          .filter((t) => t.trim().length > 0)
+          .join("\n\n");
+        const evidence: string[] = [];
+        const reasons: string[] = [];
+        for (const gate of ["gate.lintPost", "gate.brandCompliance", "gate.noPlaceholder", "gate.leakCheck"] as const) {
+          const verdict = await runGate(tools, gate, { text }, ctx);
+          if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`${gate}: ${verdict.reason}`);
+          if (verdict.verdict === "content_fail") {
+            evidence.push(...verdict.evidence);
+            reasons.push(`${gate}: ${verdict.reason}`);
+          }
         }
-      }
+        return reasons.length === 0 ? localPass(RULE) : localContentFail(RULE, reasons.join("; "), evidence);
+      };
+
+      const outcome = await runCheckWithRepair<readonly GatedField[]>({
+        check: RULE,
+        value: fields,
+        verify,
+        attempts: [
+          {
+            action: "redacted",
+            // Mechanical and monotone: each pass removes at least one flagged
+            // span or reports that it located none, so three passes clear a
+            // draft carrying three unrelated problems without spinning.
+            maxPasses: 3,
+            run: (value, verdict) => {
+              const spans = spansFromEvidence(verdict.evidence);
+              if (spans.length === 0) return undefined;
+              let changed = false;
+              const next = value.map((field) => {
+                if (field.text.trim().length === 0) return field;
+                let repairedText: string;
+                let removed: number;
+                if (field.shape === "prose") {
+                  const redacted = redactSentencesCarrying(field.text, spans);
+                  repairedText = redacted.text;
+                  removed = redacted.droppedSentences;
+                } else {
+                  const stripped = stripSpansFrom(field.text, spans);
+                  // `emptied` means the line WAS the flagged span; the
+                  // original is returned unchanged in that case, so treating
+                  // it as no progress is both true and what keeps the field.
+                  repairedText = stripped.text;
+                  removed = stripped.emptied ? 0 : stripped.strippedSpans.length;
+                }
+                // Emptied is not repaired. The original stands and the gate's
+                // objection rides to the reviewer instead.
+                if (removed === 0 || repairedText.trim().length === 0) return field;
+                changed = true;
+                return { ...field, text: repairedText };
+              });
+              return changed ? next : undefined;
+            },
+          },
+        ],
+        describeUnresolved: (verdict) => `${verdict.reason} — the clip ships with this noted rather than withheld`,
+      });
+
+      return { text: asRecord(outcome.value), repairs: outcome.repairs };
     };
 
     // ─────────────────────────────────────────────────────────────────────
@@ -1809,7 +2089,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
 
       // ── 06/06b: COMPOSE the commentary layer (judgment), then VERIFY it is
       //           not a repeat before anything downstream sees it ──
-      const commentary = await draftWithVerifiedDedupe<Commentary>(
+      const commentaryDraft = await draftWithVerifiedDedupe<Drafted<Commentary>>(
         rev,
         "06-commentary",
         "06b-verify-not-duplicate",
@@ -1830,6 +2110,11 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
               hookLine: moment.hookLine,
               hookType: moment.hookType,
               clipText: bounds.text,
+              // The caption is the one thing the client pastes into TikTok, so
+              // it is written in THEIR language, not the language of whoever
+              // was speaking in the footage. A Hebrew client clipping an
+              // English podcast writes a Hebrew take on it.
+              contentLanguage: targetLanguage.tag,
               // What the footage ACTUALLY is, so the credit names it rather
               // than a plausible episode.
               ...(intake.sourceContext ? { sourceContext: intake.sourceContext } : {}),
@@ -1843,7 +2128,32 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
               ...(directive !== undefined ? { revisionRequest: directive } : {}),
             }, "the commentary");
             if (exec.status === "content_fail") {
-              throw new WorkflowHeld("commentary did not clear its own output validation");
+              // The writer produced nothing schema-valid. Everything the
+              // caption needs already exists in this run and none of it is
+              // invented: the line the moment was picked for, what the footage
+              // actually is, and how long the cut runs. Assembling those is a
+              // plainer caption than a writer would have produced and a real
+              // deliverable a reviewer can edit, which is the trade the
+              // always-deliver rule asks for. Recorded `unresolved`, so nobody
+              // mistakes it for the writer's work.
+              const credit = intake.sourceContext?.title ?? intake.sourceContext?.channel ?? intake.sourceContext?.label ?? "the source recording";
+              const assembled = normalizeCommentaryDashes({
+                caption: `${moment.hookLine.trim()}
+
+${credit}`,
+                about: `A ${Math.round(bounds.endSeconds - bounds.startSeconds)}s clip from ${credit}. The commentary writer returned nothing usable on this run, so this caption is the clip's own opening line plus the credit - rewrite it before publishing.`,
+                sourceCredit: credit,
+              });
+              return {
+                value: assembled,
+                repairs: [
+                  {
+                    check: "commentary-draft",
+                    action: "unresolved" as const,
+                    detail: "the commentary writer returned nothing schema-valid; the caption was assembled from the clip's own hook line and source credit, and wants an edit before it goes out",
+                  },
+                ],
+              };
             }
             if (exec.status !== "completed") {
               throw new WorkflowToolingFailure(`commentary step resolved to "${exec.status}"`);
@@ -1852,23 +2162,60 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             // or gates the text (see `normalizeBannedDashes`): the agent has
             // already self-critiqued against the lint gate, this is the
             // backstop that makes a stray dash a comma instead of a held run.
-            return normalizeCommentaryDashes(exec.finalOutput as Commentary);
+            return { value: normalizeCommentaryDashes(exec.finalOutput as Commentary), repairs: [] };
           }),
-        (c) => `${c.caption}\n\n${c.about}`,
+        (c) => `${c.value.caption}\n\n${c.value.about}`,
       );
+      const commentary = commentaryDraft.value;
 
-      // ── 07: compliance pass ──
-      await wf.step.code(rev("07-compliance"), async () => {
-        // Source credit first, and checked in code rather than asked of the
-        // model that wrote it. The legacy rule is explicit that the on-clip
-        // attribution block is not enough — the caption has to name it — and a
-        // clip that ships uncredited is the one failure here with a party
-        // outside this system.
-        if (!commentary.caption.includes(commentary.sourceCredit)) {
-          throw new WorkflowHeld("the caption does not carry the source credit, and an on-clip attribution block alone is not enough");
-        }
-        await runTextGates(`${commentary.caption}\n\n${commentary.about}`);
-      });
+      // ── 07: compliance pass — repairs, never holds ──
+      const compliance = await wf.step.code(
+        rev("07-compliance"),
+        async (): Promise<{ caption: string; about: string; repairs: ContentRepair[] }> => {
+          const repairs: ContentRepair[] = [...commentaryDraft.repairs];
+          // Source credit first, and checked in code rather than asked of the
+          // model that wrote it. The legacy rule is explicit that the on-clip
+          // attribution block is not enough — the caption has to name it — and
+          // a clip that ships uncredited is the one failure here with a party
+          // outside this system.
+          //
+          // Which is exactly why it is APPENDED rather than held on. The rule
+          // protects the person whose footage this is, and a held run protects
+          // them no better than a credited caption does while costing the
+          // client the clip. Appending is a string concatenation; the model
+          // already produced the credit, it simply did not put it in the
+          // caption. Recorded, so a reviewer sees the caption was completed.
+          let caption = commentary.caption;
+          if (!caption.includes(commentary.sourceCredit)) {
+            caption = `${caption.trimEnd()}\n\n${commentary.sourceCredit}`;
+            repairs.push({
+              check: "source-credit",
+              action: "rewritten",
+              detail: `the caption did not name the source, so "${commentary.sourceCredit}" was appended to it — an on-clip attribution block alone is not enough`,
+            });
+          }
+          const gated = await runTextGates([
+            { key: "caption", text: caption, shape: "prose" },
+            { key: "about", text: commentary.about, shape: "prose" },
+          ]);
+          repairs.push(...gated.repairs);
+          // The caption only: `about` is written for the client's own team and
+          // the clip transcript is in whatever language the speaker used, so
+          // neither is evidence about the language the client publishes in.
+          // No redraft here, unlike the script - a commentary draft costs a
+          // dedupe-verified attempt, and the reviewer edits the caption in
+          // place. The failure is named instead.
+          const captionLanguage = checkDraftLanguage(gated.text["caption"] ?? caption, targetLanguage);
+          if (!captionLanguage.ok) {
+            repairs.push({
+              check: "target-language",
+              action: "unresolved",
+              detail: `${captionLanguage.reason}; expected ${targetLanguage.tag} (${targetLanguage.reason})`,
+            });
+          }
+          return { caption: gated.text["caption"] ?? caption, about: gated.text["about"] ?? commentary.about, repairs };
+        },
+      );
 
       // ── 08: render — cut, caption, branded frame, all pure ffmpeg. ──
       const rendered = await wf.step.code(rev("08-render"), async (): Promise<{ outputPath: string; durationSeconds: number | null }> => {
@@ -1909,19 +2256,25 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         // kept, the letterbox filled with a blurred copy of it rather than flat
         // ground, the way every podcast clip on the platform is cut. A crop
         // would take the faces; flat bars read as a screen recording.
-        return brandFrame(clipPath, workDir, srtPath, [], "blur-fill", captionFontFor(videoBrand.language));
+        return brandFrame(clipPath, workDir, srtPath, [], "blur-fill", captionFontFor(targetLanguage.tag));
       });
 
+      // The REPAIRED copy from here on, never the model's original: it is what
+      // the render burned nothing of, what the guardrail must judge, what the
+      // reviewer reads and what step 13 writes into the dedupe window. Scoring
+      // the pre-repair text would compare future runs against words that never
+      // shipped.
       return finishDraft(rev, revision, {
-        commentary: { caption: commentary.caption, about: commentary.about, sourceCredit: commentary.sourceCredit },
+        commentary: { caption: compliance.caption, about: compliance.about, sourceCredit: commentary.sourceCredit },
         voiceover: false,
         renderedPath: rendered.outputPath,
         // The framed file's probed length is the truth; the transcript-derived
         // window is the fallback.
         durationSeconds: rendered.durationSeconds ?? bounds.endSeconds - bounds.startSeconds,
         hookLine: moment.hookLine,
-        guardrailText: `${commentary.caption}\n\n${commentary.about}\n\n${bounds.text}`,
+        guardrailText: `${compliance.caption}\n\n${compliance.about}\n\n${bounds.text}`,
         captionsExpected: bounds.words.length > 0,
+        repairs: compliance.repairs,
       });
     };
 
@@ -1982,7 +2335,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       //
       // Step ids carry `-replan-N` for the second and third attempts so every
       // draft, its dedupe verdict and its estimate stay in the trace.
-      const drafted = await (async (): Promise<{ script: ShortScript; voiceover: boolean; stillsAllowed: boolean; estimate: CostEstimate; replans: number; budgetPlan: BudgetPlan }> => {
+      const drafted = await (async (): Promise<{ script: ShortScript; voiceover: boolean; stillsAllowed: boolean; estimate: CostEstimate; replans: number; budgetPlan: BudgetPlan; repairs: ContentRepair[] }> => {
         const replanTargetUsd = Math.round(costCapUsd * REPLAN_TARGET_SHARE * 100) / 100;
         const visualQaRegistered = tools["video.visualQaGate"] !== undefined;
         let budgetFeedback: string | undefined;
@@ -1991,10 +2344,10 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           const feedback = budgetFeedback;
           // A footage-only revision keeps the approved words: no writer, no
           // dedupe (the same words were already verified), one cheap step.
-          const script =
+          const scriptDraft: Drafted<ShortScript> =
             footageRevision !== undefined
-              ? await wf.step.code(planRev("03s-script"), async (): Promise<ShortScript> => footageRevision.script)
-              : await draftWithVerifiedDedupe<ShortScript>(
+              ? await wf.step.code(planRev("03s-script"), async (): Promise<Drafted<ShortScript>> => ({ value: footageRevision.script, repairs: [] }))
+              : await draftWithVerifiedDedupe<Drafted<ShortScript>>(
             planRev,
             "03s-script",
             "03t-verify-not-duplicate",
@@ -2002,7 +2355,14 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
               wf.step.code(stepId, async () => {
                 const agent = new TikTokScriptAgent({ router: options.router, tools, promptStore: options.promptStore });
                 /** One drafting call; `structureFix` is the note a redraft gets about what the last draft got structurally wrong. */
-                const draftOnce = async (agentStepId: string, structureFix: string | undefined): Promise<ShortScript> => {
+                // `assembledInCode` is how the deterministic fallback below
+                // tells `assembled()` what it produced. It rides on the script
+                // rather than on a captured array because this whole closure is
+                // one checkpointed step: on a replay the step short-circuits
+                // and any side effect on a captured array never happens, so a
+                // short the fallback assembled would come back through the
+                // checkpoint claiming a writer wrote it.
+                const draftOnce = async (agentStepId: string, structureFix: string | undefined): Promise<ShortScript & { assembledInCode?: boolean }> => {
                   const exec = await runAgentStepWithCommitSteer(wf, agentStepId, agent, {
                     ...runDirectionField(runDirection),
                     topic,
@@ -2028,6 +2388,9 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
                     ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
                     ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
                     ...(dedupeAvoid !== undefined ? { dedupeAvoid } : {}),
+                    // What this account keeps BUILDING, as opposed to what it
+                    // keeps saying. Absent until there is a real pattern.
+                    ...(shapeDirective !== undefined ? { structuralMemory: shapeDirective } : {}),
                     ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
                     ...(directive !== undefined || structureFix !== undefined
                       ? { revisionRequest: [directive, structureFix].filter((s): s is string => s !== undefined).join("\n\n") }
@@ -2035,16 +2398,69 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
                     ...(feedback !== undefined ? { budgetFeedback: feedback } : {}),
                     voiceoverPolicy: config.voiceover,
                     allowPeople: config.allowPeopleInGeneratedFootage,
-                    ...(config.voiceLanguage ?? videoBrand.language ? { contentLanguage: config.voiceLanguage ?? videoBrand.language } : {}),
+                    contentLanguage: targetLanguage.tag,
                   }, "the script");
                   if (exec.status === "content_fail") {
-                    throw new WorkflowHeld("the script did not clear its own output validation");
+                    // The writer produced nothing schema-valid. A script made
+                    // up in code from a bare topic string would be filler, and
+                    // filler is worse than a held run - but when the run has a
+                    // grounded brief, its OWN sentences are real material the
+                    // scout already wrote and research already backed. A
+                    // text-led short built from them says something true, costs
+                    // nothing more, and reaches a person who can rewrite it.
+                    const brief = intake.discovered;
+                    const lines = [brief?.hook, brief?.angle, brief?.whyNow ?? runDirection.direction]
+                      .map((line) => line?.trim())
+                      .filter((line): line is string => line !== undefined && line.length > 0);
+                    if (lines.length < 3) {
+                      // No grounded brief and no typed direction: there is
+                      // nothing to say that we did not invent. The carve-out's
+                      // "nobody to write for", reached honestly.
+                      throw new WorkflowHeld(
+                        "the script writer returned nothing schema-valid, and this run carries no grounded topic brief or typed direction to build a short out of instead",
+                      );
+                    }
+                    const cap = (line: string, n: number) => (line.length > n ? `${line.slice(0, n - 1).trimEnd()}…` : line);
+                    return {
+                      hook: cap(lines[0]!, 200),
+                      // `seconds` is a 4 | 6 | 8 union and the beats are read
+                      // aloud by nobody, so they get the short hold: a text
+                      // plate a viewer has already finished reading is dead air.
+                      beats: lines.slice(0, 3).map((line) => ({
+                        narration: cap(line, 260),
+                        onScreenText: cap(line, 80),
+                        visualBrief: "a plain brand plate; this short is text-led and needs no footage",
+                        seconds: 4 as const,
+                      })),
+                      caption: cap(lines.join(" "), 600),
+                      about: "The script writer returned nothing usable on this run, so this short was assembled from the topic brief the scout produced. Rewrite it before publishing.",
+                      format: "text-led" as const,
+                      voiceover: false,
+                      voiceoverRationale: "assembled in code from the topic brief; a synthesized read of unwritten lines would only make it sound worse",
+                      language: targetLanguage.tag,
+                      // Read by `assembled` below, and by nothing else: it is
+                      // how a fallback script tells the step that produced it
+                      // what it is, without a captured array a replay skips.
+                      assembledInCode: true,
+                    };
                   }
                   if (exec.status !== "completed") {
                     throw new WorkflowToolingFailure(`script step resolved to "${exec.status}"`);
                   }
                   return normalizeScriptDashes(ShortScriptSchema.parse(exec.finalOutput));
                 };
+                /** The ledger line a script the fallback assembled carries out of this step; empty for one a writer wrote. */
+                const assembled = (script: ShortScript & { assembledInCode?: boolean }): ContentRepair[] =>
+                  script.assembledInCode === true
+                    ? [
+                        {
+                          check: "script-draft",
+                          action: "unresolved" as const,
+                          detail:
+                            "the script writer returned nothing schema-valid; a text-led short was assembled from the run's own grounded topic brief and wants a rewrite before it goes out",
+                        },
+                      ]
+                    : [];
                 // Structure the schema cannot check: beat 1 opens on the hook
                 // (repaired in code), no two beats say the same line (ONE
                 // redraft with the offending beats named, then the later copy
@@ -2059,65 +2475,216 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
                 const firstShots = shotVarietyIssues(first.repaired);
                 const firstPitch = salesPitchIssues(first.repaired, runDirection.direction);
                 const firstCircular = circularEndingIssues(first.repaired);
-                if (first.issues.length === 0 && firstVoice.length === 0 && firstShots.length === 0 && firstPitch.length === 0 && firstCircular.length === 0) return first.repaired;
+                // The words a VIEWER meets, and only those. `visualBrief` and
+                // `stockQuery` are excluded deliberately: they are a stock
+                // library's search terms, that library indexes in English, and
+                // gating on them would fail every correct Hebrew draft.
+                const spokenAndSeen = (sc: ShortScript) =>
+                  [sc.hook, sc.caption, ...sc.beats.flatMap((b) => [b.narration, b.onScreenText])].join("\n");
+                const firstLanguage = checkDraftLanguage(spokenAndSeen(first.repaired), targetLanguage);
+                if (
+                  first.issues.length === 0 &&
+                  firstVoice.length === 0 &&
+                  firstShots.length === 0 &&
+                  firstPitch.length === 0 &&
+                  firstCircular.length === 0 &&
+                  firstLanguage.ok
+                ) {
+                  return { value: first.repaired, repairs: assembled(first.repaired) };
+                }
                 const note = [
                   first.issues.length > 0 ? `Structure problem in your last draft: ${first.issues.join("; ")}. Rewrite so every beat carries its own line.` : undefined,
                   firstVoice.length > 0 ? `Voice problem in your last draft: ${firstVoice.join("; ")}. Keep the message; rewrite the lines as speech.` : undefined,
                   firstShots.length > 0 ? `Shot problem in your last draft: ${firstShots.join("; ")}. Keep the words; change only the stockQuery and visualBrief of the beats that share the place.` : undefined,
                   firstPitch.length > 0 ? `Pitch problem in your last draft: ${firstPitch.join("; ")}. Rewrite that beat so it ends on the idea, in the client's voice, with no offer and no address.` : undefined,
                   firstCircular.length > 0 ? `Ending problem in your last draft: ${firstCircular.join("; ")}. Keep the hook; rewrite only the last beat so it lands somewhere new.` : undefined,
+                  // Last in the note and first in importance: a short in the
+                  // wrong language is not a draft with a problem, it is a
+                  // deliverable nobody can post.
+                  !firstLanguage.ok ? languageRedraftDirective(targetLanguage, firstLanguage.reason) : undefined,
                 ]
                   .filter((s): s is string => s !== undefined)
                   .join("\n");
                 const second = repairScriptStructure(await draftOnce(`${agentStepId}-fix`, note));
                 const secondVoice = scriptVoiceIssues(second.repaired);
                 if (secondVoice.length > 0) console.warn(`${agentStepId}-fix: the redraft still reads off: ${secondVoice.join("; ")}; shipping to the reviewer as is`);
-                return second.issues.length === 0 ? second.repaired : dropRepeatedBeats(second.repaired);
+                const settled = second.issues.length === 0 ? second.repaired : dropRepeatedBeats(second.repaired);
+                // One redraft, then deliver. A second wrong-language draft is
+                // a model that cannot write this language today, and a third
+                // attempt buys another one at the same odds - so the short
+                // ships with the failure named, which is the whole shape of
+                // the always-deliver rule. The reviewer is the one who can
+                // tell "wrong language" from "loanword-heavy and correct".
+                const secondLanguage = checkDraftLanguage(spokenAndSeen(settled), targetLanguage);
+                const languageRepairs: ContentRepair[] = secondLanguage.ok
+                  ? []
+                  : [
+                      {
+                        check: "target-language",
+                        action: "unresolved" as const,
+                        detail: `${secondLanguage.reason}; the writer was asked once to write it again in ${targetLanguage.tag} (${targetLanguage.reason}) and did not, so the short is delivered for a person to judge`,
+                      },
+                    ];
+                if (!secondLanguage.ok) console.warn(`${agentStepId}-fix: ${secondLanguage.reason}; delivering flagged`);
+                return { value: settled, repairs: [...assembled(settled), ...languageRepairs] };
               }),
-            (s) => `${s.caption}\n\n${s.about}`,
+            (s) => `${s.value.caption}\n\n${s.value.about}`,
           );
+          const draftedScript = scriptDraft.value;
           // The client's config outranks the model's per-piece call; on `auto`
           // the model decided and said why.
-          const voiceover = config.voiceover === "always" ? true : config.voiceover === "never" ? false : script.voiceover;
+          const voiceover = config.voiceover === "always" ? true : config.voiceover === "never" ? false : draftedScript.voiceover;
 
           // ── 07: compliance pass — the caption and about, plus every line the
           //        viewer will hear or read, because on-screen words are
           //        published words too ──
-          await wf.step.code(planRev("07-compliance"), async () => {
-            await runTextGates([script.caption, script.about, ...script.beats.flatMap((b) => [b.narration, b.onScreenText])].join("\n\n"));
+          //
+          // Repairs rather than holds (2026-09-18). A beat's `narration` is
+          // prose and loses the sentence carrying a flagged span; its
+          // `onScreenText` is a title card of four or five words, so it loses
+          // the SPAN and keeps the card — redacting a card's only sentence
+          // would leave a beat with a blank plate. The repaired script is what
+          // is priced, voiced, captioned and rendered: everything downstream
+          // reads `script`, and nothing downstream should ever see the words
+          // the gates objected to.
+          const complied = await wf.step.code(planRev("07-compliance"), async (): Promise<{ script: ShortScript; repairs: ContentRepair[] }> => {
+            const gated = await runTextGates([
+              { key: "caption", text: draftedScript.caption, shape: "prose" },
+              { key: "about", text: draftedScript.about, shape: "prose" },
+              { key: "hook", text: draftedScript.hook, shape: "line" },
+              ...draftedScript.beats.flatMap((b, i) => [
+                { key: `beat${i + 1}.narration`, text: b.narration, shape: "prose" as const },
+                { key: `beat${i + 1}.onScreenText`, text: b.onScreenText, shape: "line" as const },
+              ]),
+            ]);
+            const repaired: ShortScript = {
+              ...draftedScript,
+              caption: gated.text["caption"] ?? draftedScript.caption,
+              about: gated.text["about"] ?? draftedScript.about,
+              hook: gated.text["hook"] ?? draftedScript.hook,
+              beats: draftedScript.beats.map((b, i) => ({
+                ...b,
+                narration: gated.text[`beat${i + 1}.narration`] ?? b.narration,
+                onScreenText: gated.text[`beat${i + 1}.onScreenText`] ?? b.onScreenText,
+              })),
+            };
+            // A repaired hook has to reach beat 1 too, or the cold open says
+            // one thing and the voice says another — `repairScriptStructure`'s
+            // own invariant, re-established after the redaction.
+            return { script: repairScriptStructure(repaired).repaired, repairs: [...scriptDraft.repairs, ...gated.repairs] };
           });
+          const script = complied.script;
 
           const narrationChars = script.beats.reduce((n, b) => n + b.narration.trim().length, 0);
           const narrationWords = script.beats.reduce((n, b) => n + b.narration.trim().split(/\s+/).length, 0);
-          const estimate = await wf.step.code(planRev("03v-estimate-cost"), async () =>
-            estimateOriginalShortCost({ spentSoFarUsd: await wf.costSoFarUsd(), narrationChars, beats: script.beats.filter((b) => b.stat === undefined).length, voiceover, stillsAllowed: script.format !== "text-led" && clientFootage === undefined, visualQaRegistered, costCapUsd }),
-          );
-          if (estimate.estimatedTotalUsd <= costCapUsd) {
-            return { script, voiceover, stillsAllowed: script.format !== "text-led" && clientFootage === undefined, estimate, replans: attempt, budgetPlan: attempt === 0 ? "original" : "replan" };
-          }
-          if (attempt < MAX_BUDGET_REPLANS) {
-            budgetFeedback = budgetFeedbackFor(estimate, replanTargetUsd, script.beats.length, narrationWords);
+          const paidBeats = script.beats.filter((b) => b.stat === undefined).length;
+          const canBuyStills = script.format !== "text-led" && clientFootage === undefined;
+
+          // ── 03v: price the whole plan, then climb `BUDGET_RUNG_ORDER` ──
+          //
+          // The plan is priced against the SOFT TARGET, not the hard ceiling
+          // (2026-09-18, the owner's *quality before cost* ruling). Under the
+          // target the short is built as written and gives up nothing — which
+          // is the normal path and the point of the change: a short that wants
+          // a voice and a photograph on two beats is now planned, not trimmed.
+          //
+          // Over the target, the rungs come off in `BUDGET_RUNG_ORDER`, which
+          // is the part that actually changed. The old ladder dropped the
+          // still, then the voice, then the QA watch — the three things that
+          // decide whether a stranger finishes the short — because it was
+          // written to stop Veo, which has not been a tier since 2026-09-09.
+          // Now the photographs go first, the writer is asked next, and the
+          // voice and the QA watch are the last things any run gives up.
+          const planned = await wf.step.code(planRev("03v-estimate-cost"), async () => {
+            const spentSoFarUsd = await wf.costSoFarUsd();
+            const price = (opts: { voiceover: boolean; stillsAllowed: boolean }) =>
+              estimateOriginalShortCost({ spentSoFarUsd, narrationChars, beats: paidBeats, voiceover: opts.voiceover, stillsAllowed: opts.stillsAllowed, visualQaRegistered, costCapUsd });
+
+            const rungs: BudgetRung[] = [];
+            let stillsAllowed = canBuyStills;
+            let plannedVoice = voiceover;
+            let estimate = price({ voiceover: plannedVoice, stillsAllowed });
+            if (estimate.estimatedTotalUsd <= targetSpendUsd) {
+              return { estimate, stillsAllowed, voiceover: plannedVoice, rungs, askWriter: false };
+            }
+
+            // Rung 1 — ask the writer. First because it is the only rung the
+            // viewer does not pay for: a shorter short keeps its pictures and
+            // its voice, where every rung below costs one of them.
+            if (attempt < MAX_BUDGET_REPLANS) {
+              return { estimate, stillsAllowed, voiceover: plannedVoice, rungs, askWriter: true };
+            }
+
+            // Rung 2 — the bought photographs. The largest line in any plan,
+            // and the only one with a free tier directly underneath it: the
+            // beat still gets a picture, just its own line rather than a
+            // photograph. Against the HARD ceiling from here down — the gap
+            // between the target and the wall exists precisely so an ambitious
+            // short can spend it rather than be trimmed into an ordinary one.
+            if (stillsAllowed && estimate.estimatedTotalUsd > costCapUsd) {
+              stillsAllowed = false;
+              rungs.push("stills");
+              estimate = price({ voiceover: plannedVoice, stillsAllowed });
+            }
+
+            // Rung 3 — the voice. A silent short is a materially worse short,
+            // so it goes after every photograph in the piece.
+            if (plannedVoice && estimate.estimatedTotalUsd > costCapUsd) {
+              plannedVoice = false;
+              rungs.push("voice");
+              estimate = price({ voiceover: false, stillsAllowed });
+            }
+            // Rung 4 — the QA watch is the last thing cut, and the guard that
+            // does it lives at `10b-visual-qa` against real spend rather than
+            // against an estimate. Nothing is dropped here.
+            return { estimate, stillsAllowed, voiceover: plannedVoice, rungs, askWriter: false };
+          });
+
+          if (planned.askWriter) {
+            budgetFeedback = budgetFeedbackFor(planned.estimate, replanTargetUsd, script.beats.length, narrationWords);
             continue;
           }
 
-          // ── 03w: the deterministic fallback. No more asking: stock only,
-          //         and silent if stock only still does not fit. ──
-          return wf.step.code(planRev("03w-budget-fallback"), async () => {
-            const spentSoFarUsd = await wf.costSoFarUsd();
-            let plan: BudgetPlan = "stock-only";
-            let finalVoice = voiceover;
-            let fallback = estimateOriginalShortCost({ spentSoFarUsd, narrationChars, beats: script.beats.filter((b) => b.stat === undefined).length, voiceover: finalVoice, stillsAllowed: false, visualQaRegistered, costCapUsd });
-            if (fallback.estimatedTotalUsd > costCapUsd && finalVoice) {
-              finalVoice = false;
-              plan = "stock-only-silent";
-              fallback = estimateOriginalShortCost({ spentSoFarUsd, narrationChars, beats: script.beats.filter((b) => b.stat === undefined).length, voiceover: false, stillsAllowed: false, visualQaRegistered, costCapUsd });
-            }
-            console.warn(`03w-budget-fallback: two re-plans still priced over $${costCapUsd.toFixed(2)}; continuing as ${plan} at an estimated $${fallback.estimatedTotalUsd.toFixed(2)}`);
-            return { script, voiceover: finalVoice, stillsAllowed: false, estimate: fallback, replans: attempt, budgetPlan: plan };
-          });
+          const budgetPlan: BudgetPlan = planned.rungs.includes("voice")
+            ? "stock-only-silent"
+            : planned.rungs.includes("stills")
+              ? "stock-only"
+              : attempt === 0
+                ? "original"
+                : "replan";
+          if (planned.rungs.length > 0) {
+            console.warn(
+              `${planRev("03v-estimate-cost")}: the plan priced over $${targetSpendUsd.toFixed(2)}; gave up ${planned.rungs.join(", ")} and continues at an estimated $${planned.estimate.estimatedTotalUsd.toFixed(2)}`,
+            );
+          }
+          return {
+            script,
+            voiceover: planned.voiceover,
+            stillsAllowed: planned.stillsAllowed,
+            estimate: planned.estimate,
+            replans: attempt,
+            budgetPlan,
+            repairs: [
+              ...complied.repairs,
+              // A rung is an adaptation the client's short actually wears, so
+              // it belongs in the same ledger as a redacted sentence — not in a
+              // separate budget report nobody opens.
+              ...(planned.rungs.length > 0
+                ? [
+                    {
+                      check: "run-budget",
+                      action: "trimmed" as const,
+                      detail: `the plan priced over the $${targetSpendUsd.toFixed(2)} target, so this short gave up ${planned.rungs.join(", then ")} (estimated $${planned.estimate.estimatedTotalUsd.toFixed(2)} against a $${costCapUsd.toFixed(2)} ceiling)`,
+                    },
+                  ]
+                : []),
+            ],
+          };
         }
       })();
       const { script, voiceover, stillsAllowed, estimate, replans, budgetPlan } = drafted;
+      /** Everything this round had to repair, from the compliance pass onward; the plate loop and the render append to it. */
+      const roundRepairs: ContentRepair[] = [...drafted.repairs];
 
       /**
        * A line set large on the brand ground (`video.textPlate`), in the
@@ -2127,7 +2694,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       const renderTextPlate = async (text: string, outputName: string, seconds: number, about: string, stat?: { value: string; label: string }): Promise<string | undefined> => {
         const render = tools["video.textPlate"];
         if (render === undefined) return undefined;
-        const font = captionFontFor(config.voiceLanguage ?? videoBrand.language ?? script.language);
+        const font = captionFontFor(targetLanguage.tag);
         const outcome = await render.execute(
           {
             text: text.length > 160 ? `${text.slice(0, 157).trimEnd()}…` : text,
@@ -2162,12 +2729,28 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       /** One beat's footage: one shot, or two when the beat is long and the library had two clips for it. */
       interface BeatPlates {
         shots: PlateResult[];
+        /**
+         * Why this beat has no shots, when it has none.
+         *
+         * An EMPTY `shots` is not an error any more (2026-09-18): it is a beat
+         * the whole ladder - the client's own footage, the library, a bought
+         * still, the free text plate - could not picture, in practice because
+         * a deployment has no `video.textPlate` at all. It used to hold the
+         * run and throw away every other beat that HAD worked. The resolution
+         * pass below stands a neighbouring shot in its place and records it.
+         */
+        miss?: string;
       }
       const beatPlates: BeatPlates[] = [];
       const plateSources: PlateSource[] = [];
       // Seeded with the clips a footage-only revision is replacing, so the
-      // library cannot hand the same one back for the beat a reviewer named.
-      const usedStockIds: number[] = [...(footageRevision?.excludeStockIds ?? [])];
+      // library cannot hand the same one back for the beat a reviewer named —
+      // AND, since 2026-09-18, with every clip this client's previous shorts
+      // already used. That list was run-scoped, so the exclusion reset every
+      // run; Pexels' results for a query like "office desk" are stable, so two
+      // shorts a week apart on adjacent topics opened on the same footage and
+      // both passed every gate because neither knew about the other.
+      const usedStockIds: number[] = [...shapeMemory.usedStockIds, ...(footageRevision?.excludeStockIds ?? [])];
       for (let i = 0; i < script.beats.length; i++) {
         const beat = script.beats[i]!;
         // Revision-scoped (2026-09-10): a revised script needs its own plates,
@@ -2177,7 +2760,9 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           // A text-led short never searches: the beat's line IS the picture.
           if (script.format === "text-led") {
             const rendered = await renderTextPlate(beat.onScreenText, `plate-${i + 1}-text`, beat.seconds, `beat ${i + 1}`);
-            if (rendered === undefined) throw new WorkflowHeld("this short is text-led and video.textPlate is not registered in this deployment");
+            if (rendered === undefined) {
+              return { shots: [], miss: "this short is text-led and video.textPlate is not registered in this deployment" };
+            }
             return { shots: [{ path: rendered, source: "text" }] };
           }
           // A STAT beat (2026-09-10): one number from the brief is its own
@@ -2234,9 +2819,21 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           // A still is a purchase. It is off the table when the plan said
           // stock only, when the client said stock only, or when the run has
           // already reached its ceiling: in every one of those cases the beat
-          // walks the free ladder below instead, and a beat nothing free can
-          // serve is the one honest hold left.
-          const stillsHere = stillsAllowed && config.footageSource !== "stock" && (await wf.costSoFarUsd()) < costCapUsd;
+          // walks the free ladder below instead.
+          //
+          // And — 2026-09-18, the quality-first correction — it is off the
+          // table when buying it would leave nothing for the VOICE and the QA
+          // WATCH. Those three guards all used to fire at the same number, so
+          // the one that won was simply the one execution reached first, and
+          // execution reaches the plates before either of the others. A short
+          // could spend its last cents on a $0.067 photograph for beat 5 and
+          // then run silent and unwatched: the most money for the least
+          // return. `BUDGET_RUNG_ORDER` says the voice and the QA come off the
+          // ladder LAST, and a reservation is the only way to make that true
+          // mid-run rather than only in the plan.
+          const spentBeforePlate = await wf.costSoFarUsd();
+          const stillsHere =
+            stillsAllowed && config.footageSource !== "stock" && spentBeforePlate + unitPriceUsd("gemini-3.1-flash-image") + VOICE_AND_QA_RESERVE_USD <= costCapUsd;
 
           if (tools["video.findStockClip"] === undefined) {
             misses.push("stock: video.findStockClip is not registered");
@@ -2264,13 +2861,18 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           const textPlate = async (because: string): Promise<BeatPlates> => {
             const rendered = await renderTextPlate(beat.onScreenText, `plate-${i + 1}-text`, beat.seconds, `beat ${i + 1}`);
             if (rendered === undefined) {
-              throw new WorkflowHeld(`no footage for beat ${i + 1} ("${query}"): ${misses.join("; ")}; ${because}; and video.textPlate is not registered`);
+              return { shots: [], miss: `no footage for beat ${i + 1} ("${query}"): ${misses.join("; ")}; ${because}; and video.textPlate is not registered` };
             }
             return { shots: [{ path: rendered, source: "text" }] };
           };
 
           if (!stillsHere) {
-            const why = config.footageSource === "stock" ? 'this client\'s footageSource is "stock"' : !stillsAllowed ? `the plan is ${budgetPlan}` : "the run has reached its cost ceiling";
+            const why =
+              config.footageSource === "stock"
+                ? 'this client\'s footageSource is "stock"'
+                : !stillsAllowed
+                  ? `the plan is ${budgetPlan}`
+                  : `buying one would leave under $${VOICE_AND_QA_RESERVE_USD.toFixed(2)} for the voice and the QA watch`;
             return textPlate(`no still may be bought (${why})`);
           }
 
@@ -2315,10 +2917,62 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           return { shots: [{ path: (clip.result as { outputPath: string }).outputPath, source: "still" }] };
         });
         beatPlates.push(plate);
+        // `usedStockIds` is an INPUT to the next beat's search (it is what
+        // `excludeIds` is built from), so it has to be current before the loop
+        // comes round again - it cannot wait for the resolution pass below the
+        // way `plateSources` can. Moving this out is how two beats end up on
+        // the same library clip.
         for (const shot of plate.shots) {
-          plateSources.push(shot.source);
           if (shot.stockId !== undefined) usedStockIds.push(shot.stockId);
         }
+      }
+
+      // -- 04q: a beat nothing could picture --
+      //
+      // Every tier missed and there was no text plate under them. That used to
+      // end the run, discarding the script, the other beats' footage and the
+      // voice that was about to be bought for it. A neighbouring shot stands in
+      // instead: the narration still plays, the viewer sees the previous
+      // picture held a little longer, and the substitution rides on the
+      // deliverable. A repeated shot is a worse short; no short is no
+      // deliverable, and the owner's rule settles which of those we ship.
+      //
+      // The nearest EARLIER plated beat, so the stand-in is a picture the
+      // viewer has already been led to rather than one from later in the piece.
+      // With nothing plated at all there is no picture anywhere in the short
+      // and nothing to stand in for anything: that is the carve-out's genuine
+      // tooling failure, and it names which tool is missing.
+      const plated = (p: BeatPlates): boolean => p.shots.length > 0;
+      const firstPlatedIndex = beatPlates.findIndex(plated);
+      if (firstPlatedIndex === -1) {
+        throw new WorkflowToolingFailure(
+          `no plate could be made for any of the ${beatPlates.length} beats - ${beatPlates.map((p, i) => `beat ${i + 1}: ${p.miss ?? "no shots"}`).join("; ")}`,
+        );
+      }
+      for (const [i, plate] of beatPlates.entries()) {
+        if (plated(plate)) continue;
+        let donor = firstPlatedIndex;
+        for (let j = i - 1; j >= 0; j--) {
+          if (plated(beatPlates[j]!)) {
+            donor = j;
+            break;
+          }
+        }
+        beatPlates[i] = { shots: [beatPlates[donor]!.shots[0]!], ...(plate.miss !== undefined ? { miss: plate.miss } : {}) };
+        roundRepairs.push({
+          check: "beat-footage",
+          action: "substituted",
+          detail: `beat ${i + 1} has no picture of its own (${plate.miss ?? "every tier missed"}); beat ${donor + 1}'s shot is held over it instead`,
+        });
+      }
+
+      // `plateSources`, by contrast, IS built after the resolution pass and
+      // never inside the loop: a stand-in shot has to appear at ITS beat's
+      // position, because that list is how a reviewer knows which plates in
+      // the clip they are watching are real footage. Nothing reads it before
+      // the render, so there is no ordering cost to waiting.
+      for (const plate of beatPlates) {
+        for (const shot of plate.shots) plateSources.push(shot.source);
       }
 
       // ── 05: VOICE — the narration spoken, then TIMED by transcribing the
@@ -2335,7 +2989,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       });
 
       const narration = script.beats.map((b) => b.narration.trim()).join(" … ");
-      const language = config.voiceLanguage ?? videoBrand.language ?? script.language;
+      const language = targetLanguage.tag;
       const voice = await wf.step.code(rev("05-voiceover"), async (): Promise<{ path: string; durationSeconds: number | null; words: TranscriptWordLike[]; notes: string[] } | null> => {
         if (!voiceover) return null;
         if ((await wf.costSoFarUsd()) >= costCapUsd) {
@@ -2615,6 +3269,10 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           // reviewer then sees "unknown" rather than a claim nobody verified.
           music: musicOutcome ?? { applied: false, note: "render replayed from checkpoint; bed status not re-derived" },
           ...(repick !== undefined ? { repick } : {}),
+          // Everything this round adapted around on its way here: a redacted
+          // sentence, a beat whose picture is a neighbour's, a check nothing
+          // could satisfy. `finishDraft` appends the advisory gate verdicts.
+          repairs: roundRepairs,
         });
       };
 
@@ -2701,15 +3359,27 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     ): Promise<ClipDraft> => {
       const { renderedPath } = draft;
 
-      await wf.step.code(rev("09-qa-gate"), async () => {
-        // Blocking. The legacy rule: "Any failure aborts THIS candidate (never
-        // ship degraded)." The bitstream check is the one deterministic QA the
-        // file itself can answer.
+      // ── 09: the bitstream QA — the one deterministic check the file itself
+      //         can answer (duration, streams, silence, black frames). ──
+      //
+      // The legacy rule here was "any failure aborts THIS candidate (never
+      // ship degraded)", written when there was no way to tell a reviewer
+      // anything. There is now: the clip is uploaded below and a person meets
+      // it at 11-clip-review with a play button. A file this gate dislikes and
+      // a person can watch is strictly more useful than no file and a sentence
+      // — and the gate has no authority a human watching the same clip lacks.
+      //
+      // So it is advisory, exactly as the visual QA became on 2026-09-07, and
+      // for the same reason. A `tooling_error` still throws: a check that could
+      // not run has made no judgment.
+      const selfEval = await wf.step.code(rev("09-qa-gate"), async (): Promise<{ passed: boolean; reason?: string }> => {
         const verdict = await runGate(tools, "video.selfEvalGate", { videoPath: renderedPath }, ctx);
         if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`video.selfEvalGate: ${verdict.reason}`);
         if (verdict.verdict === "content_fail") {
-          throw new WorkflowHeld(`video.selfEvalGate failed: ${verdict.reason}`);
+          console.warn(`${rev("09-qa-gate")}: video.selfEvalGate flagged the file, shipping to review flagged rather than held: ${verdict.reason}`);
+          return { passed: false, reason: verdict.reason };
         }
+        return { passed: true };
       });
 
       // ── 10a: upload BEFORE the human gate, so the reviewer can actually
@@ -2785,7 +3455,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
               captionsExpected: draft.captionsExpected,
               voiceoverExpected: draft.voiceover,
               brandColors: [videoBrand.ground, videoBrand.fg, ...(videoBrand.accent ? [videoBrand.accent] : [])],
-              ...(videoBrand.language ? { language: videoBrand.language } : {}),
+              language: targetLanguage.tag,
               format,
               // The beats and their windows, so the model says WHICH shot is
               // wallpaper under its line, not only that one is.
@@ -2837,6 +3507,18 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       // play button is what this clip actually cost to bring to the reviewer.
       const costSoFarUsd = Math.round((await wf.costSoFarUsd()) * 1_000_000) / 1_000_000;
 
+      // Everything the production pass had to repair, plus the two advisory
+      // verdicts that used to be holds — one ledger, in the order the run met
+      // them, so a reviewer reads the whole story of this clip in one place.
+      const repairs: ContentRepair[] = [...(draft.repairs ?? [])];
+      if (!selfEval.passed) {
+        repairs.push({
+          check: "video.selfEvalGate",
+          action: "unresolved",
+          detail: `${selfEval.reason ?? "the finished file failed its bitstream check"} — delivered flagged for a person to watch rather than withheld`,
+        });
+      }
+
       return {
         commentary: draft.commentary,
         ...(draft.script ? { script: draft.script } : {}),
@@ -2845,6 +3527,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         durationSeconds: draft.durationSeconds,
         uploaded,
         hookLine: draft.hookLine,
+        ...(repairs.length > 0 ? { repairs } : {}),
         costSoFarUsd,
         ...(draft.estimatedCostUsd !== undefined ? { estimatedCostUsd: draft.estimatedCostUsd } : {}),
         ...(draft.budgetPlan !== undefined ? { budgetPlan: draft.budgetPlan } : {}),
@@ -2904,7 +3587,28 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           ...(draft.uploaded !== null ? { gcsUri: draft.uploaded.gcsUri } : {}),
           // The visual QA model's read, so a flagged clip arrives with the
           // reason beside the play button instead of as a held run.
-          ...(draft.visualQa !== undefined ? { visualQa: draft.visualQa, flagged: !draft.visualQa.passed } : {}),
+          ...(draft.visualQa !== undefined ? { visualQa: draft.visualQa } : {}),
+          // Everything this round had to adapt around on its way to a clip: a
+          // redacted sentence, an appended source credit, a beat wearing a
+          // neighbour's picture, a writer that returned nothing. The reviewer
+          // needs this beside the play button more than anywhere else - it is
+          // the difference between a clip that came out clean and one that was
+          // salvaged, and nothing else on the payload says which they are
+          // watching.
+          ...(draft.repairs !== undefined && draft.repairs.length > 0 ? { contentRepairs: draft.repairs } : {}),
+          // The one field the portal reads to decide whether to shout.
+          ...(draft.visualQa?.passed === false || (draft.repairs?.length ?? 0) > 0 ? { flagged: true } : {}),
+          // Set when the cut was chosen by code rather than by the picker.
+          ...(momentFallback !== undefined ? { momentFallback } : {}),
+          // What the moment floor OBSERVED but did not act on — a window with
+          // no figure and no contrast connective may still be the best thirty
+          // seconds in the episode, and that call is the reviewer's.
+          ...(momentFloorNotes.length > 0 ? { momentNotes: momentFloorNotes } : {}),
+          // Which language this short is in and where that came from. Shown
+          // always, not only on a failure: "we assumed English because nobody
+          // configured anything" is exactly the thing a reviewer of a Hebrew
+          // client's short needs to see before they approve it.
+          targetLanguage: { tag: targetLanguage.tag, source: targetLanguage.source, reason: targetLanguage.reason, assumed: targetLanguage.assumed },
           // Which plates are real footage and which are generated stills.
           ...(draft.plateSources !== undefined ? { plateSources: draft.plateSources } : {}),
           // What it cost to get here, what the plan was priced at, and the
@@ -2928,7 +3632,15 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         // A clip the visual QA never got to watch (a skipped or failed gate,
         // as under the 2026-09-10 Vertex hold) waits for a person too: a clip
         // nobody reviewed is exactly what the audit found shipping.
-        timeout: { duration: "1h", onTimeout: draft.visualQa !== undefined && draft.visualQa.passed ? "auto_approve" : "hold" },
+        // An unanswered gate approves itself after an hour ONLY for a clip the
+        // visual QA watched and passed AND that this run did not have to
+        // repair. A repaired clip is precisely the one a person has to see:
+        // the always-deliver rule buys the client a deliverable, not a silent
+        // publish of work the run itself knows is degraded.
+        timeout: {
+          duration: "1h",
+          onTimeout: draft.visualQa?.passed === true && (draft.repairs?.length ?? 0) === 0 ? "auto_approve" : "hold",
+        },
       }),
       onDecision: async ({ revision, response, output }) => {
         // SCRUM-306 (AU23): a reject's drafted content previously had nowhere
@@ -2979,6 +3691,39 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         ? { outcome: review.outcome, detail: review.outcomeDetail ?? review.outcome }
         : null;
     const { commentary: copy, script, voiceover, renderedPath, durationSeconds, uploaded } = review.output;
+    /**
+     * Everything the APPROVED round had to repair, plus the reviewer's own
+     * verdict when it was not an approval and the cut's provenance when code
+     * picked it.
+     *
+     * The honest half of the owner's always-deliver rule (2026-09-17). Taken
+     * from `review.output`, which is the round a human actually saw — not the
+     * last round attempted — so the ledger describes the clip that shipped.
+     */
+    const contentRepairs: ContentRepair[] = [...(review.output.repairs ?? [])];
+    if (momentFallback !== undefined) {
+      contentRepairs.push({ check: "moment-selection", action: "substituted", detail: momentFallback });
+    }
+    if (momentFloorNote !== undefined) {
+      contentRepairs.push({
+        check: "moment-floor",
+        action: "unresolved",
+        detail: `${momentFloorNote} — and no other run of whole sentences in this recording scores better, so the clip ships for a person to judge`,
+      });
+    }
+    // An ASSUMED language is deliberately NOT a repair.
+    //
+    // It is visible either way - `targetLanguage.assumed` rides on the gate
+    // payload and the deliverable, which is where a reviewer reads it. But the
+    // repair ledger means "this run had to adapt around something", and most
+    // clients have no `voiceLanguage` and no brand language and publish in
+    // English perfectly happily. Pushing a repair here would attach a degrade
+    // marker to the majority of clean runs, which is the "shouting `degraded`
+    // at every clean post until nobody reads it" failure in reverse - the same
+    // asymmetry `contentRepairs` is documented to protect.
+    if (reviewOutcome !== null) {
+      contentRepairs.push({ check: "human-review", action: "unresolved", detail: reviewOutcome.detail });
+    }
 
     /**
      * D11's goal line — what this clip is for, who for, and why now.
@@ -3036,6 +3781,14 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             // The visual QA model's read, persisted with what shipped so the
             // portal can show a flagged clip as flagged after the fact.
             ...(review.output.visualQa !== undefined ? { visualQa: review.output.visualQa } : {}),
+            // What the APPROVED round had to adapt around, plus the reviewer's
+            // own verdict when it was not an approval. Absent, never empty, on
+            // a clean run: a marker attached unconditionally is the "silently
+            // shipping a degraded clip" failure in reverse - shouting at every
+            // clean clip until nobody reads it.
+            ...(contentRepairs.length > 0 ? { contentRepairs } : {}),
+            ...(momentFallback !== undefined ? { momentFallback } : {}),
+            targetLanguage: { tag: targetLanguage.tag, source: targetLanguage.source, assumed: targetLanguage.assumed },
             ...(review.output.plateSources !== undefined ? { plateSources: review.output.plateSources } : {}),
             ...(review.output.repick !== undefined ? { repick: review.output.repick } : {}),
             ...(review.output.revisionKind !== undefined ? { revisionKind: review.output.revisionKind } : {}),
@@ -3080,6 +3833,25 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         await tools["ledger.recordOutputExcerpt"]?.execute({ agentId: "tiktok-agent", runId: wf.runId, excerpt: `${copy.caption}\n\n${copy.about}` }, { ctx });
       } catch (error) {
         console.error("13-commit-and-record: could not record the output excerpt for future dedup", error);
+      }
+      // What this account has now MADE. The used-media ledger states the rule
+      // for itself — "an image that never shipped was never used" — and it
+      // applies to both halves of this: a short a reviewer turned down never
+      // reached a feed, so it cannot have made the account look repetitive,
+      // and the library clips it fetched are still free for the next run to
+      // use. `reviewOutcome` is non-null for a reject and for a cycle that ran
+      // out of rounds, and neither of those shipped anything.
+      try {
+        const record = reviewOutcome === null ? tools["ledger.recordUsedImages"] : undefined;
+        if (record !== undefined) {
+          const entries = [
+            ...(review.output.plateStockIds ?? []).flatMap((p) => p.ids.map(stockClipEntry)),
+            ...(script !== undefined ? [skeletonEntry(skeletonOf(script))] : []),
+          ];
+          if (entries.length > 0) await record.execute({ imagePaths: entries }, { ctx });
+        }
+      } catch (error) {
+        console.error("13-commit-and-record: could not record this short's shape for future runs", error);
       }
       const memory = tools["memory.appendDecision"];
       if (memory) {
