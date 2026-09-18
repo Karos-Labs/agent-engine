@@ -530,3 +530,45 @@ describe("a separated number survives isolation", () => {
     expect(isolateForeignRuns("we counted 1,500 of them", "ltr")).toBe("we counted 1,500 of them");
   });
 });
+
+/**
+ * # A HASHTAG OPENS ON A BIDI NEUTRAL
+ *
+ * Geektime's prep cover of 2026-09-18 printed its caption line with the `#` at
+ * the far LEFT of the line, detached from the word it marks. `#` has no
+ * direction of its own and takes one from whatever sits around it, which at a
+ * line boundary is not the word it belongs to.
+ *
+ * Every template already wraps the `@handle` SLOT in a `<bdi>` for exactly
+ * this reason, and its comment says so. A hashtag arrives inside the COPY and
+ * never got the same treatment.
+ */
+describe("a marked token travels with its word", () => {
+  it("keeps the marker attached to a HEBREW hashtag", () => {
+    const line = isolateForeignRuns("\u05ea\u05d5\u05db\u05df \u05de\u05e7\u05d5\u05d3\u05dd #\u05ea\u05d5\u05db\u05df \u05d4\u05d5\u05d0 \u05dc\u05d0 \u05e4\u05e8\u05d8", "rtl");
+    expect(line).toContain(FSI + "#\u05ea\u05d5\u05db\u05df" + PDI);
+    // The shape that shipped: a marker with nothing isolating it.
+    expect(line.includes("#") && !line.includes(FSI + "#")).toBe(false);
+  });
+
+  it("keeps the marker attached to a handle, and the handle stays LTR", () => {
+    const line = isolateForeignRuns("\u05d4\u05e9\u05d5\u05d5\u05d5 @karoslabs \u05e2\u05db\u05e9\u05d9\u05d5", "rtl");
+    expect(line).toContain(FSI + "@karoslabs" + PDI);
+  });
+
+  it("does not split a LATIN hashtag into a bare marker and an isolated word", () => {
+    // Without the marked pass, `FOREIGN_TOKEN` matches only the letters and
+    // the `#` is left outside the isolate: the same detachment, moved.
+    const line = isolateForeignRuns("\u05d4\u05e0\u05d5\u05e9\u05d0 #RoadToIPO \u05d4\u05d9\u05d5\u05dd", "rtl");
+    expect(line).toContain(FSI + "#RoadToIPO" + PDI);
+    expect(line).not.toContain("#" + FSI);
+  });
+
+  it("leaves an ordinary mid-word hash alone, because it is not a marker", () => {
+    expect(isolateForeignRuns("\u05e7\u05d5\u05d3 C# \u05d1\u05e4\u05e8\u05d5\u05d9\u05e7\u05d8", "rtl")).not.toContain(FSI + "#");
+  });
+
+  it("is still a no-op for an LTR post", () => {
+    expect(isolateForeignRuns("we posted #RoadToIPO today", "ltr")).toBe("we posted #RoadToIPO today");
+  });
+});

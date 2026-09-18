@@ -23,6 +23,9 @@ import {
   topicDecisionForGate,
   topicDecisionSummary,
   type BelowFloorWeighting,
+  freshnessBonus,
+  FRESHNESS_NEUTRAL,
+  FRESHNESS_STALE,
 } from "../src/workflow/topic-selection.js";
 import type { InstagramTopicClaim } from "../src/workflow/types.js";
 import { goodTrendScoutOutput } from "./test-helpers.js";
@@ -498,5 +501,72 @@ describe("content-mode rotation over the decision log", () => {
     expect(gate).not.toHaveProperty("reservationKey");
     // Step 03's bare seed, before 03g: no mode yet, empty alternatives — never undefined.
     expect(topicDecisionForGate(researchSeed)).toEqual({ topic: "B2B SaaS", source: "research", alternatives: [] });
+  });
+});
+
+/**
+ * # RECENCY WAS A TIE-BREAKER, SO IT NEVER REACHED A REAL RANKING
+ *
+ * `publishedAt` appeared exactly once in this module: in the comparator, after
+ * the score and after `hasNumbers`. Two candidates with different scores never
+ * got that far. So an evergreen abstraction beat anything that happened this
+ * week, every time, and all three prep carousels of 2026-09-18 opened on one.
+ *
+ * The owner: *"it is important that the topics are sometimes trendy or about
+ * something new that came out."* It is also upstream of the image problem: a
+ * post about a real, named, recent thing gives the picture something real to
+ * show, and a post about a metaphor gives it a pocket watch.
+ */
+const NOW = new Date("2026-09-18T12:00:00Z");
+const daysAgo = (n: number): string => new Date(NOW.getTime() - n * 86_400_000).toISOString();
+
+describe("freshnessBonus", () => {
+  it("rewards this week and leaves a month ago alone", () => {
+    expect(freshnessBonus(daysAgo(1), NOW)).toBe(1.35);
+    expect(freshnessBonus(daysAgo(5), NOW)).toBe(1.25);
+    expect(freshnessBonus(daysAgo(12), NOW)).toBe(1.12);
+    expect(freshnessBonus(daysAgo(25), NOW)).toBe(FRESHNESS_NEUTRAL);
+  });
+
+  it("treats an UNDATED candidate as neutral, because an absent date is not evidence of age", () => {
+    // Most good evergreen ideas have no date. Punishing them would be guessing.
+    expect(freshnessBonus(undefined, NOW)).toBe(FRESHNESS_NEUTRAL);
+    expect(freshnessBonus("   ", NOW)).toBe(FRESHNESS_NEUTRAL);
+    expect(freshnessBonus("not a date", NOW)).toBe(FRESHNESS_NEUTRAL);
+  });
+
+  it("makes a five-week-old news peg compete as the evergreen idea it has become", () => {
+    expect(freshnessBonus(daysAgo(35), NOW)).toBe(FRESHNESS_STALE);
+    expect(FRESHNESS_STALE).toBeLessThan(FRESHNESS_NEUTRAL);
+  });
+
+  it("does not reward a date in the FUTURE, which is a clock skew and not a scoop", () => {
+    expect(freshnessBonus(new Date(NOW.getTime() + 5 * 86_400_000).toISOString(), NOW)).toBe(1.35);
+    expect(freshnessBonus(new Date(NOW.getTime() + 400 * 86_400_000).toISOString(), NOW)).toBe(1.35);
+  });
+});
+
+describe("rankTopicCandidates: recency now reaches the score", () => {
+  it("prefers this week's story over an equally strong evergreen one", () => {
+    const evergreen = candidate({ topic: "retainer scopes drift in month three", brandFit: 4, interest: 4, publishedAt: undefined });
+    const thisWeek = candidate({ topic: "a vendor shipped agent guardrails", brandFit: 4, interest: 4, publishedAt: daysAgo(2) });
+    const ranked = rankTopicCandidates([evergreen, thisWeek], { ...RANK_BASE, now: NOW });
+    expect(ranked.chosen).toBe(thisWeek);
+    expect(scoreOf(ranked, thisWeek.topic)).toBeGreaterThan(scoreOf(ranked, evergreen.topic));
+  });
+
+  it("does NOT let freshness beat a real brand-fit gap, because it is a nudge and not a veto", () => {
+    // 1.35 is smaller than the spread brandFit and interest can open, which is
+    // the intended weight: a fresh story the client has no business telling
+    // still loses.
+    const fresh = candidate({ topic: "an unrelated consumer launch", brandFit: 3, interest: 3, publishedAt: daysAgo(1) });
+    const fitting = candidate({ topic: "how onboarding time actually falls", brandFit: 5, interest: 5, publishedAt: undefined });
+    const ranked = rankTopicCandidates([fresh, fitting], { ...RANK_BASE, now: NOW });
+    expect(ranked.chosen).toBe(fitting);
+  });
+
+  it("reports the factor it applied, so a boring week is diagnosable rather than mysterious", () => {
+    const ranked = rankTopicCandidates([candidate({ topic: "x", publishedAt: daysAgo(2) })], { ...RANK_BASE, now: NOW });
+    expect(ranked.ranked[0]!.components.freshness).toBe(1.35);
   });
 });

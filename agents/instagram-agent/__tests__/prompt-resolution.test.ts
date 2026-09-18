@@ -516,7 +516,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // Phase 5 bumped it to @2 (RFC-18 §6.5): `@1` documented only the CAROUSEL round's
     // `"caption"`/`"slide:N"` targets, so on `08c2-package-native-round` the judge had no legal target to
     // write and every correction it returned was dropped as cross-context by `resolveField`'s guard.
-    expect(registry).toContain(`{ promptId: "instagram-native-editor", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" }`);
+    expect(registry).toContain(`{ promptId: "instagram-native-editor", agent: "instagram-agent", versions: ["1", "2", "3"], latestVersion: "3" }`);
     // Phase 3 (items Q and R). Phase 5.5 item A3 bumps the vet to @6: the
     // SUBJECT is separated from the scene, and `scene` is declared decorative.
     expect(registry).toContain(`{ promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5", "6"], latestVersion: "6" }`);

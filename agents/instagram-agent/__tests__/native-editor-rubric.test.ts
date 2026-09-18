@@ -583,7 +583,7 @@ describe("the judge's own configuration", () => {
     expect(config.id).toBe("instagram-native-editor");
     expect(config.allowedTools).toEqual([]);
     expect(config.maxSteps).toBe(1);
-    expect(config.skillRef).toBe("instagram-native-editor@2");
+    expect(config.skillRef).toBe("instagram-native-editor@3");
     expect(config.modelPolicy.policy).toBe("pinned");
   });
 

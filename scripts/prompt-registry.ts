@@ -270,7 +270,7 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   // but @1 was never told any of it existed — so on `08c2` the judge had only `"caption"`/`"slide:N"` to
   // write, and every correction it produced was correctly dropped as cross-context. Prompt-only: no new
   // step, no code change, no re-price beyond the file's own growth.
-  { promptId: "instagram-native-editor", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
+  { promptId: "instagram-native-editor", agent: "instagram-agent", versions: ["1", "2", "3"], latestVersion: "3" },
   // Phase 2, item N. The Template Studio's three setup-time prompts. None of
   // them carries `requires` flags, for the same reason `instagram-brief` and
   // `instagram-angle` do not: they receive the resolved `targetLanguage`
