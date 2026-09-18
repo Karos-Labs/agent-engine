@@ -314,7 +314,21 @@ export function deviceFromText(text: string, source: string): RelayoutFigureDevi
   // When the preceding word is a verb ("we saved 4 hours a week") the splice
   // was always right and is untouched.
   const trailingConnector = /(?:^|\s)(?:to|of|by|at|in|on|for|from|with|than|into|over|under|about|around|per)\s*$/iu;
-  const spliced = trailingConnector.test(before) ? before.replace(trailingConnector, "") : `${before} ${after}`;
+  // ── AND IT ONLY FIRES WHEN THE FIGURE REALLY IS WHAT THE CLAUSE ENDS ON. ──
+  //
+  // A first version tested the connector alone and cut there whenever it
+  // matched, which threw away the whole rest of the sentence on every
+  // mid-sentence figure. The repo's own fixtures said so within minutes:
+  // "Every team that handed it to the tool got about 4 hours a week back,
+  // which is most of a working morning" became "Every team that handed it to
+  // the tool got", and "It ran to 14 days and now runs to 7" became "It ran".
+  // Both are far worse than the splice they replaced.
+  //
+  // The figure ends the clause when what follows it is punctuation, or one
+  // short unit word and then punctuation ("to 7 days."). Anything longer is
+  // a sentence that continues, and continuing sentences splice.
+  const endsTheClause = /^[\s.,;:!?\u2013\u2014-]*$|^\s*[\p{L}]{1,12}[\s.,;:!?]*$/u.test(after);
+  const spliced = endsTheClause && trailingConnector.test(before) ? before.replace(trailingConnector, "") : `${before} ${after}`;
 
   // The seam, tidied. A space before punctuation, a doubled space and a tail
   // that is nothing but punctuation are artefacts of the cut, not anything
@@ -544,17 +558,27 @@ export function composeBoundedObjects(
       sentences.find((s) => s.includes(device.value)) ??
       (clampWords(sentences[0] ?? "", MAX_DEVICE_LABEL_LENGTH) === device.label ? sentences[0] : undefined);
     const remaining = promoted === undefined ? slide.body.trim() : sentences.filter((s) => s !== promoted).join(" ").trim();
-    if (remaining.length === 0) {
-      decisions.push({
-        slide: slide.n,
-        layout,
-        outcome: "refused",
-        reason: "the only sentence in the body is the one the device would be labelled with — a device here would print it twice or leave the paragraph empty",
-      });
-      return slide;
-    }
-    decisions.push({ slide: slide.n, layout, outcome: "composed", reason: `built from a figure already in the slide's own copy`, value: device.value });
-    return { ...slide, device, body: remaining };
+    decisions.push({
+      slide: slide.n,
+      layout,
+      outcome: "composed",
+      reason:
+        remaining.length === 0
+          ? "built from a figure already in the slide's own copy; its ONE sentence stays in the body, so the label repeats it"
+          : "built from a figure already in the slide's own copy, and that sentence was lifted out of the body",
+      value: device.value,
+    });
+    // ── AND THE ONE-SENTENCE BODY IS A KNOWN, BOUNDED GAP. ──
+    //
+    // `body` is `z.string().min(1)`, so a body whose only sentence became the
+    // label cannot be emptied here; the duplication stays on those plates and
+    // closing it means suppressing the body SLOT at render time rather than
+    // in the copy, which is a change in `slides-data.ts` and not in this
+    // function. Refusing the device instead was tried and is worse: every
+    // fixture body in this repo is a single sentence, so it removed the
+    // device from essentially every statement plate and the interest floor
+    // bought a second render to fill the hole it made.
+    return remaining.length === 0 ? { ...slide, device } : { ...slide, device, body: remaining };
   });
   return { copy: { ...copy, slides }, decisions };
 }

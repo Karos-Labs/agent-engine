@@ -1432,6 +1432,25 @@ describe("figuresInText / deviceFromText", () => {
     // extractor exists to refuse.
     expect(deviceFromText("Down to 12%.", "a source")).toBeUndefined();
   });
+
+  it("does NOT cut the clause when the sentence CONTINUES past the figure", () => {
+    // The first version of the connector rule tested the preposition alone
+    // and cut wherever it matched, which threw the rest of the sentence away
+    // on every mid-sentence figure. This repo's own fixtures falsified it in
+    // one run: both of these are `goodCopyOutput()` bodies, and both became
+    // stubs.
+    expect(deviceFromText("Every team that handed it to the tool got about 4 hours a week back, which is most of a working morning.", "s")?.label)
+      .toContain("hours a week back");
+    expect(deviceFromText("It ran to 14 days and now runs to 7, which is the difference.", "s")?.label)
+      .toContain("and now runs to 7");
+  });
+
+  it("cuts the clause when the figure is what the sentence ENDS on, with or without a unit word after it", () => {
+    expect(deviceFromText("Error stacks at every step, dropping accuracy to 77%.", "s")?.label)
+      .toBe("Error stacks at every step, dropping accuracy");
+    expect(deviceFromText("The rollout took a quarter. Onboarding then dropped to 7 days.", "s")?.label)
+      .toBe("Onboarding then dropped");
+  });
 });
 
 describe("planInterestRelayout: the fixed table", () => {
