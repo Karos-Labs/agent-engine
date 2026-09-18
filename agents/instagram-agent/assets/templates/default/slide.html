@@ -1086,12 +1086,45 @@ body.ta-center .acc { margin-inline: auto; }
        and the floor reported "the ground layers rendered and the copy did not"
        about a plate that had rendered perfectly. Filling a plate is the bounded
        object's job; the type's job is to be read. */
+    /* ── AND IT MUST NOT GROW AT THE BOUNDED OBJECT'S EXPENSE, WHICH IS THE
+          ONE CASE WHERE THIS LOOP INVERTS ITS OWN PURPOSE. ──
+       The rung exists to SHRINK the largest empty rectangle. On the cover it
+       grew it. `.cov-field` is the elastic item there, so every pixel the
+       headline takes is a pixel off a FULL-WIDTH band, and it is spent on a
+       text column that is tall and narrow: measured on CI 35306664288, the
+       worst row in the sweep is `he rtl short s -> cover  rect 0,452 304x988`
+       — a 304px column against the left edge running from the band's foot to
+       the bottom of the plate, LER 0.1931 against a swept limb of 0.1913, on a
+       plate reading `flat` 0.7802. Hebrew sets short words, so at the smallest
+       scale the grown line reaches nowhere near its own measure and the rung
+       bought 224px of bare column for a bigger headline.
+
+       A full-width band covers more frame per pixel of height than a ranged
+       text column can, so the trade is losing on the very metric the rung is
+       for. MEASURED, not assumed: the band's own height is read before and
+       after the rung, and a rung that shortened it is given back. Short copy
+       on the cover then sets at its role's step with the subject at the extent
+       the run declared, which is what `--cover-band` means.
+
+       Scoped to `.cov-field` by name. The other seven plates have no such item
+       and their loop is untouched — this is a finding about one plate's
+       composition, not a new rule for the set. */
+    var objects = plate.querySelectorAll('.cov-field');
+    var objectExtent = function () {
+      var total = 0;
+      for (var o = 0; o < objects.length; o++) total += objects[o].getBoundingClientRect().height;
+      return total;
+    };
     if (primary.length) {
+      var extentBefore = objectExtent();
       var grown = 0;
       while (grown > -1 && !overflows()) {
         grown -= 1;
         set(primary, grown);
         closeInk();
+        /* 1px of tolerance, for the same reason the overflow limbs carry one:
+           a subpixel layout difference is not the object giving ground. */
+        if (objectExtent() < extentBefore - 1) { grown += 1; set(primary, grown); closeInk(); break; }
       }
       if (overflows()) { grown += 1; set(primary, grown); closeInk(); }
     }
