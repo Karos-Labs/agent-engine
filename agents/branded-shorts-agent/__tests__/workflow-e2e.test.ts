@@ -1,4 +1,5 @@
 import { describe, expect, it, afterEach } from "vitest";
+import { z } from "zod";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
@@ -554,13 +555,17 @@ describe("the plates are priced before any are bought", () => {
     // pass for the wrong reason.
     env.tools["image.generate"] = {
       name: "image.generate",
+      description: "Generates the cutaway plates this plan asks for.",
       version: "1.0.0",
-      inputSchema: { safeParse: (v: unknown) => ({ success: true as const, data: v }) },
+      // `z.any()` rather than a hand-rolled `{ safeParse }`: the real registry
+      // types `inputSchema` as a `ZodSchema`, and a structural fake only looks
+      // assignable until the root typecheck reads it.
+      inputSchema: z.any(),
       async execute(args: unknown) {
         const needs = (args as { needs: Array<{ n: number }> }).needs;
         return { status: "success" as const, result: { candidates: needs.map((need) => ({ path: `n${need.n}-gen1.png` })), unmet: [] } };
       },
-    } as (typeof env.tools)[string];
+    } as unknown as (typeof env.tools)[string];
     const promptStore = makePromptStore();
     const router = smartFakeRouter([
       goodHighlights(),
