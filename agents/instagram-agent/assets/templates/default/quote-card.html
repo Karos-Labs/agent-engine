@@ -436,6 +436,32 @@ body[data-anchor="centre"] .plate::after {
    fit ladder can see it. */
 body[data-anchor="split"] .plate { justify-content: space-between; }
 
+/* ── AND THE OBJECT TAKES THE AIR ON EVERY ANCHOR, NOT JUST THE ONE PARKING
+      SPOT THAT WAS FIXED FIRST. ──
+   Free space on a plate can be parked in three places: the leading spacer, the
+   trailing spacer, or between the children with `space-between`. The rule
+   above — give it to the bounded object rather than to the spacer — was
+   applied to the first one only, so the other two still made the hole it
+   exists to prevent. Measured on the real-Chromium end-to-end carousel, whose
+   grammar is seeded off the client slug and came out `split-band`:
+   `interest:dead-space (slide 1) — an empty rectangle covered 31% of the plate
+   (0,552 to 1080,992)`, a full-width 440px strip between the band's foot and
+   the copy, against a 22% cover ceiling. `space-between` on a plate whose
+   first child is already the subject does not compose anything; it opens a gap
+   in the middle and hands the plate to the floor.
+
+   So on a plate carrying a visible `.cov-field` all three are shut and the
+   band, which is the only item left with `flex-grow`, absorbs the lot. The
+   anchor axis still moves the lockup on the seven plates that have no bounded
+   object — which is where `visual-system-axes-render` measures it, on
+   `headline-focus.html` — and on the cover the composition is the band and a
+   foot-anchored lockup, which is what the plate's own header describes. Same
+   guard as the rule above: over a photograph and on `typographic-poster` the
+   band stands down, and there the spacers are the anchor and must keep
+   working. */
+body:not(:has(.hero)):not([data-cover="typographic-poster"]) .plate:has(.cov-field) { justify-content: flex-start; }
+body:not(:has(.hero)):not([data-cover="typographic-poster"]) .plate:has(.cov-field)::after { flex-grow: 0; }
+
 /* ---- the brand band: mark on one side, eyebrow on the other ------------- */
 .zone-mark {
   position: absolute;

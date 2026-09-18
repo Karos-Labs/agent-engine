@@ -606,16 +606,38 @@ export const ACCENT_FORM_GEOMETRY: Record<AccentForm, { w: string; h: string }> 
  * it either. This is the axis reaching the one plate it names.
  *
  * A `typographic-poster` cover has no subject but its title, so the band IS the
- * composition and takes 42% of the plate. Every other form expects something in
- * frame — a photograph, a drawn object, a figure device — so the band steps back
- * to a header and leaves the subject the room. Read by `cover.html` as
- * `var(--cover-band, 600px)`.
+ * composition. Every other form expects something in frame — a photograph, a
+ * drawn object, a figure device — so the band claims less of the plate and
+ * leaves the subject the room. Read by `cover.html` as `var(--cover-band,
+ * 600px)`, where it is both the flex CEILING and, since the plate stopped
+ * parking free space in a spacer, the only item that can absorb it.
+ *
+ * ── THE BAND WAS THE CEILING THE COVER KEPT HITTING (2026-09-18). ──
+ *
+ * These were 600/420/380/300, and at those values the cover could not close
+ * its own hole on short copy. The plate has ~1214px between the mark band and
+ * the foot; a short-copy lockup takes 350-450px of it; so the band needs to be
+ * able to reach ~760-860px or the remainder has nowhere to go and lands as a
+ * refused rectangle. Measured on the real-Chromium end-to-end carousel at 420:
+ * `interest:dead-space (slide 1) — an empty rectangle covered 35% of the plate
+ * (0,932 to 1080,1440)`, a full-width 508px strip at the foot, against a 22%
+ * cover ceiling. Every earlier attempt moved that strip — to the head, to the
+ * middle under `space-between`, to a column beside the copy — because the
+ * spacers, the anchor and the measure all decide WHERE the air goes and only
+ * this number decides whether anything can absorb it.
+ *
+ * The ordering and the axis are unchanged, and none of them is a screen: the
+ * band still shrinks to nothing for a long headline (`flex-shrink: 1`,
+ * `min-block-size: 0` — the copy never clips for the decoration), still paints
+ * one `no-repeat` ramp, and at 57% of the canvas at its tallest still leaves
+ * the lower third of every cover to the words. RFC-20 §5.6 rule 4 is not in
+ * play: no floor, ceiling or gate moved for this — the composition did.
  */
 export const COVER_FORM_BAND_PX: Record<CoverForm, number> = {
-  "typographic-poster": 600,
-  figure: 420,
-  object: 380,
-  portrait: 300,
+  "typographic-poster": 900,
+  figure: 820,
+  object: 780,
+  portrait: 700,
 };
 
 export interface CarouselVisualSystem {
