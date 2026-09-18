@@ -275,6 +275,78 @@ export function validateGraphicsPlan(plan: GraphicsPlanOutput, ctx: GraphicsPlan
 }
 
 /**
+ * What one edited short may cost, all in.
+ *
+ * This agent had NO cost bound of any kind until 2026-09-18, alone among
+ * D08's three. Clipping and content design have been priced before the first
+ * purchase since 2026-09-09; here, `image.generate` was billed once per plate
+ * cutaway with the plate COUNT decided by a model, so the only thing between a
+ * client and an arbitrary bill was how many cutaways the graphics planner felt
+ * like proposing.
+ *
+ * The same shape as the other two, and the same numbers, because it is the
+ * same product line and the owner asked for one answer rather than three:
+ * `TARGET` is the plan, `MAX` is the wall.
+ */
+export const TARGET_RUN_SPEND_USD = 1.8;
+export const MAX_RUN_COST_USD = 2;
+
+/**
+ * The image SKU a cutaway plate is billed against.
+ *
+ * Named here rather than inlined at the estimate so the pricing row this
+ * agent plans against and the one `image.generate` actually bills against are
+ * one edit apart, not one search apart. `unitPriceUsd` throws on a SKU with no
+ * `UNIT_PRICING` row, so a rename cannot silently produce a free-looking plan.
+ */
+export const PLATE_IMAGE_SKU = "gemini-3.1-flash-image";
+
+/** How many plate cutaways a plan may carry once the estimate has had its say. `undefined` means "as planned". */
+export interface PlateBudget {
+  /** The most plates this run may buy; the rest of the cutaways are dropped from the plan. */
+  maxPlates: number | undefined;
+  estimatedTotalUsd: number;
+  spentSoFarUsd: number;
+  /** One line for the reviewer when the budget had to cut something. */
+  note?: string;
+}
+
+/**
+ * How many of a plan's plate cutaways this run can afford.
+ *
+ * Bursts are free — they are the client's own stills, already on disk — so
+ * they are never counted and never cut. Only plates are a purchase, and they
+ * come off newest-last: a plan's earlier cutaways are the ones the planner
+ * anchored to the strongest phrases, so dropping from the end costs the least.
+ *
+ * Returns `maxPlates: undefined` on the normal path, which means "buy them
+ * all" and is distinct from `0`.
+ */
+export function planPlateBudget(input: { plateCount: number; spentSoFarUsd: number; platePriceUsd: number; targetUsd: number; maxUsd: number }): PlateBudget {
+  const round = (n: number) => Math.round(n * 1_000_000) / 1_000_000;
+  const full = round(input.spentSoFarUsd + input.plateCount * input.platePriceUsd);
+  if (full <= input.targetUsd || input.plateCount === 0) {
+    return { maxPlates: undefined, estimatedTotalUsd: full, spentSoFarUsd: round(input.spentSoFarUsd) };
+  }
+  // Against the WALL, not the target, for the reason the other two agents give:
+  // the gap between them exists so an ambitious short can spend it rather than
+  // be trimmed into an ordinary one.
+  const affordable = Math.max(0, Math.floor((input.maxUsd - input.spentSoFarUsd) / input.platePriceUsd));
+  if (affordable >= input.plateCount) {
+    return { maxPlates: undefined, estimatedTotalUsd: full, spentSoFarUsd: round(input.spentSoFarUsd) };
+  }
+  return {
+    maxPlates: affordable,
+    estimatedTotalUsd: round(input.spentSoFarUsd + affordable * input.platePriceUsd),
+    spentSoFarUsd: round(input.spentSoFarUsd),
+    note:
+      `the plan asked for ${input.plateCount} generated plate(s) at $${input.platePriceUsd.toFixed(3)} each, which prices this run at ` +
+      `$${full.toFixed(2)} against a $${input.maxUsd.toFixed(2)} ceiling; ${input.plateCount - affordable} were dropped and the short keeps the ` +
+      `${affordable} strongest plus every burst from the client's own library`,
+  };
+}
+
+/**
  * The plan with every item that failed {@link validateGraphicsPlan} removed.
  *
  * The deterministic floor under the plan loop (2026-09-18, the owner's

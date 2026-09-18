@@ -1,7 +1,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
-import { firstAsset } from "@agent-engine/core";
+import { firstAsset, UNIT_PRICING } from "@agent-engine/core";
 import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail, readRunDirection, runDirectionField, readContextDoc, enforceContextDocPolicy, toAgentContext, finalizeDeliverable, readLearningContext, stageForRun, touchesNeverTopic, craftRulesForPrompt, preferencesForDrafting, resolveGoalLine, writeRunState, type LearningContextLike, type ResolvedGoalLine,
 // D08's editing agent catching up with clipping and content design
 // (2026-09-18): the reviewer's revise loop it never had, and the owner's
@@ -14,12 +14,17 @@ import { BrandedShortsHighlightsAgent } from "../agent/branded-shorts-highlights
 import { deriveCutSegments, totalRetainedDuration } from "./cut-planner.js";
 import { assembleJob, resolveRunPaths, type RunPaths } from "./job-builder.js";
 import { deriveBrandSetup, type ResolveFontsOptions } from "./derive-brand-setup.js";
+import { applyHighlightRhythm } from "./highlight-rhythm.js";
 import {
   AssetLibraryIndexSchema,
   BrandedShortsClientConfigSchema,
   BrandedShortsIntakeSchema,
   dropViolatingItems,
+  planPlateBudget,
   validateGraphicsPlan,
+  MAX_RUN_COST_USD,
+  PLATE_IMAGE_SKU,
+  TARGET_RUN_SPEND_USD,
   type AssetLibraryStill,
   type BrandedShortsIntake,
   type BrandedShortsWorkflowResult,
@@ -527,6 +532,22 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
       }
     };
 
+    /**
+     * What one generated cutaway plate costs, read off the same `UNIT_PRICING`
+     * row `image.generate` bills against. A missing row is a tooling failure
+     * rather than a free-looking plan: an estimate built on a rate nobody has
+     * is a guess with a decimal point in it.
+     */
+    const platePriceUsd = (): number => {
+      const row = UNIT_PRICING[PLATE_IMAGE_SKU];
+      if (row === undefined) throw new WorkflowToolingFailure(`cannot price this run: no UNIT_PRICING row for "${PLATE_IMAGE_SKU}"`);
+      return row.usdPerUnit;
+    };
+    /** The hard wall, lowered (never raised) by a dispatcher budget tighter than the product rule. */
+    const costCapUsd = Math.min(MAX_RUN_COST_USD, wf.budget?.maxTotalCostUsd ?? MAX_RUN_COST_USD);
+    /** What the run PLANS against, clamped to the wall so a tighter dispatcher budget still decides. */
+    const targetSpendUsd = Math.min(TARGET_RUN_SPEND_USD, costCapUsd);
+
     /** What one review round produced, and what it had to adapt around to produce it. */
     interface ShortDraft {
       outputPath: string;
@@ -578,7 +599,26 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
       if (highlightsResult.status !== "completed" && highlightsResult.status !== "content_fail") {
         throw new WorkflowToolingFailure(`highlights step resolved to "${highlightsResult.status}"`);
       }
-      const highlightStarts = highlightsResult.status === "completed" ? highlightsResult.finalOutput!.highlightStarts : [];
+      // The model's timestamps are a PROPOSAL, snapped here onto words that
+      // exist (2026-09-18). Its prompt has forbidden inventing one since v1
+      // and nothing checked: the schema is `z.array(z.number())`, so any
+      // number at all reached the render job's `highlight_starts`, where the
+      // engine emphasised whatever was nearest, or nothing. The clipping agent
+      // has validated its own model's timestamps from the beginning, for
+      // exactly the reason its comment gives — a model asked for a timestamp
+      // returns one whether or not the transcript supports it.
+      const rhythm = await wf.step.code(rev("06b-highlight-rhythm"), () =>
+        applyHighlightRhythm(highlightsResult.status === "completed" ? highlightsResult.finalOutput!.highlightStarts : [], kept),
+      );
+      const highlightStarts = rhythm.highlightStarts;
+      if (rhythm.dropped.length > 0) {
+        repairs.push({
+          check: "highlight-rhythm",
+          action: "redacted",
+          detail: `${rhythm.dropped.length} proposed emphasis word(s) were dropped: ${rhythm.dropped.join("; ")}`,
+        });
+        console.warn(`${rev("06b-highlight-rhythm")}: ${rhythm.dropped.join("; ")}`);
+      }
       if (highlightsResult.status === "content_fail") {
         repairs.push({
           check: "branded-shorts-highlights",
@@ -754,6 +794,35 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
           }
         }
 
+        // ── 08b2: price the plates BEFORE buying any (2026-09-18) ──
+        //
+        // This agent had no cost bound at all, alone among D08's three:
+        // `image.generate` billed once per plate cutaway, and the plate COUNT
+        // is a model's decision. A planner that proposed nine plates spent
+        // nine plates' worth, and nothing anywhere said otherwise.
+        //
+        // Bursts are not counted and never cut — they are the client's own
+        // stills, already on disk, and free. Only a plate is a purchase.
+        const plateBudget = await wf.step.code(rev(`08b2-plate-budget-attempt-${attempt}`), async () =>
+          planPlateBudget({
+            plateCount: planned.cutaways.filter((c) => c.kind === "plate").length,
+            spentSoFarUsd: await wf.costSoFarUsd(),
+            platePriceUsd: platePriceUsd(),
+            targetUsd: targetSpendUsd,
+            maxUsd: costCapUsd,
+          }),
+        );
+        if (plateBudget.note !== undefined) {
+          repairs.push({ check: "run-budget", action: "trimmed", detail: plateBudget.note });
+          console.warn(`${rev(`08b2-plate-budget-attempt-${attempt}`)}: ${plateBudget.note}`);
+        }
+        // Applied OUTSIDE the step from its recorded result, so a replay that
+        // short-circuits the step still builds the plan the budget allowed.
+        const maxPlates = plateBudget.maxPlates;
+        let platesKept = 0;
+        const affordable: GraphicsPlanOutput =
+          maxPlates === undefined ? planned : { ...planned, cutaways: planned.cutaways.filter((c) => c.kind !== "plate" || platesKept++ < maxPlates) };
+
         // ── 08c: the plan passed — generate its plates, then the one full composite ──
         // Plates are generated only now, after the gates: each is a billed call,
         // and a plan that was going to fail its schedule should not have bought
@@ -761,7 +830,7 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
         // the model's own reason; nothing is substituted.
         build = await wf.step.code(rev(`08c-plates-and-render-attempt-${attempt}`), async () => {
           const generated = await generatePlates(tools, ctx, {
-            plan: planned,
+            plan: affordable,
             workDir: brandResolve.paths.workDir,
             runId: wf.runId,
             palette: [profile.color.background, profile.color.foreground, profile.color.accent],
@@ -774,8 +843,8 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
           // on the deliverable are the same plan the render actually built.
           const built: GraphicsPlanOutput =
             generated.unmet.length === 0
-              ? planned
-              : { ...planned, cutaways: planned.cutaways.filter((_, i) => planned.cutaways[i]!.kind !== "plate" || generated.plateFiles[i] !== undefined) };
+              ? affordable
+              : { ...affordable, cutaways: affordable.cutaways.filter((_, i) => affordable.cutaways[i]!.kind !== "plate" || generated.plateFiles[i] !== undefined) };
           await writeJob(assembleJob({ ...jobBase, plan: built, plateFiles: generated.plateFiles }));
           const renderOutcome = await tools["video.render"]!.execute({ profilePath: inputs.profilePath, jobPath: brandResolve.paths.jobPath }, { ctx });
           if (renderOutcome.status !== "success") {

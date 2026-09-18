@@ -99,7 +99,7 @@ export class TikTokScriptAgent extends BaseAgent<ShortScript> {
     // shot and pitch lints). It also tells the writer what the render now
     // does with `seconds`: on a voiced short the LINE is the clock, so a
     // twenty-five-word beat is ten seconds on one picture. v9 stays frozen.
-    skillRef: "tiktok-script@10",
+    skillRef: "tiktok-script@12",
     // The same lint 07-compliance runs afterwards, run FIRST on the model's
     // own output so a tell comes back as feedback it can act on rather than
     // as a held run. Two revisions: the first fix is usually enough, the

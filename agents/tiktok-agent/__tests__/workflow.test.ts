@@ -40,9 +40,24 @@ const PROMPTS_ROOT = path.join(HERE, "..", "prompts");
 
 const PARAMS = { clientSlug: "acme", productId: "tiktok-agent", runKind: "recurring" as const };
 
-/** 90 seconds of one-second sentences, so a legal 20-120s clip exists. */
+/**
+ * 90 seconds of speech at three words a second, so a legal 20-120s clip
+ * exists and the window it cuts is dense enough to be watchable.
+ *
+ * It used to be one word a SECOND, which is not speech — it is a recording
+ * with a three-second gap between every word, and it scored 1.0 against the
+ * moment floor's 1.6 (2026-09-18). Every clean-run assertion in this file was
+ * therefore describing a clip the floor would now refuse. Real conversational
+ * English runs 2.3-3.3 words a second; three is the middle of that.
+ *
+ * Each word is its own sentence (the trailing full stop) so `bestLegalWindow`
+ * and `boundsFromTranscript` have a boundary everywhere, which is what lets a
+ * test ask for an arbitrary window and get it snapped exactly.
+ */
+const WORDS_PER_SECOND = 3;
 function transcriptWords(): Array<{ text: string; start: number; end: number }> {
-  return Array.from({ length: 90 }, (_, i) => ({ text: `word${i}.`, start: i, end: i + 1 }));
+  const step = 1 / WORDS_PER_SECOND;
+  return Array.from({ length: 90 * WORDS_PER_SECOND }, (_, i) => ({ text: `word${i}.`, start: i * step, end: (i + 1) * step }));
 }
 
 const GOOD_MOMENT = {
@@ -882,10 +897,15 @@ describe("branded frame inputs", () => {
     expect(brand["ground"]).toBe("#101418");
     expect(brand["fg"]).toBe("#F2F0EA");
     expect(brand["handle"]).toBe("@acmeco");
-    // 40 words in the clip window → an SRT was written and passed.
+    // The clip window is GOOD_MOMENT's 10s-50s, so the captions must carry the
+    // words that actually fall inside it and none from outside. Derived from
+    // the fixture's own rate rather than hard-coded: a literal "word10." was
+    // silently describing a one-word-a-second transcript, and quietly became
+    // wrong the moment the fixture started producing real speech.
     expect(typeof frameArgs!["srtPath"]).toBe("string");
     const srt = await fs.readFile(frameArgs!["srtPath"] as string, "utf8");
-    expect(srt).toContain("word10.");
+    expect(srt).toContain(`word${10 * WORDS_PER_SECOND}.`);
+    expect(srt).not.toContain(`word${10 * WORDS_PER_SECOND - 2}.`);
     expect(srt).toContain(" --> ");
   });
 
@@ -995,4 +1015,58 @@ describe("branded frame inputs", () => {
     expect(brand["logoScrim"]).toBe("#F2F0EA");
     expect(contrastRatio("#000000", brand["logoScrim"] as string)).toBeGreaterThanOrEqual(BRAND_LOGO_CONTRAST_FLOOR);
   });
+});
+
+/**
+ * The watchability floor, in the workflow (2026-09-18).
+ *
+ * The measures themselves are unit-tested in `moment-floor.test.ts`. What is
+ * pinned here is what the run DOES with a refusal: re-pick in code, never
+ * hold, and tell the reviewer either way.
+ */
+describe("moment floor", () => {
+  /** A transcript with a dead first half and real speech in the second. */
+  function lopsidedTranscript(): Array<{ text: string; start: number; end: number }> {
+    const sparse = Array.from({ length: 30 }, (_, i) => ({ text: `slow${i}.`, start: i * 1.4, end: i * 1.4 + 0.3 }));
+    const dense = Array.from({ length: 150 }, (_, i) => ({ text: `fast${i}.`, start: 45 + i / 3, end: 45 + (i + 1) / 3 }));
+    return [...sparse, ...dense];
+  }
+
+  it("re-picks in code when the model chose a window that is mostly silence", async () => {
+    const h = stubTools({ transcriptWords: lopsidedTranscript() });
+    // The model points at the dead half: 0-42s at well under a word a second.
+    const result = await run(h, "run-tt-floor-repick", {}, [{ ...GOOD_MOMENT, startSeconds: 0, endSeconds: 42 }, GOOD_COMMENTARY]);
+
+    expect(result.status).toBe("completed");
+    const cut = h.deliverables[0]!;
+    // The cut that shipped is the dense half, not the one that was picked.
+    expect(cut["momentFallback"]).toContain("watchability floor");
+    const repairs = cut["contentRepairs"] as Array<{ check: string; action: string }>;
+    expect(repairs.find((r) => r.check === "moment-selection")?.action).toBe("substituted");
+  }, 20_000);
+
+  it("keeps the model's choice when nothing in the transcript scores better, and flags it", async () => {
+    // A recording that is sparse end to end. There is no better window, so
+    // the model's judgment stands — code does not override a human-shaped
+    // decision with a density number when it has nothing better to offer —
+    // and the reviewer is told exactly what is wrong with what they are
+    // about to watch.
+    const sparse = Array.from({ length: 40 }, (_, i) => ({ text: `slow${i}.`, start: i * 2, end: i * 2 + 0.4 }));
+    const h = stubTools({ transcriptWords: sparse });
+    const result = await run(h, "run-tt-floor-nothing-better", {}, [{ ...GOOD_MOMENT, startSeconds: 0, endSeconds: 60 }, GOOD_COMMENTARY]);
+
+    expect(result.status).toBe("completed");
+    const repairs = h.deliverables[0]!["contentRepairs"] as Array<{ check: string; action: string; detail: string }>;
+    const flagged = repairs.find((r) => r.check === "moment-floor");
+    expect(flagged?.action).toBe("unresolved");
+    expect(flagged?.detail).toContain("a second");
+    expect(h.deliverables[0]).not.toHaveProperty("momentFallback");
+  }, 20_000);
+
+  it("says nothing on an ordinary dense clip", async () => {
+    const h = stubTools();
+    await run(h, "run-tt-floor-quiet");
+    expect(h.deliverables[0]).not.toHaveProperty("contentRepairs");
+    expect(h.deliverables[0]).not.toHaveProperty("momentNotes");
+  }, 20_000);
 });

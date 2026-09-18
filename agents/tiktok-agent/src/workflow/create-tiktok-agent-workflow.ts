@@ -72,6 +72,9 @@ import { TikTokMomentAgent } from "../agent/tiktok-moment-agent.js";
 import { TikTokScriptAgent } from "../agent/tiktok-script-agent.js";
 import { TikTokTopicScoutAgent } from "../agent/tiktok-topic-scout-agent.js";
 import { bestLegalWindow, boundsFromTranscript, sentenceBoundedWords, type TranscriptWordLike } from "./clip-bounds.js";
+import { checkDraftLanguage, isJudgeableLanguage, languageRedraftDirective, resolveTargetLanguage, type ResolvedTargetLanguage } from "./target-language.js";
+import { parseShapeMemory, shapeRepeatDirective, skeletonEntry, skeletonOf, stockClipEntry } from "./shape-memory.js";
+import { scoreMoment } from "./moment-floor.js";
 import { alignScriptToTimings, beatHoldsFromTimings, buildPhraseCues, buildPhraseGroups, cuesToSrt, scriptWords } from "./captions.js";
 import {
   CLIP_DURATION_MAX_SECONDS,
@@ -1032,6 +1035,27 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     // as much as drafting does: a scout that cannot see what the client just
     // published proposes it again.
     const outputHistory = await readOutputHistoryForDedup(wf, tools, ctx, "tiktok-agent", "read-output-history");
+    /**
+     * What this account has already MADE — the library clips its shorts have
+     * used and the skeletons they were built on.
+     *
+     * The other half of anti-repetition, beside `outputHistory`'s "what has it
+     * already said". Read here with the rest, best-effort: a deployment with no
+     * ledger tool gets a run with no structural memory, never a failed one.
+     */
+    const shapeMemory = await wf.step.code("01e-read-shape-memory", async () => {
+      const list = tools["ledger.listUsedImages"];
+      if (list === undefined) return { usedStockIds: [], skeletons: [] };
+      try {
+        const outcome = await list.execute({}, { ctx });
+        if (outcome.status !== "success") return { usedStockIds: [], skeletons: [] };
+        return parseShapeMemory((outcome.result as { imagePaths?: string[] }).imagePaths ?? []);
+      } catch (error) {
+        console.error("01e-read-shape-memory: could not read what this account has already made", error);
+        return { usedStockIds: [], skeletons: [] };
+      }
+    });
+    const shapeDirective = shapeRepeatDirective(shapeMemory.skeletons);
     const recentPostsDirective = dedupeDirective(outputHistory);
     const clientIntelContext = await readClientIntelContext(wf, tools, ctx, "read-intel-context");
     const pastFeedback = await readPastFeedback(wf, tools, ctx, "read-past-feedback");
@@ -1502,6 +1526,10 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
      * they are watching.
      */
     let momentFallback: string | undefined;
+    /** Set when the cut is under the watchability floor and nothing in the transcript scored better. */
+    let momentFloorNote: string | undefined;
+    /** Observations the floor made that never decided anything — carried to the reviewer, never acted on. */
+    const momentFloorNotes: string[] = [];
 
     if (intake.sourceTier === "stock") {
       // An original short has no speech to mine and no moment to pick. The
@@ -1651,7 +1679,45 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         }
         return result;
       });
-      bounds = { startSeconds: cut.startSeconds, endSeconds: cut.endSeconds, words: cut.words, text: cut.text, needsCut: true };
+      // ── 04b: the moment FLOOR (2026-09-18) ──
+      //
+      // `04-cut-bounds` proves the window is LEGAL. Nothing until now asked
+      // whether it was worth watching, and the 2026-09-08 audit's clips
+      // included forty seconds of someone clearing their throat.
+      //
+      // Blocking measures only — density and a filler opening, both counted
+      // rather than judged. A refused window is RE-PICKED, never held: the
+      // deterministic picker already sorts by density, so it is the natural
+      // second opinion, and it is taken only when it genuinely scores better.
+      // A model that chose a sparse window for a reason code cannot see keeps
+      // its choice when nothing better exists.
+      const floor = await wf.step.code("04b-moment-floor", async () => {
+        const first = scoreMoment(words, cut.startSeconds, cut.endSeconds);
+        if (first.ok) return { ...first, replaced: null as null | { startSeconds: number; endSeconds: number; text: string; words: TranscriptWordLike[] } };
+        const alternative = bestLegalWindow(words, { minSeconds: CLIP_DURATION_MIN_SECONDS, maxSeconds: CLIP_DURATION_MAX_SECONDS });
+        if (alternative === undefined || !alternative.ok) return { ...first, replaced: null };
+        const second = scoreMoment(words, alternative.startSeconds, alternative.endSeconds);
+        if (!second.ok || second.wordsPerSecond <= first.wordsPerSecond) return { ...first, replaced: null };
+        return {
+          ...second,
+          replaced: { startSeconds: alternative.startSeconds, endSeconds: alternative.endSeconds, text: alternative.text, words: alternative.words },
+        };
+      });
+      if (floor.replaced !== null) {
+        momentFallback =
+          `the picked moment was under the watchability floor (${floor.failures.join("; ")}); ` +
+          `the densest legal run of whole sentences was cut instead (${floor.wordsPerSecond.toFixed(2)} words a second)`;
+        bounds = { startSeconds: floor.replaced.startSeconds, endSeconds: floor.replaced.endSeconds, words: floor.replaced.words, text: floor.replaced.text, needsCut: true };
+      } else {
+        if (!floor.ok) {
+          // Nothing better existed. The clip ships and the reviewer is told
+          // exactly what is wrong with it, which is more than they had before.
+          momentFloorNote = floor.failures.join("; ");
+          console.warn(`04b-moment-floor: ${momentFloorNote}; nothing in this transcript scores better, shipping flagged`);
+        }
+        bounds = { startSeconds: cut.startSeconds, endSeconds: cut.endSeconds, words: cut.words, text: cut.text, needsCut: true };
+      }
+      if (floor.notes.length > 0) momentFloorNotes.push(...floor.notes);
       }
     }
 
@@ -1691,6 +1757,27 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         ...(language !== undefined ? { language } : {}),
       };
     });
+
+    /**
+     * The run's language, decided ONCE by code (2026-09-18).
+     *
+     * Everything downstream reads `targetLanguage.tag` and nothing reads a
+     * `??` chain any more. The old chain ended in the model's own
+     * `script.language`, which is the writer telling us what it chose to
+     * write — the very thing the check below exists to verify — so a draft in
+     * the wrong language used to mark its own homework, and the caption font,
+     * the voice and the QA model's expectations were each resolved separately
+     * from it.
+     */
+    const targetLanguage: ResolvedTargetLanguage = await wf.step.code("02d-resolve-target-language", () =>
+      resolveTargetLanguage({
+        ...(config.voiceLanguage !== undefined ? { configuredLanguage: config.voiceLanguage } : {}),
+        ...(videoBrand.language !== undefined ? { brandLanguage: videoBrand.language } : {}),
+        // The client's own words about themselves. A Hebrew client whose
+        // config nobody filled in still gets a Hebrew short out of this.
+        clientProse: [profile.description, profile.name, clientIntelContext].filter((v) => typeof v === "string" && v.length > 0).join("\n"),
+      }),
+    );
 
     /**
      * The logo, downloaded fresh for a render (any failure = no logo, never a
@@ -2023,6 +2110,11 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
               hookLine: moment.hookLine,
               hookType: moment.hookType,
               clipText: bounds.text,
+              // The caption is the one thing the client pastes into TikTok, so
+              // it is written in THEIR language, not the language of whoever
+              // was speaking in the footage. A Hebrew client clipping an
+              // English podcast writes a Hebrew take on it.
+              contentLanguage: targetLanguage.tag,
               // What the footage ACTUALLY is, so the credit names it rather
               // than a plausible episode.
               ...(intake.sourceContext ? { sourceContext: intake.sourceContext } : {}),
@@ -2107,6 +2199,20 @@ ${credit}`,
             { key: "about", text: commentary.about, shape: "prose" },
           ]);
           repairs.push(...gated.repairs);
+          // The caption only: `about` is written for the client's own team and
+          // the clip transcript is in whatever language the speaker used, so
+          // neither is evidence about the language the client publishes in.
+          // No redraft here, unlike the script - a commentary draft costs a
+          // dedupe-verified attempt, and the reviewer edits the caption in
+          // place. The failure is named instead.
+          const captionLanguage = checkDraftLanguage(gated.text["caption"] ?? caption, targetLanguage);
+          if (!captionLanguage.ok) {
+            repairs.push({
+              check: "target-language",
+              action: "unresolved",
+              detail: `${captionLanguage.reason}; expected ${targetLanguage.tag} (${targetLanguage.reason})`,
+            });
+          }
           return { caption: gated.text["caption"] ?? caption, about: gated.text["about"] ?? commentary.about, repairs };
         },
       );
@@ -2150,7 +2256,7 @@ ${credit}`,
         // kept, the letterbox filled with a blurred copy of it rather than flat
         // ground, the way every podcast clip on the platform is cut. A crop
         // would take the faces; flat bars read as a screen recording.
-        return brandFrame(clipPath, workDir, srtPath, [], "blur-fill", captionFontFor(videoBrand.language));
+        return brandFrame(clipPath, workDir, srtPath, [], "blur-fill", captionFontFor(targetLanguage.tag));
       });
 
       // The REPAIRED copy from here on, never the model's original: it is what
@@ -2282,6 +2388,9 @@ ${credit}`,
                     ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
                     ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
                     ...(dedupeAvoid !== undefined ? { dedupeAvoid } : {}),
+                    // What this account keeps BUILDING, as opposed to what it
+                    // keeps saying. Absent until there is a real pattern.
+                    ...(shapeDirective !== undefined ? { structuralMemory: shapeDirective } : {}),
                     ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
                     ...(directive !== undefined || structureFix !== undefined
                       ? { revisionRequest: [directive, structureFix].filter((s): s is string => s !== undefined).join("\n\n") }
@@ -2289,7 +2398,7 @@ ${credit}`,
                     ...(feedback !== undefined ? { budgetFeedback: feedback } : {}),
                     voiceoverPolicy: config.voiceover,
                     allowPeople: config.allowPeopleInGeneratedFootage,
-                    ...(config.voiceLanguage ?? videoBrand.language ? { contentLanguage: config.voiceLanguage ?? videoBrand.language } : {}),
+                    contentLanguage: targetLanguage.tag,
                   }, "the script");
                   if (exec.status === "content_fail") {
                     // The writer produced nothing schema-valid. A script made
@@ -2328,7 +2437,7 @@ ${credit}`,
                       format: "text-led" as const,
                       voiceover: false,
                       voiceoverRationale: "assembled in code from the topic brief; a synthesized read of unwritten lines would only make it sound worse",
-                      language: config.voiceLanguage ?? videoBrand.language ?? "en",
+                      language: targetLanguage.tag,
                       // Read by `assembled` below, and by nothing else: it is
                       // how a fallback script tells the step that produced it
                       // what it is, without a captured array a replay skips.
@@ -2366,7 +2475,21 @@ ${credit}`,
                 const firstShots = shotVarietyIssues(first.repaired);
                 const firstPitch = salesPitchIssues(first.repaired, runDirection.direction);
                 const firstCircular = circularEndingIssues(first.repaired);
-                if (first.issues.length === 0 && firstVoice.length === 0 && firstShots.length === 0 && firstPitch.length === 0 && firstCircular.length === 0) {
+                // The words a VIEWER meets, and only those. `visualBrief` and
+                // `stockQuery` are excluded deliberately: they are a stock
+                // library's search terms, that library indexes in English, and
+                // gating on them would fail every correct Hebrew draft.
+                const spokenAndSeen = (sc: ShortScript) =>
+                  [sc.hook, sc.caption, ...sc.beats.flatMap((b) => [b.narration, b.onScreenText])].join("\n");
+                const firstLanguage = checkDraftLanguage(spokenAndSeen(first.repaired), targetLanguage);
+                if (
+                  first.issues.length === 0 &&
+                  firstVoice.length === 0 &&
+                  firstShots.length === 0 &&
+                  firstPitch.length === 0 &&
+                  firstCircular.length === 0 &&
+                  firstLanguage.ok
+                ) {
                   return { value: first.repaired, repairs: assembled(first.repaired) };
                 }
                 const note = [
@@ -2375,6 +2498,10 @@ ${credit}`,
                   firstShots.length > 0 ? `Shot problem in your last draft: ${firstShots.join("; ")}. Keep the words; change only the stockQuery and visualBrief of the beats that share the place.` : undefined,
                   firstPitch.length > 0 ? `Pitch problem in your last draft: ${firstPitch.join("; ")}. Rewrite that beat so it ends on the idea, in the client's voice, with no offer and no address.` : undefined,
                   firstCircular.length > 0 ? `Ending problem in your last draft: ${firstCircular.join("; ")}. Keep the hook; rewrite only the last beat so it lands somewhere new.` : undefined,
+                  // Last in the note and first in importance: a short in the
+                  // wrong language is not a draft with a problem, it is a
+                  // deliverable nobody can post.
+                  !firstLanguage.ok ? languageRedraftDirective(targetLanguage, firstLanguage.reason) : undefined,
                 ]
                   .filter((s): s is string => s !== undefined)
                   .join("\n");
@@ -2382,7 +2509,24 @@ ${credit}`,
                 const secondVoice = scriptVoiceIssues(second.repaired);
                 if (secondVoice.length > 0) console.warn(`${agentStepId}-fix: the redraft still reads off: ${secondVoice.join("; ")}; shipping to the reviewer as is`);
                 const settled = second.issues.length === 0 ? second.repaired : dropRepeatedBeats(second.repaired);
-                return { value: settled, repairs: assembled(settled) };
+                // One redraft, then deliver. A second wrong-language draft is
+                // a model that cannot write this language today, and a third
+                // attempt buys another one at the same odds - so the short
+                // ships with the failure named, which is the whole shape of
+                // the always-deliver rule. The reviewer is the one who can
+                // tell "wrong language" from "loanword-heavy and correct".
+                const secondLanguage = checkDraftLanguage(spokenAndSeen(settled), targetLanguage);
+                const languageRepairs: ContentRepair[] = secondLanguage.ok
+                  ? []
+                  : [
+                      {
+                        check: "target-language",
+                        action: "unresolved" as const,
+                        detail: `${secondLanguage.reason}; the writer was asked once to write it again in ${targetLanguage.tag} (${targetLanguage.reason}) and did not, so the short is delivered for a person to judge`,
+                      },
+                    ];
+                if (!secondLanguage.ok) console.warn(`${agentStepId}-fix: ${secondLanguage.reason}; delivering flagged`);
+                return { value: settled, repairs: [...assembled(settled), ...languageRepairs] };
               }),
             (s) => `${s.value.caption}\n\n${s.value.about}`,
           );
@@ -2550,7 +2694,7 @@ ${credit}`,
       const renderTextPlate = async (text: string, outputName: string, seconds: number, about: string, stat?: { value: string; label: string }): Promise<string | undefined> => {
         const render = tools["video.textPlate"];
         if (render === undefined) return undefined;
-        const font = captionFontFor(config.voiceLanguage ?? videoBrand.language ?? script.language);
+        const font = captionFontFor(targetLanguage.tag);
         const outcome = await render.execute(
           {
             text: text.length > 160 ? `${text.slice(0, 157).trimEnd()}…` : text,
@@ -2600,8 +2744,13 @@ ${credit}`,
       const beatPlates: BeatPlates[] = [];
       const plateSources: PlateSource[] = [];
       // Seeded with the clips a footage-only revision is replacing, so the
-      // library cannot hand the same one back for the beat a reviewer named.
-      const usedStockIds: number[] = [...(footageRevision?.excludeStockIds ?? [])];
+      // library cannot hand the same one back for the beat a reviewer named —
+      // AND, since 2026-09-18, with every clip this client's previous shorts
+      // already used. That list was run-scoped, so the exclusion reset every
+      // run; Pexels' results for a query like "office desk" are stable, so two
+      // shorts a week apart on adjacent topics opened on the same footage and
+      // both passed every gate because neither knew about the other.
+      const usedStockIds: number[] = [...shapeMemory.usedStockIds, ...(footageRevision?.excludeStockIds ?? [])];
       for (let i = 0; i < script.beats.length; i++) {
         const beat = script.beats[i]!;
         // Revision-scoped (2026-09-10): a revised script needs its own plates,
@@ -2840,7 +2989,7 @@ ${credit}`,
       });
 
       const narration = script.beats.map((b) => b.narration.trim()).join(" … ");
-      const language = config.voiceLanguage ?? videoBrand.language ?? script.language;
+      const language = targetLanguage.tag;
       const voice = await wf.step.code(rev("05-voiceover"), async (): Promise<{ path: string; durationSeconds: number | null; words: TranscriptWordLike[]; notes: string[] } | null> => {
         if (!voiceover) return null;
         if ((await wf.costSoFarUsd()) >= costCapUsd) {
@@ -3306,7 +3455,7 @@ ${credit}`,
               captionsExpected: draft.captionsExpected,
               voiceoverExpected: draft.voiceover,
               brandColors: [videoBrand.ground, videoBrand.fg, ...(videoBrand.accent ? [videoBrand.accent] : [])],
-              ...(videoBrand.language ? { language: videoBrand.language } : {}),
+              language: targetLanguage.tag,
               format,
               // The beats and their windows, so the model says WHICH shot is
               // wallpaper under its line, not only that one is.
@@ -3451,6 +3600,15 @@ ${credit}`,
           ...(draft.visualQa?.passed === false || (draft.repairs?.length ?? 0) > 0 ? { flagged: true } : {}),
           // Set when the cut was chosen by code rather than by the picker.
           ...(momentFallback !== undefined ? { momentFallback } : {}),
+          // What the moment floor OBSERVED but did not act on — a window with
+          // no figure and no contrast connective may still be the best thirty
+          // seconds in the episode, and that call is the reviewer's.
+          ...(momentFloorNotes.length > 0 ? { momentNotes: momentFloorNotes } : {}),
+          // Which language this short is in and where that came from. Shown
+          // always, not only on a failure: "we assumed English because nobody
+          // configured anything" is exactly the thing a reviewer of a Hebrew
+          // client's short needs to see before they approve it.
+          targetLanguage: { tag: targetLanguage.tag, source: targetLanguage.source, reason: targetLanguage.reason, assumed: targetLanguage.assumed },
           // Which plates are real footage and which are generated stills.
           ...(draft.plateSources !== undefined ? { plateSources: draft.plateSources } : {}),
           // What it cost to get here, what the plan was priced at, and the
@@ -3546,6 +3704,23 @@ ${credit}`,
     if (momentFallback !== undefined) {
       contentRepairs.push({ check: "moment-selection", action: "substituted", detail: momentFallback });
     }
+    if (momentFloorNote !== undefined) {
+      contentRepairs.push({
+        check: "moment-floor",
+        action: "unresolved",
+        detail: `${momentFloorNote} — and no other run of whole sentences in this recording scores better, so the clip ships for a person to judge`,
+      });
+    }
+    // An ASSUMED language is deliberately NOT a repair.
+    //
+    // It is visible either way - `targetLanguage.assumed` rides on the gate
+    // payload and the deliverable, which is where a reviewer reads it. But the
+    // repair ledger means "this run had to adapt around something", and most
+    // clients have no `voiceLanguage` and no brand language and publish in
+    // English perfectly happily. Pushing a repair here would attach a degrade
+    // marker to the majority of clean runs, which is the "shouting `degraded`
+    // at every clean post until nobody reads it" failure in reverse - the same
+    // asymmetry `contentRepairs` is documented to protect.
     if (reviewOutcome !== null) {
       contentRepairs.push({ check: "human-review", action: "unresolved", detail: reviewOutcome.detail });
     }
@@ -3613,6 +3788,7 @@ ${credit}`,
             // clean clip until nobody reads it.
             ...(contentRepairs.length > 0 ? { contentRepairs } : {}),
             ...(momentFallback !== undefined ? { momentFallback } : {}),
+            targetLanguage: { tag: targetLanguage.tag, source: targetLanguage.source, assumed: targetLanguage.assumed },
             ...(review.output.plateSources !== undefined ? { plateSources: review.output.plateSources } : {}),
             ...(review.output.repick !== undefined ? { repick: review.output.repick } : {}),
             ...(review.output.revisionKind !== undefined ? { revisionKind: review.output.revisionKind } : {}),
@@ -3657,6 +3833,25 @@ ${credit}`,
         await tools["ledger.recordOutputExcerpt"]?.execute({ agentId: "tiktok-agent", runId: wf.runId, excerpt: `${copy.caption}\n\n${copy.about}` }, { ctx });
       } catch (error) {
         console.error("13-commit-and-record: could not record the output excerpt for future dedup", error);
+      }
+      // What this account has now MADE. The used-media ledger states the rule
+      // for itself — "an image that never shipped was never used" — and it
+      // applies to both halves of this: a short a reviewer turned down never
+      // reached a feed, so it cannot have made the account look repetitive,
+      // and the library clips it fetched are still free for the next run to
+      // use. `reviewOutcome` is non-null for a reject and for a cycle that ran
+      // out of rounds, and neither of those shipped anything.
+      try {
+        const record = reviewOutcome === null ? tools["ledger.recordUsedImages"] : undefined;
+        if (record !== undefined) {
+          const entries = [
+            ...(review.output.plateStockIds ?? []).flatMap((p) => p.ids.map(stockClipEntry)),
+            ...(script !== undefined ? [skeletonEntry(skeletonOf(script))] : []),
+          ];
+          if (entries.length > 0) await record.execute({ imagePaths: entries }, { ctx });
+        }
+      } catch (error) {
+        console.error("13-commit-and-record: could not record this short's shape for future runs", error);
       }
       const memory = tools["memory.appendDecision"];
       if (memory) {
