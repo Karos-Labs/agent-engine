@@ -3,7 +3,7 @@ import type { AgentToolRegistry, ModelRouter, PromptStore } from "@agent-engine/
 import type { WorkflowContext } from "@agent-engine/workflow";
 import { InstagramNativeEditorAgent } from "../agent/instagram-native-editor-agent.js";
 import type { SlideDevice } from "./slide-devices.js";
-import type { InstagramCopyOutput, InstagramSlideCopy, SlidesDataSelfCheck } from "./types.js";
+import type { InstagramCopyOutput, InstagramSlideCopy } from "./types.js";
 
 /**
  * SCRUM-310 (AU32): the language-compliance gate, in two stages, both run
