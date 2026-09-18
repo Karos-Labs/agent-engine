@@ -600,329 +600,329 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
         ...(intake.endcardOverride !== undefined ? { endcardOverride: intake.endcardOverride } : {}),
       };
 
-    // ── 07b: base render — the graded, concatenated footage timeline, ONCE ──
-    //
-    // `graphic_qa.py` judges every overlay's visibility over the frame it will
-    // really sit on. That frame has to come from base.mp4 (footage only), not
-    // from a finished composite that already carries the overlay being judged
-    // — which is what this workflow used to hand it. The cut and grade are
-    // fixed before any plan exists, so base renders once per round, outside
-    // the plan loop; each plan attempt then costs overlay frames + gates, and
-    // the full composite is paid for exactly once, after a plan has passed.
-    const base = await wf.step.code(rev("07b-render-base"), async () => {
-      await writeJob(assembleJob({ ...jobBase, plan: { overlays: [], cutaways: [] } }));
-      const outcome = await tools["video.render"]!.execute({ profilePath: inputs.profilePath, jobPath: brandResolve.paths.jobPath, stage: "base" }, { ctx });
-      if (outcome.status !== "success") {
-        throw new WorkflowToolingFailure(`video.render (base) failed: ${outcome.status}: ${(outcome as { reason?: string }).reason ?? ""}`);
-      }
-      return outcome.result as { outputPath: string };
-    });
-
-    // ── 08: graphics & cutaways — the second bounded judgment island, looped against its own gates ──
-    // PLAYBOOK §4d point 2: "COUNT ASSUMES A 30s+ RUNTIME" — the real rule is about actual
-    // retained runtime, never the requested length category or the agent's own proposed count
-    // (P1#5 audit fix: either proxy can mask genuine over/undercounting in either direction).
-    const allowCutawayCount = totalRetainedDuration(cutPlan.segments) < CUTAWAY_COUNT_RUNTIME_FLOOR_S;
-    // A plate is a billed generation through karos-media's `image.generate`;
-    // on a deployment without it — or on a run the client set to their own
-    // media only — the agent is told so and plans none.
-    const plateGenerationAvailable = tools["image.generate"] !== undefined && !clientMediaOnly;
-    const graphicsAgent = new BrandedShortsGraphicsAgent({ router: options.router, tools, promptStore: options.promptStore });
-    let priorFailureReason: string | undefined;
-    let build: { outputPath: string; durationSeconds: number | null; plan: GraphicsPlanOutput; warnings: string[]; unmet: string[] } | undefined;
-    let graphicsAttemptsUsed = 0;
-    /** Set when the last attempt's plan had illegal items dropped out of it; it, not `plan`, is what builds. */
-    let planForBuild: GraphicsPlanOutput | undefined;
-    /** Set when the planner produced nothing schema-valid twice and the short is the footage alone. */
-    let emptyPlanReason: string | undefined;
-
-    for (let attempt = 1; attempt <= MAX_GRAPHICS_ATTEMPTS; attempt++) {
-      graphicsAttemptsUsed = attempt;
-      const planResult = await wf.step.agent(rev(`08a-plan-graphics-attempt-${attempt}`), graphicsAgent, {
-        ...runDirectionField(runDirection),
-        words: kept,
-        graphicsLanguage: brandResolve.graphicsLanguage,
-        archetypes: brandResolve.approvedArchetypes,
-        // The client's real stills, by file and subject — the only material a
-        // burst may be built from (PLAYBOOK §4d). Empty means "no bursts".
-        assetLibrary: library.map((s) => ({ file: s.file, subjects: s.subjects })),
-        plateGenerationAvailable,
-        takeaway: intake.takeaway,
-        targetLength: intake.targetLength,
-        // The client's projected branding-guidelines context doc (T-A9),
-        // best-effort. See 02b's own comment.
-        ...(brandingGuidelines !== undefined ? { brandingGuidelines } : {}),
-        ...(priorFailureReason !== undefined ? { priorFailureReason } : {}),
-        ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
-        ...(directive !== undefined ? { revisionRequest: directive } : {}),
+      // ── 07b: base render — the graded, concatenated footage timeline, ONCE ──
+      //
+      // `graphic_qa.py` judges every overlay's visibility over the frame it will
+      // really sit on. That frame has to come from base.mp4 (footage only), not
+      // from a finished composite that already carries the overlay being judged
+      // — which is what this workflow used to hand it. The cut and grade are
+      // fixed before any plan exists, so base renders once per round, outside
+      // the plan loop; each plan attempt then costs overlay frames + gates, and
+      // the full composite is paid for exactly once, after a plan has passed.
+      const base = await wf.step.code(rev("07b-render-base"), async () => {
+        await writeJob(assembleJob({ ...jobBase, plan: { overlays: [], cutaways: [] } }));
+        const outcome = await tools["video.render"]!.execute({ profilePath: inputs.profilePath, jobPath: brandResolve.paths.jobPath, stage: "base" }, { ctx });
+        if (outcome.status !== "success") {
+          throw new WorkflowToolingFailure(`video.render (base) failed: ${outcome.status}: ${(outcome as { reason?: string }).reason ?? ""}`);
+        }
+        return outcome.result as { outputPath: string };
       });
-      if (planResult.status !== "completed" && planResult.status !== "content_fail") {
-        throw new WorkflowToolingFailure(`graphics plan step resolved to "${planResult.status}"`);
-      }
-      if (planResult.status === "content_fail") {
-        // Nothing schema-valid came back. An empty plan is a legal plan - the
-        // client's own footage, cut and graded, with no overlays and no
-        // cutaways over it - so the round retries once and then builds that
-        // rather than ending the run. A plainer short beats no short.
-        priorFailureReason = "your last plan did not clear its own output validation";
-        if (attempt < MAX_GRAPHICS_ATTEMPTS) continue;
-        emptyPlanReason = "the graphics planner returned nothing schema-valid twice; the short was built from the footage alone, with no overlays or cutaways";
-      }
-      const plan: GraphicsPlanOutput = planResult.status === "completed" ? planResult.finalOutput! : { overlays: [], cutaways: [] };
 
-      // P0#1 audit fix: reject an unapproved archetype BEFORE spending a render+gate cycle on
-      // a plan already known to violate the closed-vocabulary invariant, and feed the exact
-      // violation back into the same retry loop every other gate failure already uses. The
-      // same pass now covers bursts (stills must come from the library) and plates (only on a
-      // deployment that can generate one).
-      const planViolations = await wf.step.code(rev(`08a2-validate-archetypes-attempt-${attempt}`), () =>
-        validateGraphicsPlan(plan, { approvedArchetypes: brandResolve.approvedArchetypes, libraryFiles: library.map((s) => s.file), plateGenerationAvailable }),
-      );
-      if (planViolations.length > 0) {
-        priorFailureReason = planViolations.join("; ");
-        if (attempt === MAX_GRAPHICS_ATTEMPTS) {
-          // The closed-vocabulary invariant is not negotiable - an unapproved
-          // archetype is a graphic the client never signed off on, and a burst
-          // built from a still that is not in their library is worse than a
-          // gap. So the offending ITEMS go, not the run: what survives is
-          // every overlay and cutaway that WAS approved, over the client's own
-          // footage, and the reviewer is told what was dropped.
-          const cleaned = dropViolatingItems(plan, { approvedArchetypes: brandResolve.approvedArchetypes, libraryFiles: library.map((st) => st.file), plateGenerationAvailable });
-          repairs.push({
-            check: "video.graphicsPlan",
-            action: "redacted",
-            detail: `${priorFailureReason} - those ${plan.overlays.length + plan.cutaways.length - cleaned.overlays.length - cleaned.cutaways.length} item(s) were dropped and the rest of the plan built`,
-          });
-          planForBuild = cleaned;
-        } else {
-          continue;
+      // ── 08: graphics & cutaways — the second bounded judgment island, looped against its own gates ──
+      // PLAYBOOK §4d point 2: "COUNT ASSUMES A 30s+ RUNTIME" — the real rule is about actual
+      // retained runtime, never the requested length category or the agent's own proposed count
+      // (P1#5 audit fix: either proxy can mask genuine over/undercounting in either direction).
+      const allowCutawayCount = totalRetainedDuration(cutPlan.segments) < CUTAWAY_COUNT_RUNTIME_FLOOR_S;
+      // A plate is a billed generation through karos-media's `image.generate`;
+      // on a deployment without it — or on a run the client set to their own
+      // media only — the agent is told so and plans none.
+      const plateGenerationAvailable = tools["image.generate"] !== undefined && !clientMediaOnly;
+      const graphicsAgent = new BrandedShortsGraphicsAgent({ router: options.router, tools, promptStore: options.promptStore });
+      let priorFailureReason: string | undefined;
+      let build: { outputPath: string; durationSeconds: number | null; plan: GraphicsPlanOutput; warnings: string[]; unmet: string[] } | undefined;
+      let graphicsAttemptsUsed = 0;
+      /** Set when the last attempt's plan had illegal items dropped out of it; it, not `plan`, is what builds. */
+      let planForBuild: GraphicsPlanOutput | undefined;
+      /** Set when the planner produced nothing schema-valid twice and the short is the footage alone. */
+      let emptyPlanReason: string | undefined;
+
+      for (let attempt = 1; attempt <= MAX_GRAPHICS_ATTEMPTS; attempt++) {
+        graphicsAttemptsUsed = attempt;
+        const planResult = await wf.step.agent(rev(`08a-plan-graphics-attempt-${attempt}`), graphicsAgent, {
+          ...runDirectionField(runDirection),
+          words: kept,
+          graphicsLanguage: brandResolve.graphicsLanguage,
+          archetypes: brandResolve.approvedArchetypes,
+          // The client's real stills, by file and subject — the only material a
+          // burst may be built from (PLAYBOOK §4d). Empty means "no bursts".
+          assetLibrary: library.map((s) => ({ file: s.file, subjects: s.subjects })),
+          plateGenerationAvailable,
+          takeaway: intake.takeaway,
+          targetLength: intake.targetLength,
+          // The client's projected branding-guidelines context doc (T-A9),
+          // best-effort. See 02b's own comment.
+          ...(brandingGuidelines !== undefined ? { brandingGuidelines } : {}),
+          ...(priorFailureReason !== undefined ? { priorFailureReason } : {}),
+          ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
+          ...(directive !== undefined ? { revisionRequest: directive } : {}),
+        });
+        if (planResult.status !== "completed" && planResult.status !== "content_fail") {
+          throw new WorkflowToolingFailure(`graphics plan step resolved to "${planResult.status}"`);
         }
-      }
-
-      // Render the overlay frames, then gate them over the REAL footage (base.mp4)
-      // and gate the cutaway schedule — nothing here composites, so a failing
-      // plan costs frames and two gate runs, never a full encode.
-      const planned = planForBuild ?? plan;
-      const attemptOutput = await wf.step.code(rev(`08b-render-and-gate-attempt-${attempt}`), async () => {
-        await writeJob(assembleJob({ ...jobBase, plan: planned }));
-
-        const overlaysVerdict = await runGateTool(tools, "video.renderOverlays", { profilePath: inputs.profilePath, jobPath: brandResolve.paths.jobPath }, ctx);
-        if (overlaysVerdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`video.renderOverlays: ${overlaysVerdict.reason}`);
-        if (overlaysVerdict.verdict === "content_fail") {
-          // Nothing to gate: an overlay with no frames would only fail the
-          // graphics gate with a less specific reason than this one.
-          return { plan, failures: [`renderOverlays: ${overlaysVerdict.reason}`] };
+        if (planResult.status === "content_fail") {
+          // Nothing schema-valid came back. An empty plan is a legal plan - the
+          // client's own footage, cut and graded, with no overlays and no
+          // cutaways over it - so the round retries once and then builds that
+          // rather than ending the run. A plainer short beats no short.
+          priorFailureReason = "your last plan did not clear its own output validation";
+          if (attempt < MAX_GRAPHICS_ATTEMPTS) continue;
+          emptyPlanReason = "the graphics planner returned nothing schema-valid twice; the short was built from the footage alone, with no overlays or cutaways";
         }
+        const plan: GraphicsPlanOutput = planResult.status === "completed" ? planResult.finalOutput! : { overlays: [], cutaways: [] };
 
-        const graphicsVerdict = await runGateTool(
-          tools,
-          "video.graphicsGate",
-          { profilePath: inputs.profilePath, videoPath: base.outputPath, jobPath: brandResolve.paths.jobPath },
-          ctx,
+        // P0#1 audit fix: reject an unapproved archetype BEFORE spending a render+gate cycle on
+        // a plan already known to violate the closed-vocabulary invariant, and feed the exact
+        // violation back into the same retry loop every other gate failure already uses. The
+        // same pass now covers bursts (stills must come from the library) and plates (only on a
+        // deployment that can generate one).
+        const planViolations = await wf.step.code(rev(`08a2-validate-archetypes-attempt-${attempt}`), () =>
+          validateGraphicsPlan(plan, { approvedArchetypes: brandResolve.approvedArchetypes, libraryFiles: library.map((s) => s.file), plateGenerationAvailable }),
         );
-        if (graphicsVerdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`video.graphicsGate: ${graphicsVerdict.reason}`);
-
-        const cutawayVerdict = await runGateTool(
-          tools,
-          "video.cutawayGate",
-          { jobPath: brandResolve.paths.jobPath, transcriptPath: brandResolve.paths.transcriptPath, allowCount: allowCutawayCount },
-          ctx,
-        );
-        if (cutawayVerdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`video.cutawayGate: ${cutawayVerdict.reason}`);
-
-        const failures = [
-          ...(graphicsVerdict.verdict === "content_fail" ? [`graphicsGate: ${graphicsVerdict.reason}`] : []),
-          ...(cutawayVerdict.verdict === "content_fail" ? [`cutawayGate: ${cutawayVerdict.reason}`] : []),
-        ];
-        return { plan: planned, failures };
-      });
-
-      if (attemptOutput.failures.length > 0) {
-        priorFailureReason = attemptOutput.failures.join("; ");
-        if (attempt === MAX_GRAPHICS_ATTEMPTS) {
-          // Two plans in and the gates still object. The objection is about
-          // legibility and schedule, not about safety, and a person is about
-          // to watch the result with the same eyes the gate is standing in
-          // for. Built as planned, flagged with what the gates said.
-          repairs.push({
-            check: "video.graphicsGate",
-            action: "unresolved",
-            detail: `${priorFailureReason} - built and delivered flagged after ${MAX_GRAPHICS_ATTEMPTS} plans rather than withheld`,
-          });
-        } else {
-          continue;
+        if (planViolations.length > 0) {
+          priorFailureReason = planViolations.join("; ");
+          if (attempt === MAX_GRAPHICS_ATTEMPTS) {
+            // The closed-vocabulary invariant is not negotiable - an unapproved
+            // archetype is a graphic the client never signed off on, and a burst
+            // built from a still that is not in their library is worse than a
+            // gap. So the offending ITEMS go, not the run: what survives is
+            // every overlay and cutaway that WAS approved, over the client's own
+            // footage, and the reviewer is told what was dropped.
+            const cleaned = dropViolatingItems(plan, { approvedArchetypes: brandResolve.approvedArchetypes, libraryFiles: library.map((st) => st.file), plateGenerationAvailable });
+            repairs.push({
+              check: "video.graphicsPlan",
+              action: "redacted",
+              detail: `${priorFailureReason} - those ${plan.overlays.length + plan.cutaways.length - cleaned.overlays.length - cleaned.cutaways.length} item(s) were dropped and the rest of the plan built`,
+            });
+            planForBuild = cleaned;
+          } else {
+            continue;
+          }
         }
-      }
 
-      // ── 08c: the plan passed — generate its plates, then the one full composite ──
-      // Plates are generated only now, after the gates: each is a billed call,
-      // and a plan that was going to fail its schedule should not have bought
-      // images first. A plate the generator cannot produce holds the run with
-      // the model's own reason; nothing is substituted.
-      build = await wf.step.code(rev(`08c-plates-and-render-attempt-${attempt}`), async () => {
-        const generated = await generatePlates(tools, ctx, {
-          plan: planned,
-          workDir: brandResolve.paths.workDir,
-          runId: wf.runId,
-          palette: [profile.color.background, profile.color.foreground, profile.color.accent],
-          accent: profile.color.accent,
-          styleNotes: brandResolve.lockedStyleNotes,
-        });
-        // A plate the generator would not produce leaves its cutaway out of
-        // the composite entirely. Kept in ONE place - here, where the missing
-        // files are known - so the job written to disk and the plan recorded
-        // on the deliverable are the same plan the render actually built.
-        const built: GraphicsPlanOutput =
-          generated.unmet.length === 0
-            ? planned
-            : { ...planned, cutaways: planned.cutaways.filter((_, i) => planned.cutaways[i]!.kind !== "plate" || generated.plateFiles[i] !== undefined) };
-        await writeJob(assembleJob({ ...jobBase, plan: built, plateFiles: generated.plateFiles }));
-        const renderOutcome = await tools["video.render"]!.execute({ profilePath: inputs.profilePath, jobPath: brandResolve.paths.jobPath }, { ctx });
-        if (renderOutcome.status !== "success") {
-          throw new WorkflowToolingFailure(`video.render failed: ${renderOutcome.status}: ${(renderOutcome as { reason?: string }).reason ?? ""}`);
-        }
-        const rendered = renderOutcome.result as { outputPath: string; durationSeconds: number | null; warnings: string[] };
-        return { outputPath: rendered.outputPath, durationSeconds: rendered.durationSeconds, plan: built, warnings: rendered.warnings, unmet: generated.unmet };
-      });
-      if (build.unmet.length > 0) {
-        repairs.push({
-          check: "cutaway-plate",
-          action: "redacted",
-          detail: `the generator would not produce ${build.unmet.join("; ")}; ${build.unmet.length} cutaway(s) were left out rather than filled with something that does not match the phrase under them`,
-        });
-      }
-      break;
-    }
-      if (!build) {
-        // Unreachable: the loop above either sets `build` or, on its last
-        // attempt, builds whatever survived its gates.
-        throw new WorkflowToolingFailure("graphics/cutaway loop exited without a build result");
-      }
-      if (emptyPlanReason !== undefined) {
-        repairs.push({ check: "branded-shorts-graphics", action: "unresolved", detail: emptyPlanReason });
-      }
-      if (cutGate.flagged) {
-        repairs.push({
-          check: "video.cutGate",
-          action: "unresolved",
-          detail: `${cutGate.reason ?? "the cut list was flagged"} — built and delivered flagged rather than withheld`,
-        });
-      }
+        // Render the overlay frames, then gate them over the REAL footage (base.mp4)
+        // and gate the cutaway schedule — nothing here composites, so a failing
+        // plan costs frames and two gate runs, never a full encode.
+        const planned = planForBuild ?? plan;
+        const attemptOutput = await wf.step.code(rev(`08b-render-and-gate-attempt-${attempt}`), async () => {
+          await writeJob(assembleJob({ ...jobBase, plan: planned }));
 
-      // ── 09: self-eval gate — PLAYBOOK §6, before anyone sees the output ──
-      //
-      // Carries `build.warnings` (e.g. build_short.py's caption-density check)
-      // forward into this gate's own evidence (P0#3 audit fix) rather than
-      // letting them vanish once video.render's result is otherwise consumed —
-      // advisory, never turned into a content_fail on their own.
-      //
-      // The gate itself is advisory too since 2026-09-18, for the reason the
-      // visual QA next door already is: a person is about to watch this exact
-      // file, and no verdict this gate reaches is one that reviewer cannot
-      // reach better. A `tooling_error` still throws — a check that could not
-      // run has judged nothing.
-      const selfEval = await wf.step.code(rev("09-self-eval-gate"), async (): Promise<{ passed: boolean; reason?: string }> => {
-        const verdict = await runGateTool(
-          tools,
-          "video.selfEvalGate",
-          { videoPath: build!.outputPath, renderWarnings: build!.warnings, profilePath: inputs.profilePath, jobPath: brandResolve.paths.jobPath },
-          ctx,
-        );
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`video.selfEvalGate: ${verdict.reason}`);
-        if (verdict.verdict === "content_fail") {
-          console.warn(`${rev("09-self-eval-gate")}: video.selfEvalGate flagged the finished video, delivering it flagged rather than held: ${verdict.reason}`);
-          return { passed: false, reason: verdict.reason };
-        }
-        return { passed: true };
-      });
-      if (!selfEval.passed) {
-        repairs.push({
-          check: "video.selfEvalGate",
-          action: "unresolved",
-          detail: `${selfEval.reason ?? "the finished video failed its self-eval"} — delivered flagged for a person to watch rather than withheld`,
-        });
-      }
+          const overlaysVerdict = await runGateTool(tools, "video.renderOverlays", { profilePath: inputs.profilePath, jobPath: brandResolve.paths.jobPath }, ctx);
+          if (overlaysVerdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`video.renderOverlays: ${overlaysVerdict.reason}`);
+          if (overlaysVerdict.verdict === "content_fail") {
+            // Nothing to gate: an overlay with no frames would only fail the
+            // graphics gate with a less specific reason than this one.
+            return { plan, failures: [`renderOverlays: ${overlaysVerdict.reason}`] };
+          }
 
-      // ── 09b: the visual QA — a model WATCHES the finished short ──
-      //
-      // The check this agent has never had, and the one clipping and content
-      // design have had since 2026-09-07. `video.selfEvalGate` answers
-      // questions about the FILE; until now nothing looked at the video.
-      //
-      // It matters most here because of what sits under it: this agent's
-      // delivery gate auto-approves an unanswered review, so with no quality
-      // signal the timeout was shipping whatever nobody happened to open
-      // within the hour. That is the exact failure two prep clips met on
-      // 2026-09-08. The timeout below now reads this verdict.
-      //
-      // Advisory like everywhere else, and a deployment without the gate
-      // records that it was SKIPPED rather than pretending it passed — which
-      // is what lets the timeout tell "reviewed and fine" from "never seen".
-      const visualQa = await wf.step.code(
-        rev("09b-visual-qa"),
-        async (): Promise<{ skipped: true; note: string } | { skipped: false; passed: boolean; reason?: string; evidence: string[] }> => {
-          const gate = tools["video.visualQaGate"];
-          if (gate === undefined) return { skipped: true, note: "video.visualQaGate is not registered in this deployment" };
-          const outcome = await gate.execute(
-            {
-              videoPath: build!.outputPath,
-              expectations: {
-                topic: intake.takeaway,
-                captionsExpected: true,
-                voiceoverExpected: false,
-                brandColors: [profile.color.background, profile.color.foreground, profile.color.accent],
-                format: "commentary-clip",
-              },
-            },
-            { ctx },
+          const graphicsVerdict = await runGateTool(
+            tools,
+            "video.graphicsGate",
+            { profilePath: inputs.profilePath, videoPath: base.outputPath, jobPath: brandResolve.paths.jobPath },
+            ctx,
           );
-          if (outcome.status === "not_available") return { skipped: true, note: `video.visualQaGate is not available: ${outcome.reason}` };
-          if (outcome.status !== "success") {
-            return { skipped: true, note: `video.visualQaGate ${outcome.status}; the reviewer judges the short unaided` };
+          if (graphicsVerdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`video.graphicsGate: ${graphicsVerdict.reason}`);
+
+          const cutawayVerdict = await runGateTool(
+            tools,
+            "video.cutawayGate",
+            { jobPath: brandResolve.paths.jobPath, transcriptPath: brandResolve.paths.transcriptPath, allowCount: allowCutawayCount },
+            ctx,
+          );
+          if (cutawayVerdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`video.cutawayGate: ${cutawayVerdict.reason}`);
+
+          const failures = [
+            ...(graphicsVerdict.verdict === "content_fail" ? [`graphicsGate: ${graphicsVerdict.reason}`] : []),
+            ...(cutawayVerdict.verdict === "content_fail" ? [`cutawayGate: ${cutawayVerdict.reason}`] : []),
+          ];
+          return { plan: planned, failures };
+        });
+
+        if (attemptOutput.failures.length > 0) {
+          priorFailureReason = attemptOutput.failures.join("; ");
+          if (attempt === MAX_GRAPHICS_ATTEMPTS) {
+            // Two plans in and the gates still object. The objection is about
+            // legibility and schedule, not about safety, and a person is about
+            // to watch the result with the same eyes the gate is standing in
+            // for. Built as planned, flagged with what the gates said.
+            repairs.push({
+              check: "video.graphicsGate",
+              action: "unresolved",
+              detail: `${priorFailureReason} - built and delivered flagged after ${MAX_GRAPHICS_ATTEMPTS} plans rather than withheld`,
+            });
+          } else {
+            continue;
           }
-          const verdict = outcome.result as GateVerdict;
-          if (verdict.verdict === "tooling_error") {
-            return { skipped: true, note: `video.visualQaGate could not review the short (${verdict.reason}); the reviewer judges it unaided` };
+        }
+
+        // ── 08c: the plan passed — generate its plates, then the one full composite ──
+        // Plates are generated only now, after the gates: each is a billed call,
+        // and a plan that was going to fail its schedule should not have bought
+        // images first. A plate the generator cannot produce holds the run with
+        // the model's own reason; nothing is substituted.
+        build = await wf.step.code(rev(`08c-plates-and-render-attempt-${attempt}`), async () => {
+          const generated = await generatePlates(tools, ctx, {
+            plan: planned,
+            workDir: brandResolve.paths.workDir,
+            runId: wf.runId,
+            palette: [profile.color.background, profile.color.foreground, profile.color.accent],
+            accent: profile.color.accent,
+            styleNotes: brandResolve.lockedStyleNotes,
+          });
+          // A plate the generator would not produce leaves its cutaway out of
+          // the composite entirely. Kept in ONE place - here, where the missing
+          // files are known - so the job written to disk and the plan recorded
+          // on the deliverable are the same plan the render actually built.
+          const built: GraphicsPlanOutput =
+            generated.unmet.length === 0
+              ? planned
+              : { ...planned, cutaways: planned.cutaways.filter((_, i) => planned.cutaways[i]!.kind !== "plate" || generated.plateFiles[i] !== undefined) };
+          await writeJob(assembleJob({ ...jobBase, plan: built, plateFiles: generated.plateFiles }));
+          const renderOutcome = await tools["video.render"]!.execute({ profilePath: inputs.profilePath, jobPath: brandResolve.paths.jobPath }, { ctx });
+          if (renderOutcome.status !== "success") {
+            throw new WorkflowToolingFailure(`video.render failed: ${renderOutcome.status}: ${(renderOutcome as { reason?: string }).reason ?? ""}`);
           }
+          const rendered = renderOutcome.result as { outputPath: string; durationSeconds: number | null; warnings: string[] };
+          return { outputPath: rendered.outputPath, durationSeconds: rendered.durationSeconds, plan: built, warnings: rendered.warnings, unmet: generated.unmet };
+        });
+        if (build.unmet.length > 0) {
+          repairs.push({
+            check: "cutaway-plate",
+            action: "redacted",
+            detail: `the generator would not produce ${build.unmet.join("; ")}; ${build.unmet.length} cutaway(s) were left out rather than filled with something that does not match the phrase under them`,
+          });
+        }
+        break;
+      }
+        if (!build) {
+          // Unreachable: the loop above either sets `build` or, on its last
+          // attempt, builds whatever survived its gates.
+          throw new WorkflowToolingFailure("graphics/cutaway loop exited without a build result");
+        }
+        if (emptyPlanReason !== undefined) {
+          repairs.push({ check: "branded-shorts-graphics", action: "unresolved", detail: emptyPlanReason });
+        }
+        if (cutGate.flagged) {
+          repairs.push({
+            check: "video.cutGate",
+            action: "unresolved",
+            detail: `${cutGate.reason ?? "the cut list was flagged"} — built and delivered flagged rather than withheld`,
+          });
+        }
+
+        // ── 09: self-eval gate — PLAYBOOK §6, before anyone sees the output ──
+        //
+        // Carries `build.warnings` (e.g. build_short.py's caption-density check)
+        // forward into this gate's own evidence (P0#3 audit fix) rather than
+        // letting them vanish once video.render's result is otherwise consumed —
+        // advisory, never turned into a content_fail on their own.
+        //
+        // The gate itself is advisory too since 2026-09-18, for the reason the
+        // visual QA next door already is: a person is about to watch this exact
+        // file, and no verdict this gate reaches is one that reviewer cannot
+        // reach better. A `tooling_error` still throws — a check that could not
+        // run has judged nothing.
+        const selfEval = await wf.step.code(rev("09-self-eval-gate"), async (): Promise<{ passed: boolean; reason?: string }> => {
+          const verdict = await runGateTool(
+            tools,
+            "video.selfEvalGate",
+            { videoPath: build!.outputPath, renderWarnings: build!.warnings, profilePath: inputs.profilePath, jobPath: brandResolve.paths.jobPath },
+            ctx,
+          );
+          if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`video.selfEvalGate: ${verdict.reason}`);
           if (verdict.verdict === "content_fail") {
-            console.warn(`${rev("09b-visual-qa")}: visual QA flagged the short, delivering it flagged rather than held: ${verdict.reason}`);
-            return { skipped: false, passed: false, reason: verdict.reason, evidence: verdict.evidence };
+            console.warn(`${rev("09-self-eval-gate")}: video.selfEvalGate flagged the finished video, delivering it flagged rather than held: ${verdict.reason}`);
+            return { passed: false, reason: verdict.reason };
           }
-          return { skipped: false, passed: true, evidence: verdict.evidence };
-        },
-      );
+          return { passed: true };
+        });
+        if (!selfEval.passed) {
+          repairs.push({
+            check: "video.selfEvalGate",
+            action: "unresolved",
+            detail: `${selfEval.reason ?? "the finished video failed its self-eval"} — delivered flagged for a person to watch rather than withheld`,
+          });
+        }
 
-      // -- terminal topic guardrail --
-      //
-      // The words that survive into the cut, plus the takeaway the client asked
-      // for, plus the text this round put ON SCREEN. These are the client's OWN
-      // words from their own footage, which is exactly why the check is worth
-      // running: a subject they told us not to publish can still be something
-      // they said on camera — and an overlay is published words too.
-      //
-      // Inside the round and revision-scoped: without the suffix a second round
-      // short-circuits on round 0's checkpoint, the REVISED graphics are never
-      // actually checked, and the trace still reports a pass.
-      await runTopicGuardrail(
-        wf,
-        { tools, promptStore: options.promptStore, router: options.router },
-        [kept.map((w) => w.text).join(" "), intake.takeaway, ...build.plan.overlays.map((o) => o.label ?? o.illustrates)].filter(Boolean).join("\n\n"),
-        undefined,
-        revision === 0 ? undefined : `-r${revision}`,
-      );
+        // ── 09b: the visual QA — a model WATCHES the finished short ──
+        //
+        // The check this agent has never had, and the one clipping and content
+        // design have had since 2026-09-07. `video.selfEvalGate` answers
+        // questions about the FILE; until now nothing looked at the video.
+        //
+        // It matters most here because of what sits under it: this agent's
+        // delivery gate auto-approves an unanswered review, so with no quality
+        // signal the timeout was shipping whatever nobody happened to open
+        // within the hour. That is the exact failure two prep clips met on
+        // 2026-09-08. The timeout below now reads this verdict.
+        //
+        // Advisory like everywhere else, and a deployment without the gate
+        // records that it was SKIPPED rather than pretending it passed — which
+        // is what lets the timeout tell "reviewed and fine" from "never seen".
+        const visualQa = await wf.step.code(
+          rev("09b-visual-qa"),
+          async (): Promise<{ skipped: true; note: string } | { skipped: false; passed: boolean; reason?: string; evidence: string[] }> => {
+            const gate = tools["video.visualQaGate"];
+            if (gate === undefined) return { skipped: true, note: "video.visualQaGate is not registered in this deployment" };
+            const outcome = await gate.execute(
+              {
+                videoPath: build!.outputPath,
+                expectations: {
+                  topic: intake.takeaway,
+                  captionsExpected: true,
+                  voiceoverExpected: false,
+                  brandColors: [profile.color.background, profile.color.foreground, profile.color.accent],
+                  format: "commentary-clip",
+                },
+              },
+              { ctx },
+            );
+            if (outcome.status === "not_available") return { skipped: true, note: `video.visualQaGate is not available: ${outcome.reason}` };
+            if (outcome.status !== "success") {
+              return { skipped: true, note: `video.visualQaGate ${outcome.status}; the reviewer judges the short unaided` };
+            }
+            const verdict = outcome.result as GateVerdict;
+            if (verdict.verdict === "tooling_error") {
+              return { skipped: true, note: `video.visualQaGate could not review the short (${verdict.reason}); the reviewer judges it unaided` };
+            }
+            if (verdict.verdict === "content_fail") {
+              console.warn(`${rev("09b-visual-qa")}: visual QA flagged the short, delivering it flagged rather than held: ${verdict.reason}`);
+              return { skipped: false, passed: false, reason: verdict.reason, evidence: verdict.evidence };
+            }
+            return { skipped: false, passed: true, evidence: verdict.evidence };
+          },
+        );
 
-      return {
-        outputPath: build.outputPath,
-        durationSeconds: build.durationSeconds,
-        plan: build.plan,
-        warnings: build.warnings,
-        highlightStarts,
-        graphicsAttempts: graphicsAttemptsUsed,
-        ...(visualQa.skipped
-          ? {}
-          : { visualQa: { passed: visualQa.passed, ...(visualQa.reason !== undefined ? { reason: visualQa.reason } : {}), evidence: visualQa.evidence } }),
-        repairs,
-      };
+        // -- terminal topic guardrail --
+        //
+        // The words that survive into the cut, plus the takeaway the client asked
+        // for, plus the text this round put ON SCREEN. These are the client's OWN
+        // words from their own footage, which is exactly why the check is worth
+        // running: a subject they told us not to publish can still be something
+        // they said on camera — and an overlay is published words too.
+        //
+        // Inside the round and revision-scoped: without the suffix a second round
+        // short-circuits on round 0's checkpoint, the REVISED graphics are never
+        // actually checked, and the trace still reports a pass.
+        await runTopicGuardrail(
+          wf,
+          { tools, promptStore: options.promptStore, router: options.router },
+          [kept.map((w) => w.text).join(" "), intake.takeaway, ...build.plan.overlays.map((o) => o.label ?? o.illustrates)].filter(Boolean).join("\n\n"),
+          undefined,
+          revision === 0 ? undefined : `-r${revision}`,
+        );
+
+        return {
+          outputPath: build.outputPath,
+          durationSeconds: build.durationSeconds,
+          plan: build.plan,
+          warnings: build.warnings,
+          highlightStarts,
+          graphicsAttempts: graphicsAttemptsUsed,
+          ...(visualQa.skipped
+            ? {}
+            : { visualQa: { passed: visualQa.passed, ...(visualQa.reason !== undefined ? { reason: visualQa.reason } : {}), evidence: visualQa.evidence } }),
+          repairs,
+        };
     };
 
     // ── 10: the approve / revise / reject cycle — SKILL.md requires_approval: true ──
