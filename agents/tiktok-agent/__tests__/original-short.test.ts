@@ -118,6 +118,8 @@ function sequentialFakeRouter(candidates: readonly unknown[], prompts: string[] 
 
 interface Harness {
   tools: AgentToolRegistry;
+  /** The shared used-media ledger, so a test can read back what a run recorded. */
+  usedMedia: string[];
   calls: string[];
   musicArgs: Array<Record<string, unknown>>;
   textArgs: Array<Record<string, unknown>>;
@@ -149,6 +151,8 @@ function stubTools(
     /** The client's content language (BCP-47); default en-GB. */
     /** `null` means the client configured NO language, as opposed to the harness's own default. */
     voiceLanguage?: string | null;
+    /** What PREVIOUS runs left in this client's shared used-media ledger. */
+    usedMedia?: string[];
     /** The brand kit's declared content language; `null` means the brand kit declares none either. */
     brandLanguage?: string | null;
     /** A music track URL in the client's config; registers video.mixMusic too. */
@@ -281,6 +285,20 @@ function stubTools(
     excerpts.push(args as Record<string, unknown>);
     return ok({ recorded: true, total: excerpts.length });
   });
+  // The used-media ledger, client-scoped and shared across agents and runs —
+  // `opts.usedMedia` lets a test hand one run what a PREVIOUS run left behind.
+  const usedMedia: string[] = [...(opts.usedMedia ?? [])];
+  tools["ledger.listUsedImages"] = tool("ledger.listUsedImages", () => ok({ imagePaths: [...usedMedia] }));
+  tools["ledger.recordUsedImages"] = tool("ledger.recordUsedImages", (args) => {
+    let added = 0;
+    for (const entry of (args as { imagePaths: string[] }).imagePaths) {
+      if (!usedMedia.includes(entry)) {
+        usedMedia.push(entry);
+        added++;
+      }
+    }
+    return ok({ added, total: usedMedia.length });
+  });
   if (opts.music !== undefined) {
     tools["video.mixMusic"] = tool(
       "video.mixMusic",
@@ -352,7 +370,7 @@ function stubTools(
       VisualQaGateInputSchema,
     );
   }
-  return { tools: tools as unknown as AgentToolRegistry, calls, musicArgs, textArgs, excerpts, imageArgs, stillArgs, stockArgs, composeArgs, voiceArgs, transcribedPaths, frameArgs, qaArgs, deliverables };
+  return { tools: tools as unknown as AgentToolRegistry, calls, usedMedia, musicArgs, textArgs, excerpts, imageArgs, stillArgs, stockArgs, composeArgs, voiceArgs, transcribedPaths, frameArgs, qaArgs, deliverables };
 }
 
 /** A silent version of the script (the schema's three-beat floor stands): what a writer told to cut cost would hand back. */
@@ -1320,5 +1338,67 @@ describe("target language", () => {
     expect(h.deliverables[0]?.["targetLanguage"]).toMatchObject({ source: "default", assumed: true });
     const repairs = (h.deliverables[0]?.["contentRepairs"] as Array<{ check: string }> | undefined) ?? [];
     expect(repairs.map((r) => r.check)).not.toContain("target-language");
+  }, 20_000);
+});
+
+/**
+ * What this account has already MADE, across runs (2026-09-18).
+ *
+ * The unit behaviour is in `shape-memory.test.ts`. What is pinned here is the
+ * loop closing: a run reads what previous runs left in the shared used-media
+ * ledger, and writes its own back only once a human has approved the short.
+ */
+describe("shape memory across runs", () => {
+  it("excludes library clips this client's PREVIOUS shorts already used", async () => {
+    // `usedStockIds` was run-scoped, so the exclusion reset every run. Pexels'
+    // results for a query like "office desk" are stable, so two shorts a week
+    // apart on adjacent topics opened on the same footage and both passed
+    // every gate, because neither knew about the other.
+    const h = stubTools({ usedMedia: ["tiktok:stock:4242", "tiktok:stock:4243", "media/instagram/run-9/cover.png"] });
+    await run(h, "run-os-shape-excludes", [VOICED_SCRIPT, VOICED_SCRIPT]);
+
+    expect(h.stockArgs.length).toBeGreaterThan(0);
+    for (const args of h.stockArgs) {
+      const excluded = args["excludeIds"] as number[];
+      expect(excluded).toEqual(expect.arrayContaining([4242, 4243]));
+    }
+  }, 20_000);
+
+  it("records this short's clips and its skeleton once a human has approved it", async () => {
+    const h = stubTools();
+    const result = await run(h, "run-os-shape-records", [VOICED_SCRIPT, VOICED_SCRIPT]);
+
+    expect(result.status).toBe("completed");
+    // The library clips, so no future short reuses them…
+    expect(h.usedMedia.some((e) => e.startsWith("tiktok:stock:"))).toBe(true);
+    // …and the structural fingerprint, so no future short is built the same way.
+    const shapes = h.usedMedia.filter((e) => e.startsWith("tiktok:shape:"));
+    expect(shapes).toHaveLength(1);
+    expect(shapes[0]).toContain("beats");
+    // Namespaced, because instagram's photograph paths live in this same list.
+    expect(h.usedMedia.every((e) => e.startsWith("tiktok:"))).toBe(true);
+  }, 20_000);
+
+  it("remembers nothing from a short nobody approved", async () => {
+    // The used-media ledger's own rule — "an image that never shipped was
+    // never used". A rejected short never reached a feed, so it cannot have
+    // made the account look repetitive.
+    const h = stubTools();
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+    const workflow = createTikTokAgentWorkflow({
+      tools: h.tools,
+      promptStore: new FilePromptStore(PROMPTS_ROOT),
+      router: sequentialFakeRouter([VOICED_SCRIPT, VOICED_SCRIPT]),
+      repoRoot: os.tmpdir(),
+      fetchImpl: fakeAudioFetch,
+    });
+    const runId = "run-os-shape-rejected";
+
+    expect((await engine.run(workflow, { ...PARAMS, runId, input: {} })).status).toBe("awaiting_gate");
+    await engine.resolveGate(runId, "11-clip-review-r0", { decision: "reject", actor: "jane@karoslabs.com", reason: "not this one", at: new Date().toISOString() });
+    await engine.run(workflow, { ...PARAMS, runId, input: {} });
+
+    expect(h.usedMedia.filter((e) => e.startsWith("tiktok:"))).toHaveLength(0);
   }, 20_000);
 });

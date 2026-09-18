@@ -423,8 +423,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "tiktok-script",
     agent: "tiktok-agent",
-    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"],
-    latestVersion: "11",
+    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"],
+    latestVersion: "12",
     requires: { languageDirective: true, structuredOutput: true },
     structuredOutputFields: ["hook", "beats", "narration", "onScreenText", "visualBrief", "stockQuery", "seconds", "caption", "about", "format", "formatRationale", "voiceover", "voiceoverRationale", "language"],
   },
@@ -523,6 +523,7 @@ export interface PromptProblem {
     | "registry-wrong-agent"
     | "registry-version-mismatch"
     | "registry-latest-mismatch"
+    | "latest-version-header-drift"
     | "duplicate-prompt-id"
     | "hygiene-missing-marker"
     | "unknown-gate"
@@ -622,6 +623,40 @@ export function diffRegistryAgainstDisk(registry: readonly PromptRegistryEntry[]
     if (d.latestContent === undefined) {
       problems.push({ kind: "latest-missing", promptId: entry.promptId, detail: `agents/${d.agent}/prompts/${entry.promptId}/latest.md does not exist` });
       continue;
+    }
+
+    // ── The version a prompt SAYS it is, against the version it IS ──
+    //
+    // Every prompt in this repo opens with a title line ending in `vN`, and
+    // that line is part of the text the model receives. Until 2026-09-18
+    // nothing compared it to the filename, and the failure that exposed the
+    // gap is the one this check now catches: `tiktok-script/11.md` was created
+    // by copying `10.md`, the edit that was supposed to bump its header
+    // silently did not apply, and `latest.md` was written from the same
+    // unedited buffer. The registry agreed with the disk, `latest.md` was
+    // byte-identical to `11.md`, the hygiene markers were all present — so
+    // every existing check passed while the prompt change that was believed to
+    // have shipped had not.
+    //
+    // ONLY the latest version is enforced, and that is deliberate. Five
+    // historical files in this repo carry a header one behind their filename;
+    // they are published archives of what a model was actually sent, and
+    // rewriting them to look tidier would falsify the record. What matters is
+    // that the prompt in USE says what it is.
+    const latestOnDisk = d.versions.get(entry.latestVersion);
+    if (latestOnDisk !== undefined) {
+      const header = latestOnDisk.split(/\r?\n/, 1)[0] ?? "";
+      const stated = /\bv(\d+)\s*$/i.exec(header.trim())?.[1];
+      if (stated !== undefined && stated !== entry.latestVersion) {
+        problems.push({
+          kind: "latest-version-header-drift",
+          promptId: entry.promptId,
+          detail:
+            `${entry.latestVersion}.md is the declared latest version but its own title line says v${stated} ` +
+            `("${header.trim()}") — a copied file whose header was never bumped. Fix the header, and check that the ` +
+            `EDIT the bump was made for actually landed: a silent no-op here looks exactly like a shipped change.`,
+        });
+      }
     }
 
     const declaredLatest = d.versions.get(entry.latestVersion);

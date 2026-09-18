@@ -73,6 +73,7 @@ import { TikTokScriptAgent } from "../agent/tiktok-script-agent.js";
 import { TikTokTopicScoutAgent } from "../agent/tiktok-topic-scout-agent.js";
 import { bestLegalWindow, boundsFromTranscript, sentenceBoundedWords, type TranscriptWordLike } from "./clip-bounds.js";
 import { checkDraftLanguage, isJudgeableLanguage, languageRedraftDirective, resolveTargetLanguage, type ResolvedTargetLanguage } from "./target-language.js";
+import { parseShapeMemory, shapeRepeatDirective, skeletonEntry, skeletonOf, stockClipEntry } from "./shape-memory.js";
 import { alignScriptToTimings, beatHoldsFromTimings, buildPhraseCues, buildPhraseGroups, cuesToSrt, scriptWords } from "./captions.js";
 import {
   CLIP_DURATION_MAX_SECONDS,
@@ -1033,6 +1034,27 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     // as much as drafting does: a scout that cannot see what the client just
     // published proposes it again.
     const outputHistory = await readOutputHistoryForDedup(wf, tools, ctx, "tiktok-agent", "read-output-history");
+    /**
+     * What this account has already MADE — the library clips its shorts have
+     * used and the skeletons they were built on.
+     *
+     * The other half of anti-repetition, beside `outputHistory`'s "what has it
+     * already said". Read here with the rest, best-effort: a deployment with no
+     * ledger tool gets a run with no structural memory, never a failed one.
+     */
+    const shapeMemory = await wf.step.code("01e-read-shape-memory", async () => {
+      const list = tools["ledger.listUsedImages"];
+      if (list === undefined) return { usedStockIds: [], skeletons: [] };
+      try {
+        const outcome = await list.execute({}, { ctx });
+        if (outcome.status !== "success") return { usedStockIds: [], skeletons: [] };
+        return parseShapeMemory((outcome.result as { imagePaths?: string[] }).imagePaths ?? []);
+      } catch (error) {
+        console.error("01e-read-shape-memory: could not read what this account has already made", error);
+        return { usedStockIds: [], skeletons: [] };
+      }
+    });
+    const shapeDirective = shapeRepeatDirective(shapeMemory.skeletons);
     const recentPostsDirective = dedupeDirective(outputHistory);
     const clientIntelContext = await readClientIntelContext(wf, tools, ctx, "read-intel-context");
     const pastFeedback = await readPastFeedback(wf, tools, ctx, "read-past-feedback");
@@ -2323,6 +2345,9 @@ ${credit}`,
                     ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
                     ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
                     ...(dedupeAvoid !== undefined ? { dedupeAvoid } : {}),
+                    // What this account keeps BUILDING, as opposed to what it
+                    // keeps saying. Absent until there is a real pattern.
+                    ...(shapeDirective !== undefined ? { structuralMemory: shapeDirective } : {}),
                     ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
                     ...(directive !== undefined || structureFix !== undefined
                       ? { revisionRequest: [directive, structureFix].filter((s): s is string => s !== undefined).join("\n\n") }
@@ -2676,8 +2701,13 @@ ${credit}`,
       const beatPlates: BeatPlates[] = [];
       const plateSources: PlateSource[] = [];
       // Seeded with the clips a footage-only revision is replacing, so the
-      // library cannot hand the same one back for the beat a reviewer named.
-      const usedStockIds: number[] = [...(footageRevision?.excludeStockIds ?? [])];
+      // library cannot hand the same one back for the beat a reviewer named —
+      // AND, since 2026-09-18, with every clip this client's previous shorts
+      // already used. That list was run-scoped, so the exclusion reset every
+      // run; Pexels' results for a query like "office desk" are stable, so two
+      // shorts a week apart on adjacent topics opened on the same footage and
+      // both passed every gate because neither knew about the other.
+      const usedStockIds: number[] = [...shapeMemory.usedStockIds, ...(footageRevision?.excludeStockIds ?? [])];
       for (let i = 0; i < script.beats.length; i++) {
         const beat = script.beats[i]!;
         // Revision-scoped (2026-09-10): a revised script needs its own plates,
@@ -3749,6 +3779,25 @@ ${credit}`,
         await tools["ledger.recordOutputExcerpt"]?.execute({ agentId: "tiktok-agent", runId: wf.runId, excerpt: `${copy.caption}\n\n${copy.about}` }, { ctx });
       } catch (error) {
         console.error("13-commit-and-record: could not record the output excerpt for future dedup", error);
+      }
+      // What this account has now MADE. The used-media ledger states the rule
+      // for itself — "an image that never shipped was never used" — and it
+      // applies to both halves of this: a short a reviewer turned down never
+      // reached a feed, so it cannot have made the account look repetitive,
+      // and the library clips it fetched are still free for the next run to
+      // use. `reviewOutcome` is non-null for a reject and for a cycle that ran
+      // out of rounds, and neither of those shipped anything.
+      try {
+        const record = reviewOutcome === null ? tools["ledger.recordUsedImages"] : undefined;
+        if (record !== undefined) {
+          const entries = [
+            ...(review.output.plateStockIds ?? []).flatMap((p) => p.ids.map(stockClipEntry)),
+            ...(script !== undefined ? [skeletonEntry(skeletonOf(script))] : []),
+          ];
+          if (entries.length > 0) await record.execute({ imagePaths: entries }, { ctx });
+        }
+      } catch (error) {
+        console.error("13-commit-and-record: could not record this short's shape for future runs", error);
       }
       const memory = tools["memory.appendDecision"];
       if (memory) {
