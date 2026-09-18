@@ -536,7 +536,9 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       expect(repair?.output.repaired).toBeGreaterThan(0);
 
       // And the post the client receives really has no dash in it.
-      const deliverables = await env.store.listJson<{ deliverable?: { selfCheck?: { checks: Array<Record<string, unknown>> } } }>(
+      const deliverables = await env.store.listJson<{
+        deliverable?: { post?: { caption?: string; slides?: Array<Record<string, unknown>> }; selfCheck?: { checks: Array<Record<string, unknown>> } };
+      }>(
         "acme",
         ["ledger", "deliverables", runId, "_"],
       );
@@ -544,7 +546,7 @@ describe("Fix 3: unconditional mechanical craft-hygiene gate (em dash / exclamat
       // carries engine prose (`selfCheck.reason`, `skeleton.warnings`, the
       // topic weighting sentence) which this repo writes for a human to read
       // and which is not held to the copy guide's punctuation rules.
-      const post = deliverables[0]!.data.deliverable?.post as { caption?: string; slides?: Array<Record<string, unknown>> } | undefined;
+      const post = deliverables[0]!.data.deliverable?.post;
       expect(post?.caption ?? "").not.toContain("\u2014");
       expect(JSON.stringify(post?.slides ?? [])).not.toContain("\u2014");
       expect(deliverables[0]!.data.deliverable?.selfCheck?.checks.some((c) => c["gate"] === "craft")).not.toBe(true);
