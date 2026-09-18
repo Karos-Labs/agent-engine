@@ -393,7 +393,10 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     // delivering round gained one `08c-package-post` call after the loop.
     // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per
     // REVISION (outside the attempt loop, so a redraft never re-pays).
-    expect(router.complete).toHaveBeenCalledTimes(3 + 1 + 6 + 6 + 5 + 1);
+    // 2026-09-18: + one `05r-revise-copy` per RETRY. Attempts 2 and 3 edit the
+    // previous draft instead of rewriting it, so each costs a revise turn on
+    // top of whatever it then buys.
+    expect(router.complete).toHaveBeenCalledTimes(3 + 1 + 6 + 6 + 5 + 1 + 2);
   });
 
   /**
@@ -590,7 +593,8 @@ describe("default render rules through the workflow (WP0-4's workflow-level proo
     expect(stepIds).toContain("08b-visual-qa-attempt-2");
     // scout + research + angle + (copy + vet + relevance) + (copy + vet + relevance + QA): zero QA turns on attempt 1.
     // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
-    expect(router.complete).toHaveBeenCalledTimes(14);
+    // 2026-09-18: +1 per RETRY for `05r-revise-copy`, which every attempt after the first buys instead of a full redraft.
+    expect(router.complete).toHaveBeenCalledTimes(15);
     // The redraft is told WHICH rule and WHICH slide failed (prompt §16), not
     // just asked again: the SECOND copy turn is attempt 2's.
     expect(copyInputAt(router, 0)["selfCheckSteer"]).toBeUndefined();
