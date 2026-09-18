@@ -115,7 +115,11 @@ export class LinkedInDraftAgent extends BaseAgent<LinkedInPostOutput> {
     // between every line, a stated `takeaway`), the machine-writing tells are
     // named, and a `mediaBrief` is required (a real photo or a document
     // screenshot over illustration; "none" is a valid answer). v4 stays frozen.
-    skillRef: "linkedin-craft@7", // C7: §0 learning inputs, §14 goal line + rulesApplied, §15 craft rules; v7: §12b the eleven rules, §8 the image gates
+    // v8 adds §12a: no relative day words. The 17.9.2026 draft led with a
+    // Series D that closed "yesterday" two days earlier, and every existing
+    // check passed it — they ask whether a claim is sourced, not whether it
+    // still reads true after a weekend in review.
+    skillRef: "linkedin-craft@8", // C7: §0 learning inputs, §14 goal line + rulesApplied, §15 craft rules; v7: §12b the eleven rules, §8 the image gates
     selfCritique: { gateTool: "gate.lintPost", maxRevisions: 1, gateArgs: { platform: "linkedin" } },
   };
 }

@@ -167,7 +167,12 @@ export class XDraftAgent extends BaseAgent<XPostOutput> {
     // which is what lets the loop measure a rule (Craft 11 §4). Every new
     // input is optional, so a client with nothing projected yet drafts as
     // under v5. v5 stays frozen.
-    skillRef: "x-craft@7",
+    // v8: §12b — no "yesterday"/"tonight"/"this morning". A draft is
+    // reviewed and published later, so a day-anchored sentence is wrong by
+    // the time it is read. The shape check flags it, one redraft is asked
+    // to fix it, and the floor under that deletes the phrase — never
+    // substitutes a date, which is the failure the rule exists to prevent.
+    skillRef: "x-craft@8",
     selfCritique: {
       gateTool: "gate.lintPost",
       // Two revisions, not one: the second is what turns "thread part 3 is

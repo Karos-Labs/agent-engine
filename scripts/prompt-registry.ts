@@ -327,12 +327,15 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "linkedin-craft",
     agent: "linkedin-agent",
+    // 8: §12a — no relative day words, for the same reason as x-craft@8 and
+    // from the same run: the 17.9.2026 draft opened with a Series D that
+    // closed "yesterday" two days before it was written.
     // 7: the eleven rules from the 06 Agent Improve sheet (Lola, 2026-09-07)
     // as §12b, and §8's image rules — no web-page screenshots, and the four
     // gates any picture clears. Both came from reading posts this agent
     // actually shipped rather than from a style opinion.
-    versions: ["1", "2", "3", "4", "5", "6", "7"],
-    latestVersion: "7",
+    versions: ["1", "2", "3", "4", "5", "6", "7", "8"],
+    latestVersion: "8",
     requires: { languageDirective: true, numbersSourced: true },
   },
   {
@@ -436,13 +439,17 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "x-craft",
     agent: "x-agent",
+    // 8: §12b — no relative day words. A draft is reviewed and published
+    // later, so "yesterday" is wrong by the time anyone reads it, and every
+    // check that existed asked whether a claim was SOURCED rather than
+    // whether it still read true after a weekend in the queue.
     // 7: D24 — X is text only. §10 stopped asking the model for screenshots
     // and photographs, because the workflow stopped acting on the request;
     // and §5/§11 state the three limits the gate now actually enforces (hook
     // 70 with no @/#/link/emoji, one hashtag, two mentions) rather than
     // describing them as taste.
-    versions: ["1", "2", "3", "4", "5", "6", "7"],
-    latestVersion: "7",
+    versions: ["1", "2", "3", "4", "5", "6", "7", "8"],
+    latestVersion: "8",
     requires: { languageDirective: true, numbersSourced: true },
   },
 ];

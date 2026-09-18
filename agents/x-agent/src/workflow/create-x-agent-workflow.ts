@@ -62,6 +62,8 @@ import {
   type TrendScoutOutput,
   runCheckWithRepair,
   redactSentencesCarrying,
+  relativeDayProblems,
+  stripRelativeDays,
   localContentFail,
   localPass,
   spansFromEvidence,
@@ -963,6 +965,11 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
         if (post.firstReplyUrl && [post.mainPostText, ...post.thread].some((part) => BARE_URL_PATTERN.test(part))) {
           problems.push("the post (or a thread part) contains a bare link even though firstReplyUrl is set — links go in the first reply, never the post body (x-craft.md §5)");
         }
+        // A draft is written now and published later — often days later, by a
+        // person working through a review queue. `fullText`, so thread part 4
+        // is checked with part 1: they publish at the same second and decay
+        // together (x-craft@8 §12b).
+        problems.push(...relativeDayProblems(fullText(post), "x-craft §12b"));
         return problems;
       };
 
@@ -1093,6 +1100,20 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
               return problems.length === 0 ? localPass("x-post-shape") : localContentFail("x-post-shape", problems.join("; "), problems);
             },
             attempts: [
+              {
+                // Deletion, never substitution: nothing here knows what date
+                // the writer meant, and inventing one is the failure the rule
+                // exists to prevent. "closed its Series D yesterday" becomes
+                // "closed its Series D" — less specific, never false.
+                action: "redacted",
+                run: (value) => {
+                  const text = stripRelativeDays(value.text);
+                  const thread = value.thread.map(stripRelativeDays).filter((part) => part.trim().length > 0);
+                  if (text === value.text && thread.every((part, i) => part === value.thread[i])) return undefined;
+                  if (text.trim().length === 0) return undefined;
+                  return { ...value, text, mainPostText: text, thread };
+                },
+              },
               {
                 action: "moved",
                 run: (value) => (value.firstReplyUrl && [value.mainPostText, ...value.thread].some((p) => BARE_URL_PATTERN.test(p)) ? stripBareLinks(value) : undefined),

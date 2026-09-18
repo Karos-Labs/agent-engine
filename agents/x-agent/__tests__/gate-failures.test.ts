@@ -207,6 +207,66 @@ describe("content gate failures are REPAIRED, never held (RFC-02 §3 steps 11-14
     expect(ids.indexOf("14r-repair-post")).toBeLessThan(ids.indexOf("15-batch-review-r0"));
   });
 
+  it("a draft dated to the day it was written is REPAIRED by the model, not shipped as written", async () => {
+    // "yesterday" is true only on the day the model writes it. The post is
+    // reviewed and published later, so by the time anyone reads it the
+    // sentence is simply wrong. The check names the phrase; the redraft is
+    // asked to date the claim properly and does.
+    const promptStore = makePromptStore();
+    const dated = "We shipped our new scheduling view yesterday and teams are already moving meetings.";
+    const fixed = "We shipped our new scheduling view on September 15 and teams are already moving meetings.";
+    const router = fakeRouterSequence([
+      finalTurn(goodPost({ text: dated, mainPostText: dated, hook: "We shipped our new scheduling view." })),
+      finalTurn(goodPost({ text: fixed, mainPostText: fixed, hook: "We shipped our new scheduling view." })),
+    ]);
+    const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const result = await engine.run(workflowFn, { ...baseParams, runId: "x_run_dated_redraft" });
+
+    expect(result.status).toBe("completed");
+
+    const post = await deliveredPost(env, "x_run_dated_redraft");
+    expect(allProse(post)).not.toContain("yesterday");
+    // The redraft is kept whole, dateline and all -- this is the good case,
+    // where the model fixes the sentence rather than the floor deleting a word.
+    expect(allProse(post)).toContain("on September 15");
+
+    const ids = (await durableStore.listSteps("x_run_dated_redraft")).map((s) => s.stepId);
+    expect(ids).toContain("14r-repair-post");
+  });
+
+  it("a redraft that keeps the relative day loses the phrase to the floor, and the post still ships", async () => {
+    // The floor that makes the rule unconditional. The model is asked once and
+    // hands back a draft still anchored to "yesterday", so nothing is gained by
+    // asking again: the phrase is DELETED. "went live yesterday" becomes "went
+    // live" -- less specific, never false. Substituting a date would mean
+    // inventing one, which is the failure the rule exists to prevent.
+    const promptStore = makePromptStore();
+    const dated = "Our redesigned pricing page went live yesterday.";
+    const router = fakeRouterSequence([
+      finalTurn(goodPost({ text: dated, mainPostText: dated, hook: "Our redesigned pricing page is live." })),
+      finalTurn(goodPost({ text: dated, mainPostText: dated, hook: "Our redesigned pricing page is live." })),
+    ]);
+    const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const result = await engine.run(workflowFn, { ...baseParams, runId: "x_run_dated_floor" });
+
+    expect(result.status).toBe("completed");
+
+    const post = await deliveredPost(env, "x_run_dated_floor");
+    expect(allProse(post)).not.toContain("yesterday");
+    // Deleted, not replaced: the rest of the sentence is untouched.
+    expect(post["text"]).toContain("Our redesigned pricing page went live");
+    expect(post["mainPostText"]).toBe(post["text"]);
+
+    const repairs = post["contentRepairs"] as Array<{ check: string; action: string }>;
+    expect(repairs).toContainEqual(expect.objectContaining({ check: "x-post-shape", action: "redacted" }));
+  });
+
   it("an over-limit first draft triggers a single self-critique revision, then completes", async () => {
     const promptStore = makePromptStore();
     const tooLong = "This is way too long for X. ".repeat(15); // > 280 chars, fails gate.lintPost
