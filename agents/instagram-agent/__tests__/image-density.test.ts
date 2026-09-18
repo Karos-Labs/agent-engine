@@ -166,8 +166,8 @@ describe("planImageBackfill", () => {
 });
 
 describe("resolveRescuedSelection", () => {
-  const filled = { imagePath: ".media-cache/x.png" };
-  const refused = { imagePath: null };
+  const filled: { imagePath: string | null } = { imagePath: ".media-cache/x.png" };
+  const refused: { imagePath: string | null } = { imagePath: null };
   /** The real helper's shape: it ABSTAINS on a slide that never asked for a picture. */
   const isUnfillable = (s: { imagePath: string | null }) => s.imagePath === null;
   const abstains = () => false;
