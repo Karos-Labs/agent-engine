@@ -368,7 +368,7 @@ import {
   type RecognisedEntity,
 } from "./entity-imagery.js";
 import { gradePictureSet, heroScrimCssBlock, imageTreatmentCssBlock, resolveGenerationStyle, type GenerationStyle } from "./style-lock.js";
-import { planImageBackfill } from "./image-density.js";
+import { planImageBackfill, resolveRescuedSelection } from "./image-density.js";
 
 /** One slide the picture floor wants filled, and whether it is a slide that ASKED and failed or one that never asked. */
 interface FloorGap {
@@ -8841,21 +8841,17 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               spend(rev(`06h2-vet-floor-images-attempt-${attempt}`), floorVet.totalCostUsd, STEP_COST_ESTIMATES_USD.vetCall);
               if (floorVet.status === "completed") {
                 const filled = new Map(floorVet.finalOutput!.selections.map((sel) => [sel.n, sel]));
-                selections = selections.map((sel) => {
-                  const replacement = filled.get(sel.n);
-                  // Same rule as every other rescue tier: only an actually
-                  // fillable replacement wins, so a refusal never overwrites
-                  // the original verdict with a second unusable one.
-                  return replacement === undefined || isUnfillable(replacement) ? sel : replacement;
-                });
-                // A backfilled slide has no selection to replace — it never
-                // asked for a picture, so nothing ever made one for it. Its
-                // verdict is APPENDED, or the frame the run just paid for is
-                // vetted, approved and then dropped on the floor.
-                const known = new Set(selections.map((sel) => sel.n));
-                for (const [n, selection] of filled) {
-                  if (!known.has(n) && !isUnfillable(selection)) selections = [...selections, selection];
-                }
+                selections = selections.map((sel) =>
+                  // The rule, and why it is not `isUnfillable` alone, are in
+                  // `resolveRescuedSelection` — which exists so the case can
+                  // be asserted rather than only argued for in a comment.
+                  resolveRescuedSelection({
+                    placeholder: sel,
+                    vetted: filled.get(sel.n),
+                    wasBackfilled: backfilledPrompts.has(sel.n),
+                    isUnfillable,
+                  }),
+                );
                 unfillable = selections.filter(isUnfillable);
               }
             }

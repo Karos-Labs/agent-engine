@@ -3,6 +3,7 @@ import {
   conceptualPromptFor,
   GENERATION_EXCLUSIONS,
   planImageBackfill,
+  resolveRescuedSelection,
   sceneDescribesAPicture,
 } from "../src/workflow/image-density.js";
 import { MIN_PICTURE_SLIDES } from "../src/workflow/imagery-floor.js";
@@ -161,5 +162,40 @@ describe("planImageBackfill", () => {
   it("returns fewer than asked rather than inventing slides, when the post has none left to give", () => {
     const shortCopy = { slides: [geektimeShaped().slides[0]!, geektimeShaped().slides[7]!] } as unknown as InstagramCopyOutput;
     expect(planImageBackfill(shortCopy, new Set([1]), 3)).toEqual([]);
+  });
+});
+
+describe("resolveRescuedSelection", () => {
+  const filled = { imagePath: ".media-cache/x.png" };
+  const refused = { imagePath: null };
+  /** The real helper's shape: it ABSTAINS on a slide that never asked for a picture. */
+  const isUnfillable = (s: { imagePath: string | null }) => s.imagePath === null;
+  const abstains = () => false;
+
+  it("keeps the placeholder when the rescue produced no verdict at all", () => {
+    expect(resolveRescuedSelection({ placeholder: refused, vetted: undefined, wasBackfilled: true, isUnfillable })).toBe(refused);
+  });
+
+  it("takes a BACKFILLED frame the vet approved — the run has already paid for it", () => {
+    // The waste this whole area was fixed to stop: generated, vetted,
+    // approved, then dropped because the fillability helper was scoped to a
+    // different question. `abstains` is what `isUnfillable` actually does on
+    // these slides, so a rule that leaned on it would look correct here.
+    expect(resolveRescuedSelection({ placeholder: refused, vetted: filled, wasBackfilled: true, isUnfillable: abstains })).toBe(filled);
+  });
+
+  it("keeps the placeholder when a BACKFILLED frame was refused, rather than overwriting it with a null verdict", () => {
+    // `isUnfillable` abstains here, so the pre-extraction rule would have
+    // taken the refusal and replaced a good typographic placeholder with an
+    // entry whose reason is about a picture the slide never asked for.
+    expect(resolveRescuedSelection({ placeholder: refused, vetted: refused, wasBackfilled: true, isUnfillable: abstains })).toBe(refused);
+  });
+
+  it("leaves the ORDINARY rescue path exactly as it was, deciding on `isUnfillable`", () => {
+    expect(resolveRescuedSelection({ placeholder: refused, vetted: filled, wasBackfilled: false, isUnfillable })).toBe(filled);
+    expect(resolveRescuedSelection({ placeholder: refused, vetted: refused, wasBackfilled: false, isUnfillable })).toBe(refused);
+    // …and on that path the helper is consulted, not bypassed: a verdict it
+    // calls unfillable loses even when it carries a path.
+    expect(resolveRescuedSelection({ placeholder: refused, vetted: filled, wasBackfilled: false, isUnfillable: () => true })).toBe(refused);
   });
 });

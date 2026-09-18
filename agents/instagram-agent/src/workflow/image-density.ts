@@ -194,3 +194,36 @@ export function planImageBackfill(
 
   return [...bounded.sort(byBrief), ...fullBleed.sort(byBrief)].slice(0, want);
 }
+
+
+/**
+ * Which verdict a slide keeps after the floor step has vetted a rescued frame.
+ *
+ * ## Why this is a function and not two lines at the call site
+ *
+ * The call site's rule was `isUnfillable(replacement) ? keep : replace`, and
+ * `isUnfillable` opens with `if (!photoSlideNs.has(s.n)) return false` — a
+ * slide the writer marked `source: "none"` is not in that set, because it
+ * carries a typographic placeholder rather than an image request. So for
+ * exactly the slides a backfill fills, the helper answers "not unfillable"
+ * about a verdict it has not looked at.
+ *
+ * Both directions of that are wrong and both cost something real. A refused
+ * frame would replace a good placeholder with a null-image entry whose reason
+ * is about a picture the slide never asked for; and any change that made the
+ * helper stricter would drop a frame this run has ALREADY PAID FOR, which is
+ * the waste the whole picture-floor fix exists to stop.
+ *
+ * For a backfilled slide the honest test is the image itself.
+ */
+export function resolveRescuedSelection<T extends { imagePath: string | null }>(args: {
+  readonly placeholder: T;
+  readonly vetted: T | undefined;
+  readonly wasBackfilled: boolean;
+  readonly isUnfillable: (selection: T) => boolean;
+}): T {
+  const { placeholder, vetted, wasBackfilled, isUnfillable } = args;
+  if (vetted === undefined) return placeholder;
+  if (wasBackfilled) return vetted.imagePath === null ? placeholder : vetted;
+  return isUnfillable(vetted) ? placeholder : vetted;
+}
