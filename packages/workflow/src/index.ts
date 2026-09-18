@@ -11,6 +11,10 @@ export * from "./primitives/history-dedup.js";
 // A draft is written now and published later; this is the check that a
 // sentence anchored to "yesterday" never reaches a client's feed.
 export * from "./primitives/dated-language.js";
+// The writing-system floor, lifted out of instagram-agent's `language-gate.ts`
+// on 2026-09-18 when the TikTok family needed the same table. That table's own
+// doc comment is the argument for one copy rather than two.
+export * from "./primitives/language-script.js";
 // SCRUM-380 (D1-v2): the always-latest Brand Voice read. Appended here rather
 // than added to `primitives/index.js` to match how every other
 // context-building primitive above is exported, and to keep the change to a

@@ -39,6 +39,53 @@ const VOICED_SCRIPT = {
   language: "en-US",
 };
 
+/**
+ * The same piece written in Hebrew, for the two tests about a Hebrew client's
+ * FONTS.
+ *
+ * They exist to prove the caption and furniture are set in a Hebrew face
+ * rather than assembled from fallback glyphs — so the script they run has to
+ * be in Hebrew. Before the target-language check (2026-09-18) they passed an
+ * English script under `voiceLanguage: "he-IL"` and nothing minded, which is
+ * exactly the defect that check exists to catch: the font was right and the
+ * words were in the wrong language.
+ *
+ * `stockQuery`/`visualBrief` stay in English on purpose — they are a stock
+ * library's search terms, the library indexes in English, and the language
+ * check deliberately does not read them.
+ */
+const HEBREW_VOICED_SCRIPT = {
+  hook: "אף אחד לא מספר לך שהעובד הראשון הוא זה שתפטר.",
+  beats: [
+    {
+      narration: "אף אחד לא מספר לך שהעובד הראשון הוא זה שתפטר.",
+      onScreenText: "העובד הראשון הוא הימור",
+      visualBrief: "Empty office at dawn, one desk lamp on, slow push-in across a row of dark monitors.",
+      seconds: 4 as const,
+    },
+    {
+      narration: "אתה מגייס לחברה שיש לך. בחודש שש זו כבר חברה אחרת לגמרי.",
+      onScreenText: "חודש שש משנה הכל",
+      visualBrief: "Whiteboard being wiped clean, marker residue catching window light, handheld drift.",
+      seconds: 6 as const,
+    },
+    {
+      narration: "אז תכתוב את התפקיד לחברה שאתה הופך להיות.",
+      onScreenText: "תכתוב למי שתהיה",
+      visualBrief: "City street at blue hour, storefront lights coming on one by one, wide static frame.",
+      seconds: 6 as const,
+    },
+  ],
+  caption:
+    "העובד הראשון הוא הימור על חברה שלא תהיה קיימת בעוד חצי שנה.",
+  about:
+    "שורט שטוען שצריך לכתוב תפקידים מוקדמים לחברה העתידית.",
+  format: "footage" as const,
+  voiceover: true,
+  voiceoverRationale: "קול נושא את המפנה בביט השלישי.",
+  language: "he-IL",
+};
+
 /** The same piece as a text-led short: every beat is its line on the brand ground, no footage searched. */
 const TEXT_LED_SCRIPT = { ...VOICED_SCRIPT, format: "text-led" as const, formatRationale: "Three blunt claims; the words are the picture.", voiceover: false };
 
@@ -100,7 +147,10 @@ function stubTools(
     /** The client's own ceiling on a run, in USD. */
     maxRunCostUsd?: number;
     /** The client's content language (BCP-47); default en-GB. */
-    voiceLanguage?: string;
+    /** `null` means the client configured NO language, as opposed to the harness's own default. */
+    voiceLanguage?: string | null;
+    /** The brand kit's declared content language; `null` means the brand kit declares none either. */
+    brandLanguage?: string | null;
     /** A music track URL in the client's config; registers video.mixMusic too. */
     music?: string;
   } = {},
@@ -137,7 +187,7 @@ function stubTools(
         tiktokClips: {
           mode: "original",
           voiceover: opts.voiceoverPolicy ?? "auto",
-          voiceLanguage: opts.voiceLanguage ?? "en-GB",
+          ...(opts.voiceLanguage === null ? {} : { voiceLanguage: opts.voiceLanguage ?? "en-GB" }),
           voiceName: "en-GB-Chirp3-HD-Charon",
           voiceSpeakingRate: 1.1,
           ...(opts.music !== undefined ? { musicTrackUri: opts.music, musicGainDb: -18 } : {}),
@@ -150,7 +200,9 @@ function stubTools(
     ),
     "client.getProfile": tool("client.getProfile", () => ok({ name: "Acme", industry: "founder programs" })),
     "client.getVoiceRules": tool("client.getVoiceRules", () => ok({ tone: "direct" })),
-    "client.getBrand": tool("client.getBrand", () => ok({ forbiddenTerms: [], colors: { neutralDark: "#101418", neutralLight: "#F2F0EA" }, handle: "acmeco", language: "en" })),
+    "client.getBrand": tool("client.getBrand", () =>
+      ok({ forbiddenTerms: [], colors: { neutralDark: "#101418", neutralLight: "#F2F0EA" }, handle: "acmeco", ...(opts.brandLanguage === null ? {} : { language: opts.brandLanguage ?? "en" }) }),
+    ),
     "client.getStrategy": tool("client.getStrategy", () => ok({ markdown: "" })),
     "topics.reserve": tool("topics.reserve", () => ok({ reservationKey: "res-1", topics: ["the first hire"] })),
     "topics.commit": tool("topics.commit", () => ok({ committed: true })),
@@ -866,7 +918,7 @@ describe("original short: script → plates → voice → captions → sequence 
 
   it("a Hebrew client's text plates are set in the Hebrew face", async () => {
     const h = stubTools({ maxRunCostUsd: 0.05, stock: "miss", voiceLanguage: "he-IL" });
-    const result = await run(h, "run-os-text-hebrew", [VOICED_SCRIPT, VOICED_SCRIPT, VOICED_SCRIPT]);
+    const result = await run(h, "run-os-text-hebrew", [HEBREW_VOICED_SCRIPT, HEBREW_VOICED_SCRIPT, HEBREW_VOICED_SCRIPT]);
     expect(result.status).toBe("completed");
     // Three beat plates and the cold open, all in the Hebrew face.
     expect(h.textArgs).toHaveLength(4);
@@ -1069,7 +1121,7 @@ describe("original short: real footage, then a still, never generated video (202
 
   it("a Hebrew client's captions and furniture are set in a Hebrew face, so the frame is not assembled from fallback glyphs", async () => {
     const h = stubTools({ voiceLanguage: "he-IL" });
-    const result = await run(h, "run-os-hebrew");
+    const result = await run(h, "run-os-hebrew", [HEBREW_VOICED_SCRIPT, HEBREW_VOICED_SCRIPT]);
     expect(result.status).toBe("completed");
     expect(h.voiceArgs[0]!["language"]).toBe("he-IL");
     expect(h.frameArgs[0]!["captionStyle"]).toEqual({ fontName: "Noto Sans Hebrew" });
@@ -1207,4 +1259,66 @@ describe("expectedHoldSeconds (v10: a beat's shots follow how long it is SPOKEN)
     expect(expectedHoldSeconds(long, true)).toBeCloseTo(23 / 2.6, 5);
     expect(expectedHoldSeconds(long, true)).toBeGreaterThan(6);
   });
+});
+
+/**
+ * The target language, end to end (2026-09-18).
+ *
+ * The resolver and the check are unit-tested in `target-language.test.ts`.
+ * What is pinned here is what the WORKFLOW does with them: one redraft with
+ * the evidence, then a delivery that names the failure rather than a run that
+ * dies of it.
+ */
+describe("target language", () => {
+  it("sends a wrong-language draft back ONCE with the evidence, and ships the corrected one clean", async () => {
+    const h = stubTools({ voiceLanguage: "he-IL" });
+    const prompts: string[] = [];
+    // English first, Hebrew on the redraft — the ordinary recovery.
+    const result = await run(h, "run-os-lang-recovers", [VOICED_SCRIPT, HEBREW_VOICED_SCRIPT], prompts);
+
+    expect(result.status).toBe("completed");
+    expect(prompts).toHaveLength(2);
+    // The note carries what went wrong, not just the instruction the model
+    // already had and did not follow.
+    expect(prompts[1]).toContain("he-IL");
+    expect(prompts[1]).toContain("Hebrew");
+    // A recovered draft is a clean deliverable: nothing was left unrepaired.
+    const repairs = (h.deliverables[0]?.["contentRepairs"] as Array<{ check: string }> | undefined) ?? [];
+    expect(repairs.map((r) => r.check)).not.toContain("target-language");
+  }, 20_000);
+
+  it("ships flagged, never held, when the writer will not write the language twice", async () => {
+    const h = stubTools({ voiceLanguage: "he-IL" });
+    const result = await run(h, "run-os-lang-persists", [VOICED_SCRIPT, VOICED_SCRIPT]);
+
+    // A second wrong-language draft is a model that cannot write this language
+    // today; a third attempt buys another at the same odds. The reviewer is
+    // the one who can tell "wrong language" from "loanword-heavy and correct".
+    expect(result.status).toBe("completed");
+    const repairs = h.deliverables[0]?.["contentRepairs"] as Array<{ check: string; action: string; detail: string }>;
+    const failure = repairs.find((r) => r.check === "target-language");
+    expect(failure?.action).toBe("unresolved");
+    expect(failure?.detail).toContain("he-IL");
+  }, 20_000);
+
+  it("carries the language and its provenance to the reviewer on every run, clean or not", async () => {
+    const h = stubTools({ voiceLanguage: "he-IL" });
+    await run(h, "run-os-lang-payload", [HEBREW_VOICED_SCRIPT, HEBREW_VOICED_SCRIPT]);
+
+    expect(h.deliverables[0]?.["targetLanguage"]).toMatchObject({ tag: "he-IL", source: "client-config", assumed: false });
+  }, 20_000);
+
+  it("does not flag an assumed language as a repair, because most clean runs assume one", async () => {
+    // `assumed` is visible on the payload either way. Pushing a repair for it
+    // would attach a degrade marker to the majority of perfectly good runs,
+    // which is the "shouting at every clean post until nobody reads it"
+    // failure the repair ledger exists to avoid.
+    const h = stubTools({ voiceLanguage: null, brandLanguage: null });
+    const result = await run(h, "run-os-lang-assumed");
+
+    expect(result.status).toBe("completed");
+    expect(h.deliverables[0]?.["targetLanguage"]).toMatchObject({ source: "default", assumed: true });
+    const repairs = (h.deliverables[0]?.["contentRepairs"] as Array<{ check: string }> | undefined) ?? [];
+    expect(repairs.map((r) => r.check)).not.toContain("target-language");
+  }, 20_000);
 });
