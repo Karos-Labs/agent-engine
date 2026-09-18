@@ -1068,7 +1068,22 @@ body:not(:has(#title > span:not(:empty))) .cov-field { background-image: none; }
    The two forms that set their own tighter measures (`portrait` at 13ch over a
    photograph, `typographic-poster` at 11ch where the sentence IS the
    composition) are deliberate and untouched. */
-.lockup .headline { max-inline-size: min(19ch, 100%); }
+/* ── AND THE MEASURE HAS A FLOOR IN THE FRAME, NOT ONLY A CEILING IN
+      CHARACTERS. ──
+   `19ch` is relative to the FONT, so it shrinks with the type scale: at `ts-s`
+   (0.85) the same 19 characters are 15% fewer pixels, the column narrows, and
+   the bare strip beside it widens. That is the shape of the one row still over
+   the swept limb — `he rtl short s`, LER 0.1931 against 0.1913, Hebrew being
+   the script that sets densest and `s` the scale that sets smallest, so it is
+   the corner where the effect is largest.
+
+   `max(19ch, 62%)` makes the type scale decide how BIG the words are and not
+   how much of the frame the composition uses. It is a fraction of the canvas,
+   so unlike a character count it does not move with the face — which matters
+   on a plate where the pinned local Chromium and CI disagree about where a
+   line breaks. The `min(…, 100%)` cap is unchanged and is what keeps a measure
+   from becoming a horizontal overflow. */
+.lockup .headline { max-inline-size: min(max(19ch, 62%), 100%); }
 .lockup .body-text { max-inline-size: min(26em, 100%); }
 
 /* The title is the largest thing on the plate and the subtitle is plainly

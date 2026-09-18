@@ -3007,6 +3007,12 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         edge: number;
         iod: number;
         centroidY: number;
+        /* ── WHERE THE HOLE IS, WHICH THIS TABLE COULD NOT SAY. ──
+         * `LER` names a share, and three separate fixes were spent on the cover
+         * reading it as a band that was too short, because the number cannot
+         * tell a full-width strip above the type from a bare COLUMN beside it.
+         * It was the column both times. One string per row, in canvas pixels. */
+        rect: string;
       }
       const rows: SweepRow[] = [];
       /** The POPULATED renders themselves, so the loop below can ask the REAL floor for a verdict rather than re-deriving one from four printed shares. */
@@ -3093,6 +3099,7 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
             edge: entry.metrics.edgeDensity,
             iod: entry.metrics.imageryOrDeviceShare,
             centroidY: entry.metrics.contentCentroid.y,
+            rect: `${entry.metrics.largestEmptyRect.x},${entry.metrics.largestEmptyRect.y} ${entry.metrics.largestEmptyRect.w}x${entry.metrics.largestEmptyRect.h}`,
             band,
             label,
             archetype: templateBasename(entry.template),
@@ -3220,6 +3227,7 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
           edge: entry.metrics.edgeDensity,
           iod: entry.metrics.imageryOrDeviceShare,
           centroidY: entry.metrics.contentCentroid.y,
+          rect: `${entry.metrics.largestEmptyRect.x},${entry.metrics.largestEmptyRect.y} ${entry.metrics.largestEmptyRect.w}x${entry.metrics.largestEmptyRect.h}`,
           band: "NEGLECTED",
           // Read off the RENDER, never off the index. An index-based label
           // printed the wrong template name onto whatever slid into a slot when
@@ -3250,12 +3258,12 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
         "",
         "RFC-20 GATE-ZERO SWEEP — clause C and BOTH LIMBS of clause D",
         `${"band".padEnd(10)} ${"case".padEnd(30)} ${"template".padEnd(17)} ${"role".padEnd(9)} ${"occ".padEnd(8)} ${"flat".padEnd(8)} ${"LER".padEnd(8)} ${"COCC".padEnd(8)} ` +
-          `${"tbs".padEnd(8)} ${"dts".padEnd(8)} ${"ink".padEnd(8)} ${"text".padEnd(8)} ${"edge".padEnd(8)} ${"iod".padEnd(8)} ${"cy".padEnd(8)} ${"c/o".padEnd(8)} i/o`,
+          `${"tbs".padEnd(8)} ${"dts".padEnd(8)} ${"ink".padEnd(8)} ${"text".padEnd(8)} ${"edge".padEnd(8)} ${"iod".padEnd(8)} ${"cy".padEnd(8)} ${"c/o".padEnd(8)} ${"i/o".padEnd(8)} rect`,
         ...rows.map(
           (r) =>
             `${r.band.padEnd(10)} ${r.label.padEnd(30)} ${r.archetype.padEnd(17)} ${r.role.padEnd(9)} ${fmt(r.occ).padEnd(8)} ${fmt(r.flat).padEnd(8)} ` +
             `${fmt(r.ler).padEnd(8)} ${fmt(r.cocc).padEnd(8)} ${fmt(r.tbs).padEnd(8)} ${fmt(r.dts).padEnd(8)} ${fmt(r.ink).padEnd(8)} ${fmt(r.text).padEnd(8)} ${fmt(r.edge).padEnd(8)} ${fmt(r.iod).padEnd(8)} ` +
-            `${fmt(r.centroidY).padEnd(8)} ${fmt(ratio(r.cocc, r.occ)).padEnd(8)} ${fmt(ratio(r.ink, r.occ))}`,
+            `${fmt(r.centroidY).padEnd(8)} ${fmt(ratio(r.cocc, r.occ)).padEnd(8)} ${fmt(ratio(r.ink, r.occ)).padEnd(8)} ${r.rect}`,
         ),
         "",
       ];

@@ -801,7 +801,15 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     // the assertion that the real renderer, the real templates and a real
     // photograph produce a post with no interest finding on it, which is the
     // whole claim the fixture rework above exists to make honest.
-    expect(result.output.visualInterest, "the real-Chromium carousel shipped with an interest finding").toBeUndefined();
+    // The MESSAGE carries the finding, because `toBeUndefined` printed only
+    // `{ status: 'degraded', …(1) }` — the count of the fields it elided, not
+    // the slide, the clause or the numbers — and a CI failure that names no
+    // plate cannot be acted on without re-running the whole e2e to find out
+    // what it meant.
+    expect(
+      result.output.visualInterest,
+      `the real-Chromium carousel shipped with an interest finding: ${JSON.stringify(result.output.visualInterest, null, 2)}`,
+    ).toBeUndefined();
 
     const outDir = path.join(env.repoRoot, "instagram-output", "acme", "instagram_run_real_chromium");
     for (let n = 1; n <= 6; n++) {
