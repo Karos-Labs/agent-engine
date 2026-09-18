@@ -697,11 +697,19 @@ describe("planRunBudget — the owner's levers, in order, never a hold", () => {
     // The order is the whole of brief item A1, so it is asserted as an ORDER
     // and not as a set. A ratio of 1.45 is what it takes to reach every rung on
     // the cold English shape: the full plan prices at $2.83 calibrated, and the
-    // ladder walks all six steps down to the floor.
+    // ladder walks every step down to the floor.
     //
     // The ratio moved 1.8 -> 1.45 over Phase 4 and 5 with each honest re-price
     // of `copyAttempt`; it is kept at 1.45 here so the regime this test names is
     // the one the incident record refers to.
+    //
+    // THE LADDER IS ONE RUNG SHORTER SINCE 2026-09-18, and that is the point of
+    // the change rather than a side effect of it. `MIN_GENERATED_IMAGES_PER_RUN`
+    // moved 2 -> 3 because it could not satisfy `MIN_PICTURE_SLIDES` from zero,
+    // and a run that cannot buy three pictures ships the post the owner called
+    // a failure that day. So the floor no lever may cross is 3, the "images
+    // capped at 2" rung is gone, and this run has less room under pressure —
+    // which is the trade quality-before-cost names.
     const history = { ...EMPTY_RUN_BUDGET_HISTORY, ewmaRatio: 1.45, runs: [] };
     const decision = planRunBudget(DEFAULT_RUN_SHAPE, history);
     expect(decision.adaptations).toEqual([
@@ -709,8 +717,7 @@ describe("planRunBudget — the owner's levers, in order, never a hold", () => {
       "trend evidence reduced to the one cached industry query",
       "duplicate vision passes skipped (candidates and slides are inspected once, not once per attempt)",
       "images capped at 4",
-      "images capped at 3",
-      "images capped at 2 — the floor no lever may cross",
+      "images capped at 3 — the floor no lever may cross",
     ]);
     // The three rungs that fire BEFORE any picture is given up, in order, and
     // the fact that no image rung appears among them.
@@ -727,7 +734,7 @@ describe("planRunBudget — the owner's levers, in order, never a hold", () => {
     });
     expect(decision.adaptations.at(-1)).toMatch(/the floor no lever may cross/);
     expect(decision.estimate.estimatedUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
-    expect(decision.estimate.estimatedUsd).toBeCloseTo(2.077125, 6);
+    expect(decision.estimate.estimatedUsd).toBeCloseTo(2.133675, 6);
     expect(decision.note).toMatch(/running anyway/);
     // Over target and still under the hard max, so nothing about this plan puts
     // the run on the cheapest path before it has drawn a breath.
@@ -757,8 +764,11 @@ describe("planRunBudget — the owner's levers, in order, never a hold", () => {
       "trend evidence reduced to the one cached industry query",
       "duplicate vision passes skipped (candidates and slides are inspected once, not once per attempt)",
       "images capped at 4",
-      "images capped at 3",
-      "images capped at 2 — the floor no lever may cross",
+      // One rung shorter since MIN_GENERATED_IMAGES_PER_RUN moved 2 -> 3: the
+      // guarantee could not satisfy MIN_PICTURE_SLIDES from zero, and a run
+      // that cannot buy three pictures ships the post the owner read on
+      // 2026-09-18 and called a failure.
+      "images capped at 3 — the floor no lever may cross",
     ];
 
     // Nothing spent on the warm calibrated shape: the full plan, every picture,

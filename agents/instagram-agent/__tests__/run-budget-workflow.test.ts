@@ -4,7 +4,7 @@ import * as nodePath from "node:path";
 import type { AgentTool, AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
-import { MIN_GENERATED_IMAGES_PER_RUN, RUN_BUDGET_BELIEF_KEY, type RunBudgetDecision, type RunBudgetSummary } from "../src/workflow/run-budget.js";
+import { MIN_GENERATED_IMAGES_PER_RUN, RUN_BUDGET_BELIEF_KEY, type RunBudgetDecision, type RunBudgetSummary, MAX_RUN_SPEND_USD} from "../src/workflow/run-budget.js";
 import { DEFAULT_RENDER_RULES } from "../src/workflow/visual-qa-pre-checks.js";
 import type { InstagramCopyOutput, StyleConfig } from "../src/workflow/types.js";
 import { copyTurnInputs, fakeRenderCarousel, fakeRouterSequence, finalTurn, fixtureHeadline, goodBrandTokens, goodCopyOutput, goodImageCandidatePool, goodImageVettingOutput, goodRelevanceVerdict, goodResearchOutput, goodStyleConfig, goodTrendScoutOutput, goodVisualQaOutput, makePromptStore, qaTurnInputs, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
@@ -191,14 +191,24 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     const { result, plan, deliverable } = await run(env, "budget_adapted", fakeRouterSequence(happyTurns()));
     expect(result.status, JSON.stringify(result)).toBe("completed");
     expect(plan?.initialEstimateUsd).toBeGreaterThan(1.8);
-    expect(plan?.estimate.estimatedUsd).toBeLessThanOrEqual(1.8);
+    // ── AND IT NO LONGER FITS, WHICH IS THE POINT RATHER THAN A REGRESSION. ──
+    //
+    // This used to assert the ladder brought a hot client back under $1.80.
+    // Since `MIN_GENERATED_IMAGES_PER_RUN` moved 2 -> 3 it cannot: three
+    // pictures cost more than the target leaves, on this shape, at this
+    // ratio. That is `quality-before-cost` and `budgets-adapt-never-hold`
+    // meeting, and what the rules actually promise is asserted here instead —
+    // the run PROCEEDS, over target, having spent every optional rung first,
+    // and says so.
+    expect(plan?.estimate.estimatedUsd).toBeGreaterThan(1.8);
+    expect(plan?.estimate.estimatedUsd).toBeLessThan(MAX_RUN_SPEND_USD);
+    expect(plan?.note).toMatch(/running anyway/);
     expect(plan?.adaptations).toEqual([
       "optional rescue re-vets skipped",
       "trend evidence reduced to the one cached industry query",
       "duplicate vision passes skipped (candidates and slides are inspected once, not once per attempt)",
       "images capped at 4",
-      "images capped at 3",
-      "images capped at 2 — the floor no lever may cross",
+      "images capped at 3 — the floor no lever may cross",
     ]);
     // THE FLOOR, not zero. This is the single number the owner's "there are no
     // images although we said there would be" complaint reduces to.
@@ -219,11 +229,22 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     // the figure out and assert that, rather than widening the pattern to
     // `[01]` — which would also accept "$1.99", i.e. a ladder that ran every
     // rung and still never adapted enough.
+    //
+    // THE NOTE'S SHAPE CHANGED WITH THE FLOOR, and both shapes are real. When
+    // the ladder can reach the target the note ends "(now $X)"; when the
+    // picture floor costs more than the target leaves, it ends "still $X on
+    // the tightest plan — running anyway". Since the floor moved 2 -> 3 this
+    // shape is the second one, and asserting only the first would have read
+    // as a bug in the note rather than as the trade it records.
     const adaptedNote = plan?.note ?? "";
-    const adapted = /^budget: estimate \$(\d+\.\d\d) > \$1\.80 → (?:.+) \(now \$(\d+\.\d\d)\)$/.exec(adaptedNote);
-    expect(adapted, `the note did not have the adapted shape: ${adaptedNote}`).not.toBeNull();
-    expect(Number(adapted![1]), "the cold estimate must be over target, or there was nothing to adapt").toBeGreaterThan(1.8);
-    expect(Number(adapted![2]), "the adapted estimate must land at or under the $1.80 target").toBeLessThanOrEqual(1.8);
+    const overrun = /^budget: estimate \$(\d+\.\d\d) > \$1\.80 → (?:.+); still \$(\d+\.\d\d) on the tightest plan — running anyway/.exec(adaptedNote);
+    expect(overrun, `the note did not have the over-target shape: ${adaptedNote}`).not.toBeNull();
+    expect(Number(overrun![1]), "the cold estimate must be over target, or there was nothing to adapt").toBeGreaterThan(1.8);
+    // Over target and UNDER the hard max: the run is expensive, not runaway.
+    expect(Number(overrun![2])).toBeGreaterThan(1.8);
+    expect(Number(overrun![2])).toBeLessThan(MAX_RUN_SPEND_USD);
+    // And the cold estimate is still the bigger number — the ladder did work.
+    expect(Number(overrun![1])).toBeGreaterThan(Number(overrun![2]));
     expect(deliverable?.budget.plan.generatedImagesCap).toBe(MIN_GENERATED_IMAGES_PER_RUN);
   });
 
@@ -467,7 +488,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
       expect(requested[0]).toHaveLength(MIN_GENERATED_IMAGES_PER_RUN);
       // Lowest-first within the tier — an early picture earns the swipe — and
       // this run carries no concept, which `04m` declines on the canonical story.
-      expect(requested[0]).toEqual([1, 2]);
+      expect(requested[0]).toEqual([1, 2, 3, 4].slice(0, MIN_GENERATED_IMAGES_PER_RUN));
 
       // ── THE TWO CONTROLS, both in-band. ──
       // A pre-phase `continue` produces ZERO generate calls; a partition that
@@ -503,7 +524,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
       expect(floor!.action).not.toBe("ok");
       expect(floor!.action).toBe("unfilled");
       // And it says WHY, in the run's own numbers, rather than silently passing.
-      expect(floor!.reason).toMatch(/already generated 2 image\(s\)/u);
+      expect(floor!.reason).toContain(`already generated ${MIN_GENERATED_IMAGES_PER_RUN} image(s)`);
       // It never holds: the run completed above, and the slides took the
       // text-only downgrade exactly as they did before.
       const downgrade = steps.find((s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-1")?.output as { downgraded: number[] } | undefined;

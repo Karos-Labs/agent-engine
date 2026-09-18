@@ -1956,7 +1956,20 @@ export interface RunBudgetDecision {
  * property that matters about it: `IMAGE_CAP_STEPS` contains no value below
  * `MIN_GENERATED_IMAGES_PER_RUN`.
  */
-export const IMAGE_CAP_STEPS = [4, 3, MIN_GENERATED_IMAGES_PER_RUN] as const;
+// Derived rather than listed, so raising the floor cannot leave a duplicate or
+// an unreachable rung behind. It was `[4, 3, MIN_GENERATED_IMAGES_PER_RUN]`,
+// and the moment the floor moved to 3 that read `[4, 3, 3]`: a ladder with the
+// same rung twice, which the sweep caught as a cap it visited once against a
+// step list claiming two. The floor is always the LAST rung and always present,
+// which is what makes the tuple non-empty by construction.
+export const IMAGE_CAP_STEPS: readonly [number, ...number[]] = [
+  // Highest rung first and the floor last. Written head-then-tail rather than
+  // spread-then-push so the type carries the non-emptiness that `plan.ts`
+  // relies on when it reads `IMAGE_CAP_STEPS[0]`.
+  Math.max(4, MIN_GENERATED_IMAGES_PER_RUN),
+  ...[3].filter((n) => n > MIN_GENERATED_IMAGES_PER_RUN),
+  ...(MIN_GENERATED_IMAGES_PER_RUN < 4 ? [MIN_GENERATED_IMAGES_PER_RUN] : []),
+];
 
 /**
  * Decide the plan for this run. Starts from the default plan (or, after an
