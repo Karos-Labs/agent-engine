@@ -12,6 +12,7 @@ import {
   BRAND_MARK_ZONE,
   clientVisualSystemCss,
   CONDENSED_DISPLAY_FONT_FAMILY,
+  REGISTER_DISPLAY_FONT_FAMILY,
   displayFaceForScript,
   resolveDisplayRegisterForScript,
   type ClientVisualSystem,
@@ -795,12 +796,15 @@ export function buildBrandHeadHtml(
   // Oswald cannot set, `clientVisualSystemCss` withholds the face, so fetching
   // it would be one more css2 round trip in the render sandbox for a family no
   // selector names.
+  const registerFamily =
+    options.system !== undefined ? REGISTER_DISPLAY_FONT_FAMILY[options.system.displayRegister] : undefined;
   if (
-    options.system?.displayRegister === "condensed" &&
-    resolveDisplayRegisterForScript("condensed", options.script).covers &&
-    !families.includes(CONDENSED_DISPLAY_FONT_FAMILY)
+    registerFamily !== undefined &&
+    options.system !== undefined &&
+    resolveDisplayRegisterForScript(options.system.displayRegister, options.script).covers &&
+    !families.includes(registerFamily)
   ) {
-    families.push(CONDENSED_DISPLAY_FONT_FAMILY);
+    families.push(registerFamily);
   }
   // ── AND THE FACE THE REGISTER SETS WHEN ITS OWN CANNOT SET THE SCRIPT. ──
   // The other side of the same rule: on a script the register's Latin family
@@ -901,7 +905,31 @@ export function buildBrandHeadHtml(
   // `<link>` a non-default family needs. A client with no kit reaches none of
   // this and keeps the templates' own `--f-display`, which is the correct
   // degradation: the fleet default is a real face, just a shared one.
-  if (options.system !== undefined) css.push(clientVisualSystemCss(options.system, { script: options.script }));
+  if (options.system !== undefined) {
+    /* ── THE BRAND KIT'S OWN DISPLAY FACE WINS. ──
+     *
+     * This block lands AFTER the kit's `cssVars`, so its `--f-display` beat the
+     * client's on every run that had one: `thepitchbydeel` declares
+     * `'Inter', Georgia, serif` in its kit and rendered in Fraunces, because
+     * the register overwrote it. A client's typeface is part of the brand
+     * voice the setup agents derive — the owner's point exactly — and a
+     * variety axis has no business overriding it.
+     *
+     * The register is not pointless: it is what gives a client with NO display
+     * face of its own a face, and what keeps two such clients apart. So it
+     * fills a gap and never takes a decision that has already been made.
+     */
+    const kitNamesDisplayFace = tokens.cssVars["--f-display"] !== undefined && tokens.cssVars["--f-display"].trim() !== "";
+    const systemCss = clientVisualSystemCss(options.system, { script: options.script });
+    css.push(
+      kitNamesDisplayFace
+        ? systemCss
+            .split(/\r?\n/)
+            .filter((line) => !/^\s*--f-display:/.test(line))
+            .join("\n")
+        : systemCss,
+    );
+  }
   // ── ONE HEADLINE, ONE TYPEFACE, ON A SCRIPT THE REGISTER CANNOT SET. ──
   //
   // `clientVisualSystemCss` withholds the register's Latin face on such a run

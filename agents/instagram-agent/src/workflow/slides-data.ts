@@ -23,6 +23,7 @@ import {
 } from "./emphasis-marks.js";
 import { buildDeviceFragment, deviceFigureValues, validateDevice, type SlideDevice } from "./slide-devices.js";
 import { imageTreatmentFields, type ImageTreatment } from "./style-lock.js";
+import { COMPOSITION_ANCHOR } from "./visual-system.js";
 import type { CarouselVisualSystem } from "./visual-system.js";
 import type {
   BrandTokens,
@@ -1398,6 +1399,11 @@ function contentFor(
   context?: {
     position?: SlidePosition | undefined;
     groundStyle?: SlideGroundStyle | undefined;
+    /** The run's cover form and accent form, carried to the plate as layout metadata so the axes the system decides actually reach the pixels. */
+    coverForm?: string | undefined;
+    /** The run's composition grammar as a selectable keyword — `top` | `centre` | `split` | `bottom`. */
+    compositionAnchor?: string | undefined;
+    accentForm?: string | undefined;
     targetLanguage?: string | undefined;
     /**
      * Phase 4, RFC-15 §7.2 — the run's language as a BCP-47 tag, for the
@@ -1645,6 +1651,9 @@ function contentFor(
     // Both are in `LAYOUT_FIELD_KEYS`, so nothing that counts or reads a
     // slide's CONTENT ever sees them.
     groundStyle: context?.groundStyle ?? "grid",
+    coverForm: context?.coverForm ?? "figure",
+    compositionAnchor: context?.compositionAnchor ?? "bottom",
+    accentForm: context?.accentForm ?? "rule",
     slideIndex: String(slide.n).padStart(2, "0"),
     ...(eyebrowText !== undefined ? { kicker: iso(eyebrowText) } : {}),
     ...(brand?.handle !== undefined ? { brandHandle: brand.handle } : {}),
@@ -2601,6 +2610,26 @@ export function assembleSlidesData(params: {
         // The seeded walk stays as the no-system fallback so every existing
         // fixture composes byte-identically.
         groundStyle: params.visualSystem?.ground ?? (isVariationSlot(1, GROUND_VARIATION_MIX, `${params.paletteSeed ?? ""}:ground`) ? "glyph" : "grid"),
+        // ── THE OTHER TWO AXES THE RUN ALREADY DECIDED, AND NOTHING READ. ──
+        //
+        // `coverForm` and `accentForm` were resolved per run, held across runs
+        // and printed on the payload, and then reached no template — so four
+        // cover forms rendered as one cover and five accent forms rendered as
+        // one bar at two sizes. That is the owner's oldest complaint in the
+        // code: *"שכל פוסט יראה שונה"*, decided and then discarded.
+        // They ride as layout metadata, exactly like `groundStyle`: no prose,
+        // nothing a content gate counts, one attribute each on `<body>`.
+        // The composition grammar, as a keyword the CSS can SELECT on. It was
+        // published as `--lockup-anchor`, a custom property — and a custom
+        // property cannot be used in a selector, so four grammars moved nothing:
+        // measured on a real render, `headline-focus` put its lockup at the
+        // same y under `top-column` and under `bottom-column`.
+        // `COMPOSITION_ANCHOR` rather than a ternary spelled out here: this
+        // mapping is the axis reaching the plate, and a copy of it in this
+        // file is a copy the render sweeps cannot reach. See its own note.
+        compositionAnchor: COMPOSITION_ANCHOR[params.visualSystem?.compositionGrammar ?? "bottom-column"],
+        coverForm: params.visualSystem?.coverForm ?? "figure",
+        accentForm: params.visualSystem?.accentForm ?? "rule",
         ...(eyebrowSlides !== undefined ? { eyebrowSlides } : {}),
         ...(params.targetLanguage !== undefined ? { targetLanguage: params.targetLanguage } : {}),
         ...(params.bcp47 !== undefined ? { bcp47: params.bcp47 } : {}),

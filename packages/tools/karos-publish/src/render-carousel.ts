@@ -119,8 +119,30 @@ import { measureSlidePng, type SlideMetrics, type SlideProbe } from "./slide-met
  * CONTENT pair. The list now also carries the prose and object classes the
  * eight bundled archetypes actually declare. `probe` and every 1.6.0 field are
  * byte-identical; `geometry.collisions` can only grow.
+ *
+ * ## 1.8.0 — an inline box leaves the block-start limb
+ *
+ * MINOR for the same reason again, and the reason is worth stating precisely
+ * because this one makes the instrument report LESS. `probePage`'s block-start
+ * limb treated an inline box's rect as a layout result. It is not: the rect is
+ * the union of the box's line fragments, sized by the face's ascent and
+ * descent rather than by `line-height`, so a display face at 46px in a 51.5px
+ * line box reports a 57px rect starting 3px above the block containing it — at
+ * every size, in every plate. That turned ordinary typography into `clipped`
+ * on 72 of the mark sweep's renders, and a wider tolerance would only move the
+ * type size at which it happened again.
+ *
+ * So `clipped` is now ABSENT where a 1.7.0 record would have carried it, for
+ * the same plate and the same copy. Nothing else moved: every other field is
+ * byte-identical, `inline-block` and `inline-flex` stay in scope because they
+ * really are laid out as boxes, and the probe's shape widens by one optional
+ * `display`, which only the limb above reads.
+ *
+ * Bumped separately from the commit that made the change: the push gate caught
+ * a version left at 1.7.0 while the judgement under it changed, which is the
+ * gate doing exactly its job.
  */
-const TOOL_VERSION = "1.7.0";
+const TOOL_VERSION = "1.8.0";
 
 // n/template/fields/images have no existing TSDoc to transcribe (SCRUM-293 flag) — descriptions
 // below synthesized from fillTemplate's/validateRenderInputs' usage of each field.
@@ -449,6 +471,8 @@ declare function getComputedStyle(element: ProbeElement): {
   visibility?: string;
   /** Read only by `probeGeometry`'s alignment-column set: the INLINE START edge is `left` in `ltr` and `right` in `rtl`. */
   direction?: string;
+  /** Read only by the block-start limb, to leave INLINE boxes out of it — see there. Optional for the same fake-style reason as the four above. */
+  display?: string;
 };
 
 function readyFlagCheck(flag: string): boolean {
@@ -637,10 +661,27 @@ export function probePage(canvas: { n: number; w: number; h: number }): {
     // a switched-off limb is worse than a documented gap. If an inline escape
     // ever ships, it will be one of real size: add the limb then, with a
     // tolerance above the hang (measured at 4px here) rather than at 2.
+    //
+    // A FOURTH EXCLUSION, AND IT IS NOT A TOLERANCE PROBLEM. An INLINE box's
+    // rect is not a layout result — it is the union of its line fragments,
+    // sized by the face's own ascent and descent rather than by `line-height`.
+    // A display face at 46px in a 51.5px line box reports a 57px rect that
+    // starts 3px above the block that contains it, at EVERY size, in EVERY
+    // plate: measured on this tree, an emphasis run (`span.mk`, `span.mk-t`)
+    // inside `.mk-runs` escaped by exactly that, and the 2px tolerance turned
+    // ordinary typography into `clipped` on 72 of the mark sweep's renders.
+    // Raising the tolerance only moves the size at which it happens again,
+    // because the overshoot scales with the type. An inline box cannot escape
+    // its parent in the sense this limb is about: the LINE BOX owns the
+    // layout, and the ink above it is the same ink the block would paint with
+    // no span there at all. `inline-block` and `inline-flex` ARE laid out as
+    // boxes and stay in scope.
     const parent: ProbeElement | null = element.parentElement ?? null;
     if (!spills && parent !== null && rect.height > 0 && typeof parent.getBoundingClientRect === "function") {
+      const display = getComputedStyle(element).display;
       const placed = getComputedStyle(element).position === "absolute" || getComputedStyle(element).position === "fixed";
-      if (!placed && getComputedStyle(parent).overflow === "visible") {
+      const inlineLevel = display === "inline" || display === "contents";
+      if (!placed && !inlineLevel && getComputedStyle(parent).overflow === "visible") {
         const parentRect = parent.getBoundingClientRect();
         if (parentRect.height > 0 && rect.top < parentRect.top - 2) spills = true;
       }

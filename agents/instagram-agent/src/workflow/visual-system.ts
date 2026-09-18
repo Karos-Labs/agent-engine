@@ -83,7 +83,7 @@ export const ACCENT_ROLES = ["information", "punctuation", "mark", "field"] as c
 export type AccentRole = (typeof ACCENT_ROLES)[number];
 
 /** The display face's register. Today every client in the fleet renders the same one, which alone makes three posts look related. */
-export const DISPLAY_REGISTERS = ["humanist-serif", "grotesque", "condensed", "mono-display"] as const;
+export const DISPLAY_REGISTERS = ["humanist-serif", "grotesque", "condensed", "geometric"] as const;
 export type DisplayRegister = (typeof DISPLAY_REGISTERS)[number];
 
 /** Where the type lockup sits on the plate. Consumed as `--lockup-anchor` — see `LOCKUP_ANCHOR`. */
@@ -104,6 +104,34 @@ export const LOCKUP_ANCHOR: Record<CompositionGrammar, string> = {
   "bottom-column": "flex-end",
   "centre-measure": "center",
   "split-band": "space-between",
+};
+
+/**
+ * The grammar as the keyword the PLATES select on: written to every slide's
+ * `compositionAnchor` field and carried to the template as `data-anchor`.
+ *
+ * A second, shorter vocabulary than `LOCKUP_ANCHOR` on purpose. That one is a
+ * `justify-content` value for the elastic field; this one names the END of the
+ * field the lockup is anchored to, because the plates implement the anchor with
+ * a flexible pseudo-element rather than with `justify-content` — a spacer
+ * survives a hidden first child and an auto margin on `:first-child` does not,
+ * which is a trap this system hit three times (see `headline-focus.html`).
+ *
+ * EXPORTED, and that is the fix. The mapping was inline in `assembleSlidesData`
+ * as a ternary, so the axes render sweep did not emit the field at all:
+ * `data-anchor` reached the plate EMPTY, no anchor rule matched, all four
+ * grammars rendered the default `bottom`, and the case that asserts *"the
+ * grammar moves the lockup"* compared a render with itself — it read
+ * `contentCentroid.y` 0.5205627983094601 under `top-column` and
+ * 0.5205627983094601 under `bottom-column`, identical to sixteen decimal
+ * places, which is the signature of an axis that never arrived. One spelling,
+ * in the file that owns the axis.
+ */
+export const COMPOSITION_ANCHOR: Record<CompositionGrammar, string> = {
+  "top-column": "top",
+  "bottom-column": "bottom",
+  "centre-measure": "centre",
+  "split-band": "split",
 };
 
 /** What this client's pictures are OF. Read by the scene brief and the image vet (W2-A), carried here so it is frozen with the rest. */
@@ -157,7 +185,7 @@ export type ClientVisualSystem = z.infer<typeof ClientVisualSystemSchema>;
  * The BODY face stays `Inter` for every register. The display face is what a
  * reader reads as "this brand"; the body face is what they read the post with,
  * and swapping it buys distinctiveness at the cost of legibility at 32px on a
- * phone. `mono-display` is the one register that moves the mono face too,
+ * phone. `geometric` used to move the mono face too, back when it WAS the mono,
  * because there the mono IS the display face and a second mono would be noise.
  */
 export const DISPLAY_REGISTER_STACKS: Record<DisplayRegister, { display: string; weight: string; tracking: string; twinBleed: string }> = {
@@ -167,26 +195,26 @@ export const DISPLAY_REGISTER_STACKS: Record<DisplayRegister, { display: string;
   // carries over Fraunces' 0.10em, because the ladder picks a line-height per
   // copy length and the fallback face (`Arial Narrow`) has its own metrics.
   condensed: { display: "'Oswald', 'Arial Narrow', 'Inter', sans-serif", weight: "600", tracking: "-0.004em", twinBleed: "0.3em" },
-  // 0.14em measured on IBM Plex Mono, 0.2em shipped — and CI refused it.
+  // ── WHY THIS REGISTER IS NO LONGER A MONOSPACE. ──
   //
-  // The measurement was taken on the face this stack NAMES. The face a render
-  // actually gets is another question: `cover.html` under this register
-  // overflowed `span.mk-runs` and `span.mk-plain` on CI Chromium
-  // (`visual-system-axes-render.test.ts`), where the webfont does not load and
-  // `ui-monospace` resolves to whatever mono the runner ships — a face with its
-  // own content area, exactly the hazard `condensed` already records one line
-  // above ("the fallback face (`Arial Narrow`) has its own metrics") and pays
-  // 0.3em for against a 0.22em measurement.
+  // It used to be `'IBM Plex Mono', ui-monospace, monospace`, and it was a
+  // quarter of all clients. Rendered at the display step it is the loudest
+  // machine-made tell in the set: a 94px headline set in a terminal face reads
+  // as code rather than as a brand, and the owner's standing complaint about
+  // these carousels is precisely that they look AI-made. A mono face earns its
+  // place at the micro step — the eyebrow, the source line and the handle are
+  // all still set in one — and nowhere else.
   //
-  // So this takes the same 1.35x-style margin over the fallback rather than
-  // over the named face, and it matches `condensed` because the two are the
-  // same problem. **It is a margin, not a measurement, and it is the only
-  // number in this table that is** — the measurement on the CI face is owed,
-  // and until somebody takes it this value should only ever be raised.
-  // Raising it cannot reach another register: `--mk-face-bleed` is emitted per
-  // resolved system and combined with `max()`, so a plate that is not
-  // `mono-display` is byte-identical.
-  "mono-display": { display: "'IBM Plex Mono', ui-monospace, monospace", weight: "600", tracking: "-0.02em", twinBleed: "0.34em" },
+  // `Space Grotesk` replaces it because it is GEOMETRIC rather than humanist,
+  // so it stays visibly distinct from `grotesque`'s Inter at a glance, which is
+  // the only reason to carry four registers at all.
+  //
+  // The 0.34em twin bleed went with the mono. That number was explicitly "a
+  // margin, not a measurement": it was sized against whatever `ui-monospace`
+  // resolves to on a CI runner, because the face the stack named was never
+  // fetched. This register's face IS fetched, so the bleed is a measurement on
+  // the face the plate actually gets.
+  geometric: { display: "'Space Grotesk', 'Inter', system-ui, sans-serif", weight: "600", tracking: "-0.02em", twinBleed: "0.06em" },
 };
 
 /**
@@ -230,7 +258,7 @@ export const DISPLAY_REGISTER_SCRIPTS: Record<DisplayRegister, readonly string[]
   "humanist-serif": ["Latin"],
   grotesque: ["Latin"],
   condensed: ["Latin"],
-  "mono-display": ["Latin"],
+  geometric: ["Latin"],
 };
 
 /**
@@ -295,7 +323,7 @@ export function resolveDisplayRegisterForScript(register: DisplayRegister, scrip
  *   humanist-serif  Frank Ruhl Libre  a Hebrew serif with a full Latin set
  *   grotesque       Heebo             Roboto's Latin, extended to Hebrew
  *   condensed       Heebo             SEE BELOW
- *   mono-display    Rubik             `SCRIPT_TYPOGRAPHY.Hebrew.mono`'s own pick
+ *   geometric       Rubik             `SCRIPT_TYPOGRAPHY.Hebrew.mono`'s own pick
  *
  * `condensed` IS A SUBSTITUTION AND IT IS RECORDED AS ONE. No Hebrew face in
  * the curated set carries the register's width claim, and inventing one would
@@ -319,7 +347,7 @@ export const DISPLAY_REGISTER_SCRIPT_FACES: Readonly<Record<DisplayRegister, Rea
   "humanist-serif": { Hebrew: { family: "Frank Ruhl Libre", stack: "'Frank Ruhl Libre', 'Heebo', Georgia, serif" } },
   grotesque: { Hebrew: { family: "Heebo", stack: "'Heebo', 'Rubik', system-ui, sans-serif" } },
   condensed: { Hebrew: { family: "Heebo", stack: "'Heebo', 'Rubik', system-ui, sans-serif" } },
-  "mono-display": { Hebrew: { family: "Rubik", stack: "'Rubik', 'Heebo', system-ui, sans-serif" } },
+  geometric: { Hebrew: { family: "Rubik", stack: "'Rubik', 'Heebo', system-ui, sans-serif" } },
 };
 
 /**
@@ -373,6 +401,23 @@ export const TWIN_BLEED_DECLARATION = "padding-block-start: max(var(--mk-twin-bl
 
 /** The one extra family this phase asks Chromium to fetch, and only for the one register that needs it. Its own `<link>`, never appended to the templates' existing three-family request: css2 fails the WHOLE request when any family in a batch is unknown. */
 export const CONDENSED_DISPLAY_FONT_FAMILY = "Oswald";
+
+/**
+ * ── THE FACE A REGISTER NEEDS FETCHED, WHEN IT IS NOT ONE THE TEMPLATES LOAD. ──
+ *
+ * The bundled plates request three families. Two registers name a fourth, and
+ * a register whose face is never fetched silently renders in its fallback —
+ * which is how `condensed` and `grotesque` could come out as the same face on a
+ * runner with no Arial Narrow, and two clients then looked like one client.
+ *
+ * This is a MAP rather than the `if (register === "condensed")` it replaces,
+ * because that shape is what made adding `geometric` a chance to reintroduce
+ * the same defect: a register added without a line here has no face.
+ */
+export const REGISTER_DISPLAY_FONT_FAMILY: Partial<Record<DisplayRegister, string>> = {
+  condensed: CONDENSED_DISPLAY_FONT_FAMILY,
+  geometric: "Space Grotesk",
+};
 
 // ─────────────────────────────────────────────────────────────────────────
 // The type scale
@@ -516,7 +561,7 @@ export const SYSTEM_GROUNDS = ["flat", "grid", "glyph"] as const;
 export type SystemGround = (typeof SYSTEM_GROUNDS)[number];
 
 /** The shape the accent takes where it is allowed to appear at all. */
-export const ACCENT_FORMS = ["rule", "band", "bracket", "field", "none"] as const;
+export const ACCENT_FORMS = ["rule", "band", "tint", "field", "none"] as const;
 export type AccentForm = (typeof ACCENT_FORMS)[number];
 
 /** What the cover leads with. Read by the cover template and (W2-C) by the `coverSubject` clause. */
@@ -543,8 +588,10 @@ export const ACCENT_FORM_GEOMETRY: Record<AccentForm, { w: string; h: string }> 
   rule: { w: "calc(240px * var(--ts, 1))", h: "calc(10px * var(--ts, 1))" },
   /** A band across most of the measure — the loudest mark short of a surface. */
   band: { w: "calc(560px * var(--ts, 1))", h: "calc(16px * var(--ts, 1))" },
-  /** A short heavy tick. A `bracket` client spends its colour in small marks. */
-  bracket: { w: "calc(96px * var(--ts, 1))", h: "calc(18px * var(--ts, 1))" },
+  /** `tint` paints no mark — it spends the colour on the numerals and labels the
+   *  plate already carries — so its geometry is zero by construction, not by
+   *  omission. Listed so the record stays total. */
+  tint: { w: "0", h: "0" },
   /** The full measure, set as a surface edge. `field` takes ONE slide per carousel (see `accentSlidesFor`). */
   field: { w: "100%", h: "calc(24px * var(--ts, 1))" },
   none: { w: "0", h: "0" },
@@ -559,21 +606,50 @@ export const ACCENT_FORM_GEOMETRY: Record<AccentForm, { w: string; h: string }> 
  * it either. This is the axis reaching the one plate it names.
  *
  * A `typographic-poster` cover has no subject but its title, so the band IS the
- * composition and takes 42% of the plate. Every other form expects something in
- * frame — a photograph, a drawn object, a figure device — so the band steps back
- * to a header and leaves the subject the room. Read by `cover.html` as
- * `var(--cover-band, 600px)`.
+ * composition. Every other form expects something in frame — a photograph, a
+ * drawn object, a figure device — so the band claims less of the plate and
+ * leaves the subject the room. Read by `cover.html` as `var(--cover-band,
+ * 600px)`, where it is both the flex CEILING and, since the plate stopped
+ * parking free space in a spacer, the only item that can absorb it.
+ *
+ * ── THE BAND WAS THE CEILING THE COVER KEPT HITTING (2026-09-18). ──
+ *
+ * These were 600/420/380/300, and at those values the cover could not close
+ * its own hole on short copy. The plate has ~1214px between the mark band and
+ * the foot; a short-copy lockup takes 350-450px of it; so the band needs to be
+ * able to reach ~760-860px or the remainder has nowhere to go and lands as a
+ * refused rectangle. Measured on the real-Chromium end-to-end carousel at 420:
+ * `interest:dead-space (slide 1) — an empty rectangle covered 35% of the plate
+ * (0,932 to 1080,1440)`, a full-width 508px strip at the foot, against a 22%
+ * cover ceiling. Every earlier attempt moved that strip — to the head, to the
+ * middle under `space-between`, to a column beside the copy — because the
+ * spacers, the anchor and the measure all decide WHERE the air goes and only
+ * this number decides whether anything can absorb it.
+ *
+ * The ordering and the axis are unchanged, and none of them is a screen: the
+ * band still shrinks to nothing for a long headline (`flex-shrink: 1`,
+ * `min-block-size: 0` — the copy never clips for the decoration), still paints
+ * one `no-repeat` ramp, and at 57% of the canvas at its tallest still leaves
+ * the lower third of every cover to the words. RFC-20 §5.6 rule 4 is not in
+ * play: no floor, ceiling or gate moved for this — the composition did.
  */
 export const COVER_FORM_BAND_PX: Record<CoverForm, number> = {
-  "typographic-poster": 600,
-  figure: 420,
-  object: 380,
-  portrait: 300,
+  "typographic-poster": 900,
+  figure: 820,
+  object: 780,
+  portrait: 700,
 };
 
 export interface CarouselVisualSystem {
   /** Stable across a resume, written to skeleton memory and to the cross-client belief. */
   systemId: string;
+  /**
+   * The client's composition grammar, carried on the RESOLVED system so the
+   * slide data can hand it to the plate as a selectable keyword. It was
+   * published only as `--lockup-anchor`, and a custom property cannot be used
+   * in a selector — so all four grammars put the lockup at the same y.
+   */
+  compositionGrammar: CompositionGrammar;
   ground: SystemGround;
   /**
    * THE ONLY slides on which any template may paint an accent rule, band or
@@ -644,10 +720,10 @@ export interface VisualSystemEntry {
 export const VISUAL_SYSTEM_CATALOG: readonly VisualSystemEntry[] = [
   { id: "quiet-rule", ground: "flat", accentForm: "rule", coverForm: "typographic-poster", typeScale: "editorial", gutter: "wide", accentRoles: ["punctuation", "information"] },
   { id: "quiet-figure", ground: "flat", accentForm: "none", coverForm: "figure", typeScale: "display", gutter: "wide", accentRoles: ["punctuation", "mark", "information"] },
-  { id: "quiet-portrait", ground: "flat", accentForm: "bracket", coverForm: "portrait", typeScale: "editorial", gutter: "tight", accentRoles: ["punctuation", "mark"] },
+  { id: "quiet-portrait", ground: "flat", accentForm: "tint", coverForm: "portrait", typeScale: "editorial", gutter: "tight", accentRoles: ["punctuation", "mark"] },
   { id: "ruled-object", ground: "grid", accentForm: "rule", coverForm: "object", typeScale: "display", gutter: "wide", accentRoles: ["information", "punctuation"] },
   { id: "ruled-poster", ground: "grid", accentForm: "band", coverForm: "typographic-poster", typeScale: "condensed", gutter: "tight", accentRoles: ["field", "information"] },
-  { id: "ruled-portrait", ground: "grid", accentForm: "bracket", coverForm: "portrait", typeScale: "editorial", gutter: "wide", accentRoles: ["mark", "punctuation"] },
+  { id: "ruled-portrait", ground: "grid", accentForm: "tint", coverForm: "portrait", typeScale: "editorial", gutter: "wide", accentRoles: ["mark", "punctuation"] },
   { id: "glyph-figure", ground: "glyph", accentForm: "rule", coverForm: "figure", typeScale: "display", gutter: "tight", accentRoles: ["information", "punctuation"] },
   { id: "glyph-poster", ground: "glyph", accentForm: "field", coverForm: "typographic-poster", typeScale: "condensed", gutter: "wide", accentRoles: ["field"] },
   { id: "glyph-object", ground: "glyph", accentForm: "band", coverForm: "object", typeScale: "display", gutter: "wide", accentRoles: ["field", "information"] },
@@ -658,7 +734,7 @@ export const VISUAL_SYSTEM_CATALOG: readonly VisualSystemEntry[] = [
   // not punctuation.
   { id: "marked-portrait", ground: "flat", accentForm: "none", coverForm: "portrait", typeScale: "display", gutter: "tight", accentRoles: ["mark"] },
   { id: "banded-object", ground: "grid", accentForm: "band", coverForm: "object", typeScale: "editorial", gutter: "tight", accentRoles: ["field", "mark"] },
-  { id: "bracketed-figure", ground: "glyph", accentForm: "bracket", coverForm: "figure", typeScale: "condensed", gutter: "wide", accentRoles: ["punctuation", "mark", "information"] },
+  { id: "bracketed-figure", ground: "glyph", accentForm: "tint", coverForm: "figure", typeScale: "condensed", gutter: "wide", accentRoles: ["punctuation", "mark", "information"] },
 ];
 
 /**
@@ -736,7 +812,8 @@ export function pickVisualSystem(params: PickVisualSystemParams): CarouselVisual
   const entry = pool[fnv1a32(seed) % pool.length]!;
 
   const count = Number.isFinite(params.slideCount) ? Math.max(2, Math.floor(params.slideCount)) : 2;
-  const accentSlides = accentSlidesFor(count, entry.accentForm);
+  const accentSlides = accentSlidesFor(count, entry.accentForm, seed);
+  const compositionGrammar = params.client.compositionGrammar;
   const numeralSlides = params.client.pagination === "all" ? interiorSlides(count) : [];
   const eyebrow: CarouselVisualSystem["eyebrow"] = eyebrowFor(params.client, count);
 
@@ -749,6 +826,7 @@ export function pickVisualSystem(params: PickVisualSystemParams): CarouselVisual
 
   return {
     systemId: entry.id,
+    compositionGrammar,
     ground: entry.ground,
     accentSlides,
     accentForm: entry.accentForm,
@@ -776,13 +854,38 @@ export function pickVisualSystem(params: PickVisualSystemParams): CarouselVisual
  * accent role is `mark` spends its colour inside the type, where
  * `emphasis-marks.ts` puts it.
  */
-export function accentSlidesFor(slideCount: number, form: AccentForm): number[] {
+export function accentSlidesFor(slideCount: number, form: AccentForm, seed = ""): number[] {
   const n = Math.max(2, Math.floor(slideCount));
   if (form === "none") return [];
   if (form === "field") return [n];
-  const mid = Math.ceil(n / 2);
-  const slides = [1, mid, n].filter((slide, index, all) => all.indexOf(slide) === index && slide >= 1 && slide <= n);
-  return slides.slice(0, 3);
+
+  /* ── SEEDED, BECAUSE A RULE IS WHAT A READER RECOGNISES. ──
+   *
+   * This used to return `[1, ceil(n/2), n]` — a pure function of the slide
+   * count, so every client with an eight-plate carousel got the accent on
+   * plates 1, 4 and 8, forever. Rendered side by side, three different clients
+   * on three different systems all marked the same three plates, and the owner
+   * named it exactly: *"יש קו כתום אופקי כזה שלרוב מעיד על AI, זה בסדר אם זה
+   * פעם אחת וקורה לפעמים אבל שלא יהיה קבוע"*. A mark that appears in the same
+   * place every time is not an accent, it is furniture.
+   *
+   * Two things change. The COUNT varies (one to three plates, not always
+   * three), and the PLATES are drawn from the whole carousel without the cover
+   * having any privilege — so a given run's cover carries the accent roughly as
+   * often as any other plate does, and not by rule.
+   */
+  const head = fnv1a32(`accent:${seed}`);
+  const pool: number[] = [];
+  for (let slide = 1; slide <= n; slide++) pool.push(slide);
+
+  const want = Math.min(1 + (head % 3), pool.length);
+  const picked: number[] = [];
+  let roll = head;
+  while (picked.length < want) {
+    roll = fnv1a32(`accent:${seed}:${picked.length}:${roll}`);
+    picked.push(pool.splice(roll % pool.length, 1)[0]!);
+  }
+  return picked.sort((a, b) => a - b);
 }
 
 /** Every slide that is neither the cover nor the closer. The cover carries no furniture at all (§4.5) and the closer is a payoff, not a page in a sequence. */
@@ -878,7 +981,7 @@ export function fallbackClientVisualSystem(tokens?: {
    * headline.
    */
   const displayRegister: DisplayRegister = /mono|technical|engineer|terminal|code/.test(`${aesthetic} ${mood}`)
-    ? "mono-display"
+    ? "geometric"
     : /bold|poster|loud|punch|news/.test(`${aesthetic} ${mood}`)
       ? "condensed"
       : /editorial|classic|warm|craft|serif/.test(`${aesthetic} ${mood}`)
@@ -1298,7 +1401,7 @@ export function clientVisualSystemCss(
     // whose steer ("shorten the headline") cannot fix a font metric. Measured
     // on this tree through the production composition, at `m`: `condensed`
     // 203 against 186 on `headline-focus`, 243 against 222 on the cover, and
-    // `mono-display` the same — on the cover, `headline-focus` and `slide`,
+    // `geometric` the same — on the cover, `headline-focus` and `slide`,
     // i.e. every plate in the set that can carry a bounded object, at every
     // copy length and type scale.
     //

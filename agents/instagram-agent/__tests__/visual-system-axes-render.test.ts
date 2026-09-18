@@ -9,6 +9,7 @@ import { buildScriptFontHeadForLanguage } from "../src/workflow/script-fonts.js"
 import { buildMarkRing, markCssBlock } from "../src/workflow/emphasis-marks.js";
 import { deviceCssBlock } from "../src/workflow/slide-devices.js";
 import {
+  COMPOSITION_ANCHOR,
   COMPOSITION_GRAMMARS,
   DISPLAY_REGISTERS,
   DISPLAY_REGISTER_SCRIPTS,
@@ -156,6 +157,13 @@ function fieldsFor(n: number, system: CarouselVisualSystem, over: Record<string,
     // this sweep would render two catalog entries on one ground and then assert
     // they differ.
     groundStyle: system.ground,
+    // ── AND SO IS THE GRAMMAR, FOR THE REASON THE GROUND IS. ──
+    // This field was missing, so `data-anchor` reached every plate EMPTY, no
+    // anchor rule matched, and all four grammars rendered the default: the
+    // case below read `contentCentroid.y` 0.5205627983094601 under BOTH
+    // `top-column` and `bottom-column`. An axis this sweep does not emit is
+    // an axis this sweep cannot measure, whatever it asserts.
+    compositionAnchor: COMPOSITION_ANCHOR[system.compositionGrammar],
     slideIndex: String(n).padStart(2, "0"),
     brandHandle: "@karoslabs",
     // Filled on every plate: an EMPTY eyebrow hides itself and the collision
@@ -182,8 +190,17 @@ function fieldsFor(n: number, system: CarouselVisualSystem, over: Record<string,
   };
 }
 
-const systemFrom = (entry: (typeof VISUAL_SYSTEM_CATALOG)[number], slideCount = 8): CarouselVisualSystem => ({
+const systemFrom = (
+  entry: (typeof VISUAL_SYSTEM_CATALOG)[number],
+  slideCount = 8,
+  /* The grammar is an AXIS of this sweep, so it is a parameter rather than a
+     constant: the case that asserts the grammars move the lockup has to be able
+     to hand each one in. Default `bottom-column`, which is what a run with no
+     grammar of its own resolves to. */
+  compositionGrammar: CarouselVisualSystem["compositionGrammar"] = "bottom-column",
+): CarouselVisualSystem => ({
   systemId: entry.id,
+  compositionGrammar,
   ground: entry.ground,
   accentSlides: accentSlidesFor(slideCount, entry.accentForm),
   accentForm: entry.accentForm,
@@ -612,7 +629,18 @@ describe.skipIf(!isChromiumInstalled())("every declared axis is measured on a re
       const statementPlates = PLATES.filter(([file]) => file === "headline-focus.html");
       const centroids = new Map<CompositionGrammar, number[]>();
       for (const grammar of COMPOSITION_GRAMMARS) {
-        const plates = await renderSet(`grammar-${grammar}`, systemFrom(entry), clientSystem({ compositionGrammar: grammar }), { templates: statementPlates });
+        // BOTH objects carry it, as production does: `resolveVisualSystem`
+        // copies the client's frozen axis onto the run's system, and it is
+        // the RUN's system that `fieldsFor` reads. Handed only to the client
+        // sheet, `systemFrom`'s default `bottom-column` reached the plate on
+        // every pass of this loop — which is what `systemFrom`'s third
+        // parameter was added for and then not used.
+        const plates = await renderSet(
+          `grammar-${grammar}`,
+          systemFrom(entry, 8, grammar),
+          clientSystem({ compositionGrammar: grammar }),
+          { templates: statementPlates },
+        );
         for (const plate of plates) {
           expect(plate.overflow, `${plate.template} under "${grammar}" overflows: ${plate.overflowing.join(", ")}`).toBe(false);
         }

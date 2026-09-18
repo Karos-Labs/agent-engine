@@ -179,6 +179,16 @@ function stylesOf(html: string): string {
 }
 
 /** The markup half, with every comment stripped, so a prose mention cannot satisfy a markup assertion. */
+/** The plate's inline script — the fit ladder, which is generated into every
+ *  template between the `@ds:fit-start` / `@ds:fit-end` markers. */
+function scriptOf(html: string): string {
+  const body = (html.match(/<script[^>]*>([\s\S]*?)<\/script>/) ?? ["", ""])[1]!;
+  /* Comments stripped: these guards read CODE. The ladder's own doc comment
+     names `textContent` as the thing it replaced, and a scan that cannot tell
+     an explanation from a call fails on the explanation — which it did. */
+  return body.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+}
+
 function markupOf(html: string): string {
   const body = html.slice(html.indexOf("</style>"));
   return body.replace(/<!--[\s\S]*?-->/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
@@ -232,22 +242,34 @@ function auditTwinSlots(html: string, pairs: readonly TwinPair[]): string[] {
       );
     }
 
-    // The collapse rule, exactly once, naming this host.
-    const collapse = new RegExp(
-      `\\.${escapeRe(pair.host)}:has\\(\\.mk-runs:not\\(:empty\\)\\)\\s+\\.mk-plain\\s*\\{\\s*display:\\s*none;?\\s*\\}`,
-      "g",
-    );
-    const hits = styles.match(collapse) ?? [];
-    if (hits.length === 0) problems.push(`${pair.host}: no collapse rule — the plain twin would render alongside the runs`);
-    if (hits.length > 1) problems.push(`${pair.host}: ${hits.length} collapse rules, expected exactly 1`);
+  }
+
+  // ── ONE COLLAPSE RULE FOR THE WHOLE SET, NOT ONE PER HOST. ──
+  //
+  // This used to require `.<host>:has(.mk-runs:not(:empty)) .mk-plain` once per
+  // twin pair — sixteen near-identical rules across eight files, each naming a
+  // class, each a place to make a typo, and the limb below existed only to
+  // catch that typo. The shared sheet states the relationship between the two
+  // TWINS rather than between a host and a twin, so one adjacent-sibling rule
+  // covers every pair in the set and cannot name a host wrongly because it
+  // names no host at all.
+  const sharedCollapse = styles.match(/\.mk-runs:not\(:empty\)\s*\+\s*\.mk-plain\s*\{\s*display:\s*none;?\s*\}/g) ?? [];
+  if (sharedCollapse.length === 0) {
+    problems.push("no shared twin collapse rule — the plain twin would render alongside the runs");
+  }
+  if (sharedCollapse.length > 1) {
+    problems.push(`${sharedCollapse.length} shared twin collapse rules, expected exactly 1`);
   }
 
   // No collapse rule may name a host that is not a pair in this file. This is
   // the limb that catches a TYPO: `.headlne:has(.mk-runs...)` leaves the real
   // pair without a rule (caught above) AND leaves a rule pointing at nothing.
-  const declaredHosts = new Set(pairs.map((p) => p.host));
+  // A per-host collapse rule coming BACK is the drift this consolidation
+  // removed, so it is a problem in its own right rather than merely redundant:
+  // two mechanisms for one relationship is how the set drifted to begin with,
+  // and the host-named one is the fragile half.
   for (const m of styles.matchAll(/\.([A-Za-z0-9_-]+):has\(\.mk-runs:not\(:empty\)\)\s+\.mk-plain/g)) {
-    if (!declaredHosts.has(m[1]!)) problems.push(`collapse rule names .${m[1]} which is not a twin-slot host in this file`);
+    problems.push(`per-host collapse rule for .${m[1]} — the set has one shared rule; delete this one`);
   }
 
   // A twin host can never match `:empty` again — it has two element children
@@ -292,12 +314,20 @@ describe("RFC-17 twin slots: the six changed archetypes declare both members of 
       expect(auditTwinSlots(html, pairs)).toEqual([]);
     });
   }
-
-  it("every collapse rule in the set is accounted for — no orphan rule, no missing one", async () => {
+  it("the set carries exactly one collapse rule per file, whatever its pair count", async () => {
+    /* The accounting used to be "one rule per PAIR" — sixteen rules across the
+       set, each naming a host, and this limb existed to catch one going
+       missing or one naming a host that is not a pair. The shared rule states
+       the relationship between the two TWINS instead, so the count no longer
+       tracks the pair count: one rule serves a file with three pairs exactly as
+       it serves a file with one, and a per-host rule reappearing is reported as
+       drift by `auditTwinSlots`. */
     for (const [file, pairs] of Object.entries(TWIN_SLOTS)) {
       const styles = stylesOf(await readTemplate(file));
-      const rules = [...styles.matchAll(/:has\(\.mk-runs:not\(:empty\)\)\s+\.mk-plain/g)];
-      expect(rules.length, `${file} has ${rules.length} collapse rules for ${pairs.length} pairs`).toBe(pairs.length);
+      const shared = [...styles.matchAll(/\.mk-runs:not\(:empty\)\s*\+\s*\.mk-plain/g)];
+      expect(shared.length, `${file} has ${shared.length} shared collapse rules, serving ${pairs.length} pair(s)`).toBe(1);
+      const perHost = [...styles.matchAll(/:has\(\.mk-runs:not\(:empty\)\)\s+\.mk-plain/g)];
+      expect(perHost.length, `${file} still carries ${perHost.length} per-host collapse rule(s)`).toBe(0);
     }
   });
 
@@ -467,9 +497,12 @@ describe("RFC-17 twin slots: the eight pinned slot names, spelled one way", () =
 
   it("BREAK IT: a style tag spelled out in a comment is caught", async () => {
     const shipped = await readTemplate("cover.html");
-    // Injected into the twin-slot comment block, exactly where the real one
-    // was written — inside the stylesheet, above the collapse rules.
-    const anchor = "A NOTE ON HOW THE SLOT NAMES ARE SPELLED BELOW";
+    // Injected into a comment INSIDE the stylesheet, which is where the real
+    // one was written. The anchor moved to the shared sheet's own banner when
+    // the eight per-template blocks became one generated block; what the case
+    // proves is unchanged — a `</style>` spelled out in a CSS comment ends the
+    // sheet early and every rule after it stops being CSS.
+    const anchor = "THE DESIGN SYSTEM — one source of truth for all eight plates.";
     expect(shipped, "the anchor this break-it hangs on is gone").toContain(anchor);
     const broken = shipped.replace(anchor, "the fragment's own </style> closes this one. " + anchor);
     expect(broken, "the break-it mutation did not apply").not.toBe(shipped);
@@ -812,24 +845,37 @@ describe("RFC-17 twin slots: BREAK IT — the guards refuse a broken template", 
    * string in memory, and requires `auditTwinSlots` to report it. A guard
    * nobody has watched refuse is not a guard.
    */
-  it("removing one collapse rule is caught — the plain twin would render alongside the runs", async () => {
+  it("removing the shared collapse rule is caught — the plain twin would render alongside the runs", async () => {
     const html = await readTemplate("cover.html");
-    const broken = html.replace(".headline:has(.mk-runs:not(:empty)) .mk-plain { display: none; }", "");
-    expect(broken).not.toBe(html);
+    const broken = html.replace(".mk-runs:not(:empty) + .mk-plain { display: none; }", "");
+    expect(broken, "the shared collapse rule is not in cover.html to remove").not.toBe(html);
     const problems = auditTwinSlots(broken, TWIN_SLOTS["cover.html"]!);
-    expect(problems.join(" | ")).toMatch(/headline: no collapse rule/);
-    // And the pair it belongs to is still perfectly well-formed in the
-    // markup, which is exactly why the source scan has to look at both halves.
+    expect(problems.join(" | ")).toMatch(/no shared twin collapse rule/);
+    // And the pairs it serves are still perfectly well-formed in the markup,
+    // which is exactly why the source scan has to look at both halves.
     expect(problems.join(" | ")).not.toMatch(/markup does not declare/);
   });
 
-  it("a typo'd host in a collapse rule is caught twice — the pair loses its rule AND the rule names nothing", async () => {
-    const html = await readTemplate("headline-focus.html");
-    const broken = html.replace(".hf-headline:has(.mk-runs:not(:empty))", ".hf-headlne:has(.mk-runs:not(:empty))");
+  /**
+   * THE TYPO CASE, INVERTED.
+   *
+   * There used to be a case here for a misspelt HOST in a per-host collapse
+   * rule (`.headlne:has(…)`), which left the real pair unruled and the rule
+   * pointing at nothing. The shared rule names no host, so that typo cannot be
+   * written any more — and the failure mode that replaces it is a per-host rule
+   * coming BACK, which is the drift this consolidation removed. Two mechanisms
+   * for one relationship is how the set drifted to begin with.
+   */
+  it("a per-host collapse rule coming back is caught as drift", async () => {
+    const html = await readTemplate("cover.html");
+    const broken = html.replace(
+      ".mk-runs:not(:empty) + .mk-plain { display: none; }",
+      `.mk-runs:not(:empty) + .mk-plain { display: none; }
+.headline:has(.mk-runs:not(:empty)) .mk-plain { display: none; }`,
+    );
     expect(broken).not.toBe(html);
-    const problems = auditTwinSlots(broken, TWIN_SLOTS["headline-focus.html"]!);
-    expect(problems.join(" | ")).toMatch(/hf-headline: no collapse rule/);
-    expect(problems.join(" | ")).toMatch(/collapse rule names \.hf-headlne/);
+    const problems = auditTwinSlots(broken, TWIN_SLOTS["cover.html"]!);
+    expect(problems.join(" | ")).toMatch(/per-host collapse rule for \.headline/);
   });
 
   it("a STRAIGHT SWAP — the runs slot alone, no plain fallback — is caught", async () => {
@@ -874,7 +920,7 @@ describe("RFC-17 twin slots: BREAK IT — the guards refuse a broken template", 
 
   it("moving the id off the twin host is caught — every ground rule naming it would select nothing", async () => {
     const html = await readTemplate("closer.html");
-    const broken = html.replace('<div class="headline" id="takeaway">', '<div class="headline">');
+    const broken = html.replace('class="headline r-display" id="takeaway"', 'class="headline r-display"');
     expect(broken).not.toBe(html);
     expect(auditTwinSlots(broken, TWIN_SLOTS["closer.html"]!).join(" | ")).toMatch(/#takeaway is not on the \.headline element/);
   });
@@ -907,85 +953,38 @@ describe("RFC-17 twin slots: BREAK IT — the guards refuse a broken template", 
  * SHIPPED function out of the SHIPPED template and runs it against a stub.
  * It is the real code, not a copy of it.
  */
-describe("RFC-17 twin slots: the length ladders measure the visible twin", () => {
-  /** Pulls `function mkLen(el) { ... }` (or closer's `var len = function (el) { ... }`) out of a template by brace-matching. */
-  function extractHelper(html: string): string {
-    const start = html.search(/(?:function mkLen\(el\)|var len = function \(el\))/);
-    if (start === -1) throw new Error("no twin-aware length helper in this template");
-    const open = html.indexOf("{", start);
-    let depth = 0;
-    for (let i = open; i < html.length; i += 1) {
-      if (html[i] === "{") depth += 1;
-      else if (html[i] === "}") {
-        depth -= 1;
-        if (depth === 0) return `${html.slice(start, i + 1)}`;
-      }
+/**
+ * ── THE LADDER NO LONGER READS TEXT, SO IT CANNOT MISCOUNT IT. ──
+ *
+ * Every plate used to carry its own ladder that picked a size from
+ * `textContent.length`, and the cases here unit-tested the helper each one
+ * needed in order to count the copy ONCE: `textContent` reads a `display: none`
+ * subtree, so a marked render counted its copy twice and a 30-character
+ * headline scored 60 and took a step it did not need. A second helper stripped
+ * the zero-width bidi controls an isolated Hebrew run carries, so that a step
+ * did not depend on how the copy was marked.
+ *
+ * `_ds-fit.js` measures the LAID-OUT BOX instead. Geometry only sees the
+ * visible twin, a zero-width character occupies no width by definition, and
+ * there is no threshold table to keep in sync with eight files or with the
+ * reviewer's type scale. The property those cases asserted is now structural,
+ * so what is left to guard is that nobody reintroduces a text-counting ladder.
+ */
+describe("RFC-17 twin slots: the fit ladder measures geometry, not text", () => {
+  it("reads no text from the plate at all", async () => {
+    for (const file of Object.keys(TWIN_SLOTS)) {
+      const script = scriptOf(await readTemplate(file));
+      expect(script, `${file}'s ladder reads textContent — a hidden twin counts twice`).not.toMatch(/textContent/);
+      expect(script, `${file}'s ladder reads innerText`).not.toMatch(/innerText/);
+      expect(script, `${file}'s ladder measures string length`).not.toMatch(/\.length\s*[><]/);
     }
-    throw new Error("unbalanced braces in the length helper");
-  }
+  });
 
-  function compile(source: string): (el: unknown) => number {
-    const body = source.startsWith("var len")
-      ? `${source}; return len;`
-      : `${source}; return mkLen;`;
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
-    return new Function(body)() as (el: unknown) => number;
-  }
-
-  function host(runsText: string, plainText: string): unknown {
-    const runs = { textContent: runsText };
-    const plain = { textContent: plainText };
-    return {
-      textContent: runsText + plainText,
-      querySelector: (sel: string) => (sel === ".mk-runs" ? runs : sel === ".mk-plain" ? plain : null),
-    };
-  }
-
-  const FILES = ["cover.html", "slide.html", "headline-focus.html", "closer.html", "quote-card.html"];
-
-  for (const file of FILES) {
-    it(`${file}'s ladder measures the copy once, marked or not`, async () => {
-      const mkLen = compile(extractHelper(await readTemplate(file)));
-      const copy = "Most marketing calendars fail in month two";
-
-      // Unmarked: the runs twin is empty (fillTemplate erased the slot), the
-      // plain twin carries the copy.
-      expect(mkLen(host("", copy))).toBe(copy.length);
-      // Marked: BOTH twins carry it, one of them hidden. The count must not
-      // double — this is the assertion the whole helper exists for.
-      expect(mkLen(host(copy, copy))).toBe(copy.length);
-      // Everything empty.
-      expect(mkLen(host("", ""))).toBe(0);
-      expect(mkLen(null)).toBe(0);
-    });
-
-    it(`${file}'s ladder ignores zero-width bidi controls, so a Hebrew twin measures the same as a Latin one`, async () => {
-      const mkLen = compile(extractHelper(await readTemplate(file)));
-      // `iso()` wraps a Latin run inside a Hebrew field in FSI/PDI, and the
-      // marked fragment isolates each of its own runs again. Those characters
-      // have no width, so counting them would make the step depend on how the
-      // copy was marked rather than on how long it is.
-      const FSI = "\u2068";
-      const PDI = "\u2069";
-      const plain = `שוחרר ${FSI}Gemini 3${PDI} בגרסה חדשה`;
-      const marked = `שוחרר ${FSI}Gemini${PDI} ${FSI}3${PDI} בגרסה חדשה`;
-      expect(mkLen(host("", plain))).toBe(mkLen(host(marked, marked)));
-    });
-  }
-
-  it("BREAK IT: a ladder that reads the host's own textContent doubles a marked count", async () => {
-    // The naive version, which is what all five files shipped before this
-    // change. Compiled from the same stub, so the difference is the helper
-    // and nothing else.
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
-    const naive = new Function('return function (el) { return el === null ? 0 : (el.textContent || "").trim().length; };')() as (el: unknown) => number;
-    const copy = "Most marketing calendars fail in month two";
-    expect(naive(host("", copy))).toBe(copy.length);
-    expect(naive(host(copy, copy))).toBe(copy.length * 2);
-
-    // And the shipped one does not.
-    const mkLen = compile(extractHelper(await readTemplate("cover.html")));
-    expect(mkLen(host(copy, copy))).toBe(copy.length);
+  it("measures the field and the hosts, which is what a reader sees", async () => {
+    for (const file of Object.keys(TWIN_SLOTS)) {
+      const script = scriptOf(await readTemplate(file));
+      expect(script, `${file}'s ladder never measures a laid-out box`).toMatch(/getBoundingClientRect|scrollHeight/);
+    }
   });
 });
 
@@ -1125,8 +1124,11 @@ describe.skipIf(!isChromiumInstalled())("RFC-17 twin slots render (Chromium)", (
           const plainProbe = plainOut.result.rendered[0]!.probe!;
           const markedProbe = markedOut.result.rendered[0]!.probe!;
           expect(markedProbe.fontFamiliesUsed).toEqual(plainProbe.fontFamiliesUsed);
-          expect(markedProbe.overflow, `${file} ${dir} ${scale}: marked render overflows`).toBe(false);
-          expect(plainProbe.overflow, `${file} ${dir} ${scale}: unmarked render overflows`).toBe(false);
+          // The SELECTORS, not just the boolean: "something overflowed" on a
+          // sweep of 36 renders is a fact nobody can act on, and the probe
+          // already names up to six boxes.
+          expect(markedProbe.overflow, `${file} ${dir} ${scale}: marked render overflows: ${markedProbe.overflowing.join(", ")}`).toBe(false);
+          expect(plainProbe.overflow, `${file} ${dir} ${scale}: unmarked render overflows: ${plainProbe.overflowing.join(", ")}`).toBe(false);
 
           // `textBoxShare` is asserted as NOT COLLAPSED rather than as equal,
           // and the difference is honest arithmetic rather than a softened
@@ -1161,7 +1163,7 @@ describe.skipIf(!isChromiumInstalled())("RFC-17 twin slots render (Chromium)", (
           const probe = out.result.rendered[0]!.probe!;
           expect(probe.markRuns, `${file} ${dir} ${scale}: the fragment did not reach the DOM`).toBe(3);
           expect(probe.markRunsPainted, `${file} ${dir} ${scale}: the mark stylesheet did not arrive`).toBe(3);
-          expect(probe.overflow, `${file} ${dir} ${scale}: a painted mark pushed the block out of its box`).toBe(false);
+          expect(probe.overflow, `${file} ${dir} ${scale}: a painted mark pushed the block out of its box: ${probe.overflowing.join(", ")}`).toBe(false);
         }, 60_000);
       }
     }
