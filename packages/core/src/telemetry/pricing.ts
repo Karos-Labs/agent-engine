@@ -299,6 +299,25 @@ export const UNIT_PRICING: Record<string, UnitPricing> = {
   // size `generate-image.ts` asks for.
   "gemini-3.1-flash-image": { unit: "image", usdPerUnit: 0.067, source: "ai.google.dev/gemini-api/docs/pricing — Gemini 3.1 Flash Image, $60/1M output tokens = $0.067 per 1K image (checked 2026-09-17)" },
 
+  // Instagram Phase 5.6 (item D2): `IMAGE_MODEL_LADDER` prefers Imagen over
+  // the Gemini flash-image path, so both rungs need a rate before anything
+  // can route to them — `pricingForUnit` throws on an unpriced unit, and
+  // `check-model-pricing` failed the build the moment the ladder named these.
+  //
+  // Read off Google Cloud's Agent Platform pricing page on 2026-09-18, from
+  // the Imagen table's "Price / 1 count (USD)" column. Two things about that
+  // table are worth recording rather than rediscovering:
+  //
+  //   - Imagen 3, checked at the same time, is also $0.04 — not the $0.03
+  //     it is widely remembered as. It has no row because nothing names it;
+  //     the number is recorded here so the next person does not recall it.
+  //   - Imagen is no longer on the Gemini Developer API pricing page at all.
+  //     It is a Vertex/Agent Platform offering now, which is where this
+  //     pipeline calls it from, so that is the right table — but a future
+  //     reader looking on ai.google.dev will find nothing and should not
+  //     conclude the model is gone.
+  "imagen-4.0-generate-001": { unit: "image", usdPerUnit: 0.04, source: "cloud.google.com/vertex-ai/generative-ai/pricing — Imagen 4, image generation, $0.04 per image (checked 2026-09-18)" },
+
   // SCRUM-391: `media.ingestVisualPatterns`' vision-analysis step
   // (`packages/tools/karos-media/src/visual-patterns.ts`) calls
   // `gemini-2.5-flash` — a different id from `gemini-2.5-flash-image` above,

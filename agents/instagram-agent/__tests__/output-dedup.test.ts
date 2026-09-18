@@ -13,7 +13,7 @@ function freshCopy(): InstagramCopyOutput {
   const good = goodCopyOutput();
   return {
     ...good,
-    caption: "A completely separate story about how the design department reorganized their weekly critique sessions.",
+    caption: "A completely separate story.\nThe design department reorganized their weekly critique sessions.",
     slides: good.slides.map((s, i) => ({
       ...s,
       headline: fixtureHeadline(i, "another take"),

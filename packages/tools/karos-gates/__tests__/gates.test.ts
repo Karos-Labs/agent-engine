@@ -259,6 +259,62 @@ describe("gate.lintPost on X: the platform's own counting and Craft 01's caps", 
     });
   });
 
+  describe("the hook on Instagram (Phase 5.6 item A10) — a different limit and a different shape", () => {
+    it("holds a hook over 100 characters", async () => {
+      const hook = "Most teams measure onboarding in weeks because that is how long their own tooling takes to answer a question.";
+      expect(hook.length).toBeGreaterThan(100);
+      expect((await verdictOf("gate.lintPost", { text: "body", platform: "instagram", hook })).verdict).toBe("content_fail");
+    });
+
+    it("passes at exactly 100 and holds at 101, so the bound is the reason and not the shape", async () => {
+      expect((await verdictOf("gate.lintPost", { text: "body", platform: "instagram", hook: "a".repeat(100) })).verdict).toBe("pass");
+      expect((await verdictOf("gate.lintPost", { text: "body", platform: "instagram", hook: "a".repeat(101) })).verdict).toBe("content_fail");
+    });
+
+    it("holds a hook that OPENS on an emoji, a handle or a hashtag", async () => {
+      for (const hook of ["🚀 Onboarding fell from 14 days to 3", "@acme cut onboarding in half", "#onboarding is broken"]) {
+        expect((await verdictOf("gate.lintPost", { text: "body", platform: "instagram", hook })).verdict, hook).toBe("content_fail");
+      }
+    });
+
+    it("ALLOWS an emoji or a tag inside the hook — that is ordinary Instagram writing, and X's rule is not transferable", async () => {
+      for (const hook of ["Onboarding fell from 14 days to 3 🙂", "We rebuilt #onboarding and it took a week"]) {
+        expect((await verdictOf("gate.lintPost", { text: "body", platform: "instagram", hook })).verdict, hook).toBe("pass");
+      }
+    });
+
+    it("counts an emoji as ONE character, because that is what a reader sees", async () => {
+      // 99 letters plus one emoji: 100 code points, 101 UTF-16 units. A
+      // String.length count would refuse this correct hook.
+      const hook = `${"a".repeat(99)}🙂`;
+      expect(hook.length).toBe(101);
+      expect((await verdictOf("gate.lintPost", { text: "body", platform: "instagram", hook })).verdict).toBe("pass");
+    });
+  });
+
+  describe("the tells added for Instagram (Phase 5.6 item B5)", () => {
+    it.each([
+      "This isn't just a tool, it's a system.",
+      "These aren't just numbers.",
+      "In a world where everyone posts daily, restraint wins.",
+      "Let that sink in.",
+      "Read that again.",
+      "The ultimate guide to onboarding.",
+    ])("holds %j", async (text) => {
+      expect((await verdictOf("gate.lintPost", { text, platform: "instagram" })).verdict).toBe("content_fail");
+    });
+
+    it("does NOT hold ordinary prose that merely uses those words — the bank is for shapes, not vocabulary", async () => {
+      for (const text of [
+        "We read the report again before publishing.",
+        "Their world is different from ours.",
+        "The guide we wrote covers three cases.",
+      ]) {
+        expect((await verdictOf("gate.lintPost", { text, platform: "instagram" })).verdict, text).toBe("pass");
+      }
+    });
+  });
+
   describe("hashtags and mentions (Craft 01 §11)", () => {
     it("allows one hashtag and holds two", async () => {
       expect((await verdictOf("gate.lintPost", { text: "We shipped #onboarding today.", platform: "x" })).verdict).toBe("pass");

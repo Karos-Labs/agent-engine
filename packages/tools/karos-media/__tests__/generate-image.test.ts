@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createKarosMediaTools, createGenerateImage, type ImageGenerationClient } from "../src/index.js";
+import { realPngBase64 } from "./image-fixtures.js";
 
 /**
  * `image.generate` — the fallback for a visual need no library holds.
@@ -16,8 +17,12 @@ import { createKarosMediaTools, createGenerateImage, type ImageGenerationClient 
 const CTX = { runId: "run_1", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" } as never;
 
 // A 1x1 PNG, base64 — enough to prove bytes reach disk.
-const PNG_B64 =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
+/**
+ * A REAL PNG at the plate's own size. It was a 1x1 until Phase 5.6 — a valid
+ * PNG and not a usable picture, which the generated-image floor now tells
+ * apart.
+ */
+const PNG_B64 = realPngBase64();
 
 let repoRoot: string;
 beforeEach(async () => {
@@ -317,11 +322,11 @@ describe("image.generate", () => {
   // RFC-13 Phase 3, item Q — `forbid` and `styleLock` (TOOL_VERSION 1.1.0)
   // ───────────────────────────────────────────────────────────────────────
 
-  it("declares 1.2.0, because the brief it composes changed shape again for RFC-16's permitted marks and figures", () => {
+  it("declares 2.1.0, because an unpinned caller's model is now chosen by a ladder rather than fixed", () => {
     // The tool-version gate on main diffs this against the merge base; a
     // prompt change that keeps its version is exactly what that gate exists
     // to catch (PR #95 is the precedent).
-    expect(tool(null).version).toBe("1.3.0");
+    expect(tool(null).version).toBe("2.1.0");
   });
 
   it("emits the style lock and the 'Do not include:' block in the documented order: direction, lock, negatives, constraints", async () => {

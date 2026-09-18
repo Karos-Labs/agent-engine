@@ -571,8 +571,27 @@ export function fixtureHeadline(index: number, subject: string): string {
 export function goodCopyOutput(): InstagramCopyOutput {
   return {
     format: "carousel",
+    // Phase 5.6 item B2: which of the four shapes this hook is. "Four hours a
+    // week came back to the team" is a figure and what it bought.
+    hookPattern: "number_outcome",
+    // Rewritten for Phase 5.6, items B4 and B8, and it needed both.
+    //
+    // It used to be one 34-word sentence — correct, sourced, and nothing like
+    // a caption anyone reads on a phone. That is the shape
+    // `checkCaptionRegister` now refuses, and a fixture called "good copy"
+    // has to be good by the standard in force.
+    //
+    // It was also about "process changes" while this run's topic is
+    // `automated weekly reporting is replacing the Monday status meeting` —
+    // an inconsistency that predates this phase and that nothing could see
+    // until a check read both. The caption names its own post's subject now.
     caption:
-      "We measured every process change we made this quarter instead of trusting our memory of it. Here is what each one returned, and which one we would do first if we started the quarter again.",
+      [
+        "We stopped hand-building the weekly report.",
+        "The tool writes it now, and Monday's status meeting got shorter.",
+        "Four hours a week came back to the team.",
+        "Save this before your next planning week.",
+      ].join("\n"),
     slides: SIX_RESEARCH_FACTS.map((fact, i) => ({
       n: i + 1,
       headline: GOOD_SLIDE_COPY[i]!.headline,
@@ -603,7 +622,7 @@ export function goodCopyOutput(): InstagramCopyOutput {
 export function weakCopyOutput(): InstagramCopyOutput {
   return {
     format: "carousel",
-    caption: "A quick look at the process changes that actually moved the needle this quarter, and what teams did differently.",
+    caption: "A quick look at the process changes that actually moved this quarter.\nAnd at what the teams that made them did differently.",
     slides: SIX_RESEARCH_FACTS.map((fact, i) => ({
       n: i + 1,
       headline: `Finding #${i + 1}`,

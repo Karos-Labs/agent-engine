@@ -75,8 +75,15 @@ export const MAX_HASHTAGS = 5;
  * Instagram truncates alt text around here, and the field is READ ALOUD.
  * A 300-character alt is a screen-reader user listening to a paragraph
  * where they asked for a picture.
+ *
+ * 100, not 125, since Phase 5.6: the owner's specification states the limit
+ * as 100 characters, and the 125 here was this codebase's own reading of
+ * where Instagram truncates. When a measured platform behaviour and the
+ * house standard disagree by 25 characters, the house standard wins — it is
+ * the tighter one, and nothing is lost by a shorter sentence that still
+ * leads with the picture's nouns.
  */
-export const ALT_TEXT_MAX_CHARS = 125;
+export const ALT_TEXT_MAX_CHARS = 100;
 
 /**
  * What the WIRE accepts for one alt text, before `clampAltText` brings it
@@ -305,6 +312,22 @@ export interface PostTimingNote {
   /** ISO 8601. Present on `event-dated` only. */
   readonly staleAfter?: string;
   readonly reason: string;
+  /**
+   * The smallest gap Instagram wants between two of this client's posts
+   * (Phase 5.6, item E2).
+   *
+   * Stated rather than enforced, and the distinction is the same one the
+   * comment on `buildTimingNote` makes about the publishing timestamp: the
+   * portal owns the calendar, computes the slot, and already enforces a gap —
+   * a 90-minute one, from `PLATFORM_SCHEDULES.instagram`. Ninety minutes is
+   * right for a channel where two posts an hour apart is normal and wrong for
+   * this one, where the specification asks for at least a day between posts
+   * and three to five a week. The engine cannot change that constant from
+   * here; what it can do is say, on every post, what this platform's own
+   * floor is, so the number the portal enforces and the number this agent
+   * believes are visible in the same place.
+   */
+  readonly minGapHours: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -322,6 +345,8 @@ export interface PostTimingNote {
 export interface PackagedSlide {
   readonly n: number;
   readonly headline: string;
+  /** The slide's own body prose, when the caller has it. Slide 1's is read by the topic-placement check (item B8). */
+  readonly body?: string;
   /** A step-04 fact's `claim`, VERBATIM — `checkSlidesData` has already proven that by the time this runs. */
   readonly sourceRef: string;
 }
@@ -386,34 +411,42 @@ export function buildFirstCommentSources(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// resolveHashtagPlacement — the honest use of a measurement
+// resolveHashtagPlacement — a measurement that no longer decides
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
- * Where this client's tags go, from what this client's own feed actually
- * does (RFC-18 §6.3, decision 2).
+ * Where this client's tags go: the end of the caption, always.
  *
- * `language-register.ts:128` MEASURES `hashtagsPerPost` from the client's
- * recent posts, counted at `:614` with `/(?:^|\s)#[\p{L}\p{N}_]+/gu`. An
- * account whose own posts never carry a tag does not suddenly acquire a tag
- * block under its caption — the tags go in the first comment, where they
- * still work and still reach the portal's chip row and its Copy button.
+ * ## What this used to do, and why it stopped
  *
- * **The measurement decides PLACEMENT, never EXISTENCE.** Tags are always
- * authored, 3 to 5. A measured zero is evidence about where this account puts
- * them, not evidence that this account should have none; and the previous
- * escape hatch (`latest.md:53`, "unless the client's own style config asks")
- * pointed at a field that does not exist anywhere in `karos-client`, so it
- * has never once fired.
+ * It read `hashtagsPerPost` from the client's own recent posts and sent the
+ * tags to the FIRST COMMENT when that measurement was zero — on the
+ * reasoning that an account whose posts never carry a tag does not suddenly
+ * acquire a tag block. That reasoning is sound about voice and it is
+ * overruled by the platform, which the owner's specification states as a
+ * HARD rule: **0-5 hashtags, at the end of the caption, never in a comment.**
+ * Tags in a first comment are not indexed the way caption tags are, and the
+ * behaviour they were imitating is a habit of accounts that do not need
+ * reach, not a technique.
  *
- * No measurement at all means the corpus was empty — a fact about the scrape,
- * not about the client (`RegisterCard.measured`'s own comment) — so it
- * decides nothing and the platform default stands.
+ * So the measurement no longer decides placement. It is still measured, and
+ * it still decides things that ARE about voice — sentence length, emoji rate,
+ * question rate — which is where a register card belongs.
+ *
+ * ## Why the parameter and the union survive
+ *
+ * The parameter stays so that every call site keeps reading the register (and
+ * so the diff that removes it is one commit, not one per caller). The
+ * `"firstComment"` member of `HashtagPlacement` stays because the portal's
+ * deliverable contract names it and widening a shared type is a separate
+ * change from this one — but nothing produces it any more, and
+ * `post-package.test.ts` asserts that no register at all can.
+ *
+ * The first comment itself is unaffected: it still carries the SOURCES, which
+ * is what it was for.
  */
-export function resolveHashtagPlacement(register: Pick<RegisterCard, "measured"> | undefined): HashtagPlacement {
-  const measured = register?.measured;
-  if (measured === undefined) return "caption";
-  return measured.hashtagsPerPost === 0 ? "firstComment" : "caption";
+export function resolveHashtagPlacement(_register: Pick<RegisterCard, "measured"> | undefined): HashtagPlacement {
+  return "caption";
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -425,6 +458,15 @@ export const EVENT_DATED_WINDOW_DAYS = 7;
 
 /** How long a news hook stays a news hook. Three days, after which the post still reads but the "this just happened" framing does not. */
 export const STALE_AFTER_HOURS = 72;
+
+/**
+ * At least a day between two of this client's Instagram posts (item E2).
+ *
+ * Never back-to-back, three to five a week, per the owner's specification.
+ * See `PostTimingNote.minGapHours` for why this is reported rather than
+ * enforced here.
+ */
+export const MIN_POST_GAP_HOURS = 24;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -469,7 +511,7 @@ export function buildTimingNote(factCards: readonly PackagedFactCard[], now: Dat
   }
 
   if (freshest === undefined) {
-    return { basis: "evergreen", reason: "no dated claim — no timing constraint" };
+    return { basis: "evergreen", reason: "no dated claim — no timing constraint", minGapHours: MIN_POST_GAP_HOURS };
   }
 
   const staleAfter = new Date(freshest.at + STALE_AFTER_HOURS * 60 * 60 * 1000).toISOString();
@@ -477,6 +519,7 @@ export function buildTimingNote(factCards: readonly PackagedFactCard[], now: Dat
     basis: "event-dated",
     staleAfter,
     reason: `rests on ${freshest.card.source.trim()}, ${freshest.card.date.trim()}; the hook goes stale after that`,
+    minGapHours: MIN_POST_GAP_HOURS,
   };
 }
 
@@ -540,6 +583,16 @@ export interface PostPackageCheckInput {
   readonly allowedLatinTerms?: readonly string[];
   /** The run's resolved target language, or `undefined` for an English/no-target client. */
   readonly targetLanguage?: string | undefined;
+  /**
+   * The topic the run chose, for the alt-text half of the placement check
+   * (item B8).
+   *
+   * Optional, so every existing caller — and every test fixture — keeps
+   * working, and the check simply has no opinion without it. That is the
+   * right default: a missing topic is a fact about the caller, not evidence
+   * that the post failed to name its subject.
+   */
+  readonly topicPhrase?: string | undefined;
 }
 
 /**

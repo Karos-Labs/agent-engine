@@ -10,6 +10,7 @@ import {
   STALE_AFTER_HOURS,
   buildFirstCommentSources,
   buildTimingNote,
+  MIN_POST_GAP_HOURS,
   checkPackageRules,
   checkPostPackage,
   packageLanguageGateFields,
@@ -288,22 +289,27 @@ describe("buildFirstCommentSources", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-describe("resolveHashtagPlacement — the measurement decides PLACEMENT, never EXISTENCE", () => {
-  it("sends the tags to the first comment when this client's own feed never uses one", () => {
-    expect(resolveHashtagPlacement({ measured: { posts: 22, meanSentenceWords: 12, meanCaptionChars: 300, questionsPerPost: 0.2, emojiPerPost: 0.4, hashtagsPerPost: 0 } })).toBe(
-      "firstComment",
-    );
+describe("resolveHashtagPlacement — the caption, whatever the client's own feed does", () => {
+  const measured = (hashtagsPerPost: number) => ({
+    measured: { posts: 22, meanSentenceWords: 12, meanCaptionChars: 300, questionsPerPost: 0.2, emojiPerPost: 0.4, hashtagsPerPost },
   });
 
-  it("puts them under the caption when the client's own posts carry tags", () => {
-    expect(resolveHashtagPlacement({ measured: { posts: 22, meanSentenceWords: 12, meanCaptionChars: 300, questionsPerPost: 0.2, emojiPerPost: 0.4, hashtagsPerPost: 4.1 } })).toBe(
-      "caption",
-    );
+  it("keeps the tags in the caption even for an account whose own posts never carry one", () => {
+    // This case returned "firstComment" until Phase 5.6. The owner's
+    // specification makes caption placement a HARD rule, and a habit of
+    // accounts that do not need reach is not a technique to imitate.
+    expect(resolveHashtagPlacement(measured(0))).toBe("caption");
   });
 
-  it("has no opinion when nothing was measured — an empty corpus is a fact about the scrape, not about the client", () => {
-    expect(resolveHashtagPlacement(undefined)).toBe("caption");
-    expect(resolveHashtagPlacement({})).toBe("caption");
+  it("keeps them in the caption when the client's own posts carry tags", () => {
+    expect(resolveHashtagPlacement(measured(4.1))).toBe("caption");
+  });
+
+  it("NO register produces a first-comment placement — the union member is dead, and this is what keeps it dead", () => {
+    const everyShape = [undefined, {}, measured(0), measured(0.4), measured(12), measured(Number.NaN)];
+    for (const register of everyShape) {
+      expect(resolveHashtagPlacement(register as never)).toBe("caption");
+    }
   });
 });
 
@@ -548,7 +554,23 @@ describe("buildTimingNote — 08c3, $0 (RFC-18 §6.4)", () => {
   const now = new Date("2026-09-13T12:00:00Z");
 
   it("calls a post evergreen when nothing it rests on is dated recently", () => {
-    expect(buildTimingNote(FACT_CARDS, now)).toEqual({ basis: "evergreen", reason: "no dated claim — no timing constraint" });
+    expect(buildTimingNote(FACT_CARDS, now)).toEqual({
+      basis: "evergreen",
+      reason: "no dated claim — no timing constraint",
+      minGapHours: MIN_POST_GAP_HOURS,
+    });
+  });
+
+  it("states the platform's cadence floor on BOTH branches — a note only one of them carries is a note nobody can rely on", () => {
+    const fresh: PackagedFactCard = { claim: "c", source: "Reuters", date: "2026-09-10T09:00:00Z" };
+    expect(buildTimingNote(FACT_CARDS, now).minGapHours).toBe(MIN_POST_GAP_HOURS);
+    expect(buildTimingNote([...FACT_CARDS, fresh], now).minGapHours).toBe(MIN_POST_GAP_HOURS);
+  });
+
+  it("asks for at least a day, which is the thing the portal's ninety minutes does not know", () => {
+    // Reported, not enforced: the portal owns the calendar. See the field's
+    // own comment for why the engine states a number it cannot apply.
+    expect(MIN_POST_GAP_HOURS).toBe(24);
   });
 
   it(`marks a claim inside the ${EVENT_DATED_WINDOW_DAYS}-day window event-dated, and says when the hook goes off`, () => {

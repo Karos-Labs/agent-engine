@@ -6,7 +6,10 @@ import { ScraperError, type ScrapedRecord, type ScraperProvider, type SocialPlat
 import { MEDIA_CACHE_PREFIX, downloadImage, type FindImagesCandidate } from "./find-images.js";
 
 // 1.0.1 (SCRUM-296/AU11): removed the redundant re-parse of already-validated input.
-const TOOL_VERSION = "1.0.1";
+// 1.1.0 (Phase 5.6, item A8): a scraped image is measured before it is
+// placed, so a post-sized thumbnail no longer reaches a slide, and each
+// candidate carries its pixels.
+const TOOL_VERSION = "1.1.0";
 
 /**
  * Platforms searched for a visual need, in order.
@@ -140,11 +143,13 @@ export function createScrapeImages(options: { scraper?: ScraperProvider | undefi
           for (const { url, record } of urls) {
             if (savedForNeed >= input.perNeed) break;
             const saved = await downloadImage(fetchImpl, { id: `${platform}-${url}`, url }, absDir, relDir, need.n);
-            if (saved === undefined) continue;
+            if (!saved.ok) continue;
 
             const caption = (record.text ?? record.title ?? "").replace(/\s+/g, " ").slice(0, 180);
             candidates.push({
-              path: saved,
+              path: saved.path,
+              pixels: saved.facts,
+              ...(saved.warnings.length > 0 ? { qualityNotes: saved.warnings } : {}),
               description:
                 `slide ${need.n} candidate — social post image found by searching ${platform} for "${need.query}"` +
                 `${caption ? `; post caption: "${caption}"` : ""}` +

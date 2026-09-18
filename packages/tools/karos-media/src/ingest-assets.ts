@@ -5,7 +5,11 @@ import { defineTool, success, contentFail, toolingError } from "@agent-engine/to
 import { MEDIA_CACHE_PREFIX, downloadImage, type FindImagesCandidate } from "./find-images.js";
 
 // 1.0.1 (SCRUM-296/AU11): removed the redundant re-parse of already-validated input.
-const TOOL_VERSION = "1.0.1";
+// 1.1.0 (Phase 5.6, item A8): client-supplied imagery is MEASURED rather than
+// refused — their own photograph is not a search result to reject, and the
+// always-deliver ruling forbids handing back an empty slide and a lecture.
+// The shortfall rides along as a quality note instead.
+const TOOL_VERSION = "1.1.0";
 
 /** Reads a `gs://` object. Structurally satisfied by `GcsArtifactStoreLike`/`GcsMediaStore`. */
 export interface ObjectReader {
@@ -230,17 +234,35 @@ export function createIngestAssets(options: { reader?: ObjectReader | undefined;
         }
 
         if (/^https?:\/\//i.test(asset.uri)) {
-          const saved =
-            input.kind === "video"
-              ? await downloadVideo(fetchImpl, asset.uri, absDir, relDir, `n${asset.slot}-client-source`)
-              : // Same downloader as every other image tier, so the content-type
-                // and size guarantees cannot drift between them.
-                await downloadImage(fetchImpl, { id: `client-${asset.slot}-${asset.uri}`, url: asset.uri }, absDir, relDir, asset.slot);
-          if (saved === undefined) {
-            unmet.push({ slot: asset.slot, uri: asset.uri, reason: `the URL did not return a usable ${input.kind}` });
+          if (input.kind === "video") {
+            const saved = await downloadVideo(fetchImpl, asset.uri, absDir, relDir, `n${asset.slot}-client-source`);
+            if (saved === undefined) {
+              unmet.push({ slot: asset.slot, uri: asset.uri, reason: "the URL did not return a usable video" });
+              continue;
+            }
+            candidates.push(describe(saved));
             continue;
           }
-          candidates.push(describe(saved));
+          // Same downloader as every other image tier, so the content-type
+          // and size guarantees cannot drift between them — but on the
+          // `measure` policy, because this is the client's own picture.
+          const saved = await downloadImage(
+            fetchImpl,
+            { id: `client-${asset.slot}-${asset.uri}`, url: asset.uri },
+            absDir,
+            relDir,
+            asset.slot,
+            "measure",
+          );
+          if (!saved.ok) {
+            unmet.push({ slot: asset.slot, uri: asset.uri, reason: `the URL did not return a usable image — ${saved.reason}` });
+            continue;
+          }
+          candidates.push({
+            ...describe(saved.path),
+            pixels: saved.facts,
+            ...(saved.warnings.length > 0 ? { qualityNotes: saved.warnings } : {}),
+          });
           continue;
         }
 

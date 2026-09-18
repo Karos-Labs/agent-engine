@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createKarosMediaTools, type ImageGenerationClient } from "../src/index.js";
+import { realPngBase64 } from "./image-fixtures.js";
 
 /**
  * RFC-16 §5.3 — `image.generate` 1.1.0 → 1.2.0: `art.permittedMarks` and
@@ -31,8 +32,12 @@ import { createKarosMediaTools, type ImageGenerationClient } from "../src/index.
 
 const CTX = { runId: "run_1", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" } as never;
 
-const PNG_B64 =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
+/**
+ * A REAL PNG at the plate's own size. It was a 1x1 until Phase 5.6 — a valid
+ * PNG and not a usable picture, which the generated-image floor now tells
+ * apart.
+ */
+const PNG_B64 = realPngBase64();
 
 let repoRoot: string;
 beforeEach(async () => {
@@ -105,9 +110,9 @@ const BRIEF_1_1_0 = [
 
 const DESCRIPTION_1_1_0_TAIL = "no third-party copyright, no watermark, no identifiable real person unless described above.";
 
-describe("image.generate 1.2.0 — the permit is absent for the whole fleet", () => {
-  it("declares 1.2.0, because the brief it composes changes shape when a permit names something", () => {
-    expect(schemaOnly().version).toBe("1.3.0");
+describe("image.generate 2.1.0 — the permit is absent for the whole fleet", () => {
+  it("declares 2.1.0: the brief changes shape when a permit names something, and the model is now laddered", () => {
+    expect(schemaOnly().version).toBe("2.1.0");
   });
 
   it("buildBrief is BYTE-IDENTICAL to 1.1.0 when no permit names anything", async () => {
@@ -169,7 +174,7 @@ describe("image.generate 1.2.0 — the permit is absent for the whole fleet", ()
   });
 });
 
-describe("image.generate 1.2.0 — a permit that names something", () => {
+describe("image.generate 2.1.0 — a permit that names something", () => {
   it("a permitted mark appears only as the badge clause, never widening the no-lettering constraint", async () => {
     const { briefs, tool } = recordingTool();
     await tool.execute(
@@ -266,7 +271,7 @@ describe("image.generate 1.2.0 — a permit that names something", () => {
   });
 });
 
-describe("image.generate 1.2.0 — the schema keeps the permit small and named", () => {
+describe("image.generate 2.1.0 — the schema keeps the permit small and named", () => {
   const base = { repoRoot: "/tmp/x", runId: "run_1", needs: [{ n: 1, prompt: "x" }] };
   const parse = (art: Record<string, unknown>) => schemaOnly().inputSchema.safeParse({ ...base, art }).success;
 

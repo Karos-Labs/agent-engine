@@ -54,9 +54,9 @@ const BUMPED = [
     // actually reads. The Phase 5 sections the second block below asserts by name are all still present at
     // @22, which is what makes following safe rather than merely cheap.
     promptId: "instagram-copy",
-    version: "22",
-    h1: "# Instagram Copy Craft Guide, v22",
-    skillRef: "instagram-copy@22",
+    version: "23",
+    h1: "# Instagram Copy Craft Guide, v23",
+    skillRef: "instagram-copy@23",
     agent: () => new InstagramCopyAgent({ router: fakeRouterSequence([]), tools: {}, promptStore: makePromptStore() }),
   },
   {
@@ -77,7 +77,7 @@ const readPrompt = (promptId: string, file: string): string => readFileSync(path
 
 const skillRefOf = (agent: unknown): string => (agent as { config: { skillRef: string } }).config.skillRef;
 
-describe("the copy prompt bump: instagram-copy@22 (live) and instagram-post-package@2 (live)", () => {
+describe("the copy prompt bump: instagram-copy@23 (live) and instagram-post-package@2 (live)", () => {
   for (const { promptId, version, h1, skillRef, agent } of BUMPED) {
     describe(`${promptId}@${version}`, () => {
       it(`step 1: prompts/${promptId}/${version}.md exists and is not a stub`, () => {

@@ -22,6 +22,7 @@ import {
   type ImageSearchHit,
   type ImageSearchProvider,
 } from "../src/index.js";
+import { realJpeg, realPng } from "./image-fixtures.js";
 
 /** A fetch that answers each URL substring with a canned JSON body, and records what it was asked. */
 function routedFetch(routes: Array<{ match: string; body: unknown; status?: number }>) {
@@ -466,7 +467,9 @@ describe("chain fallback in media.findImages", () => {
     await fs.rm(repoRoot, { recursive: true, force: true });
   });
 
-  const jpeg = (async () => new Response(Buffer.alloc(64, 1), { status: 200, headers: { "content-type": "image/jpeg" } })) as unknown as typeof fetch;
+  // A REAL JPEG: the download path measures what it receives, so a stub body
+  // is refused by the resolution floor before any of these assertions run.
+  const jpeg = (async () => new Response(realJpeg(), { status: 200, headers: { "content-type": "image/jpeg" } })) as unknown as typeof fetch;
 
   const hit = (id: string): ImageSearchHit => ({
     id,
@@ -784,11 +787,9 @@ describe("the sourcing tier queries every provider concurrently", () => {
     ];
     const source = { chainFor: () => providers, available: providers.map((p) => p.name) };
 
-    // A fetch that returns a real 1x1 PNG for every download.
-    const png = Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-      "base64",
-    );
+    // A real PNG at the plate's own size. It used to be a 1x1, which is a
+    // real PNG and not a usable picture — the floor tells those apart now.
+    const png = realPng();
     const fetchImpl = (async () =>
       new Response(png, { status: 200, headers: { "content-type": "image/png" } })) as unknown as typeof fetch;
 
@@ -835,10 +836,7 @@ describe("the sourcing tier queries every provider concurrently", () => {
     const providers = [dup("first", 30), dup("second", 5)];
     const source = { chainFor: () => providers, available: ["first", "second"] };
 
-    const png = Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-      "base64",
-    );
+    const png = realPng();
     const fetchImpl = (async () =>
       new Response(png, { status: 200, headers: { "content-type": "image/png" } })) as unknown as typeof fetch;
 
@@ -854,10 +852,7 @@ describe("the sourcing tier queries every provider concurrently", () => {
   });
 
   it("absorbs one provider's outage without discarding the healthy ones", async () => {
-    const png = Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-      "base64",
-    );
+    const png = realPng();
     const fetchImpl = (async () =>
       new Response(png, { status: 200, headers: { "content-type": "image/png" } })) as unknown as typeof fetch;
 

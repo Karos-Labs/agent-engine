@@ -238,7 +238,7 @@ function conceptCopy() {
   return {
     format: "carousel" as const,
     caption:
-      "Two vendors shipped the same weekly report this week, and neither of them asked what the report was for. Here is what we changed instead.",
+      "Two vendors shipped the same weekly report this week.\nNeither of them asked what the report was for.\nHere is what we changed instead.",
     // Phase 5 — the HEADLINE and BODY come from `goodCopyOutput()` now rather
     // than from `Finding #N` plus the card's own sentence. `07i-value-signals`
     // refuses that shape twice over (`checkSourceProse`, `checkRhythm`), and a

@@ -51,7 +51,7 @@ function slide(n: number, headline: string, body: string, extra: Partial<Instagr
 function copy(slides: InstagramSlideCopy[], overrides: Partial<InstagramCopyOutput> = {}): InstagramCopyOutput {
   return {
     format: "carousel",
-    caption: "What a quarterly coil clean is actually worth on a two horsepower compressor, and how to tell whether yours needs one.",
+    caption: "What a quarterly coil clean is worth on a two horsepower compressor.\nAnd how to tell whether yours needs one.",
     slides,
     ...overrides,
   } as InstagramCopyOutput;
@@ -126,7 +126,10 @@ describe("checkSourceProse — the ban on reproducing the source's prose (§4.1 
 
   it("reads the caption too, not only the slides", () => {
     const post = copy([slide(1, "The finding", "A cleaner coil costs less to run.")], {
-      caption: "Here is the number: teams that automated their weekly reporting saved an average of four hours per week.",
+      // The card's claim VERBATIM on the second line: this test is about the
+      // caption reproducing source prose, so the reproduction has to survive
+      // the line break the hook rule now asks for.
+      caption: "Here is the number.\nTeams that automated their weekly reporting saved an average of four hours per week.",
     });
     const verdict = checkSourceProse(post, [card(CLAIM)]);
     expect(verdict.ok).toBe(false);

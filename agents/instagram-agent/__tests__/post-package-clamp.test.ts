@@ -107,13 +107,13 @@ describe("an over-long alt text is cut, not refused", () => {
     expect(verdict.ok, verdict.ok ? "" : verdict.reason).toBe(true);
   });
 
-  it("a package built in CODE is still checked against 125, because nothing parsed it", () => {
+  it(`a package built in CODE is still checked against ${ALT_TEXT_MAX_CHARS}, because nothing parsed it`, () => {
     // `native-corrections.ts` rebuilds `altText` entry by entry, so the
     // deterministic rule in `checkPackageRules` is not dead code.
     const pkg = { ...PostPackageSchema.parse(packagerOutput("fine")), altText: [{ n: 1, alt: ALT_240 }, { n: 2, alt: "ok, a second plate" }] };
     const verdict = checkPackageRules({ pkg, slides: SHIPPED, coreTerms: ["ai marketing"] });
     expect(verdict.ok).toBe(false);
-    expect(verdict.ok === false && verdict.reason).toContain("past the 125-character cap");
+    expect(verdict.ok === false && verdict.reason).toContain(`past the ${ALT_TEXT_MAX_CHARS}-character cap`);
   });
 
   it("an answer past the WIRE maximum is still refused — the widening is headroom, not surrender", async () => {

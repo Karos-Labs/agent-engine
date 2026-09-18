@@ -250,7 +250,8 @@ import {
   type SkeletonHistory,
   type SkeletonVarietyVerdict,
 } from "./skeleton-memory.js";
-import { countComparedEntities, selectSeries, seriesDirectedSlides, seriesDirective, SERIES_DIRECTIVE_SLIDES } from "./editorial-series.js";
+import { PERFORMANCE_BELIEF_KEY, readPerformanceStore, withPost, type PostArm } from "./post-performance.js";
+import { countComparedEntities, selectSeries, seriesDirectedSlides, seriesDirective, seriesLibraryFor, SERIES_DIRECTIVE_SLIDES } from "./editorial-series.js";
 import {
   buildGateVerdict,
   draftDigestFor,
@@ -887,6 +888,27 @@ async function persistReviewFeedback(
  * selection, not a claim that every client's topics naturally belong to one
  * lane called "general."
  */
+
+/**
+ * Which of the three arms the post that just shipped WAS (Phase 5.6, item C2).
+ *
+ * Derived from what the run decided — the published format, the writer's own
+ * `payloadKind`, and the slide count — rather than from reading the finished
+ * carousel back. A single image is a `single-deep` whatever else is true. A
+ * carousel whose writer declared a teaching payload is `carousel-edu`;
+ * anything else that ships as a carousel took a position, which is
+ * `carousel-pov`. A short carousel with no declaration is read as a position
+ * too, because six to eight is what a procedure needs and four is not one.
+ */
+export function armOfShippedPost(format: string, payloadKind: string | undefined, slideCount: number): PostArm {
+  if (format === "single" || slideCount <= 1) return "single-deep";
+  if (payloadKind === "walkthrough" || payloadKind === "checklist" || payloadKind === "glossary" || payloadKind === "ranking") {
+    return "carousel-edu";
+  }
+  if (payloadKind === undefined && slideCount >= 6) return "carousel-edu";
+  return "carousel-pov";
+}
+
 export const DEFAULT_CAROUSEL_LANE = "general";
 
 export interface CreateInstagramAgentWorkflowOptions {
@@ -1574,9 +1596,27 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         skeletons: readSkeletonHistory(beliefs),
         customArchetypes: readCustomArchetypeHistory(beliefs),
         crossClientFormats: readCrossClientFormatHistory(beliefs),
+        // Phase 5.6, item C2 — a fourth parse of the same read, on the same
+        // fail-open contract: `readPerformanceStore` returns an empty store
+        // for anything it cannot read, and an empty store decides nothing.
+        performance: readPerformanceStore(beliefs),
       };
     });
     const skeletonHistory: SkeletonHistory = structuralMemory.skeletons;
+    /**
+     * Phase 5.6, item C2 — what this client's own posts DID.
+     *
+     * Empty for every client today, and it will stay empty until Phase 6
+     * connects the Graph API. It is read here anyway, and written at `09b`,
+     * because the alternative is that Phase 6 arrives with data and nowhere
+     * to put it. Nothing in this run's decisions reads it yet, and the
+     * comment saying so is the point: `selectArm` in `post-performance.ts`
+     * is the reader, it is tested, and it is called the day the store has
+     * rows rather than being wired now to produce a rotation answer this
+     * workflow already produces by another route.
+     */
+    const performanceStore = structuralMemory.performance;
+
     /**
      * Phase 5.5, item D — the cross-client variety pressure: which series and
      * which visual systems have shipped RECENTLY, for ANY client, so the fleet
@@ -2023,6 +2063,46 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       },
     );
     const brief = briefResolution.brief;
+
+    // ── This client's tracked competitors (Phase 5.6, item C5) ──
+    //
+    // $0, one deterministic read, no model. `client.listCompetitors` reports
+    // `not_available` for a client who never onboarded the list, and that is
+    // read as "nothing to look for" rather than as a failure: a competitor
+    // check with no competitors has no opinion, exactly like every other
+    // measurement in this workflow that runs on data a client may not have.
+    const competitorNames = await wf.step.code("02a2-competitor-names", async (): Promise<string[]> => {
+      const tool = tools["client.listCompetitors"];
+      if (tool === undefined) return [];
+      try {
+        const outcome = await tool.execute({}, { ctx });
+        if (outcome.status !== "success") return [];
+        const rows = outcome.result as ReadonlyArray<{ name?: unknown }>;
+        return rows.map((r) => (typeof r.name === "string" ? r.name.trim() : "")).filter((n) => n.length > 0);
+      } catch {
+        // A competitor lookup is not worth a run. Same posture as every other
+        // optional read here.
+        return [];
+      }
+    });
+
+    /**
+     * Phase 5.6, item C3 — this client's own editorial library.
+     *
+     * Three to five of the bundled six, chosen from the brief's own segment
+     * words and stable per client. The six were shared by every client, and
+     * their own comment said so ("any client can carry"), which is the
+     * mechanism behind the owner's verdict on two finished posts: you could
+     * see the same writer made both.
+     *
+     * Derived here rather than stored, because it is a pure function of the
+     * brief and the slug: storing it would add a migration and a staleness
+     * question to answer a question that has no state in it.
+     */
+    const clientLibrary = seriesLibraryFor({
+      clientSlug: wf.clientSlug,
+      segments: [...brief.icp.industries, ...brief.offers.map((offer) => offer.name)],
+    });
 
     // ── The run's ONE target language (Phase 1, closing audit defect 5's second door) ──
     //
@@ -6217,7 +6297,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // genuinely right for this story still wins. Fail-open — an empty
           // list is no penalty, which is what an unreadable belief yields.
           crossClientSeriesIds: crossClientSeriesIds(crossClientFormatHistory, wf.clientSlug, 5),
-        });
+        },
+        // Phase 5.6, item C3: this client's OWN three to five, not the
+        // bundled six every client shared. Pure, free, stable per client, and
+        // derived from the brief the run already loaded — the same cost
+        // profile `selectSeries` itself has, and for the same reason.
+        clientLibrary.series);
         // INSIDE the step, and the resume guard is why. A ledger write outside
         // a `wf.step.code` re-fires on every resume, which
         // `resume-idempotency.test.ts` counts and refuses - it caught this one
@@ -9001,7 +9086,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // over every language's patterns unconditionally, on the
       // `HEBREW_BANNED_PHRASES` precedent.
       const craftHygiene = await wf.step.code(rev(`07b-craft-hygiene-attempt-${attempt}`), () =>
-        checkCraftHygiene(tools, ctx, copy, targetLanguage),
+        checkCraftHygiene(tools, ctx, copy, targetLanguage, topicClaim.topic, competitorNames),
       );
       // The twin of the `07` outage finding above, for `gate.lintPost`. The anti-slop half of this gate is
       // the half that needs a provider; the sentence-case half is local code and still ran, so this says
@@ -9854,7 +9939,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // free check in the state it ships in, or a judge's proposal could smuggle an em dash past
           // `gate.lintPost`.
           const patch = await applyNativeCorrections(copy, round1.corrections, {
-            checkHygiene: (candidate) => checkCraftHygiene(tools, ctx, candidate, targetLanguage),
+            checkHygiene: (candidate) => checkCraftHygiene(tools, ctx, candidate, targetLanguage, topicClaim.topic, competitorNames),
             language: targetLanguage,
           });
 
@@ -11704,7 +11789,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       let post: DraftResult["post"];
       {
         /** The shipped slides, as the package family reads them: the number, the headline alt text may not restate, and the `sourceRef` that traces to a card. */
-        const packagedSlides = finalCopy.slides.map((s) => ({ n: s.n, headline: s.headline, sourceRef: s.sourceRef }));
+        const packagedSlides = finalCopy.slides.map((s) => ({ n: s.n, headline: s.headline, body: s.body, sourceRef: s.sourceRef }));
         const registerCard = languageBrief !== undefined ? renderRegisterCard(languageBrief.register, languageBrief.target) : undefined;
         /**
          * The script the package's prose is checked against — `07e2`'s own constraint, re-derived here
@@ -11721,6 +11806,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         const packageCheckInput = {
           slides: packagedSlides,
           coreTerms: brief.coreTerms,
+          // Item B8's packager half: an alt text has to name the topic.
+          // The caption and cover halves are checked at `07b`, where a
+          // redraft can act on them.
+          topicPhrase: topicClaim.topic,
           ...(languageBrief !== undefined ? { allowedLatinTerms: languageBrief.terms.allowedLatinTerms } : {}),
           ...(targetLanguage !== undefined ? { targetLanguage } : {}),
           ...(packageScript !== undefined && packageScriptPattern !== undefined
@@ -13362,6 +13451,24 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               // permanent truth. That split is the whole decisiveness filter.
               ...(languageBelief !== undefined ? { [LANGUAGE_BELIEF_KEY]: languageBelief } : {}),
               [SKELETON_BELIEF_KEY]: recordSkeleton(skeletonHistory, skeletonEntry),
+              // Phase 5.6, item C2 — what this post WAS, written only on a
+              // post that actually shipped, the same rule the skeleton entry
+              // follows. Every field is decided by the run that made the post
+              // rather than inferred later from the post itself, because a
+              // label applied by reading a carousel back is a guess, and the
+              // whole value of this store is that the labels are what the
+              // writer chose. `metrics` stays absent until Phase 6 fills it.
+              [PERFORMANCE_BELIEF_KEY]: withPost(performanceStore, {
+                runId: wf.runId,
+                arm: armOfShippedPost(review.output.copy.format, review.output.copy.payloadKind, slidesData.slides.length),
+                // No `funnelStage`: nothing in this run decides one yet, and a
+                // constant would be worse than an absence. See the field's own
+                // comment in `post-performance.ts`.
+                slideCount: slidesData.slides.length,
+                publishedAt: new Date().toISOString(),
+                ...(review.output.copy.hookPattern !== undefined ? { hookPattern: review.output.copy.hookPattern } : {}),
+                imageSource: slidesData.slides.some((slide) => slide.images?.["hero"] !== undefined) ? "present" : "none",
+              }),
               [CUSTOM_ARCHETYPE_BELIEF_KEY]: customArchetypeHistory,
               // Phase 5.5, item D — the fleet-variety row, written only on a
               // post that actually SHIPPED, the same rule the skeleton entry

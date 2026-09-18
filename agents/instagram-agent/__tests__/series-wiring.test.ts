@@ -3,7 +3,7 @@ import type { AgentToolRegistry } from "@agent-engine/core";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-agent-workflow.js";
 import { SKELETON_BELIEF_KEY, readSkeletonHistory, recentSeriesIds } from "../src/workflow/skeleton-memory.js";
-import { EDITORIAL_SERIES_IDS } from "../src/workflow/editorial-series.js";
+import { EDITORIAL_SERIES_IDS, MIN_CLIENT_LIBRARY, seriesLibraryFor } from "../src/workflow/editorial-series.js";
 import {
   copyTurnInputs,
   fakeRenderCarousel,
@@ -41,6 +41,14 @@ import { goodAngleProposal } from "./angle-fixtures.js";
 
 const base = { clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" as const };
 
+/**
+ * The segment words the seeded brief actually carries, which is what
+ * `seriesLibraryFor` is given in the workflow. `setupTestEnvironment`'s brief
+ * names no industries and no offers, so this is empty — and an empty brief is
+ * the case worth pinning: the library still has to exist.
+ */
+const expectedSegments: readonly string[] = [];
+
 async function run(env: TestEnvironment, runId: string, router: ReturnType<typeof fakeRouterSequence>, tools: AgentToolRegistry) {
   const durableStore = new MemoryDurableStepStore();
   const workflowFn = createInstagramAgentWorkflow({
@@ -75,9 +83,21 @@ describe("RFC-21 Part 3 wiring: a real run chooses a series and the writer is to
     expect(series, "04i2-select-series produced no output on a happy run — the feature is inert").toBeDefined();
     expect(EDITORIAL_SERIES_IDS, `04i2 chose "${series?.series?.id}", which is not a declared series`).toContain(series!.series!.id);
     expect(series!.reason, "the choice carries no reason, so a reviewer cannot ask why THIS format").toMatch(/series "/u);
+    // Phase 5.6 item C3: scored over THIS CLIENT'S library, not over all six.
+    // It was `EDITORIAL_SERIES_IDS.length` and that is what the change is: a
+    // client runs three to five shapes, so a payload listing six would mean
+    // the library is not reaching the selector. Derived from the same pure
+    // function the workflow calls, rather than written as a number, so the
+    // assertion cannot drift from the thing it is about.
+    const library = seriesLibraryFor({ clientSlug: base.clientSlug, segments: expectedSegments });
+    expect(library.series.length).toBeGreaterThanOrEqual(MIN_CLIENT_LIBRARY);
     expect(Object.keys(series!.scores ?? {}), "the scores are missing, so a one-point win reads like a decision").toHaveLength(
-      EDITORIAL_SERIES_IDS.length,
+      library.series.length,
     );
+    expect(
+      library.series.map((entry) => entry.id),
+      "04i2 chose a series outside this client's own library",
+    ).toContain(series!.series!.id);
 
     // ── 2. AND THE WRITER WAS ACTUALLY TOLD. ──
     //
