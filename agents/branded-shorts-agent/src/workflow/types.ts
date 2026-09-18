@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { DegradedContextGroundingMarker } from "@agent-engine/workflow";
+import type { ContentRepair, DegradedContextGroundingMarker } from "@agent-engine/workflow";
 
 /**
  * The per-upload intake (SKILL.md's `assets/INTAKE-REQUEST.md`, RFC-06 §7).
@@ -274,6 +274,41 @@ export function validateGraphicsPlan(plan: GraphicsPlanOutput, ctx: GraphicsPlan
   return violations;
 }
 
+/**
+ * The plan with every item that failed {@link validateGraphicsPlan} removed.
+ *
+ * The deterministic floor under the plan loop (2026-09-18, the owner's
+ * always-deliver rule). Two remedy attempts that still produce an unapproved
+ * archetype, a burst naming stills the client does not own, or a plate a
+ * deployment cannot generate used to end the run — throwing away the
+ * transcript, the cut, the grade, the base render and every overlay in the
+ * same plan that WAS legal.
+ *
+ * Dropping is the only honest repair for these three: the closed archetype
+ * vocabulary is the client's own sign-off, a burst must be built from photos
+ * they actually hold, and a plate nothing can generate is a file that will not
+ * exist at render time. None of them can be rewritten into legality by code
+ * without inventing a design decision, and substituting a different archetype
+ * would put a graphic on screen that no human approved. So the item goes, the
+ * rest of the plan builds, and the reviewer is told how many went.
+ *
+ * Re-validates rather than filtering on the caller's violation strings: a
+ * violation message names an item in prose, and matching prose back to an
+ * index is how the wrong overlay gets deleted.
+ */
+export function dropViolatingItems(plan: GraphicsPlanOutput, ctx: GraphicsPlanValidationContext): GraphicsPlanOutput {
+  const archetypeSchema = createGraphicOverlayPlanSchema(ctx.approvedArchetypes);
+  const library = new Set(ctx.libraryFiles);
+  return {
+    ...plan,
+    overlays: plan.overlays.filter((overlay) => archetypeSchema.safeParse(overlay).success),
+    cutaways: plan.cutaways.filter((c) => {
+      if (c.kind === "burst") return (c.stills ?? []).length > 0 && c.stills!.every((s) => library.has(s));
+      return ctx.plateGenerationAvailable;
+    }),
+  };
+}
+
 /** One entry of a client's `library/index.json` (`<profile dir>/library/index.json`): a cleared, brand-treated real still and what it shows. */
 export const AssetLibraryStillSchema = z.object({
   /** Relative to the profile's directory, e.g. `library/openai-logo.png`. This exact string is what a plan's `stills[]` must carry. */
@@ -297,4 +332,14 @@ export interface BrandedShortsWorkflowResult {
   renderWarnings: string[];
   /** SCRUM-242 (T-A10) — present only when this run's branding-guidelines context doc was absent; a human reviewer must see this, not merely a system that fetched it. */
   contextGrounding?: DegradedContextGroundingMarker;
+  /**
+   * What the approved round had to adapt around on its way to a video, and the
+   * reviewer's own verdict when it was not an approval.
+   *
+   * The honest half of the owner's always-deliver rule (2026-09-17): a run that
+   * repairs silently is worse than one that holds, because nothing downstream
+   * can tell a clean short from a salvaged one. Absent, never empty, on a clean
+   * run - a marker attached unconditionally is the same failure in reverse.
+   */
+  contentRepairs?: ContentRepair[];
 }

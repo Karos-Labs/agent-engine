@@ -107,7 +107,7 @@ const GATE_STEP_ID_BY_PRODUCT: Record<OriginalChannelProductId, string> = {
 const GATE_STEP_IDS_BY_NEW_PRODUCT: Record<Exclude<ProductId, OriginalChannelProductId | "campaign-orchestrator">, readonly string[]> = {
   "instagram-agent": ["09a-batch-review", "09a-batch-review-r0"],
   "landing-builder-agent": ["08-human-review"],
-  "branded-shorts-agent": ["10-delivery-review"],
+  "branded-shorts-agent": ["10-delivery-review", "10-delivery-review-r0"],
   "reputation-agent": ["10-reputation-approve-all"],
   "seo-geo-agent": ["03-prompt-set-review", "12-fix-generation-review", "16-batch-review-r0"],
   "intel-report-agent": ["04-batch-review", "04-batch-review-r0"],
@@ -115,9 +115,13 @@ const GATE_STEP_IDS_BY_NEW_PRODUCT: Record<Exclude<ProductId, OriginalChannelPro
   // D08's three (SCRUM-455). Two workflows, so two gate ids: clipping and
   // content design are one workspace and share `11-clip-review`; editing is
   // branded-shorts' workflow and keeps `10-delivery-review`.
+  //
+  // Both forms of the editing id since 2026-09-18: that gate became a
+  // `runReviewCycle`, which names its rounds `<gateId>-r<n>`, so a run from
+  // after that change records `-r0` and one from before records the bare id.
   "tiktok-clipping-agent": ["11-clip-review", "11-clip-review-r0"],
   "tiktok-content-design-agent": ["11-clip-review", "11-clip-review-r0"],
-  "tiktok-editing-agent": ["10-delivery-review"],
+  "tiktok-editing-agent": ["10-delivery-review", "10-delivery-review-r0"],
 };
 
 /** Recovers a step id's intended ordering position from its own "NN-..." prefix — the convention every step id in this codebase already follows (`00-`, `01-`, `10a-`, ...). Ties (e.g. `"10-delivery-review"` vs `"10a-upload-to-gcs"`) fall back to a plain string compare. */
