@@ -119,8 +119,30 @@ import { measureSlidePng, type SlideMetrics, type SlideProbe } from "./slide-met
  * CONTENT pair. The list now also carries the prose and object classes the
  * eight bundled archetypes actually declare. `probe` and every 1.6.0 field are
  * byte-identical; `geometry.collisions` can only grow.
+ *
+ * ## 1.8.0 — an inline box leaves the block-start limb
+ *
+ * MINOR for the same reason again, and the reason is worth stating precisely
+ * because this one makes the instrument report LESS. `probePage`'s block-start
+ * limb treated an inline box's rect as a layout result. It is not: the rect is
+ * the union of the box's line fragments, sized by the face's ascent and
+ * descent rather than by `line-height`, so a display face at 46px in a 51.5px
+ * line box reports a 57px rect starting 3px above the block containing it — at
+ * every size, in every plate. That turned ordinary typography into `clipped`
+ * on 72 of the mark sweep's renders, and a wider tolerance would only move the
+ * type size at which it happened again.
+ *
+ * So `clipped` is now ABSENT where a 1.7.0 record would have carried it, for
+ * the same plate and the same copy. Nothing else moved: every other field is
+ * byte-identical, `inline-block` and `inline-flex` stay in scope because they
+ * really are laid out as boxes, and the probe's shape widens by one optional
+ * `display`, which only the limb above reads.
+ *
+ * Bumped separately from the commit that made the change: the push gate caught
+ * a version left at 1.7.0 while the judgement under it changed, which is the
+ * gate doing exactly its job.
  */
-const TOOL_VERSION = "1.7.0";
+const TOOL_VERSION = "1.8.0";
 
 // n/template/fields/images have no existing TSDoc to transcribe (SCRUM-293 flag) — descriptions
 // below synthesized from fillTemplate's/validateRenderInputs' usage of each field.
