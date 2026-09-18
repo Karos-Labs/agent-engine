@@ -157,3 +157,69 @@ describe("LEGACY_ARCHETYPE_IDS", () => {
     expect(LEGACY_ARCHETYPE_IDS.size).toBe(8);
   });
 });
+
+/**
+ * # A STUDIO TEMPLATE THAT GOT NO PICTURE MUST NOT PAINT THE FRAME ANYWAY
+ *
+ * The Geektime prep carousel of 2026-09-18 opened on a 1080x620 grey-green
+ * gradient rectangle above the headline. That rectangle was the cover's
+ * picture frame, rendered at full size around an `<img src="">`, because
+ * `fillTemplate` erases a slot nobody filled and leaves the element in the
+ * document. The owner read it, correctly, as the post being broken rather
+ * than as the post having no photograph.
+ *
+ * The bundled plates have carried this rule for `.sc-figure-band` since the
+ * same defect shipped there once already (`figure-band-collapse.test.ts`,
+ * which is where the source-scan instrument below is borrowed from, and its
+ * reasoning applies unchanged: an empty `src` may not fire `error` at all,
+ * and if it does it fires asynchronously, so a collapse has to be true at
+ * parse time).
+ *
+ * What is different here is that studio markup is MODEL-AUTHORED. There is no
+ * class name to hang the rule on, so it has to be structural and it has to
+ * live in the one shell code owns — which is the shell these two builders
+ * return.
+ */
+describe("the code-owned shell collapses an unfilled picture", () => {
+  const SHELLS = [
+    ["studio template", buildStudioTemplateDocument("<div>{{title}}</div>")],
+    ["custom archetype", buildCustomArchetypeDocument("<div>{{title}}</div>")],
+  ] as const;
+
+  it("hides the image element itself when its src was erased", () => {
+    for (const [what, doc] of SHELLS) {
+      expect(doc, what).toMatch(/img\[src=""\][^{]*\{[^}]*display:\s*none/);
+    }
+  });
+
+  it("collapses the CONTAINER, not just the image — the frame is what painted the hole", () => {
+    for (const [what, doc] of SHELLS) {
+      // The container rule, asserted by its three clauses rather than by its
+      // exact text. Each one is load-bearing and each has a way of being
+      // quietly dropped in a rewrite:
+      //
+      //   1. it fires on an UNFILLED img       — or it collapses good frames;
+      //   2. not when a FILLED img sits beside — or a two-picture frame with
+      //      one missing takes the whole frame down;
+      //   3. not when a non-img child exists   — or a frame that also holds a
+      //      caption loses the caption.
+      const rule = doc.match(/:has\(> img\[src=""\]\)[^{]*\{[^}]*display:\s*none[^}]*\}/)?.[0];
+      expect(rule, `${what}: no structural container-collapse rule at all`).toBeDefined();
+      expect(rule, `${what}: clause 2 missing — a frame holding one good picture and one gap would vanish`).toContain(
+        ':not(:has(> img[src]:not([src=""])))',
+      );
+      expect(rule, `${what}: clause 3 missing — a frame that also holds a caption would lose it`).toContain(
+        ":not(:has(> *:not(img)))",
+      );
+    }
+  });
+
+  it("names no class, because the markup it has to work on is written by a model", () => {
+    for (const [what, doc] of SHELLS) {
+      const rule = doc.match(/:has\(> img\[src=""\]\)[^{]*\{/)?.[0] ?? "";
+      expect(rule, `${what}: the rule is scoped to a class the studio's designer agent has no obligation to use`).not.toMatch(
+        /\.[A-Za-z]/,
+      );
+    }
+  });
+});

@@ -873,8 +873,8 @@ export function buildListRows(items: readonly { title: string; note?: string | u
  * makes a recap a recap rather than a second draft of the post.
  */
 function recapTextFor(slide: InstagramSlideCopy): string {
-  const figure = slide.stat?.figure ?? (slide.device ? deviceFigureValues(slide.device)[0] : undefined);
-  if (figure !== undefined && figure.trim().length > 0) return figure.trim();
+  const figure = figureOn(slide);
+  if (figure !== undefined) return figure;
   const headline = slide.headline.trim();
   if (headline.length <= MAX_RECAP_PLATE_CHARS) return headline;
   const cut = headline.slice(0, MAX_RECAP_PLATE_CHARS);
@@ -890,16 +890,36 @@ function recapTextFor(slide: InstagramSlideCopy): string {
  * an eight-slide carousel would silently drop the second half of the
  * argument. Slides whose only text is a cover headline are still eligible —
  * every slide said something, and the plate is that something.
+ *
+ * ## One strip, one kind of thing
+ *
+ * `recapTextFor` prefers a figure and falls back to a headline, so a mixed
+ * draw produces three percentages and one sentence. That is what shipped on
+ * 2026-09-18 — `01 47% / 03 77% / 05 40% / 07 Three moves to make in your
+ * first month` — and it reads as a table with a broken cell rather than as a
+ * recap. When enough slides carry a figure the strip is drawn only from
+ * those; otherwise it is drawn from all of them and is a strip of headlines.
+ * Either is coherent. The mixture is not.
  */
-export function recapSourceSlides(earlier: readonly InstagramSlideCopy[]): InstagramSlideCopy[] {
-  if (earlier.length <= MAX_RECAP_PLATES) return [...earlier];
-  const step = (earlier.length - 1) / (MAX_RECAP_PLATES - 1);
+function figureOn(slide: InstagramSlideCopy): string | undefined {
+  const figure = slide.stat?.figure ?? (slide.device ? deviceFigureValues(slide.device)[0] : undefined);
+  return figure !== undefined && figure.trim().length > 0 ? figure.trim() : undefined;
+}
+
+function spreadEvenly(slides: readonly InstagramSlideCopy[]): InstagramSlideCopy[] {
+  if (slides.length <= MAX_RECAP_PLATES) return [...slides];
+  const step = (slides.length - 1) / (MAX_RECAP_PLATES - 1);
   const picked: InstagramSlideCopy[] = [];
   for (let i = 0; i < MAX_RECAP_PLATES; i++) {
-    const slide = earlier[Math.round(i * step)];
+    const slide = slides[Math.round(i * step)];
     if (slide !== undefined && !picked.includes(slide)) picked.push(slide);
   }
   return picked;
+}
+
+export function recapSourceSlides(earlier: readonly InstagramSlideCopy[]): InstagramSlideCopy[] {
+  const numeric = earlier.filter((slide) => figureOn(slide) !== undefined);
+  return spreadEvenly(numeric.length >= MIN_RECAP_PLATES ? numeric : earlier);
 }
 
 /**
@@ -911,18 +931,25 @@ export function recapSourceSlides(earlier: readonly InstagramSlideCopy[]): Insta
  * deliberately unescaped — so a variable number of plates has to be
  * assembled here, with every interpolated value escaped on the way in.
  *
- * The plate number is the slide's own `n`, zero-padded, so a reader can map
- * a plate back to the slide it recaps. Returns `""` when there is nothing
- * worth recapping, and the template's `:empty` rule collapses the slot.
+ * The plate number is the plate's POSITION IN THE STRIP, zero-padded. It used
+ * to be the source slide's own `n`, justified as letting "a reader map a
+ * plate back to the slide it recaps" — which a reader cannot do, because no
+ * slide in a carousel carries a visible number anywhere. The shipped Karos
+ * post of 2026-09-18 closed on a strip reading 01 / 03 / 05 / 07, and the
+ * owner read it the only way it can be read: as a list missing half its
+ * items.
+ *
+ * Returns `""` when there is nothing worth recapping, and the template's
+ * `:empty` rule collapses the slot.
  */
 export function buildRecapFragment(earlier: readonly InstagramSlideCopy[]): string {
   const sources = recapSourceSlides(earlier);
   if (sources.length < MIN_RECAP_PLATES) return "";
   const plates = sources
     .map(
-      (slide) =>
+      (slide, index) =>
         `<div class="rc-plate">` +
-        `<div class="rc-n">${esc(String(slide.n).padStart(2, "0"))}</div>` +
+        `<div class="rc-n">${esc(String(index + 1).padStart(2, "0"))}</div>` +
         `<div class="item-title">${esc(recapTextFor(slide))}</div>` +
         `</div>`,
     )

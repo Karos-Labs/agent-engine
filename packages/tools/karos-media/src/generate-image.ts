@@ -59,7 +59,7 @@ import { buildImageProvenance } from "./image-provenance.js";
 // The push gate caught this, which is the gate doing precisely its job: the
 // version was carried through a conflict resolution unchanged while the
 // constant under it changed value.
-const TOOL_VERSION = "2.1.0";
+const TOOL_VERSION = "2.2.0";
 /**
  * The image-generation call, narrowed to what this tool uses so the package
  * does not take a type dependency on the whole `@google/genai` surface.
@@ -512,13 +512,20 @@ export function createGenerateImage(options: {
 
           const bytes = Buffer.from(image.inlineData.data, "base64");
 
-          // The same resolution floor a SOURCED image must clear. A model that
-          // returns a 512px frame has not produced a usable slide picture, and
-          // "we made it ourselves" is not a reason to place one. The attempt
-          // is retried within this need's own budget rather than accepted.
+          // Measured, and measured for the same reasons a SOURCED image is:
+          // to book what was produced and to say where it can go. Size no
+          // longer refuses anything (see `image-floor.ts` — the owner's
+          // 2026-09-18 ruling), which matters most precisely here. This path
+          // has ALREADY PAID the image charge by the time the bytes arrive,
+          // so a refusal on size was spending money and then discarding the
+          // result; both prep runs on 2026-09-18 did exactly that, six times,
+          // over a 896x1200 frame that would have been enlarged 1.21x.
+          //
+          // What survives is the refusal a broken frame deserves: unreadable
+          // bytes, or a CMYK separation that renders with shifted colour.
           const verdict = assessImageFloor(bytes);
           if (!verdict.ok) {
-            failures.push(`the generated frame missed the floor — ${verdict.reasons.join("; ")}`);
+            failures.push(`the generated frame is not placeable — ${verdict.reasons.join("; ")}`);
             continue;
           }
 

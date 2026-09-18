@@ -159,8 +159,20 @@ export const TARGET_RUN_SPEND_USD = 1.8;
  * — the binding one, outside every optional-spend check), and
  * `04m-concept-eligibility`, which reads `max(cap, this)` instead of treating
  * the cap as a veto.
+ *
+ * ## Why 3 and not 2
+ *
+ * It was 2, and 2 is arithmetically unable to do the job this constant exists
+ * for. `MIN_PICTURE_SLIDES` is 3, and a carousel whose draft opted out of
+ * every picture starts at 0 — so the guarantee ran out one frame short of the
+ * floor it is there to reach, every time. The Geektime prep run of
+ * 2026-09-18 shipped with 0 pictures having spent the whole guarantee.
+ *
+ * A guarantee that cannot satisfy the floor is not a guarantee, and the gap
+ * between the two numbers was never argued for anywhere: it is what 2 was
+ * before `MIN_PICTURE_SLIDES` moved to 3.
  */
-export const MIN_GENERATED_IMAGES_PER_RUN = 2;
+export const MIN_GENERATED_IMAGES_PER_RUN = 3;
 
 /**
  * The owner's hard max per Instagram run. **Its purpose is to break an
@@ -1944,7 +1956,20 @@ export interface RunBudgetDecision {
  * property that matters about it: `IMAGE_CAP_STEPS` contains no value below
  * `MIN_GENERATED_IMAGES_PER_RUN`.
  */
-export const IMAGE_CAP_STEPS = [4, 3, MIN_GENERATED_IMAGES_PER_RUN] as const;
+// Derived rather than listed, so raising the floor cannot leave a duplicate or
+// an unreachable rung behind. It was `[4, 3, MIN_GENERATED_IMAGES_PER_RUN]`,
+// and the moment the floor moved to 3 that read `[4, 3, 3]`: a ladder with the
+// same rung twice, which the sweep caught as a cap it visited once against a
+// step list claiming two. The floor is always the LAST rung and always present,
+// which is what makes the tuple non-empty by construction.
+export const IMAGE_CAP_STEPS: readonly [number, ...number[]] = [
+  // Highest rung first and the floor last. Written head-then-tail rather than
+  // spread-then-push so the type carries the non-emptiness that `plan.ts`
+  // relies on when it reads `IMAGE_CAP_STEPS[0]`.
+  Math.max(4, MIN_GENERATED_IMAGES_PER_RUN),
+  ...[3].filter((n) => n > MIN_GENERATED_IMAGES_PER_RUN),
+  ...(MIN_GENERATED_IMAGES_PER_RUN < 4 ? [MIN_GENERATED_IMAGES_PER_RUN] : []),
+];
 
 /**
  * Decide the plan for this run. Starts from the default plan (or, after an

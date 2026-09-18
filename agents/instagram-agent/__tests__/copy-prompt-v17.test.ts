@@ -54,9 +54,9 @@ const BUMPED = [
     // actually reads. The Phase 5 sections the second block below asserts by name are all still present at
     // @22, which is what makes following safe rather than merely cheap.
     promptId: "instagram-copy",
-    version: "23",
-    h1: "# Instagram Copy Craft Guide, v23",
-    skillRef: "instagram-copy@23",
+    version: "24",
+    h1: "# Instagram Copy Craft Guide, v24",
+    skillRef: "instagram-copy@24",
     agent: () => new InstagramCopyAgent({ router: fakeRouterSequence([]), tools: {}, promptStore: makePromptStore() }),
   },
   {

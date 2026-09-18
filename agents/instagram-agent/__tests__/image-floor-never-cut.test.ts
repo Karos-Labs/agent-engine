@@ -63,6 +63,8 @@ describe("partitionGaps — the guarantee the three generation gates may not ski
     // cannot produce the right answer and the test means something).
     const gaps = [gap(2), gap(3), gap(6), gap(7), gap(8)];
     const { guaranteed, optional } = partitionGaps(gaps, 0, { conceptSlide: 6 });
+    // Five gaps against the floor, so the partition has something to split.
+    expect(gaps.length).toBeGreaterThan(MIN_GENERATED_IMAGES_PER_RUN);
 
     expect(guaranteed).toHaveLength(MIN_GENERATED_IMAGES_PER_RUN);
     // THE CONCEPT FIRST. It is the one picture retrieval can never recover:
@@ -71,7 +73,11 @@ describe("partitionGaps — the guarantee the three generation gates may not ski
     expect(guaranteed[0]!.n).toBe(6);
     // Then slide order — an early picture earns the swipe.
     expect(guaranteed[1]!.n).toBe(2);
-    expect(optional.map((g) => g.n)).toEqual([3, 7, 8]);
+    // Derived from the floor rather than listed, because the floor moves: it
+    // went 2 -> 3 on 2026-09-18 and this line was three separate hard-coded
+    // arrays away from saying anything true.
+    expect(optional.map((g) => g.n)).toEqual([2, 3, 6, 7, 8].filter((n) => !guaranteed.some((g) => g.n === n)));
+    expect(optional).toHaveLength(5 - MIN_GENERATED_IMAGES_PER_RUN);
     // Nothing is lost: a caller that records `rescueSkipped` for `optional` and
     // generates `guaranteed` has accounted for every gap it was handed.
     expect([...guaranteed, ...optional].map((g) => g.n).sort((a, b) => a - b)).toEqual([2, 3, 6, 7, 8]);
@@ -81,8 +87,10 @@ describe("partitionGaps — the guarantee the three generation gates may not ski
   });
 
   it("orders by slide number when the tier carries no concept, and never guarantees more than it was given", () => {
-    expect(partitionGaps([gap(7), gap(3), gap(5)], 0).guaranteed.map((g) => g.n)).toEqual([3, 5]);
-    // One gap and a floor of two: the guarantee is what exists, not a promise
+    expect(partitionGaps([gap(7), gap(3), gap(5)], 0).guaranteed.map((g) => g.n)).toEqual(
+      [3, 5, 7].slice(0, MIN_GENERATED_IMAGES_PER_RUN),
+    );
+    // One gap against the floor: the guarantee is what exists, not a promise
     // the tier cannot keep.
     const one = partitionGaps([gap(4)], 0);
     expect(one.guaranteed.map((g) => g.n)).toEqual([4]);
@@ -156,9 +164,14 @@ describe("partitionGaps — the guarantee the three generation gates may not ski
     // Both gates closed at once — the exact state of every prep run on
     // 2026-09-16 — and the concept plus one more picture still get made.
     const both = runGate(real, "essential-only", false);
-    expect(both.generated).toEqual([5, 1]);
+    // Concept first, then slide order, cut at the floor — derived, because the
+    // floor moved 2 -> 3 on 2026-09-18 and a literal here would have gone red
+    // saying nothing about idempotence, which is this test's actual subject.
+    expect(both.generated).toEqual([5, 1, 4, 6].slice(0, MIN_GENERATED_IMAGES_PER_RUN));
     expect(both.generated).toHaveLength(MIN_GENERATED_IMAGES_PER_RUN);
-    expect(both.skipped).toEqual([4, 6]);
+    expect(both.skipped).toEqual([1, 4, 5, 6].filter((n) => !both.generated.includes(n)));
+    // …and the split is a real one, or the idempotence below is vacuous.
+    expect(both.skipped.length).toBeGreaterThan(0);
     // The second gate is a NO-OP on what the first one left: it re-partitions
     // the guarantee and finds nothing optional in it. That idempotence is what
     // makes three gates safe to wire to one helper.

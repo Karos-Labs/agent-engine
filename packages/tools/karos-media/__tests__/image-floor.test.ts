@@ -11,7 +11,11 @@ import {
   IMAGE_MODEL_LADDER,
   ImageModelLadder,
   isModelUnavailableError,
-  MIN_IMAGE_SHORT_SIDE_PX,
+  CANVAS_SHORT_SIDE_PX,
+  FULL_BLEED_MIN_SHORT_SIDE_PX,
+  INSET_MIN_SHORT_SIDE_PX,
+  MAX_UPSCALE,
+  placementFor,
   type ImageSearchHit,
   type ImageSearchProvider,
 } from "../src/index.js";
@@ -24,9 +28,16 @@ import { realJpeg, realPng, realPngBase64, tooSmallPng } from "./image-fixtures.
  * The owner's complaint that started this was "why are there no images", and
  * the answer in three prep runs was never one thing: a source served a
  * thumbnail, a generation returned a small frame, the model the project could
- * reach was decided by a comment written during an outage. Each of those is a
- * separate assertion below, and each is written so that REMOVING the fix makes
- * it fail — a floor tested only with images that clear it is not a floor.
+ * reach was decided by a comment written during an outage.
+ *
+ * The first of those three was then made WORSE by the fix: a hard 1080 floor
+ * turned "the source only had a small one" into "there is no picture", and on
+ * the generation path it discarded frames the run had already paid for. The
+ * owner's 2026-09-18 ruling removed size as a refusal, and these tests hold
+ * the replacement instead: an image always has a placement, and the pool is
+ * ORDERED so the picture that can cover the frame is offered first.
+ *
+ * Each assertion is still written so that removing its fix makes it fail.
  */
 
 const CTX = { runId: "run_1", clientSlug: "acme", productId: "instagram-agent", runKind: "recurring" } as never;
@@ -67,16 +78,50 @@ describe("assessImageFloor", () => {
     expect(verdict.facts).toMatchObject({ width: 1080, height: 1350, shortSide: 1080, format: "png" });
   });
 
-  it("passes an image EXACTLY on the floor — the bound is inclusive, and a test proves which", () => {
-    expect(assessImageFloor(realPng(MIN_IMAGE_SHORT_SIDE_PX, 2000)).ok).toBe(true);
-    expect(assessImageFloor(realPng(MIN_IMAGE_SHORT_SIDE_PX - 1, 2000)).ok).toBe(false);
+  it("NEVER refuses on size — the owner's ruling, and the case that produced it", () => {
+    // 896x1200 is what Gemini returned in both prep runs on 2026-09-18. It
+    // was refused six times, each time after the image charge had been paid.
+    const generated = assessImageFloor(realPng(896, 1200));
+    expect(generated.ok).toBe(true);
+    expect(generated.facts?.placement).toBe("full-bleed");
+
+    // …and neither is anything below it, however small.
+    for (const shortSide of [640, 320, 120, 16]) {
+      expect(assessImageFloor(realPng(shortSide, shortSide * 2)).ok, `${shortSide}px`).toBe(true);
+    }
   });
 
-  it("names the REAL size in the refusal, because 'too small' is not an actionable reason", () => {
+  it("maps a size to the largest job it can hold, and the bounds are inclusive", () => {
+    expect(placementFor(FULL_BLEED_MIN_SHORT_SIDE_PX)).toBe("full-bleed");
+    expect(placementFor(FULL_BLEED_MIN_SHORT_SIDE_PX - 1)).toBe("inset");
+    expect(placementFor(INSET_MIN_SHORT_SIDE_PX)).toBe("inset");
+    expect(placementFor(INSET_MIN_SHORT_SIDE_PX - 1)).toBe("accent");
+    // Total by construction: there is no size with no answer, which is what
+    // makes "a caller can always place what it is handed" true rather than
+    // hopeful.
+    expect(placementFor(0)).toBe("accent");
+  });
+
+  it("derives the placement bounds from the canvas, so moving the canvas moves them", () => {
+    // Asserted as arithmetic rather than as the literals 772 / 348: item A1
+    // changes the canvas, and a test pinned to today's numbers would then
+    // pass while describing the wrong frame.
+    expect(FULL_BLEED_MIN_SHORT_SIDE_PX).toBe(Math.ceil(CANVAS_SHORT_SIDE_PX / MAX_UPSCALE));
+    expect(INSET_MIN_SHORT_SIDE_PX).toBeLessThan(FULL_BLEED_MIN_SHORT_SIDE_PX);
+  });
+
+  it("says what covering the frame would COST, so a soft slide is explained rather than guessed at", () => {
     const verdict = assessImageFloor(realPng(640, 480));
-    expect(verdict.ok).toBe(false);
-    expect(verdict.reasons.join(" ")).toContain("640x480");
-    expect(verdict.reasons.join(" ")).toContain("480px");
+    expect(verdict.ok).toBe(true);
+    expect(verdict.facts?.fullBleedUpscale).toBe(2.25);
+    expect(verdict.warnings.join(" ")).toContain("640x480");
+    expect(verdict.warnings.join(" ")).toContain("2.25x");
+  });
+
+  it("charges nothing for a reduction — an oversized picture is not a warning", () => {
+    const verdict = assessImageFloor(realPng(2400, 3000));
+    expect(verdict.facts?.fullBleedUpscale).toBeLessThan(1);
+    expect(verdict.warnings).toEqual([]);
   });
 
   it("refuses bytes that are not an image at all, rather than placing them unmeasured", () => {
@@ -102,30 +147,38 @@ describe("assessImageFloor", () => {
 // ─────────────────────────────────────────────────────────────────────────
 
 describe("the resolution floor on the download path", () => {
-  it("refuses a sourced thumbnail and reports its size, instead of enlarging it onto a slide", async () => {
+  it("PLACES a sourced thumbnail and says where it fits, rather than returning an empty slide", async () => {
     const tool = createFindImages({ chainFor: () => [provider("p", [oneHit()])], available: ["p"] }, servingBytes(tooSmallPng()));
     const outcome = await tool.execute(
       { repoRoot, runId: "small", needs: [{ n: 1, query: "a desk" }], perNeed: 1, maxPerNeed: 2 },
       { ctx: CTX } as never,
     );
 
-    // Nothing was placed…
-    expect(outcome.status).toBe("content_fail");
-    // …and the reason is the measurement, not "failed to download".
-    expect(JSON.stringify(outcome)).toContain("640x480");
+    expect(outcome.status).toBe("success");
+    const result = (outcome as { result: { candidates: Array<{ pixels?: { placement: string }; qualityNotes?: string[]; description: string }> } }).result;
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]!.pixels?.placement).toBe("inset");
+    // The size reaches the vetting agent, which reads only the description.
+    expect(result.candidates[0]!.description).toContain("640x480");
+    expect(result.candidates[0]!.qualityNotes?.join(" ")).toContain("640x480");
   });
 
-  it("writes NOTHING to disk for a refused image — a later path cannot pick it up by scanning the directory", async () => {
-    const tool = createFindImages({ chainFor: () => [provider("p", [oneHit()])], available: ["p"] }, servingBytes(tooSmallPng()));
+  it("writes NOTHING to disk for an image it DOES refuse — a later path cannot pick it up by scanning the directory", async () => {
+    // Bytes that are not an image at all: the refusal that survived the
+    // ruling. Placing this would mean inventing its dimensions.
+    const tool = createFindImages(
+      { chainFor: () => [provider("p", [oneHit()])], available: ["p"] },
+      servingBytes(Buffer.from("<html>not an image</html>")),
+    );
     await tool.execute(
-      { repoRoot, runId: "small", needs: [{ n: 1, query: "a desk" }], perNeed: 1, maxPerNeed: 2 },
+      { repoRoot, runId: "broken", needs: [{ n: 1, query: "a desk" }], perNeed: 1, maxPerNeed: 2 },
       { ctx: CTX } as never,
     );
-    const written = await fs.readdir(path.join(repoRoot, ".media-cache", "small")).catch(() => []);
+    const written = await fs.readdir(path.join(repoRoot, ".media-cache", "broken")).catch(() => []);
     expect(written).toEqual([]);
   });
 
-  it("falls THROUGH a small-image provider to a healthy one, rather than giving up on the need", async () => {
+  it("OFFERS the picture that covers the frame first, so relaxing the floor did not promote thumbnails", async () => {
     let call = 0;
     const fetchImpl = (async (url: string) => {
       call += 1;
@@ -133,6 +186,8 @@ describe("the resolution floor on the download path", () => {
       return new Response(body, { status: 200, headers: { "content-type": "image/png" } });
     }) as unknown as typeof fetch;
 
+    // The thumbnail provider is FIRST in the chain, so chain precedence alone
+    // would hand the slide a 640px picture. Deleting the sort makes this fail.
     const tool = createFindImages(
       {
         chainFor: () => [provider("thumbs", [oneHit("small")]), provider("full", [oneHit("big")])],
@@ -147,7 +202,9 @@ describe("the resolution floor on the download path", () => {
 
     expect(outcome.status).toBe("success");
     const result = (outcome as { result: { candidates: Array<{ provider: string; pixels?: { shortSide: number } }> } }).result;
-    expect(result.candidates.map((c) => c.provider)).toEqual(["full"]);
+    // Both are kept — nothing is thrown away any more — but the one that can
+    // cover the frame is the one the vetting agent reads first.
+    expect(result.candidates.map((c) => c.provider)).toEqual(["full", "thumbs"]);
     expect(result.candidates[0]!.pixels?.shortSide).toBe(1080);
     expect(call).toBe(2);
   });
@@ -172,13 +229,14 @@ describe("client-supplied media is measured, not refused", () => {
     );
 
     expect(outcome.status).toBe("success");
-    const result = (outcome as { result: { candidates: Array<{ qualityNotes?: string[]; pixels?: { shortSide: number } }> } }).result;
+    const result = (outcome as { result: { candidates: Array<{ qualityNotes?: string[]; pixels?: { shortSide: number; placement: string } }> } }).result;
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0]!.pixels?.shortSide).toBe(480);
-    expect(result.candidates[0]!.qualityNotes?.join(" ")).toContain("480px");
+    expect(result.candidates[0]!.pixels?.placement).toBe("inset");
+    expect(result.candidates[0]!.qualityNotes?.join(" ")).toContain("640x480");
   });
 
-  it("still refuses bytes that are not an image — `measure` softens the size question, not the existence one", async () => {
+  it("still refuses bytes that are not an image — `measure` softens a judgement, not the existence question", async () => {
     const tools = createKarosMediaTools({ env: {}, fetchImpl: servingBytes(Buffer.from("<html>nope</html>"), "image/png") });
     const outcome = await tools["media.ingestAssets"]!.execute(
       { repoRoot, runId: "tier0", assets: [{ slot: 1, uri: "https://client.example/broken.png" }] },
@@ -297,7 +355,11 @@ describe("image.generate walks the ladder", () => {
     expect(asked.filter((m) => m === "gemini-3.1-flash-image")).toHaveLength(1);
   });
 
-  it("refuses a generated frame that misses the floor — 'we made it' is not a reason to place a small picture", async () => {
+  it("PLACES a small generated frame — this path has already paid for it, and both prep runs threw one away", async () => {
+    // The regression this replaces: on 2026-09-18 a 896x1200 frame was
+    // refused six times across two runs, each refusal after the image charge
+    // had been booked, and the retries in one run ended on a 429. A 640px
+    // frame is the sharper version of the same case.
     const client = {
       models: {
         async generateContent() {
@@ -312,8 +374,37 @@ describe("image.generate walks the ladder", () => {
       { repoRoot, runId: "smallgen", needs: [{ n: 1, prompt: "a desk" }], perNeed: 1 },
       { ctx: CTX } as never,
     );
+    expect(outcome.status).toBe("success");
+    const result = (outcome as { result: { candidates: Array<{ pixels?: { placement: string }; qualityNotes?: string[] }> } }).result;
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]!.pixels?.placement).toBe("inset");
+    // The shortfall is still REPORTED. Relaxing the refusal did not relax
+    // the measurement, which is the whole of what A8 was for.
+    expect(result.candidates[0]!.qualityNotes?.join(" ")).toContain("640x480");
+  });
+
+  it("still refuses a generated frame that is not a readable image, rather than writing it to the cache", async () => {
+    const client = {
+      models: {
+        async generateContent() {
+          return {
+            candidates: [
+              {
+                finishReason: "STOP",
+                content: { parts: [{ inlineData: { data: Buffer.from("<html>nope</html>").toString("base64"), mimeType: "image/png" } }] },
+              },
+            ],
+          } as never;
+        },
+      },
+    };
+    const tool = createKarosMediaTools({ env: {}, generationClient: client as never })["image.generate"]!;
+    const outcome = await tool.execute(
+      { repoRoot, runId: "brokengen", needs: [{ n: 1, prompt: "a desk" }], perNeed: 1 },
+      { ctx: CTX } as never,
+    );
     expect(outcome.status).toBe("content_fail");
-    expect(JSON.stringify(outcome)).toContain("640x480");
+    expect(JSON.stringify(outcome)).toContain("not a readable");
   });
 
   it("accepts 4:5 — the platform's own portrait ratio, which the schema did not offer until now", async () => {

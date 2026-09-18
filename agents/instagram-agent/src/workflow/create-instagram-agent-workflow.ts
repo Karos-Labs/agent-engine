@@ -187,6 +187,7 @@ import {
   checkSlidesData,
   collectDeviceIssues,
   fallbackArchetypeFor,
+  FULL_BLEED_IMAGE_LAYOUTS,
   HERO_IMAGE_LAYOUTS,
   INVERTED_TEMPLATE_SUFFIX,
   invertedTemplateFileName,
@@ -368,6 +369,14 @@ import {
   type RecognisedEntity,
 } from "./entity-imagery.js";
 import { gradePictureSet, heroScrimCssBlock, imageTreatmentCssBlock, resolveGenerationStyle, type GenerationStyle } from "./style-lock.js";
+import { planImageBackfill, resolveRescuedSelection } from "./image-density.js";
+
+/** One slide the picture floor wants filled, and whether it is a slide that ASKED and failed or one that never asked. */
+interface FloorGap {
+  readonly n: number;
+  readonly prompt: string;
+  readonly backfilled: boolean;
+}
 import {
   buildLibraryEntry,
   CLIENT_UPLOAD_RIGHTS,
@@ -453,6 +462,7 @@ import {
   mergeStyleOverrides,
   ResearchOutputSchema,
   selectionPasses,
+  selectionPlacement,
   StyleConfigSchema,
   type ImageCandidate,
   type ImageSelection,
@@ -7871,6 +7881,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * unfillable would downgrade every typographic archetype straight back
        * to `text_only` — silently undoing the whole archetype set.
        */
+      /** The archetype a slide will actually render as, so a placement decision can ask whether the picture is the plate or sits in it. */
+      const layoutOf = (n: number): InstagramSlideLayout => copy.slides.find((sl) => sl.n === n)?.layout ?? "photo";
+
       const isUnfillable = (s: ImageSelection): boolean => {
         if (!photoSlideNs.has(s.n)) return false;
         if (s.imagePath === null) return true;
@@ -7878,10 +7891,28 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         if (usedImagesSet.has(s.imagePath)) return true;
         // Phase 0, item F, raised by Phase 5.5 item A3: a picture that does
         // not show the slide's SUBJECT is not a picture for that slide,
-        // however compatible it is. `selectionPasses` is the one place the
-        // floor lives — it is the `@6` subject floor when the vet scored one,
-        // and the pre-5.5 claim floor (reported as such) when it did not.
-        if (!selectionPasses(s).passes) return true;
+        // however compatible it is. `selectionPasses` is the one place that
+        // floor lives — the `@6` subject floor when the vet scored one, the
+        // pre-5.5 claim floor (reported as such) when it did not.
+        //
+        // ── AND IT IS THE FLOOR FOR A GROUND, NOT FOR EVERY PLACEMENT. ──
+        //
+        // The owner's 2026-09-16 verdict that raised it was about a generic
+        // photograph FILLING a plate. On 2026-09-18 he added the other half:
+        // *"not every image has to be a background... it really adds when
+        // there is an image inside"*. A candidate that is compatible without
+        // contradicting is filler as a ground and editorial illustration in a
+        // 300px band, so on a bounded-band panel it is fillable and on a
+        // full-bleed archetype it is not. `selectionPlacement` draws that
+        // line; a contradiction (`claimMatch` under the floor) is refused at
+        // both, because a band is as published as a ground.
+        //
+        // Geektime's slide 6 is the case: a real conference stage, scored
+        // `subjectMatch 3 / claimMatch 2`, refused outright, and the carousel
+        // shipped with no pictures at all.
+        const placement = selectionPlacement(s);
+        if (placement.placement === "refuse") return true;
+        if (placement.placement === "bounded" && FULL_BLEED_IMAGE_LAYOUTS.has(layoutOf(s.n))) return true;
         // Phase 5.5, item A2 — and the rights class, as a CODE, not as a
         // sentence. `POST_USAGE` is `"commentary"`: an Instagram carousel that
         // argues an editorial point about a news story is commentary, and
@@ -8699,7 +8730,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // the cap it records `{ action: "unfilled", reason }` and the run carries
       // on into the downgrade ladder exactly as before.
       const floorCheck = await wf.step.code(rev(`06h-imagery-floor-check-attempt-${attempt}`), () => {
-        const withPicture = selections.filter((sel) => sel.imagePath !== null && !isUnfillable(sel)).length;
+        const withPictureNs = new Set(selections.filter((sel) => sel.imagePath !== null && !isUnfillable(sel)).map((sel) => sel.n));
+        const withPicture = withPictureNs.size;
         // ── `ok` MEANS PICTURES LANDED. IT USED TO ALSO MEAN "WE TRIED". ──
         //
         // The pass condition was `withPicture >= MIN_PICTURE_SLIDES ||
@@ -8723,16 +8755,38 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // buy — and a run that has spent the guarantee and still has no pictures
         // says so, in `unfilled`, instead of reporting `ok`.
         if (withPicture >= MIN_PICTURE_SLIDES) {
-          return { action: "ok" as const, pictureSlides: withPicture, generated: generatedSoFar, slides: [] as number[] };
+          return { action: "ok" as const, pictureSlides: withPicture, generated: generatedSoFar, gaps: [] as FloorGap[] };
         }
         /** What is left of the run's generation guarantee. Zero once it has been spent, whatever the vet then did with the frames. */
         const guaranteeLeft = Math.max(0, MIN_GENERATED_IMAGES_PER_RUN - generatedSoFar);
         const want = Math.min(MIN_PICTURE_SLIDES - withPicture, guaranteeLeft);
-        const slides = selections
+
+        // ── THE FLOOR USED TO SEE ONLY THE SLIDES THAT ASKED. ──
+        //
+        // A slide whose brief said `source: "none"` produces no selection, so
+        // `filter(isUnfillable)` never returned it and the floor reported
+        // *"no slide is still without a picture, so there is nothing to
+        // fill"* — which was true of everything it could see, and false of
+        // the post. Both prep carousels of 2026-09-18 opted out on six slides
+        // of eight and shipped under the floor with that sentence in the
+        // trace: Karos at 2 pictures, Geektime at 0.
+        //
+        // Slides that failed come first: they described a picture, the run
+        // already tried to buy it, and a second attempt is the cheapest fix.
+        // `planImageBackfill` supplies the rest, bounded plates first.
+        const fromFailed: FloorGap[] = selections
           .filter(isUnfillable)
           .map((sel) => sel.n)
           .sort((a, b) => a - b)
-          .slice(0, want);
+          .slice(0, want)
+          .flatMap((n) => {
+            const slide = copy.slides.find((sl) => sl.n === n);
+            return slide === undefined ? [] : [{ n, prompt: generationPromptFor(normaliseVisualNeed(slide)), backfilled: false }];
+          });
+        const backfilled: FloorGap[] = planImageBackfill(copy, withPictureNs, want - fromFailed.length, {
+          ...(frozenStyle.treatment !== undefined ? { treatment: frozenStyle.treatment } : {}),
+        }).map((candidate) => ({ n: candidate.n, prompt: candidate.prompt, backfilled: true }));
+        const gaps = [...fromFailed, ...backfilled];
         const blocked = clientMediaOnly
           ? "this run is client-media only, so there is no generation tier to re-enter"
           : meter.crossedMax
@@ -8742,20 +8796,17 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               : guaranteeLeft === 0
                 ? `this run already generated ${generatedSoFar} image(s) — its whole guarantee of ${MIN_GENERATED_IMAGES_PER_RUN} — and ${withPicture === 0 ? "none of them" : "not enough of them"} survived vetting, ` +
                   `so there is no generation left to buy and ${withPicture} slide(s) carry a picture against a floor of ${MIN_PICTURE_SLIDES}`
-                : slides.length === 0
-                  ? "no slide is still without a picture, so there is nothing to fill"
+                : gaps.length === 0
+                  ? "every slide already carries a picture or cannot hold one, so there is nothing left to fill"
                   : undefined;
         return blocked === undefined
-          ? { action: "generate-more" as const, pictureSlides: withPicture, generated: generatedSoFar, slides }
-          : { action: "unfilled" as const, pictureSlides: withPicture, generated: generatedSoFar, slides: [] as number[], reason: blocked };
+          ? { action: "generate-more" as const, pictureSlides: withPicture, generated: generatedSoFar, gaps }
+          : { action: "unfilled" as const, pictureSlides: withPicture, generated: generatedSoFar, gaps: [] as FloorGap[], reason: blocked };
       });
       if (floorCheck.action === "generate-more") {
-        const floorGaps: ImageGap[] = floorCheck.slides
-          .map((n) => {
-            const slide = copy.slides.find((sl) => sl.n === n);
-            return { n, prompt: slide === undefined ? undefined : generationPromptFor(normaliseVisualNeed(slide)) };
-          })
-          .filter((g): g is ImageGap => g.prompt !== undefined);
+        const floorGaps: ImageGap[] = floorCheck.gaps.map((gap) => ({ n: gap.n, prompt: gap.prompt }));
+        /** Which of them are slides that never asked — their vet payload is the BRIEF, not the slide's own opted-out scene. */
+        const backfilledPrompts = new Map(floorCheck.gaps.filter((gap) => gap.backfilled).map((gap) => [gap.n, gap.prompt]));
         if (floorGaps.length > 0) {
           // REGARDLESS OF THE PLAN, per the owner's 2026-09-16 ruling that
           // quality-affecting work is never optional spend. The dollars are
@@ -8774,11 +8825,20 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 slides: floorGaps.map((g) => {
                   const slide = copy.slides.find((sl) => sl.n === g.n);
                   const need = slide === undefined ? undefined : normaliseVisualNeed(slide);
+                  // A BACKFILLED slide's own `visualNeed` describes the
+                  // picture it did not want, so grading a made frame against
+                  // it would refuse the frame for matching the brief it was
+                  // actually drawn from. Its brief IS the subject.
+                  const brief = backfilledPrompts.get(g.n);
                   return {
                     n: g.n,
                     headline: slide?.headline ?? "",
                     body: slide?.body ?? "",
-                    ...(need !== undefined ? vetSubjectFor(need) : {}),
+                    ...(brief !== undefined
+                      ? { subject: brief.slice(0, 120), mustShow: [] as string[] }
+                      : need !== undefined
+                        ? vetSubjectFor(need)
+                        : {}),
                     scene: g.prompt,
                     isClientPhotoSlot: tier0Slots.has(g.n),
                   };
@@ -8789,13 +8849,17 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               spend(rev(`06h2-vet-floor-images-attempt-${attempt}`), floorVet.totalCostUsd, STEP_COST_ESTIMATES_USD.vetCall);
               if (floorVet.status === "completed") {
                 const filled = new Map(floorVet.finalOutput!.selections.map((sel) => [sel.n, sel]));
-                selections = selections.map((sel) => {
-                  const replacement = filled.get(sel.n);
-                  // Same rule as every other rescue tier: only an actually
-                  // fillable replacement wins, so a refusal never overwrites
-                  // the original verdict with a second unusable one.
-                  return replacement === undefined || isUnfillable(replacement) ? sel : replacement;
-                });
+                selections = selections.map((sel) =>
+                  // The rule, and why it is not `isUnfillable` alone, are in
+                  // `resolveRescuedSelection` — which exists so the case can
+                  // be asserted rather than only argued for in a comment.
+                  resolveRescuedSelection({
+                    placeholder: sel,
+                    vetted: filled.get(sel.n),
+                    wasBackfilled: backfilledPrompts.has(sel.n),
+                    isUnfillable,
+                  }),
+                );
                 unfillable = selections.filter(isUnfillable);
               }
             }

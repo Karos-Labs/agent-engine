@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { defineTool, success, contentFail, toolingError } from "@agent-engine/tool-common";
-import { assessImageFloor, describeImageFloorRefusal, type ImagePixelFacts } from "./image-floor.js";
+import { assessImageFloor, describeImageFloorRefusal, type ImagePixelFacts, type ImagePlacement } from "./image-floor.js";
 import type { ImageProvenance } from "./image-provenance.js";
 import { ImageProviderError, type ImageSearchHit, type ImageSearchProvider } from "./providers.js";
 import { MEDIA_ROUTES, singleProviderSource, type ImageSource, type MediaRoute } from "./routing.js";
@@ -20,7 +20,7 @@ import { MEDIA_ROUTES, singleProviderSource, type ImageSource, type MediaRoute }
 // with its real size in the reason instead of being placed and enlarged. The
 // wire contract widens by one optional `pixels` field per candidate; no
 // existing field changed meaning, hence MINOR.
-const TOOL_VERSION = "1.2.0";
+const TOOL_VERSION = "1.3.0";
 
 /**
  * Every downloaded file lands under this repo-relative prefix. Kept in one
@@ -319,21 +319,27 @@ export function createFindImages(source: ImageSource | ImageSearchProvider, fetc
         // before any source's second. Chain order still decides who goes first
         // within a round, so the highest-confidence provider keeps its
         // precedence without taking everything.
+        const forNeed: FindImagesCandidate[] = [];
         for (const { provider, hit } of interleaveByProvider(perProviderHits)) {
           if (savedForNeed >= input.maxPerNeed) break;
           const saved = await downloadHit(fetchImpl, hit, absDir, relDir, need.n);
           if (!saved.ok) {
-            // The real reason, not "failed to download" — a 400px thumbnail
+            // The real reason, not "failed to download" — a broken container
             // and a 404 are different problems and the chain report says which.
             attempts.push(`${provider}: ${saved.reason}`);
             continue;
           }
-          candidates.push({
+          forNeed.push({
             path: saved.path,
-            // The licence rides on the description because that is the only
-            // field that reaches the vetting agent, and it has to record a
-            // real `license` string per selection.
-            description: `slide ${need.n} candidate — ${hit.description} [licence: ${hit.license}]`,
+            // The licence and the SIZE both ride on the description because
+            // it is the only field that reaches the vetting agent. The agent
+            // has to record a real `license` string per selection, and since
+            // size stopped being a refusal it also has to be able to prefer a
+            // picture that covers the frame over one that does not — which it
+            // cannot do from a description that never mentions pixels.
+            description:
+              `slide ${need.n} candidate — ${hit.description} ` +
+              `[licence: ${hit.license}] [${saved.facts.width}x${saved.facts.height}, fits: ${saved.facts.placement}]`,
             provider,
             licenseConfidence: hit.licenseConfidence ?? "unknown",
             pixels: saved.facts,
@@ -342,6 +348,22 @@ export function createFindImages(source: ImageSource | ImageSearchProvider, fetc
           savedForNeed += 1;
           if (!providersUsed.includes(provider)) providersUsed.push(provider);
         }
+
+        // Largest job first, provider precedence preserved inside a rank.
+        // This is the half of the old floor worth keeping: a thumbnail
+        // provider used to lose by being refused, and it should still lose —
+        // it just loses by being ranked below a picture that can cover the
+        // frame, instead of by having its result thrown away.
+        const RANK: Record<ImagePlacement, number> = { "full-bleed": 0, inset: 1, accent: 2 };
+        candidates.push(
+          ...forNeed
+            .map((candidate, order) => ({ candidate, order }))
+            .sort((a, b) => {
+              const byFit = RANK[a.candidate.pixels!.placement] - RANK[b.candidate.pixels!.placement];
+              return byFit !== 0 ? byFit : a.order - b.order;
+            })
+            .map(({ candidate }) => candidate),
+        );
 
         if (savedForNeed === 0) {
           const offered = perProviderHits.reduce((n, p) => n + p.hits.length, 0);
@@ -458,17 +480,21 @@ export type ImageDownload =
   | { ok: false; reason: string };
 
 /**
- * How strictly the resolution floor applies to this source.
+ * How strictly the colour floor applies to this source.
  *
- * `"enforce"` is right for everything the agent went and found: a provider
- * that only has a 600px copy of a picture has not given us a usable picture,
- * and the next provider in the chain deserves the slot.
+ * This used to be about RESOLUTION, and it no longer is: size refuses nothing
+ * from either policy since the owner's 2026-09-18 ruling, because a picture
+ * too small to cover the frame is still a perfectly good inset or mark. What
+ * is left for the two policies to differ on is a CMYK separation.
  *
- * `"measure"` is for media the CLIENT supplied. Their own photograph is not
- * a search result to be rejected — refusing it would hand back a post with
- * an empty slide and a lecture, which the always-deliver ruling forbids. It
- * is measured, its shortfall is recorded as a warning that travels with the
- * asset, and it is placed.
+ * `"enforce"`, for everything the agent went and found: a provider holding
+ * only a print separation of a picture has not given us a usable one, and the
+ * next provider in the chain deserves the slot.
+ *
+ * `"measure"`, for media the CLIENT supplied. Their own file is not a search
+ * result to be rejected — refusing it would hand back a post with an empty
+ * slide and a lecture, which the always-deliver ruling forbids. It is
+ * measured, its shortfall travels with it as a warning, and it is placed.
  */
 export type ImageFloorPolicy = "enforce" | "measure";
 
@@ -529,15 +555,15 @@ async function downloadHit(
     return { ok: false, reason: `${Math.round(bytes.byteLength / 1024 / 1024)} MB, over the ${MAX_BYTES / 1024 / 1024} MB ceiling` };
   }
 
-  // The resolution and colour floor, measured on the bytes we actually hold —
-  // before anything is written, so a refused image never reaches the disk and
-  // can never be picked up by a later path that trusts the directory.
+  // Measured on the bytes we actually hold, before anything is written, so a
+  // refused image never reaches the disk and can never be picked up by a
+  // later path that trusts the directory. Size is recorded here and decides
+  // `facts.placement`; it does not decide admission.
   const verdict = assessImageFloor(bytes);
-  // Unreadable bytes are refused under EITHER policy. `"measure"` softens the
-  // question "is this picture big enough", which is a judgement about a real
-  // image; it does not soften "is this an image at all". Placing a file no
-  // container parser recognises would mean inventing its dimensions, and a
-  // fabricated measurement is worse than no image.
+  // Unreadable bytes are refused under EITHER policy. `"measure"` softens a
+  // judgement about a real image; it does not soften "is this an image at
+  // all". Placing a file no container parser recognises would mean inventing
+  // its dimensions, and a fabricated measurement is worse than no image.
   if (verdict.facts === undefined) return { ok: false, reason: describeImageFloorRefusal(verdict) };
   if (floorPolicy === "enforce" && !verdict.ok) {
     return { ok: false, reason: describeImageFloorRefusal(verdict) };
@@ -554,9 +580,9 @@ async function downloadHit(
     return { ok: false, reason: `could not be written (${error instanceof Error ? error.message : "unknown"})` };
   }
 
-  // A measured-policy asset that misses the floor still travels with the
-  // shortfall attached, so the deliverable can say so rather than the client
-  // discovering it in the feed.
+  // Whatever it fell short on travels with it, so the deliverable can say so
+  // rather than the client discovering it in the feed. Under `"measure"` that
+  // includes the reasons `"enforce"` would have refused on.
   const warnings = verdict.ok ? verdict.warnings : [...verdict.warnings, ...verdict.reasons];
   return { ok: true, path: relative, facts: verdict.facts, warnings };
 }

@@ -1389,7 +1389,7 @@ describe("figuresInText / deviceFromText", () => {
 
   it("builds a device only when the figure, a label and a source all exist", () => {
     const device = deviceFromText("Support resolved 30% more tickets after the new triage flow.", "support dashboard export");
-    expect(device).toEqual({ kind: "figure", value: "30%", label: "Support resolved more tickets after the new triage flow.", source: "support dashboard export" });
+    expect(device).toEqual({ kind: "figure", value: "30%", label: "Support resolved more tickets after the new triage flow", source: "support dashboard export" });
     // No figure, no device — never a manufactured one.
     expect(deviceFromText("The team reworked its process end to end.", "retro notes")).toBeUndefined();
     // No source, no device: item M's rule is that every figure names its source.
@@ -1403,7 +1403,7 @@ describe("figuresInText / deviceFromText", () => {
     expect(deviceFromText("In 2024 we saved 4 hours a week.", "internal survey")).toEqual({
       kind: "figure",
       value: "4",
-      label: "In 2024 we saved hours a week.",
+      label: "In 2024 we saved hours a week",
       source: "internal survey",
     });
   });
@@ -1411,7 +1411,45 @@ describe("figuresInText / deviceFromText", () => {
   it("labels a figure from its OWN sentence, not from the whole body", () => {
     const device = deviceFromText("The rollout took a quarter. Onboarding then dropped to 7 days.", "cohort analysis");
     expect(device?.value).toBe("7");
-    expect(device?.label).toBe("Onboarding then dropped to days.");
+    // "…dropped to" — the figure completes the clause, so the label stops
+    // where the clause starts reaching for it. This used to read "Onboarding
+    // then dropped to days.", which is the milder form of what shipped on
+    // slide 3 of the Karos carousel: "dropping accuracy to ."
+    expect(device?.label).toBe("Onboarding then dropped");
+  });
+
+  it("refuses rather than printing a clause with its value cut out of the middle", () => {
+    // The shipped defect, exactly. The figure is the last thing in the
+    // sentence and the full stop survives the splice, so the plate printed a
+    // sentence whose value was the one thing missing from it — directly
+    // under that value, set at display size.
+    const shipped = deviceFromText("Error stacks at every step, dropping accuracy to 77%.", "MLDeep Blog");
+    expect(shipped?.label).toBe("Error stacks at every step, dropping accuracy");
+    expect(shipped?.label).not.toContain(" .");
+
+    // And when nothing readable is left, no device at all: a big number over
+    // a one-word fragment is the "technically correct and empty" this
+    // extractor exists to refuse.
+    expect(deviceFromText("Down to 12%.", "a source")).toBeUndefined();
+  });
+
+  it("does NOT cut the clause when the sentence CONTINUES past the figure", () => {
+    // The first version of the connector rule tested the preposition alone
+    // and cut wherever it matched, which threw the rest of the sentence away
+    // on every mid-sentence figure. This repo's own fixtures falsified it in
+    // one run: both of these are `goodCopyOutput()` bodies, and both became
+    // stubs.
+    expect(deviceFromText("Every team that handed it to the tool got about 4 hours a week back, which is most of a working morning.", "s")?.label)
+      .toContain("hours a week back");
+    expect(deviceFromText("It ran to 14 days and now runs to 7, which is the difference.", "s")?.label)
+      .toContain("and now runs to 7");
+  });
+
+  it("cuts the clause when the figure is what the sentence ENDS on, with or without a unit word after it", () => {
+    expect(deviceFromText("Error stacks at every step, dropping accuracy to 77%.", "s")?.label)
+      .toBe("Error stacks at every step, dropping accuracy");
+    expect(deviceFromText("The rollout took a quarter. Onboarding then dropped to 7 days.", "s")?.label)
+      .toBe("Onboarding then dropped");
   });
 });
 

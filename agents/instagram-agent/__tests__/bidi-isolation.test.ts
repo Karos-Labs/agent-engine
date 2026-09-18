@@ -488,3 +488,45 @@ describe.skipIf(!isChromiumInstalled())("a mixed Hebrew/Latin cover renders at 1
     expect(composed.replace(/\{\{lang\}\}/g, fields["lang"]!)).toContain('<html lang="he" dir="{{dir}}">');
   }, 120_000);
 });
+
+/**
+ * # A THOUSANDS SEPARATOR IS INSIDE THE NUMBER, NOT BESIDE IT
+ *
+ * Geektime's prep slide 6 of 2026-09-18 printed `מול 500,1 מפתחים` where the
+ * draft said `מול 1,500 מפתחים`. This module caused it. Without the comma in
+ * the token's inside class, `1,500` is two matches: `1`, which is one
+ * character and ships bare under `MIN_ISOLATED_RUN_CHARS`, and `500`, which
+ * is isolated. FSI..PDI is opaque by design, so UAX#9's W4 cannot collapse
+ * `EN CS EN` across it, and RTL order then reverses the halves.
+ *
+ * Plain bidi gets this right on its own. The isolation broke it.
+ */
+describe("a separated number survives isolation", () => {
+  it("keeps 1,500 whole instead of shipping `1,` beside an isolated `500`", () => {
+    const isolated = isolateForeignRuns("מול 1,500 מפתחים.", "rtl");
+    expect(isolated).toContain(`${FSI}1,500${PDI}`);
+    // The exact shape that shipped, asserted as absent: a bare `1,` followed
+    // by an isolate. Removing the comma from the class brings it straight back.
+    expect(isolated).not.toContain(`1,${FSI}`);
+  });
+
+  it("handles the shapes a stat line actually carries", () => {
+    for (const [raw, whole] of [
+      ["גדל ב-1,234,567 משתמשים", "1,234,567"],
+      ["1,500 מפתחים", "1,500"],
+      ["עלה 12,5 אחוז", "12,5"],
+    ] as const) {
+      expect(isolateForeignRuns(raw, "rtl"), raw).toContain(`${FSI}${whole}${PDI}`);
+    }
+  });
+
+  it("still leaves a SENTENCE comma outside, so it stays on the correct side of the line", () => {
+    // The end anchor does this, and it is why the fix is one character in the
+    // inside class rather than a looser token.
+    expect(isolateForeignRuns("קראנו 1,500, ואז עצרנו", "rtl")).toContain(`${FSI}1,500${PDI},`);
+  });
+
+  it("is still a no-op for an LTR post", () => {
+    expect(isolateForeignRuns("we counted 1,500 of them", "ltr")).toBe("we counted 1,500 of them");
+  });
+});

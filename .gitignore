@@ -13,21 +13,22 @@ _to_delete/
 # agents/instagram-agent/__tests__/default-template-render.test.ts's scratch outDir —
 # has to live inside the repo root (assertInside requires a repo-relative outDir),
 # cleaned up in afterEach but ignored here as a backstop against a crashed run.
-.tmp-render-test-*/
-# The same backstop for the two render suites that grew their own scratch outDir
-# after that line was written: interest-floor-calibration.test.ts and
-# template-mark-slots.test.ts. Both clean up in afterEach, and both leave a
-# directory behind when a run is killed mid-render — which is how an uncommitted
-# `.tmp-calibration-*` came within a `git add -A` of being committed.
-.tmp-calibration-*/
-.tmp-mark-slots-*/
-# And the third, which the sentence above did not save anybody from:
-# style-lock.test.ts writes a `.tmp-style-lock-*` per treatment, and on
-# 2026-09-18 a `git add -A` run while that suite was mid-render committed
-# eighteen of its rendered templates. The lesson the comment above records
-# is right and was not enough, because the pattern list is a denylist: a new
-# render suite with a new scratch prefix is invisible until it happens.
-.tmp-style-lock-*/
+#
+# ── THIS IS AN ALLOWLIST'S OPPOSITE, SO IT IS NOW ONE PATTERN. ──
+#
+# It was four: `.tmp-render-test-*`, `.tmp-calibration-*`, `.tmp-mark-slots-*`
+# and `.tmp-style-lock-*`, each added after a run was killed mid-render and
+# left its scratch behind. The third of them carried a comment saying exactly
+# why the list was the wrong shape — *"the pattern list is a denylist: a new
+# render suite with a new scratch prefix is invisible until it happens"* —
+# and then on the same day `.tmp-furniture-*` happened and a `git add -A`
+# committed fifteen rendered templates from `template-furniture.test.ts`.
+#
+# Every one of these is a suite's own scratch under the repo root, and it has
+# to live there because `publish.renderCarousel`'s `assertInside` only accepts
+# a repo-relative outDir. Nothing in this repo is a `.tmp-` directory anyone
+# wants committed, so the prefix is the rule and a new suite needs no edit.
+.tmp-*/
 # Per-run scratch that MUST live under repoRoot, because publish.renderCarousel's
 # assertInside only accepts repo-relative paths. Both are written by a real run
 # (not only by tests), and in local development repoRoot IS this repo, so without

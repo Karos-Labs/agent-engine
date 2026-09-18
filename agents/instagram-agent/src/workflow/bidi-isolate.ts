@@ -62,8 +62,23 @@ export const PDI = "⁩";
  * sentence period, comma or closing bracket stays OUTSIDE and keeps taking
  * the paragraph's own direction, which is what puts it on the correct side of
  * the line.
+ * ── THE COMMA IS IN THE INSIDE CLASS, AND LEAVING IT OUT REVERSED NUMBERS. ──
+ *
+ * Geektime's prep slide 6 printed `מול 500,1 מפתחים` where the draft said
+ * `מול 1,500 מפתחים`. Without the comma, `1,500` is not one token: `1` matches
+ * alone, is one character, and falls under `MIN_ISOLATED_RUN_CHARS`, so it
+ * ships bare — while `500` matches separately and IS isolated. An FSI..PDI
+ * sequence is opaque to the bidi algorithm by design, which is the whole
+ * reason this module uses it, so UAX#9's W4 (EN CS EN collapses to one
+ * number) can no longer see across the boundary. The two halves become
+ * separate runs and RTL order puts them back the wrong way round.
+ *
+ * So the isolation CAUSED the defect. Plain bidi renders `1,500` correctly in
+ * a Hebrew paragraph, and this module broke it by cutting the number in half.
+ * The end anchor still keeps a SENTENCE comma outside, because a token may
+ * not end on one.
  */
-const FOREIGN_TOKEN = String.raw`[A-Za-z0-9](?:[A-Za-z0-9.@/&+#'’_-]*[A-Za-z0-9%])?`;
+const FOREIGN_TOKEN = String.raw`[A-Za-z0-9](?:[A-Za-z0-9.,@/&+#'’_-]*[A-Za-z0-9%])?`;
 
 /**
  * One foreign RUN: a maximal sequence of foreign tokens separated by SINGLE
