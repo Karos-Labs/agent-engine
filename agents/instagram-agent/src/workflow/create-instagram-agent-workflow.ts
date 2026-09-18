@@ -7368,13 +7368,22 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       if (mechanical.repairs.length > 0) {
         copy = mechanical.copy;
         recordSalvage(attempt, 1, copy);
-        selfCheckFindings.push({
-          gate: "craft",
-          step: rev(`05-write-copy-attempt-${attempt}`),
-          kind: "mechanical-dash",
-          detail: describeRepairs(mechanical.repairs),
-          remedy: "repaired",
-        });
+        // ── A REPAIR IS NOT A FINDING, AND THE DIFFERENCE IS LOAD-BEARING. ──
+        //
+        // The first version of this pushed onto `selfCheckFindings`, which is
+        // what builds the DEGRADE marker. Every run that had ever contained a
+        // dash then shipped `degraded`, and `09f-auto-promote-templates` never
+        // fired because it counts CLEAN ships. Six tests said so.
+        //
+        // They were right. A degrade marker asks a reviewer to weigh something
+        // the post got wrong; this cost nothing, changed punctuation the guide
+        // already bans, and is the reason no redraft was bought. It belongs in
+        // the trace, which is what a step checkpoint is.
+        await wf.step.code(rev(`05m-repair-mechanical-tells-attempt-${attempt}`), () => ({
+          repaired: mechanical.repairs.length,
+          note: describeRepairs(mechanical.repairs),
+          fields: mechanical.repairs.map((r) => r.field),
+        }));
       }
       // Whatever this attempt finished with is what the NEXT one edits. Set
       // after the repair so a revision starts from repaired text and cannot

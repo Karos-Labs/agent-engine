@@ -22,6 +22,7 @@ import {
   InstagramBriefAgent,
   InstagramConceptAgent,
   InstagramCopyAgent,
+  InstagramCopyReviseAgent,
   InstagramDesignBriefAgent,
   InstagramImageVettingAgent,
   InstagramNativeEditorAgent,
@@ -105,6 +106,10 @@ function everyInstagramAgentPolicy(): Array<{ id: string; policy: ModelPolicy }>
     new InstagramBriefAgent(noopRuntime),
     new InstagramConceptAgent(noopRuntime),
     new InstagramCopyAgent(noopRuntime),
+    // 2026-09-18: the retry that EDITS the previous draft instead of writing a
+    // new carousel. Added to this list the same commit the class was written,
+    // which is the rule the comment above states.
+    new InstagramCopyReviseAgent(noopRuntime),
     // Phase 5.5 item B3: the markup half of a writer-designed layout, hoisted
     // off the copy step. Added to this list the same commit the class was
     // written, which is the rule the comment above states.
@@ -146,10 +151,12 @@ describe("no Instagram step resolves to a premium model, in any language (RFC-15
     // silently produced nothing cannot pad the count.
     expect(policies.filter((p) => typeof p.id === "string" && p.id.length > 0)).toHaveLength(onDisk.length);
     const sensitive = policies.filter((p) => p.policy.contentLanguageSensitive === true);
-    // Five of them, on `claude-sonnet-4-6`. If a future change deletes these flags, this assertion fails and
+    // Six of them since 2026-09-18, on `claude-sonnet-4-6`: the revise step edits a draft in the post's own
+    // language, so it is as language-sensitive as the drafting step it stands in for. If a future change
+    // deletes these flags, this assertion fails and
     // says so, rather than the suite quietly passing because there is nothing left to re-point.
     expect(sensitive.map((p) => p.id).sort()).toEqual(
-      ["instagram-angle", "instagram-brief", "instagram-copy", "instagram-custom-archetype", "instagram-design-brief", "instagram-template-designer"].sort(),
+      ["instagram-angle", "instagram-brief", "instagram-copy", "instagram-copy-revise", "instagram-custom-archetype", "instagram-design-brief", "instagram-template-designer"].sort(),
     );
     expect(sensitive.every((p) => p.policy.model === "claude-sonnet-4-6")).toBe(true);
   });

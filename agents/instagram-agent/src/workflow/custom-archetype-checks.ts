@@ -80,6 +80,11 @@ export const KNOWN_SLOT_NAMES: ReadonlySet<string> = new Set([
   "slideIndex",
   "deviceFigures",
   "deviceKind",
+  // 2026-09-18: WHERE a bounded picture sits on the plate. Code-derived like
+  // the four above and equally not content. Added here the same commit the
+  // eight templates started reading it, because this set has to stay the
+  // superset its doc comment promises: without it every run holds.
+  "figurePlacement",
   // The two fields every slide always has.
   "headline",
   "body",
