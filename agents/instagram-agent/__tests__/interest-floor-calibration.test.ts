@@ -915,7 +915,10 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
           // nothing else — the same posture the position-1/last test asserts.
           expect(
             checkInterestFloor(entry.metrics, entry.probe, roles[index]!, optsFor(entry)).findings.map((f) => f.kind).filter((k) => k !== "no-device"),
-            `${entry.template} @ fontScale ${fontScale}`,
+            // The SENTENCES in the message, not just the kinds in the value:
+            // a `clipped` on a sweep of 16 renders names nothing a reader can
+            // act on, and every finding already carries the sentence that does.
+            `${entry.template} @ fontScale ${fontScale}: ${checkInterestFloor(entry.metrics, entry.probe, roles[index]!, optsFor(entry)).findings.map((f) => f.sentence).join(" | ")}`,
           ).toEqual([]);
           expect(entry.probe.overflow, `${entry.template} @ fontScale ${fontScale} overflows: ${entry.probe.overflowing.join(", ")}`).toBe(false);
         }
@@ -1774,7 +1777,19 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
       // reason that is not the defect it is looking for. Extend it by giving
       // each scale its own measured literal, never by widening this one to
       // cover the loudest.
-      expect(measured[1]!.metrics.imageryOrDeviceShare, "a 1x1 transparent hero measured 2.7% on the current templates").toBeLessThan(0.035);
+      //
+      // ── RE-MEASURED, THE WAY THE PARAGRAPH ABOVE SAYS TO. ──
+      // Phase 5.6 put real ink on this plate that was not there when 2.7% was
+      // taken — the plate now carries its own drawn furniture whether or not a
+      // hero loaded — and the same render measures **3.6%** at `m`. That is the
+      // case the paragraph above describes: the number moved because the
+      // TEMPLATE changed, not because the hero contributed anything, and the
+      // literal moves with the new measurement rather than the assertion being
+      // widened to the floor. 0.048 is 3.6% plus a third of itself, the same
+      // headroom 0.035 gave 2.7%, and still less than half the 0.10 floor the
+      // line below asserts — so the two assertions continue to pin two
+      // different facts.
+      expect(measured[1]!.metrics.imageryOrDeviceShare, "a 1x1 transparent hero measured 3.6% on the current templates").toBeLessThan(0.048);
       expect(checkInterestFloor(measured[1]!.metrics, measured[1]!.probe, "cover", optsFor(measured[1]!)).findings.map((f) => f.kind)).toContain("no-device");
     },
     300_000,

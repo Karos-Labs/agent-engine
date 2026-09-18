@@ -80,6 +80,48 @@
       if (box.top < f.top - 1 || box.bottom > f.bottom + 1) return true;
     }
 
+    /* ── A BOX ESCAPING ITS OWN PARENT, WHICH THE PLATE'S FIELD CANNOT SEE. ──
+       The limb above asks whether anything left the field the PLATE reserved.
+       That is not the same question the render check asks: `render-carousel`'s
+       probe compares each element against ITS OWN PARENT, so a box that grows
+       out of its container while staying inside the plate is `clipped` to the
+       interest floor and invisible here.
+
+       Measured on this tree: the cover's figure device is 359px in a band whose
+       content box came out 254px, and the band aligns its item to the block-end
+       — so the excess went out of the TOP of the band, 49px above it, while
+       still sitting 7px below the plate's own content edge. The ladder reported
+       `data-fit-step=0` (nothing to fix) and the render check reported one
+       element overflowing its own box. Both were right about their own
+       question; only one of them was asked.
+
+       The three exclusions are the probe's, for the probe's reasons: a parent
+       that is not `overflow: visible` has already declared what happens to
+       content leaving it, an absolutely positioned child is placed rather than
+       laid out, and a 2px tolerance covers a display face whose glyph box sits
+       a subpixel or two above its line box. Same question, same answer — which
+       is the only way the ladder can fix what the check will report. */
+    for (var k = 0; k < content.length; k++) {
+      var child = content[k];
+      var owner = child.parentElement;
+      if (!owner || owner === plate) continue;
+      var childBox = child.getBoundingClientRect();
+      if (childBox.height === 0 || childBox.width === 0) continue;
+      var childStyle = getComputedStyle(child);
+      if (childStyle.position === 'absolute' || childStyle.position === 'fixed') continue;
+      /* An INLINE box's rect is the union of its line fragments, sized by the
+         face's ascent and descent rather than by `line-height` — it starts a
+         few px above the block that contains it at every size, which is
+         typography rather than escape. The probe excludes it for the same
+         reason; the two have to agree or the ladder shrinks type to chase a
+         finding that is never reported. */
+      if (childStyle.display === 'inline' || childStyle.display === 'contents') continue;
+      if (getComputedStyle(owner).overflow !== 'visible') continue;
+      var ownerBox = owner.getBoundingClientRect();
+      if (ownerBox.height === 0) continue;
+      if (childBox.top < ownerBox.top - 2) return true;
+    }
+
     /* THE CANVAS ITSELF. A host that sets a `max-inline-size` in `ch` grows with
        the step it is given, so at the top of the ladder a 15ch measure at the
        figure step is wider than the plate — the first render of this system

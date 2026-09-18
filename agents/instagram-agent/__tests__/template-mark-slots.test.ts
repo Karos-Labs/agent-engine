@@ -1124,8 +1124,11 @@ describe.skipIf(!isChromiumInstalled())("RFC-17 twin slots render (Chromium)", (
           const plainProbe = plainOut.result.rendered[0]!.probe!;
           const markedProbe = markedOut.result.rendered[0]!.probe!;
           expect(markedProbe.fontFamiliesUsed).toEqual(plainProbe.fontFamiliesUsed);
-          expect(markedProbe.overflow, `${file} ${dir} ${scale}: marked render overflows`).toBe(false);
-          expect(plainProbe.overflow, `${file} ${dir} ${scale}: unmarked render overflows`).toBe(false);
+          // The SELECTORS, not just the boolean: "something overflowed" on a
+          // sweep of 36 renders is a fact nobody can act on, and the probe
+          // already names up to six boxes.
+          expect(markedProbe.overflow, `${file} ${dir} ${scale}: marked render overflows: ${markedProbe.overflowing.join(", ")}`).toBe(false);
+          expect(plainProbe.overflow, `${file} ${dir} ${scale}: unmarked render overflows: ${plainProbe.overflowing.join(", ")}`).toBe(false);
 
           // `textBoxShare` is asserted as NOT COLLAPSED rather than as equal,
           // and the difference is honest arithmetic rather than a softened
@@ -1160,7 +1163,7 @@ describe.skipIf(!isChromiumInstalled())("RFC-17 twin slots render (Chromium)", (
           const probe = out.result.rendered[0]!.probe!;
           expect(probe.markRuns, `${file} ${dir} ${scale}: the fragment did not reach the DOM`).toBe(3);
           expect(probe.markRunsPainted, `${file} ${dir} ${scale}: the mark stylesheet did not arrive`).toBe(3);
-          expect(probe.overflow, `${file} ${dir} ${scale}: a painted mark pushed the block out of its box`).toBe(false);
+          expect(probe.overflow, `${file} ${dir} ${scale}: a painted mark pushed the block out of its box: ${probe.overflowing.join(", ")}`).toBe(false);
         }, 60_000);
       }
     }
