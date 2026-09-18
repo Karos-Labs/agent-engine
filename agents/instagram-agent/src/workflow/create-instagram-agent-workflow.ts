@@ -187,6 +187,7 @@ import {
   checkSlidesData,
   collectDeviceIssues,
   fallbackArchetypeFor,
+  FULL_BLEED_IMAGE_LAYOUTS,
   HERO_IMAGE_LAYOUTS,
   INVERTED_TEMPLATE_SUFFIX,
   invertedTemplateFileName,
@@ -460,6 +461,7 @@ import {
   mergeStyleOverrides,
   ResearchOutputSchema,
   selectionPasses,
+  selectionPlacement,
   StyleConfigSchema,
   type ImageCandidate,
   type ImageSelection,
@@ -7871,6 +7873,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * unfillable would downgrade every typographic archetype straight back
        * to `text_only` — silently undoing the whole archetype set.
        */
+      /** The archetype a slide will actually render as, so a placement decision can ask whether the picture is the plate or sits in it. */
+      const layoutOf = (n: number): InstagramSlideLayout => copy.slides.find((sl) => sl.n === n)?.layout ?? "photo";
+
       const isUnfillable = (s: ImageSelection): boolean => {
         if (!photoSlideNs.has(s.n)) return false;
         if (s.imagePath === null) return true;
@@ -7878,10 +7883,28 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         if (usedImagesSet.has(s.imagePath)) return true;
         // Phase 0, item F, raised by Phase 5.5 item A3: a picture that does
         // not show the slide's SUBJECT is not a picture for that slide,
-        // however compatible it is. `selectionPasses` is the one place the
-        // floor lives — it is the `@6` subject floor when the vet scored one,
-        // and the pre-5.5 claim floor (reported as such) when it did not.
-        if (!selectionPasses(s).passes) return true;
+        // however compatible it is. `selectionPasses` is the one place that
+        // floor lives — the `@6` subject floor when the vet scored one, the
+        // pre-5.5 claim floor (reported as such) when it did not.
+        //
+        // ── AND IT IS THE FLOOR FOR A GROUND, NOT FOR EVERY PLACEMENT. ──
+        //
+        // The owner's 2026-09-16 verdict that raised it was about a generic
+        // photograph FILLING a plate. On 2026-09-18 he added the other half:
+        // *"not every image has to be a background... it really adds when
+        // there is an image inside"*. A candidate that is compatible without
+        // contradicting is filler as a ground and editorial illustration in a
+        // 300px band, so on a bounded-band panel it is fillable and on a
+        // full-bleed archetype it is not. `selectionPlacement` draws that
+        // line; a contradiction (`claimMatch` under the floor) is refused at
+        // both, because a band is as published as a ground.
+        //
+        // Geektime's slide 6 is the case: a real conference stage, scored
+        // `subjectMatch 3 / claimMatch 2`, refused outright, and the carousel
+        // shipped with no pictures at all.
+        const placement = selectionPlacement(s);
+        if (placement.placement === "refuse") return true;
+        if (placement.placement === "bounded" && FULL_BLEED_IMAGE_LAYOUTS.has(layoutOf(s.n))) return true;
         // Phase 5.5, item A2 — and the rights class, as a CODE, not as a
         // sentence. `POST_USAGE` is `"commentary"`: an Instagram carousel that
         // argues an editorial point about a news story is commentary, and

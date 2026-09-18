@@ -1325,6 +1325,65 @@ export function selectionPasses(selection: Pick<ImageSelection, "rightsUsable" |
   };
 }
 
+/**
+ * How far a vetted candidate may be placed: as the whole plate, inside it, or
+ * not at all.
+ *
+ * ## Why the floor needed a middle rung
+ *
+ * `selectionPasses` is a pass/fail, and a fail meant the slide got NOTHING.
+ * Geektime's prep slide 6 of 2026-09-18 asked for a conference stage and was
+ * offered one: `subjectMatch 3, claimMatch 2`, refused as *"an anonymous
+ * crowd rather than a picture of the specific entity"*. The slide shipped
+ * with no picture, and the carousel shipped with none at all.
+ *
+ * Both of the owner's rulings are right and they are about different
+ * placements. On 2026-09-16, looking at a generic stock photograph filling a
+ * plate: *that is not a picture* — which is what `MIN_SUBJECT_MATCH` was
+ * raised to 4 for, and it stands. On 2026-09-18: *"not every image has to be
+ * a background. Images can appear inside the post as part of it, even if it
+ * is a small part... it really adds when there is an image inside."*
+ *
+ * A generically compatible photograph filling a 1080x1440 plate is filler.
+ * The same photograph in a 300px band beside type is editorial illustration,
+ * which is the register the second ruling asks for and which no carousel has
+ * shipped yet. So the floor for the GROUND is unchanged, and a candidate that
+ * misses it can still be placed inside a plate.
+ *
+ * ## What still refuses, and why that line is where it is
+ *
+ * `claimMatch` below `MIN_CLAIM_MATCH` is a picture that says something the
+ * slide does not — a CONTRADICTION, not a weak match. That refuses at every
+ * placement, because a band is as published as a ground. It is also the axis
+ * the fabricated-figure incident turned on, and nothing here loosens it.
+ */
+export type SelectionPlacement = "full-bleed" | "bounded" | "refuse";
+
+export interface SelectionPlacementVerdict {
+  placement: SelectionPlacement;
+  reason: string;
+}
+
+export function selectionPlacement(
+  selection: Pick<ImageSelection, "rightsUsable" | "watermarkFree" | "claimMatch" | "subjectMatch">,
+): SelectionPlacementVerdict {
+  const ground = selectionPasses(selection);
+  if (ground.passes) return { placement: "full-bleed", reason: ground.reason };
+  if (!selection.rightsUsable || !selection.watermarkFree) return { placement: "refuse", reason: ground.reason };
+  if (selection.claimMatch < MIN_CLAIM_MATCH) {
+    return {
+      placement: "refuse",
+      reason: `claimMatch ${selection.claimMatch}/5 is under the ${MIN_CLAIM_MATCH}/5 floor — the picture says something the slide does not, which no placement makes acceptable`,
+    };
+  }
+  return {
+    placement: "bounded",
+    reason:
+      `${ground.reason}; compatible without contradicting (claimMatch ${selection.claimMatch}/5), so it is placed INSIDE the plate ` +
+      `beside the type rather than as its ground`,
+  };
+}
+
 export const ImageVettingOutputSchema = z.object({
   selections: z.array(ImageSelectionSchema).min(1),
 });
