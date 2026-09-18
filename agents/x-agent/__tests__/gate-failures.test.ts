@@ -1,7 +1,9 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createXAgentWorkflow } from "../src/workflow/create-x-agent-workflow.js";
-import { fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import {
+  allProse,
+  deliveredPost, fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 
 const baseParams = { clientSlug: "acme", productId: "x-agent", runKind: "recurring" as const };
 
@@ -18,7 +20,7 @@ function goodPost(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe("content gate failures (RFC-02 §3 steps 11-14d)", () => {
+describe("content gate failures are REPAIRED, never held (RFC-02 §3 steps 11-14r)", () => {
   let env: TestEnvironment;
 
   beforeEach(async () => {
@@ -29,7 +31,7 @@ describe("content gate failures (RFC-02 §3 steps 11-14d)", () => {
     await env.cleanup();
   });
 
-  it("an unsourced numeric claim fails gate.numbersSourced at step 11 -> held", async () => {
+  it("an unsourced numeric claim is removed from the post, which still ships", async () => {
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([
       finalTurn(
@@ -41,24 +43,26 @@ describe("content gate failures (RFC-02 §3 steps 11-14d)", () => {
         }),
       ),
     ]);
-    const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "x_run_gate_numbers" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/numbers not sourced/i);
+    // The old contract was `held`. The gate keeps its authority over what may
+    // be PUBLISHED, asserted below; it lost the authority to end the run.
+    expect(result.status).toBe("completed");
 
-    const stepRecords = await durableStore.listSteps("x_run_gate_numbers");
-    const ids = stepRecords.map((s) => s.stepId);
-    expect(ids).toContain("10-draft-post");
+    const post = await deliveredPost(env, "x_run_gate_numbers");
+    expect(allProse(post)).not.toContain("43%");
+
+    const ids = (await durableStore.listSteps("x_run_gate_numbers")).map((s) => s.stepId);
     expect(ids).toContain("11-verify-numbers-sourced");
-    expect(ids).not.toContain("12-verify-brand-compliance");
+    expect(ids).toContain("12-verify-brand-compliance");
+    expect(ids).toContain("14r-repair-post");
   });
 
-  it("a forbidden brand term fails gate.brandCompliance at step 12 -> held", async () => {
+  it("a forbidden brand term is removed from the post, which still ships", async () => {
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([
       finalTurn(
@@ -69,23 +73,26 @@ describe("content gate failures (RFC-02 §3 steps 11-14d)", () => {
         }),
       ),
     ]);
-    const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "x_run_gate_brand" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/brand compliance failed/i);
+    expect(result.status).toBe("completed");
 
-    const stepRecords = await durableStore.listSteps("x_run_gate_brand");
-    const ids = stepRecords.map((s) => s.stepId);
+    const post = await deliveredPost(env, "x_run_gate_brand");
+    expect(allProse(post)).not.toContain("guaranteed");
+
+    // Every later check still runs, on the repaired post — the brand gate no
+    // longer short-circuits the ones after it.
+    const ids = (await durableStore.listSteps("x_run_gate_brand")).map((s) => s.stepId);
     expect(ids).toContain("12-verify-brand-compliance");
-    expect(ids).not.toContain("13-verify-link-placement");
+    expect(ids).toContain("13-verify-link-placement");
+    expect(ids).toContain("14r-repair-post");
   });
 
-  it("a link in mainPostText alongside a set firstReplyUrl fails the link-placement check at step 13 -> held", async () => {
+  it("a link in mainPostText alongside a set firstReplyUrl is REMOVED from the body, not held", async () => {
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([
       finalTurn(
@@ -97,20 +104,23 @@ describe("content gate failures (RFC-02 §3 steps 11-14d)", () => {
         }),
       ),
     ]);
-    const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "x_run_gate_link" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/bare link/i);
+    expect(result.status).toBe("completed");
 
-    const stepRecords = await durableStore.listSteps("x_run_gate_link");
-    const ids = stepRecords.map((s) => s.stepId);
+    // The URL is gone from the body and the thread. Nothing is lost: it is
+    // already in `firstReplyUrl`, which is exactly where the rule wants it.
+    const post = await deliveredPost(env, "x_run_gate_link");
+    expect(allProse(post)).not.toContain("https://acme.example.com/report");
+    expect(post["firstReplyUrl"]).toBe("https://acme.example.com/report");
+
+    const ids = (await durableStore.listSteps("x_run_gate_link")).map((s) => s.stepId);
     expect(ids).toContain("13-verify-link-placement");
-    expect(ids).not.toContain("14-render-preview-check");
+    expect(ids).toContain("14-render-preview-check");
   });
 
   it("a clean post with a link only in firstReplyUrl clears the link-placement check", async () => {
@@ -135,7 +145,7 @@ describe("content gate failures (RFC-02 §3 steps 11-14d)", () => {
     expect(stepRecords.map((s) => s.stepId)).toContain("13-verify-link-placement");
   });
 
-  it("a planted placeholder marker fails gate.noPlaceholder at step 14c, BEFORE the human gate -> held", async () => {
+  it("a planted placeholder marker is removed before the post reaches the human gate", async () => {
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([
       finalTurn(
@@ -152,21 +162,22 @@ describe("content gate failures (RFC-02 §3 steps 11-14d)", () => {
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "x_run_gate_placeholder" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/placeholder/i);
+    expect(result.status).toBe("completed");
 
-    const stepRecords = await durableStore.listSteps("x_run_gate_placeholder");
-    const ids = stepRecords.map((s) => s.stepId);
+    const post = await deliveredPost(env, "x_run_gate_placeholder");
+    expect(allProse(post)).not.toContain("{{TOPIC}}");
+
+    // AU13's invariant still holds, and is now stronger: the finding is
+    // surfaced AND repaired before the human gate, so the reviewer sees a
+    // clean post rather than approving one that would then be killed with no
+    // revision path.
+    const ids = (await durableStore.listSteps("x_run_gate_placeholder")).map((s) => s.stepId);
     expect(ids).toContain("14c-verify-no-placeholder");
-    expect(ids).not.toContain("14d-verify-no-leak");
-    // AU13: the finding must surface BEFORE the human gate. Reaching
-    // `15-batch-review-r0` would mean a reviewer approved a draft that was
-    // then killed with no revision path — the exact bug this ordering fixes.
-    expect(ids).not.toContain("15-batch-review-r0");
+    expect(ids).toContain("14r-repair-post");
+    expect(ids.indexOf("14r-repair-post")).toBeLessThan(ids.indexOf("15-batch-review-r0"));
   });
 
-  it("a planted credential-shaped leak fails gate.leakCheck at step 14d, BEFORE the human gate -> held", async () => {
+  it("a planted credential-shaped leak is removed before the post reaches the human gate", async () => {
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([
       finalTurn(
@@ -183,16 +194,17 @@ describe("content gate failures (RFC-02 §3 steps 11-14d)", () => {
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "x_run_gate_leak" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/leak check failed/i);
+    expect(result.status).toBe("completed");
 
-    const stepRecords = await durableStore.listSteps("x_run_gate_leak");
-    const ids = stepRecords.map((s) => s.stepId);
+    // The credential is gone from `text` AND `mainPostText` — the two are kept
+    // in lockstep precisely so a repair cannot clean one and ship the other.
+    const post = await deliveredPost(env, "x_run_gate_leak");
+    expect(allProse(post)).not.toContain("sk-abcdefghijklmnopqrstuvwxyz123456");
+
+    const ids = (await durableStore.listSteps("x_run_gate_leak")).map((s) => s.stepId);
     expect(ids).toContain("14d-verify-no-leak");
-    expect(ids).not.toContain("18-persist-deliverable");
-    // AU13: same invariant — caught inside the revision loop, never after approval.
-    expect(ids).not.toContain("15-batch-review-r0");
+    expect(ids).toContain("18-persist-deliverable");
+    expect(ids.indexOf("14r-repair-post")).toBeLessThan(ids.indexOf("15-batch-review-r0"));
   });
 
   it("an over-limit first draft triggers a single self-critique revision, then completes", async () => {

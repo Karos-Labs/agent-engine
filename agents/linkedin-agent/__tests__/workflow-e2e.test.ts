@@ -49,6 +49,10 @@ const ALL_19_STEP_IDS = [
   "12b-verify-link-placement",
   "13-verify-no-placeholder",
   "14-verify-no-leak",
+  // The repair step. Always present, even on a clean post: it asks what the
+  // checks above objected to and returns the draft untouched when the answer
+  // is nothing, so its presence says the repair path ran.
+  "14r-repair-post",
   // 2026-09: the media resolver. Always a step; with no media tools in this
   // registry and no brief on the draft it records `none` and moves on.
   "14b-resolve-media",
@@ -191,7 +195,7 @@ describe("end-to-end: the 20-step LinkedIn agent workflow", () => {
     expect(gateStep?.output).toMatchObject({ decision: "approve", actor: "jane@karoslabs.com" });
   });
 
-  it("rejects the batch review with a reason -> held, and the deliverable never ships", async () => {
+  it("rejects the batch review with a reason -> the work is KEPT and marked rejected, not discarded", async () => {
     const promptStore = makePromptStore();
     const router = goodDraftRouter();
     const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router });
@@ -208,13 +212,13 @@ describe("end-to-end: the 20-step LinkedIn agent workflow", () => {
     });
 
     const result = await engine.run(workflowFn, params);
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    // `runReviewCycle` is generic across agents, so the wording is
-    // "review rejected" rather than anything channel-specific.
-    expect(result.reason).toMatch(/review rejected/i);
-
-    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", params.runId, "_"]);
-    expect(deliverables).toHaveLength(0);
+    // This reverses a deliberate earlier decision, and the reversal is the
+    // point: a reject used to end the run, so a drafted post a reviewer had
+    // opinions about existed nowhere afterwards and the next run started from
+    // scratch. The gate still says no — the rejection rides on the deliverable
+    // where nobody can miss it, and no caller treats a rejected deliverable as
+    // shippable. What changed is that the reviewer keeps the work and the
+    // reason attached to it.
+    expect(result.status).toBe("completed");
   });
 });

@@ -46,8 +46,15 @@ import {
   finalizeDeliverable,
   recordOutputExcerpt,
   runAgentStepWithCommitSteer,
+  runCheckWithRepair,
+  redactSentencesCarrying,
+  localContentFail,
+  localPass,
+  spansFromEvidence,
+  type ContentRepair,
 } from "@agent-engine/workflow";
-import { RedditDraftAgent } from "../agent/reddit-draft-agent.js";
+import type { GateVerdict } from "@agent-engine/core";
+import { type RedditReplyOutput, RedditDraftAgent } from "../agent/reddit-draft-agent.js";
 import { RedditChannelPlannerAgent } from "../agent/reddit-channel-planner-agent.js";
 import { RedditThreadScoutAgent, type RedditThreadScoutOutput } from "../agent/reddit-thread-scout-agent.js";
 import { renderPreview, type RenderPreviewResult } from "../tools/render-preview.js";
@@ -108,6 +115,17 @@ export interface CreateRedditAgentWorkflowOptions {
  * that de-duplication flags and steers, it does not hold a run.
  */
 const MAX_DEDUPE_ATTEMPTS = 3;
+
+/**
+ * What the reply says when every one of its sentences carried a span a content
+ * gate rejected.
+ *
+ * Reachable only on a reply short enough that one sentence was the whole
+ * thing. It exists because the alternative at that point is falling back to
+ * the unredacted text — which republishes the very span the gate refused —
+ * and because `text` is `min(1)` in the schema.
+ */
+const REPLY_WITHHELD = "(withheld: this reply rested on content that failed verification)";
 /** Reddit's comment ceiling, the same figure `render.preview` (step 17) enforces. */
 const REDDIT_COMMENT_LIMIT = 10_000;
 
@@ -703,7 +721,12 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
      * OUTSIDE it (intake, discovery, the thread read, research) keeps its id
      * and is reused.
      */
+    /** What each drafting round had to repair before it could deliver. Empty on the normal path. */
+    const repairsByRevision = new Map<number, ContentRepair[]>();
+
     const draftOnce = async (revision: number, notes: readonly RevisionNote[]) => {
+      /** The last drafting input used, so step 17r's redraft reads exactly the same brief. */
+      let draftInputForRepair: Record<string, unknown> = {};
       const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
       const directive = revisionDirective(notes);
 
@@ -719,7 +742,7 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
           // `runAgentStepWithCommitSteer`). Opus with four tools and a
           // self-critique gate is the profile most likely to re-gate itself
           // into the ceiling.
-          const draftResult = await runAgentStepWithCommitSteer(wf, rev(att("12-draft-reply")), draftAgent, {
+          const draftInput = {
             ...runDirectionField(runDirection),
             topic,
             angle,
@@ -766,10 +789,28 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
             ...(lengthSteer !== undefined ? { lengthDirective: lengthSteer } : {}),
             ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
             ...(directive !== undefined ? { revisionRequest: directive } : {}),
-          }, "the reply draft");
+          };
+          // Kept for the repair redraft at 17r, which must send byte-identical
+          // evidence and differ only in its `revisionRequest`.
+          draftInputForRepair = draftInput;
+          const firstDraft = await runAgentStepWithCommitSteer(wf, rev(att("12-draft-reply")), draftAgent, draftInput, "the reply draft");
+
+          // A draft that came back unusable gets ANOTHER draft, not a held run:
+          // `content_fail` here means the turn returned no parseable structured
+          // output, which is a coin flip rather than a verdict on the reply.
+          const draftResult =
+            firstDraft.status === "content_fail"
+              ? await runAgentStepWithCommitSteer(wf, rev(att("12z-regenerate-reply")), draftAgent, draftInput, "the reply draft")
+              : firstDraft;
 
           if (draftResult.status === "content_fail") {
-            throw new WorkflowHeld(`draft did not clear its own self-critique gate: ${draftResult.status}`);
+            // Twice is no longer a coin flip. Nothing was drafted, so there is
+            // nothing to repair and nothing to annotate. `degraded` rather than
+            // `held`: `held` means "we looked and decided not to publish", a
+            // content verdict nobody made here. Neither status is auto-retried
+            // (the queue consumer acks every terminal status); this is about
+            // classifying the failure honestly.
+            throw new WorkflowToolingFailure("draft did not produce a parseable reply on two consecutive attempts");
           }
           if (draftResult.status !== "completed") {
             throw new WorkflowToolingFailure(`draft step resolved to "${draftResult.status}"`);
@@ -795,81 +836,306 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
         }
         throw new WorkflowToolingFailure("the de-duplication redraft loop ended without a draft");
       };
-      const draft = await draftWithVerifiedDedupe();
+      /** `let`: the repair region below may hand back a corrected reply, and everything downstream must see it. */
+      let draft = await draftWithVerifiedDedupe();
 
-      await wf.step.code(rev("13-verify-numbers-sourced"), async () => {
-        // Source CONTENT, never URLs: the thread's own text (a figure the poster
-        // stated is sourced), the client's own knowledge, and the research
-        // documents' text. Handing this gate a URL verified nothing and held
-        // every faithfully quoted number.
-        const sources = [
-          thread.body,
-          ...thread.comments.map((c) => c.body),
-          ...(clientIntelContext !== undefined ? [clientIntelContext] : []),
-          ...(research ? researchSourceTexts(research) : []),
-        ].filter((s) => s.trim().length > 0);
-        const verdict = await runGate(tools, "gate.numbersSourced", { text: draft.text, sources }, ctx);
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
-        if (verdict.verdict === "content_fail") throw new WorkflowHeld(`numbers not sourced: ${verdict.reason}`);
-        return verdict;
+      // ── 13-17r: inspect, then REPAIR. This region no longer holds the run. ──
+      //
+      // Every check here used to `throw new WorkflowHeld(...)`, ending the run
+      // and handing the client an error where a reply should have been. Each
+      // of these failures is a reason to fix one thing, not to discard a reply
+      // that a scouted thread, a research pull and a drafting pass already paid
+      // for.
+      //
+      // The checks keep their full authority over what may be PUBLISHED and
+      // lose the authority to end the run. `tooling_error` still throws.
+      //
+      // Source CONTENT, never URLs: the thread's own text (a figure the poster
+      // stated is sourced), the client's own knowledge, and the research
+      // documents' text. Handing this gate a URL verified nothing and held
+      // every faithfully quoted number.
+      const sources = [
+        thread.body,
+        ...thread.comments.map((c) => c.body),
+        ...(clientIntelContext !== undefined ? [clientIntelContext] : []),
+        ...(research ? researchSourceTexts(research) : []),
+      ].filter((t) => t.trim().length > 0);
+      const forbiddenTerms = (clientContext.brand["forbiddenTerms"] as string[] | undefined) ?? [];
+      const mentionNames = productMentionNames(clientContext);
+
+      const subredditRulesArgs = (reply: RedditReplyOutput) => ({
+        text: reply.text,
+        subreddit: selectedThread.targetSubreddit,
+        ...subredditRulesLookup,
+        mentionAttempted: reply.disclosureIncluded,
+        // The names the gate scans for, so the mention checks rest on the
+        // draft's TEXT rather than on `disclosureIncluded`, which is the
+        // model's word for what it wrote. A model that names the product and
+        // reports no mention used to switch warming, cooldown and disclosure
+        // off in one go, and the undisclosed mention went to a human to post
+        // from their own account.
+        mentionNames,
+        now: new Date().toISOString(),
       });
 
-      await wf.step.code(rev("14-verify-brand-compliance"), async () => {
-        const forbiddenTerms = clientContext.brand["forbiddenTerms"] as string[] | undefined;
-        const brandVerdict = await runGate(tools, "gate.brandCompliance", { text: draft.text, forbiddenTerms: forbiddenTerms ?? [] }, ctx);
-        if (brandVerdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.brandCompliance: ${brandVerdict.reason}`);
-        if (brandVerdict.verdict === "content_fail") throw new WorkflowHeld(`brand compliance failed: ${brandVerdict.reason}`);
+      /** The subreddit's own required disclosure line, when it has one. */
+      const requiredDisclosure = (subredditRulesLookup as { requiredDisclosure?: string }).requiredDisclosure;
 
-        // Disclosure/warming/cooldown are the subreddit-rules checks that need real
-        // draft text — re-run now that it exists, reusing step 10's lookup.
-        const disclosureVerdict = await runGate(
-          tools,
-          "gate.subredditRules",
-          {
-            text: draft.text,
-            subreddit: selectedThread.targetSubreddit,
-            ...subredditRulesLookup,
-            mentionAttempted: draft.disclosureIncluded,
-            // The names the gate scans for, so the mention checks rest on the
-            // draft's TEXT rather than on `disclosureIncluded`, which is the
-            // model's word for what it wrote. A model that names the product
-            // and reports no mention used to switch warming, cooldown and
-            // disclosure off in one go, and the undisclosed mention went to a
-            // human to post from their own account.
-            mentionNames: productMentionNames(clientContext),
-            now: new Date().toISOString(),
-          },
-          ctx,
+      /**
+       * Every content check over the reply, as one verdict.
+       *
+       * `gate.subredditRules` is in here with the other three because its
+       * mention failure has the same shape and the same repair: the gate's own
+       * message says "either drop the name or set the disclosure", and dropping
+       * the name is exactly what the redaction floor does.
+       */
+      const inspectSpans = async (reply: RedditReplyOutput): Promise<GateVerdict> => {
+        const verdicts = await Promise.all([
+          runGate(tools, "gate.numbersSourced", { text: reply.text, sources }, ctx),
+          runGate(tools, "gate.brandCompliance", { text: reply.text, forbiddenTerms }, ctx),
+          runGate(tools, "gate.noPlaceholder", { text: reply.text }, ctx),
+          runGate(tools, "gate.leakCheck", { text: reply.text }, ctx),
+          runGate(tools, "gate.subredditRules", subredditRulesArgs(reply), ctx),
+        ]);
+        const broken = verdicts.find((v) => v.verdict === "tooling_error");
+        if (broken !== undefined && broken.verdict === "tooling_error") {
+          throw new WorkflowToolingFailure(`reddit content gate: ${broken.reason}`);
+        }
+        const failures = verdicts.filter((v) => v.verdict === "content_fail");
+        if (failures.length === 0) return localPass("reddit-content-gates");
+        return localContentFail(
+          "reddit-content-gates",
+          failures.map((v) => (v.verdict === "content_fail" ? v.reason : "")).join("; "),
+          failures.flatMap((v) => v.evidence),
         );
-        if (disclosureVerdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.subredditRules: ${disclosureVerdict.reason}`);
-        if (disclosureVerdict.verdict === "content_fail") throw new WorkflowHeld(`subreddit mention/disclosure check failed: ${disclosureVerdict.reason}`);
+      };
 
+      /**
+       * Applies a span redaction to BOTH prose fields.
+       *
+       * `replyBody` is a second copy of the reply and the deliverable spreads
+       * it, so repairing only the gated `text` would re-check clean and still
+       * ship the flagged string to the human who posts it. The two are kept in
+       * lockstep for exactly the reason x-agent keeps `text` and
+       * `mainPostText` in lockstep.
+       *
+       * Never falls back to the original on an emptied field: that would put
+       * the flagged span straight back.
+       */
+      const redactAcrossReply = (reply: RedditReplyOutput, spans: readonly string[]): RedditReplyOutput => {
+        const text = redactSentencesCarrying(reply.text, spans, REPLY_WITHHELD).text;
+        return { ...reply, text, replyBody: redactSentencesCarrying(reply.replyBody, spans, REPLY_WITHHELD).text };
+      };
+
+      const previewOf = async (reply: RedditReplyOutput): Promise<RenderPreviewResult> => {
+        const outcome = await tools["render.preview"]!.execute({ text: reply.text }, { ctx });
+        if (outcome.status !== "success") throw new WorkflowToolingFailure(`render.preview failed: ${outcome.status}`);
+        return outcome.result as RenderPreviewResult;
+      };
+
+      // Each check keeps its own step id and records its verdict against the
+      // draft AS FIRST WRITTEN, which is what a trace wants to show.
+      const numbersVerdict = await wf.step.code(rev("13-verify-numbers-sourced"), () =>
+        runGate(tools, "gate.numbersSourced", { text: draft.text, sources }, ctx),
+      );
+      const brandStep = await wf.step.code(rev("14-verify-brand-compliance"), async () => {
+        const brandVerdict = await runGate(tools, "gate.brandCompliance", { text: draft.text, forbiddenTerms }, ctx);
+        // Disclosure/warming/cooldown are the subreddit-rules checks that need
+        // real draft text — re-run now that it exists, reusing step 10's lookup.
+        const disclosureVerdict = await runGate(tools, "gate.subredditRules", subredditRulesArgs(draft), ctx);
         return { brandVerdict, disclosureVerdict };
       });
-
-      await wf.step.code(rev("15-verify-no-placeholder"), async () => {
-        const verdict = await runGate(tools, "gate.noPlaceholder", { text: draft.text }, ctx);
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.noPlaceholder: ${verdict.reason}`);
-        if (verdict.verdict === "content_fail") throw new WorkflowHeld(`unresolved placeholder left in draft: ${verdict.reason}`);
-        return verdict;
+      const placeholderVerdict = await wf.step.code(rev("15-verify-no-placeholder"), () =>
+        runGate(tools, "gate.noPlaceholder", { text: draft.text }, ctx),
+      );
+      const leakVerdict = await wf.step.code(rev("16-verify-leak-check"), () =>
+        runGate(tools, "gate.leakCheck", { text: draft.text }, ctx),
+      );
+      const previewInspection = await wf.step.code(rev("17-render-preview-check"), async () => {
+        const preview = await previewOf(draft);
+        return { withinLimit: preview.withinLimit, characterCount: preview.characterCount };
       });
 
-      await wf.step.code(rev("16-verify-leak-check"), async () => {
-        const verdict = await runGate(tools, "gate.leakCheck", { text: draft.text }, ctx);
-        if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.leakCheck: ${verdict.reason}`);
-        if (verdict.verdict === "content_fail") throw new WorkflowHeld(`draft appears to leak a credential, path, or internal-only term: ${verdict.reason}`);
-        return verdict;
-      });
+      /** Everything the content gates objected to, unwrapped from each gate's own evidence shape. */
+      const flaggedSpans = [numbersVerdict, brandStep.brandVerdict, brandStep.disclosureVerdict, placeholderVerdict, leakVerdict].flatMap(
+        (verdict) => {
+          if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`reddit content gate: ${verdict.reason}`);
+          // `spansFromEvidence`, not `.evidence`: gate.leakCheck reports
+          // `local file path: "..."`, which the redactor cannot match as-is.
+          return verdict.verdict === "content_fail" ? spansFromEvidence(verdict.evidence) : [];
+        },
+      );
 
-      await wf.step.code(rev("17-render-preview-check"), async () => {
-        const outcome = await tools["render.preview"]!.execute({ text: draft.text }, { ctx });
-        if (outcome.status !== "success") throw new WorkflowToolingFailure(`render.preview failed: ${outcome.status}`);
-        const preview = outcome.result as RenderPreviewResult;
-        if (!preview.withinLimit) {
-          throw new WorkflowHeld(`reply exceeds Reddit's 10000-character comment limit (${preview.characterCount} chars)`);
-        }
-        return preview;
-      });
+      /**
+       * 17r — the repair step.
+       *
+       * Runs only when something above objected, so a clean reply costs nothing
+       * extra. ONE model redraft told every problem at once, kept only if
+       * strictly cleaner, then deterministic floors.
+       */
+      const repaired = await wf.step.code(
+        rev("17r-repair-reply"),
+        async (): Promise<{ reply: RedditReplyOutput; repairs: ContentRepair[] }> => {
+          const overLimit = previewInspection.withinLimit
+            ? null
+            : `reply exceeds Reddit's 10000-character comment limit (${previewInspection.characterCount} chars)`;
+          if (flaggedSpans.length === 0 && overLimit === null) return { reply: draft, repairs: [] };
+
+          const repairs: ContentRepair[] = [];
+          let reply = draft;
+
+          // ── one model redraft, told everything that is wrong ──
+          const asked = [
+            ...(flaggedSpans.length > 0
+              ? [
+                  `These exact spans were rejected and must not appear in the reply unless the rule below says otherwise: ${flaggedSpans.join(", ")}.`,
+                  "For a figure: restate it exactly as the thread or a source writes it, or make the point qualitatively.",
+                  "For a banned phrase, a placeholder, a credential or an internal path: rewrite the sentence without it.",
+                  "If the reply names the product without disclosing the relationship, either drop the name entirely or include the subreddit's required disclosure verbatim — an undisclosed mention is what gets an account banned.",
+                ]
+              : []),
+            ...(overLimit !== null ? [`The reply was also rejected for length: ${overLimit}. Cut it to fit.`] : []),
+            "Keep everything else exactly as it is.",
+          ].join(" ");
+
+          const redraft = await draftAgent.run(ctx, { ...draftInputForRepair, revisionRequest: asked });
+          if (redraft.status === "completed" && redraft.finalOutput) {
+            const candidate = redraft.finalOutput;
+            const candidateSpans = await inspectSpans(candidate);
+            const candidatePreview = await previewOf(candidate);
+            const before = flaggedSpans.length + (overLimit === null ? 0 : 1);
+            const after =
+              (candidateSpans.verdict === "content_fail" ? spansFromEvidence(candidateSpans.evidence).length : 0) +
+              (candidatePreview.withinLimit ? 0 : 1);
+            if (after < before) {
+              reply = candidate;
+              repairs.push({
+                check: "reddit-content-gates",
+                action: "rewritten",
+                detail: `redrafted to clear ${before - after} of ${before} flagged problem(s)`,
+              });
+            }
+          }
+
+          // ── floor 1: the content gates ──
+          const spanOutcome = await runCheckWithRepair({
+            check: "reddit-content-gates",
+            value: reply,
+            verify: inspectSpans,
+            attempts: [
+              // A MISSING required disclosure is fixed by adding, not removing,
+              // and it is fixable exactly — the subreddit's rule names the
+              // sentence verbatim. Tried first, because redaction cannot reach
+              // a missing sentence at all.
+              {
+                action: "rewritten",
+                run: (value) => {
+                  if (requiredDisclosure === undefined || value.text.toLowerCase().includes(requiredDisclosure.toLowerCase())) return undefined;
+                  return {
+                    ...value,
+                    text: `${value.text}\n\n${requiredDisclosure}`,
+                    replyBody: `${value.replyBody}\n\n${requiredDisclosure}`,
+                    disclosureIncluded: true,
+                  };
+                },
+              },
+              // An account-POSTURE refusal — still warming, inside the mention
+              // cooldown, too little karma, too new — is not about the words,
+              // so the gate's evidence is timestamps and thresholds that no
+              // redaction can match. But every one of those rules governs the
+              // MENTION, and a reply that does not name the product is not
+              // subject to any of them. Dropping the mention turns a reply
+              // nobody could post into a plain helpful one they can, which is
+              // a far better outcome than flagging it and moving on.
+              {
+                action: "redacted",
+                run: (value, verdict) => {
+                  const posture = /accountWarmingUntil|mentionCooldownDays|accountKarma|accountAgeDays/;
+                  if (!verdict.evidence.some((item) => posture.test(item))) return undefined;
+                  const named = mentionNames.filter((name) => value.text.toLowerCase().includes(name.toLowerCase()));
+                  if (named.length === 0) return undefined;
+                  const redacted = redactAcrossReply(value, named);
+                  if (redacted.text === value.text) return undefined;
+                  return { ...redacted, disclosureIncluded: false };
+                },
+              },
+              // Then the floor the gate itself points at: "either drop the name
+              // or set the disclosure". Dropping the sentence that names the
+              // product is exactly what this does, and it makes the disclosure
+              // requirement moot rather than papering over it.
+              {
+                action: "redacted",
+                maxPasses: 3,
+                run: (value, verdict) => {
+                  const spans = spansFromEvidence(verdict.evidence);
+                  const redacted = redactAcrossReply(value, spans);
+                  const text = redacted.text;
+                  if (text === value.text) return undefined;
+                  // The flag follows the text: a reply that no longer names the
+                  // product is not "a mention with a disclosure", it is no
+                  // mention, and leaving the flag set would misreport it to
+                  // every downstream check and to the human who posts it.
+                  const stillNames = mentionNames.some((name) => text.toLowerCase().includes(name.toLowerCase()));
+                  return { ...redacted, disclosureIncluded: stillNames ? value.disclosureIncluded : false };
+                },
+              },
+            ],
+            describeUnresolved: (verdict) => `${verdict.reason} — delivered with this noted rather than withheld`,
+          });
+          reply = spanOutcome.value;
+          repairs.push(...spanOutcome.repairs);
+
+          // ── floor 2: the 10,000-character comment limit ──
+          const lengthOutcome = await runCheckWithRepair({
+            check: "reddit-length",
+            value: reply,
+            verify: async (value) => {
+              const preview = await previewOf(value);
+              return preview.withinLimit
+                ? localPass("reddit-length")
+                : localContentFail("reddit-length", `reply exceeds Reddit's 10000-character comment limit (${preview.characterCount} chars)`, [
+                    `${preview.characterCount}`,
+                  ]);
+            },
+            attempts: [
+              {
+                action: "trimmed",
+                run: (value) => {
+                  // Drops as many TRAILING sentences as the overrun needs, in
+                  // one pass. Shedding one sentence at a time would need ~19
+                  // passes on a reply 1,400 characters over, and a repair that
+                  // runs out of passes before it reaches the limit delivers an
+                  // unpublishable reply while reporting that it trimmed it.
+                  const fitToLimit = (prose: string): string | undefined => {
+                    if (prose.length <= REDDIT_COMMENT_LIMIT) return undefined;
+                    const parts = prose.split(/(?<=[.!?])\s+/);
+                    if (parts.length <= 1) return undefined;
+                    let kept = parts.length;
+                    while (kept > 1 && parts.slice(0, kept).join(" ").trim().length > REDDIT_COMMENT_LIMIT) kept -= 1;
+                    const shorter = parts.slice(0, kept).join(" ").trim();
+                    return shorter.length > 0 && shorter.length < prose.length ? shorter : undefined;
+                  };
+                  const text = fitToLimit(value.text);
+                  if (text === undefined) return undefined;
+                  // `replyBody` is trimmed to match: it is the copy the human
+                  // pastes, and a shorter `text` beside a full-length `replyBody`
+                  // would defeat the limit this repair exists to enforce.
+                  return { ...value, text, replyBody: fitToLimit(value.replyBody) ?? value.replyBody };
+                },
+              },
+            ],
+            describeUnresolved: (verdict) => `${verdict.reason} — delivered with this noted rather than withheld`,
+          });
+          reply = lengthOutcome.value;
+          repairs.push(...lengthOutcome.repairs);
+
+          return { reply, repairs };
+        },
+      );
+      draft = repaired.reply;
+      // Outside the step body: a checkpointed step is replayed from its stored
+      // value on resume and its body never runs again.
+      repairsByRevision.set(revision, repaired.repairs);
 
       // ── terminal topic guardrail: a reviewer is never shown a draft on a subject this client does not touch ──
       await runTopicGuardrail(wf, { tools, promptStore: options.promptStore, router: options.router }, draft.text, forbiddenTopics, revision === 0 ? undefined : `-r${revision}`);
@@ -904,6 +1170,24 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
       },
     });
     const draft = review.output;
+    /**
+     * The repairs made to the round that was APPROVED — not the last round
+     * attempted. Omitted from the deliverable when empty, so a clean run
+     * produces the bytes it always did.
+     */
+    const contentRepairs = repairsByRevision.get(review.revision) ?? [];
+    // A reviewer who ran out of rounds, or who rejected outright, is recorded
+    // ON the deliverable rather than ending the run: the work survives for
+    // them to act on, and the marker is what makes their decision unmissable.
+    // Nothing here publishes anything — every deliverable still waits on a
+    // human — so this changes what a reviewer KEEPS, not what ships.
+    if (review.outcome !== undefined && review.outcome !== "approved") {
+      contentRepairs.push({
+        check: "human-review",
+        action: "unresolved",
+        detail: review.outcomeDetail ?? review.outcome,
+      });
+    }
 
     // ── 19-20: deliverable & manifest persistence ──
     const redditUsername = clientContext.profile["redditUsername"];
@@ -925,6 +1209,9 @@ export function createRedditAgentWorkflow(options: CreateRedditAgentWorkflowOpti
         ...(selectedThread.scoutBrief ? { whyThisThread: selectedThread.scoutBrief.why, whatToAdd: selectedThread.scoutBrief.whatToAdd } : {}),
         threadSource: thread.source,
         charterSource: intake.charter.source,
+        // Present only when something had to be repaired to get here, so a
+        // reviewer sees what changed instead of a silently edited reply.
+        ...(contentRepairs.length > 0 ? { contentRepairs } : {}),
       },
       snapshot: (id) => ({
         topic,

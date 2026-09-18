@@ -1,7 +1,8 @@
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, researchDigestForDrafting, researchSourceTexts, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, toAgentContext, runGate, finalizeDeliverable, recordOutputExcerpt} from "@agent-engine/workflow";
-import { BlogDraftAgent } from "../agent/blog-draft-agent.js";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, researchDigestForDrafting, researchSourceTexts, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, toAgentContext, runGate, finalizeDeliverable, recordOutputExcerpt, runCheckWithRepair, redactSentencesCarrying, stripSpansFrom, localContentFail, localPass, spansFromEvidence, type ContentRepair} from "@agent-engine/workflow";
+import type { GateVerdict } from "@agent-engine/core";
+import { BlogDraftAgent, type BlogPostOutput } from "../agent/blog-draft-agent.js";
 import { renderPreview, BLOG_MIN_WORD_COUNT, BLOG_MAX_WORD_COUNT, type RenderPreviewResult } from "../tools/render-preview.js";
 import { buildBlogJsonLd, type BlogJsonLd } from "../tools/json-ld.js";
 import type {
@@ -37,6 +38,19 @@ export interface CreateBlogAgentWorkflowOptions {
  * that de-duplication flags and steers, it does not hold a run.
  */
 const MAX_DEDUPE_ATTEMPTS = 3;
+
+/**
+ * What a prose field says when every one of its sentences carried a span a
+ * content gate rejected.
+ *
+ * Reachable only on a draft so short that one sentence was the whole field —
+ * a real long-form article loses a sentence, not its body. It exists because
+ * the alternative at that point is falling back to the unredacted text, which
+ * would republish the very span the gate refused, and because every one of
+ * these fields is `min(1)` in the schema and so cannot be left blank.
+ */
+const EVERYTHING_WITHHELD =
+  "This section is not published: everything it said rested on content that failed verification, and unverified claims are withheld rather than published.";
 
 /**
  * Builds `https://{client-domain}/blog/{slug}` from the client's own
@@ -221,7 +235,15 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
         topic = candidateSummary.candidateTopic;
         source = "research";
       } else {
-        throw new WorkflowHeld("no candidate topic available for this run — nothing honestly cleared selection");
+        // Nothing cleared selection — and that used to end the run, so a client
+        // whose research pull came back thin got an error instead of an
+        // article. Their own configured content pillar and target keyword ARE
+        // a topic, and the most defensible one available: it is what they said
+        // they want to be known for, not something invented on their behalf.
+        // Recorded as `client-strategy` so a reviewer can tell it apart from a
+        // researched topic at a glance.
+        topic = `${intake.contentPillars[0]}: ${intake.targetKeywords[0]}`;
+        source = "client-strategy";
       }
 
       // Target keyword: an explicit client request wins (if it's actually one of the
@@ -278,6 +300,9 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
      * research, the topic reservation) keeps its id and is reused. That
      * reuse is why the revision is in-run rather than a fresh run.
      */
+    /** What each drafting round had to repair before it could deliver. Empty on the normal path. */
+    const repairsByRevision = new Map<number, ContentRepair[]>();
+
     const draftOnce = async (revision: number, notes: readonly RevisionNote[]) => {
       /** Revision 0 keeps the ORIGINAL ids, so a first-pass trace is unchanged. */
       const rev = (id: string) => (revision === 0 ? id : `${id}-r${revision}`);
@@ -305,43 +330,81 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
     //
     // The scored text is exactly what step 18 records back into the window
     // (`${title}\n${text}`), so every future run compares like with like.
+    /**
+     * The drafting prompt's evidence, as one object.
+     *
+     * Extracted so the REPAIR redraft (step 14r) can send byte-identical
+     * evidence and differ only in its `revisionRequest` — a repair that
+     * quietly drafted from a different brief would be a second draft, not a
+     * correction of the first.
+     */
+    const buildDraftInput = (extra: { dedupeAvoid?: string; revisionRequest?: string } = {}) => ({
+      ...runDirectionField(runDirection),
+      topic: selected.topic,
+      source: selected.source,
+      angle,
+      targetKeyword: selected.targetKeyword,
+      contentPillar: selected.contentPillar,
+      audiencePersona: clientContext.audiencePersona,
+      voiceRules: clientContext.voiceRules,
+      // The client's own profile description + voice-rules guidelines,
+      // verbatim — this is where a language requirement like Geektime's
+      // "Hebrew-language technology site" actually lives.
+      ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
+      ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
+      ...(researchDigest !== undefined ? { research: researchDigest } : {}),
+      ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
+      ...(extra.dedupeAvoid !== undefined ? { dedupeAvoid: extra.dedupeAvoid } : {}),
+      // Two distinct steers, kept apart on purpose: `pastFeedback` is what
+      // this client has said across previous RUNS, `revisionRequest` is what
+      // a reviewer asked about THIS draft minutes ago.
+      ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
+      // A repair's own instruction replaces the reviewer's for that one call:
+      // the reviewer's steer is already baked into the draft being repaired.
+      ...(extra.revisionRequest !== undefined
+        ? { revisionRequest: extra.revisionRequest }
+        : directive !== undefined
+          ? { revisionRequest: directive }
+          : {}),
+    });
+
     const draftWithVerifiedDedupe = async () => {
       /** Set by a failed 09a check, so the NEXT attempt's prompt names exactly which published article to move away from. */
       let dedupeRetrySteer: string | undefined;
       for (let attempt = 1; attempt <= MAX_DEDUPE_ATTEMPTS; attempt++) {
         /** Attempt 1 keeps the ORIGINAL step ids, so a run that never repeats itself has a byte-identical trace to what it had before this check existed. */
         const att = (id: string) => (attempt === 1 ? id : `${id}-attempt-${attempt}`);
-        const draftResult = await wf.step.agent(rev(att("09-draft-post")), draftAgent, {
-          ...runDirectionField(runDirection),
-          topic: selected.topic,
-          source: selected.source,
-          angle,
-          targetKeyword: selected.targetKeyword,
-          contentPillar: selected.contentPillar,
-          audiencePersona: clientContext.audiencePersona,
-          voiceRules: clientContext.voiceRules,
-          // The client's own profile description + voice-rules guidelines,
-          // verbatim — this is where a language requirement like Geektime's
-          // "Hebrew-language technology site" actually lives.
-          ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
-          ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
-          ...(researchDigest !== undefined ? { research: researchDigest } : {}),
-          ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
-          ...(dedupeRetrySteer !== undefined ? { dedupeAvoid: dedupeRetrySteer } : {}),
-          // Two distinct steers, kept apart on purpose: `pastFeedback` is what
-          // this client has said across previous RUNS, `revisionRequest` is what
-          // a reviewer asked about THIS draft minutes ago.
-          ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
-          ...(directive !== undefined ? { revisionRequest: directive } : {}),
-        });
+        const draftInput = buildDraftInput(dedupeRetrySteer !== undefined ? { dedupeAvoid: dedupeRetrySteer } : {});
+        const draftResult = await wf.step.agent(rev(att("09-draft-post")), draftAgent, draftInput);
 
-        if (draftResult.status === "content_fail") {
-          throw new WorkflowHeld(`draft did not clear its own self-critique gate: ${draftResult.status}`);
+        // ── a draft that came back unusable gets ANOTHER draft, not a held run ──
+        //
+        // `content_fail` here does not mean the model judged the article
+        // impossible — it means the turn came back without a parseable
+        // structured output, the known long-step shape where the type
+        // discriminator is dropped. That is a coin flip, not a verdict, and
+        // re-flipping it costs one turn against a run that would otherwise end
+        // with the client holding nothing.
+        const usableDraft =
+          draftResult.status === "content_fail"
+            ? await wf.step.agent(rev(att("09z-regenerate-post")), draftAgent, draftInput)
+            : draftResult;
+
+        if (usableDraft.status === "content_fail") {
+          // Twice is no longer a coin flip. Nothing was drafted, so there is
+          // no content to repair, and nothing to annotate either. `degraded`
+          // rather than `held` because the distinction is real: `held` means
+          // "we looked at this and decided not to publish", a content verdict
+          // nobody made here, while `degraded` means the machinery produced
+          // nothing. Neither is auto-retried — the queue consumer acks every
+          // terminal status — so this is about classifying the failure
+          // honestly, not about buying another attempt.
+          throw new WorkflowToolingFailure("draft did not produce a parseable post on two consecutive attempts");
         }
-        if (draftResult.status !== "completed") {
-          throw new WorkflowToolingFailure(`draft step resolved to "${draftResult.status}"`);
+        if (usableDraft.status !== "completed") {
+          throw new WorkflowToolingFailure(`draft step resolved to "${usableDraft.status}"`);
         }
-        const candidate = draftResult.finalOutput!;
+        const candidate = usableDraft.finalOutput!;
 
         const dedupeVerdict = await checkOutputDedupe(
           wf,
@@ -359,88 +422,278 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
       // `continue` above is guarded on `attempt < MAX_DEDUPE_ATTEMPTS`.
       throw new WorkflowToolingFailure("the de-duplication redraft loop ended without a draft");
     };
-    const draft = await draftWithVerifiedDedupe();
+    /**
+     * `let`, not `const`: the repair region below may hand back a corrected
+     * article, and everything downstream — the guardrail, the review gate, the
+     * deliverable, the excerpt window — must see the corrected one.
+     */
+    let draft = await draftWithVerifiedDedupe();
 
-    await wf.step.code(rev("10-verify-numbers-sourced"), async () => {
+    // ── 10-14r: inspect, then REPAIR. This region no longer holds the run. ──
+    //
+    // Every check here used to `throw new WorkflowHeld(...)` on a
+    // `content_fail`, ending the run and handing the client an error message in
+    // place of an article that was already researched, drafted and paid for —
+    // over, typically, one figure or one banned word in one sentence. An
+    // unsourced figure is a reason to drop that figure. It is not a reason to
+    // withhold two thousand words of sound writing.
+    //
+    // The checks keep their full authority over what may be PUBLISHED — no
+    // flagged span survives this region — and lose their authority to end the
+    // run. `tooling_error` still throws: a check that could not RUN has made no
+    // judgment, and calling that a pass would ship exactly what it exists to
+    // catch.
+    const sources = [
       // The gate verifies against source CONTENT; `sourceLabel` is a URL and
       // verified nothing on its own, so every faithfully quoted figure was held
       // (2026-09-05). Full research text + the client's intel + the run's topic.
-      const sources = [
-        ...researchSourceTexts(research),
-        ...(clientIntelContext !== undefined ? [clientIntelContext] : []),
-        selected.topic,
-        ...(candidateSummary.hasNumericInsight ? [candidateSummary.sourceLabel] : []),
-      ];
-      const verdict = await runGate(tools, "gate.numbersSourced", { text: draft.text, sources }, ctx);
-      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.numbersSourced: ${verdict.reason}`);
-      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`numbers not sourced: ${verdict.reason}`);
-      return verdict;
+      ...researchSourceTexts(research),
+      ...(clientIntelContext !== undefined ? [clientIntelContext] : []),
+      selected.topic,
+      ...(candidateSummary.hasNumericInsight ? [candidateSummary.sourceLabel] : []),
+    ];
+    const forbiddenTerms = (clientContext.brand["forbiddenTerms"] as string[] | undefined) ?? [];
+
+    /**
+     * Applies a span redaction to the WHOLE draft, not just the gated field.
+     *
+     * `buildDeliverable` below spreads every draft field, so `bodyMarkdown` is
+     * what a reader actually gets. Repairing only the gated `text` would pass
+     * every re-check and still publish the unredacted article — precisely the
+     * class of bug this mechanism exists to prevent.
+     *
+     * Long prose loses the whole sentence; short single-line fields lose only
+     * the span, because dropping "the sentence" of a title drops the title, and
+     * every one of these fields is `min(1)` in the schema.
+     */
+    const redactAcrossDraft = (post: BlogPostOutput, spans: readonly string[]): BlogPostOutput => ({
+      ...post,
+      // NEVER `|| post.text`. Falling back to the original when redaction
+      // empties a field would put the flagged span straight back — the one
+      // mistake that turns this whole mechanism into a no-op. A field that
+      // loses everything says so instead; every one of these is `min(1)` in
+      // the schema, so it cannot simply be blank.
+      text: redactSentencesCarrying(post.text, spans, EVERYTHING_WITHHELD).text,
+      bodyMarkdown: redactSentencesCarrying(post.bodyMarkdown, spans, EVERYTHING_WITHHELD).text,
+      excerpt: redactSentencesCarrying(post.excerpt, spans, EVERYTHING_WITHHELD).text,
+      title: stripSpansFrom(post.title, spans).text,
+      metaDescription: stripSpansFrom(post.metaDescription, spans).text,
+      faqItems: post.faqItems.map((item) => ({
+        question: stripSpansFrom(item.question, spans).text,
+        answer: redactSentencesCarrying(item.answer, spans, EVERYTHING_WITHHELD).text,
+      })),
     });
 
-    // KNOWN GAP (deliberately out of scope for this batch): this gate's substring
-    // matching has no negation awareness, so a legitimate negated mention of a
-    // banned term — e.g. "this is not a guaranteed strategy" — is wrongly refused
-    // exactly like a genuine violation would be. Legacy specifically built a
-    // `{phrase, unless: [...]}` shape to avoid this (`karos-agents/products/
-    // building/blog-agent-v2/setup/SKILL.md` step 03, `run.mjs`'s "defect 7").
-    // `gate.brandCompliance` (`packages/tools/karos-gates/src/brand-compliance.ts`)
-    // is a SHARED gate used by every channel, not just blog — a real fix means
-    // either extending its matching logic there (cross-cutting, another engineer's
-    // scope this batch) or building a blog-local negation pre-filter here. A
-    // pre-filter was deliberately not added: reimplementing "is this term actually
-    // negated" locally, on top of a shared gate whose own banned-term bank
-    // (`DEFAULT_BANNED_PROMISE_PHRASES` plus this client's `forbiddenTerms`) can
-    // change independently of this file, risks silently drifting out of sync with
-    // what the shared gate actually checks — worse than the false-positive it
-    // would fix. Tracked here as a known miss versus legacy, not a silent one.
-    await wf.step.code(rev("11-verify-brand-compliance"), async () => {
-      const forbiddenTerms = clientContext.brand["forbiddenTerms"] as string[] | undefined;
-      const verdict = await runGate(tools, "gate.brandCompliance", { text: draft.text, forbiddenTerms: forbiddenTerms ?? [] }, ctx);
-      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.brandCompliance: ${verdict.reason}`);
-      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`brand compliance failed: ${verdict.reason}`);
-      return verdict;
-    });
-
-    await wf.step.code(rev("12-render-preview-check"), async () => {
+    const previewOf = async (post: BlogPostOutput): Promise<RenderPreviewResult> => {
       const outcome = await tools["render.preview"]!.execute(
-        { title: draft.title, metaDescription: draft.metaDescription, text: draft.text },
+        { title: post.title, metaDescription: post.metaDescription, text: post.text },
         { ctx },
       );
       if (outcome.status !== "success") throw new WorkflowToolingFailure(`render.preview failed: ${outcome.status}`);
-      const preview = outcome.result as RenderPreviewResult;
-      if (!preview.withinLimit) {
-        const reason = !preview.titleWithinLimit
-          ? `title exceeds the 120-character limit (${preview.titleCharacterCount} chars)`
-          : !preview.metaDescriptionWithinLimit
-            ? `metaDescription exceeds the 160-character SEO limit (${preview.metaDescriptionCharacterCount} chars)`
-            : !preview.bodyWithinLimit
-              ? `article exceeds the 20000-character long-form limit (${preview.bodyCharacterCount} chars)`
-              : preview.wordCountAboveCeiling
-                ? `article is ${preview.wordCount} words, over the ${BLOG_MAX_WORD_COUNT}-word target ceiling for a long-form piece`
-                : `article is only ${preview.wordCount} words, below the ${BLOG_MIN_WORD_COUNT}-word minimum for a real long-form piece`;
-        throw new WorkflowHeld(reason);
+      return outcome.result as RenderPreviewResult;
+    };
+
+    /**
+     * EVERY limit the preview violates, one entry each — not just the first.
+     *
+     * One entry per violation on purpose. `runCheckWithRepair` keeps a repair
+     * only when it leaves strictly fewer pieces of evidence behind, so a single
+     * catch-all string would make every partial fix look like no fix: trimming
+     * an over-long title on an article that is ALSO under the word floor would
+     * go 1 -> 1 and be discarded, and the over-long title would ship. Listing
+     * them separately makes that trim a real 2 -> 1 improvement.
+     */
+    const previewProblems = (preview: RenderPreviewResult): string[] => [
+      ...(preview.titleWithinLimit ? [] : [`title exceeds the 120-character limit (${preview.titleCharacterCount} chars)`]),
+      ...(preview.metaDescriptionWithinLimit
+        ? []
+        : [`metaDescription exceeds the 160-character SEO limit (${preview.metaDescriptionCharacterCount} chars)`]),
+      ...(preview.bodyWithinLimit ? [] : [`article exceeds the 20000-character long-form limit (${preview.bodyCharacterCount} chars)`]),
+      ...(preview.wordCountAboveCeiling
+        ? [`article is ${preview.wordCount} words, over the ${BLOG_MAX_WORD_COUNT}-word target ceiling for a long-form piece`]
+        : []),
+      ...(preview.withinLimit || preview.wordCountAboveCeiling || !preview.bodyWithinLimit
+        ? []
+        : preview.wordCount < BLOG_MIN_WORD_COUNT
+          ? [`article is only ${preview.wordCount} words, below the ${BLOG_MIN_WORD_COUNT}-word minimum for a real long-form piece`]
+          : []),
+    ];
+    const describePreview = (preview: RenderPreviewResult): string => previewProblems(preview).join("; ");
+
+    /**
+     * The four span-flagging gates, run together.
+     *
+     * One check rather than four because they share an evidence shape — the
+     * offending literal as it appears in the draft — and therefore share a
+     * repair. Running them together also means the single model redraft below
+     * is told about ALL of them at once, which produces a better article than
+     * asking four separate times and costs one turn instead of four.
+     */
+    const inspectSpans = async (post: BlogPostOutput): Promise<GateVerdict> => {
+      const verdicts = await Promise.all([
+        runGate(tools, "gate.numbersSourced", { text: post.text, sources }, ctx),
+        runGate(tools, "gate.brandCompliance", { text: post.text, forbiddenTerms }, ctx),
+        runGate(tools, "gate.noPlaceholder", { text: post.text }, ctx),
+        runGate(tools, "gate.leakCheck", { text: post.text }, ctx),
+      ]);
+      const broken = verdicts.find((v) => v.verdict === "tooling_error");
+      if (broken !== undefined && broken.verdict === "tooling_error") {
+        throw new WorkflowToolingFailure(`blog content gate: ${broken.reason}`);
       }
-      return preview;
+      const failures = verdicts.filter((v) => v.verdict === "content_fail");
+      if (failures.length === 0) return localPass("blog-content-gates");
+      return localContentFail(
+        "blog-content-gates",
+        failures.map((v) => (v.verdict === "content_fail" ? v.reason : "")).join("; "),
+        failures.flatMap((v) => v.evidence),
+      );
+    };
+
+    // Each check keeps its own original step id and records its own verdict
+    // against the draft AS FIRST WRITTEN — which is what a trace wants to show,
+    // and why these were not collapsed into one step when they stopped
+    // throwing. What the client actually receives is settled by 14r below.
+    const numbersVerdict = await wf.step.code(rev("10-verify-numbers-sourced"), () =>
+      runGate(tools, "gate.numbersSourced", { text: draft.text, sources }, ctx),
+    );
+    const brandVerdict = await wf.step.code(rev("11-verify-brand-compliance"), () =>
+      runGate(tools, "gate.brandCompliance", { text: draft.text, forbiddenTerms }, ctx),
+    );
+    const previewInspection = await wf.step.code(rev("12-render-preview-check"), async () => {
+      const preview = await previewOf(draft);
+      return { withinLimit: preview.withinLimit, problems: previewProblems(preview) };
+    });
+    const placeholderVerdict = await wf.step.code(rev("13-verify-no-placeholder"), () =>
+      runGate(tools, "gate.noPlaceholder", { text: draft.text }, ctx),
+    );
+    const leakVerdict = await wf.step.code(rev("14-verify-no-leak"), () => runGate(tools, "gate.leakCheck", { text: draft.text }, ctx));
+
+    /** Everything the five checks above objected to, as one list of spans. */
+    const flaggedSpans = [numbersVerdict, brandVerdict, placeholderVerdict, leakVerdict].flatMap((verdict) => {
+      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`blog content gate: ${verdict.reason}`);
+      // `spansFromEvidence`, not `.evidence`: gate.leakCheck reports
+      // `local file path: "/Users/..."`, and handing that to the redactor
+      // matches nothing at all.
+      return verdict.verdict === "content_fail" ? spansFromEvidence(verdict.evidence) : [];
     });
 
-    // ── 13-14: gate.noPlaceholder / gate.leakCheck — restored dead gates (Phase 2.5
-    // remediation): both existed in packages/tools/karos-gates since the original
-    // migration, but were never called by any workflow's real step sequence, only
-    // ever exercised in evals/src/run-assertions.ts. Grouped with the other content
-    // gates (10-12), all of which run before the human review gate below. ──
-    await wf.step.code(rev("13-verify-no-placeholder"), async () => {
-      const verdict = await runGate(tools, "gate.noPlaceholder", { text: draft.text }, ctx);
-      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.noPlaceholder: ${verdict.reason}`);
-      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`unresolved placeholder found: ${verdict.reason}`);
-      return verdict;
-    });
+    /**
+     * 14r — the repair step.
+     *
+     * Runs only when something above objected, so a clean article costs nothing
+     * extra and leaves a byte-identical trace to what it always had.
+     *
+     * ONE model redraft, told every problem at once, then a deterministic floor
+     * that cannot fail to converge. The redraft is kept only if it comes back
+     * strictly cleaner, so attempting it can never cost quality; the floor then
+     * removes whatever the model left behind.
+     */
+    const repaired = await wf.step.code(
+      rev("14r-repair-post"),
+      async (): Promise<{ post: BlogPostOutput; repairs: ContentRepair[] }> => {
+        const spanProblems = flaggedSpans;
+        const lengthProblems = previewInspection.problems;
+        if (spanProblems.length === 0 && lengthProblems.length === 0) return { post: draft, repairs: [] };
 
-    await wf.step.code(rev("14-verify-no-leak"), async () => {
-      const verdict = await runGate(tools, "gate.leakCheck", { text: draft.text }, ctx);
-      if (verdict.verdict === "tooling_error") throw new WorkflowToolingFailure(`gate.leakCheck: ${verdict.reason}`);
-      if (verdict.verdict === "content_fail") throw new WorkflowHeld(`leak check failed: ${verdict.reason}`);
-      return verdict;
-    });
+        const repairs: ContentRepair[] = [];
+        let post = draft;
+
+        // ── one model redraft, told everything that is wrong ──
+        const asked = [
+          ...(spanProblems.length > 0
+            ? [
+                `These exact spans were rejected and must not appear anywhere in the article, its title, its meta description or its FAQ answers: ${spanProblems.join(", ")}.`,
+                "For a figure: restate it exactly as a source writes it, or make the point qualitatively with no number.",
+                "For a banned phrase or an unresolved placeholder: rewrite the sentence without it.",
+                "For anything resembling a credential, an internal path or an internal-only term: remove it.",
+              ]
+            : []),
+          ...(lengthProblems.length > 0 ? [`The article was also rejected for length: ${lengthProblems.join("; ")}. Fix that without dropping substance.`] : []),
+          "Keep everything else exactly as it is.",
+        ].join(" ");
+
+        const redraft = await draftAgent.run(ctx, buildDraftInput({ revisionRequest: asked }));
+        if (redraft.status === "completed" && redraft.finalOutput) {
+          const candidate = redraft.finalOutput;
+          const candidateSpans = await inspectSpans(candidate);
+          const candidatePreview = await previewOf(candidate);
+          const before = spanProblems.length + lengthProblems.length;
+          const after =
+            (candidateSpans.verdict === "content_fail" ? spansFromEvidence(candidateSpans.evidence).length : 0) +
+            previewProblems(candidatePreview).length;
+          // Strictly better, or not kept at all — a redraft that trades one
+          // problem for another leaves the article exactly where it was.
+          if (after < before) {
+            post = candidate;
+            repairs.push({
+              check: "blog-content-gates",
+              action: "rewritten",
+              detail: `redrafted to clear ${before - after} of ${before} flagged problem(s)`,
+            });
+          }
+        }
+
+        // ── the deterministic floor for spans ──
+        const spanOutcome = await runCheckWithRepair({
+          check: "blog-content-gates",
+          value: post,
+          verify: inspectSpans,
+          attempts: [{ action: "redacted", maxPasses: 3, run: (value, verdict) => redactAcrossDraft(value, spansFromEvidence(verdict.evidence)) }],
+          // The gate's OWN reason, not a "could not be removed" gloss: not
+          // every content failure is something to delete. A missing required
+          // disclaimer is a thing to ADD, and the delete-framing read as
+          // nonsense on the ledger a reviewer actually sees.
+          describeUnresolved: (verdict) => `${verdict.reason} — delivered with this noted rather than withheld`,
+        });
+        post = spanOutcome.value;
+        repairs.push(...spanOutcome.repairs);
+
+        // ── the deterministic floor for length ──
+        //
+        // Only an OVERRUN is mechanically fixable: a short article cannot be
+        // lengthened by deletion. When the redraft above did not lengthen it,
+        // the piece ships flagged, which is the right trade — a 900-word
+        // article a reviewer can read and extend beats no article at all.
+        const lengthOutcome = await runCheckWithRepair({
+          check: "blog-length",
+          value: post,
+          verify: async (value) => {
+            const preview = await previewOf(value);
+            const problems = previewProblems(preview);
+            return problems.length === 0 ? localPass("blog-length") : localContentFail("blog-length", problems.join("; "), problems);
+          },
+          attempts: [
+            {
+              action: "trimmed",
+              run: async (value) => {
+                const preview = await previewOf(value);
+                const title = preview.titleWithinLimit ? value.title : value.title.slice(0, 120).trim();
+                const metaDescription = preview.metaDescriptionWithinLimit ? value.metaDescription : value.metaDescription.slice(0, 160).trim();
+                if (title === value.title && metaDescription === value.metaDescription) {
+                  // The overrun is in the BODY, or the article is simply short.
+                  // Neither is safely fixable by truncation: cutting a long-form
+                  // article mid-argument is worse than delivering it long.
+                  return undefined;
+                }
+                return { ...value, title, metaDescription };
+              },
+            },
+          ],
+          describeUnresolved: (verdict) => `${verdict.reason} — delivered with this noted rather than withheld`,
+        });
+        post = lengthOutcome.value;
+        repairs.push(...lengthOutcome.repairs);
+
+        return { post, repairs };
+      },
+    );
+    draft = repaired.post;
+    // Outside the step body on purpose: a checkpointed step is REPLAYED from
+    // its stored value on a resumed run and its body never runs again, so a
+    // ledger written inside it would vanish the moment this run came back from
+    // its review gate. Keyed by revision, because only the round the reviewer
+    // approved describes the article that ships.
+    repairsByRevision.set(revision, repaired.repairs);
 
     // ── 15: human batch-review gate — nothing ships without a real approval ──
     // ── terminal topic guardrail ──
@@ -490,6 +743,25 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
       },
     });
     const draft = review.output;
+    /**
+     * The repairs made to the round that was APPROVED — not to the last round
+     * attempted, which on an approve-after-revise run is the same thing only
+     * by luck. Omitted from the deliverable entirely when empty, so a clean run
+     * produces the bytes it always did.
+     */
+    const contentRepairs = repairsByRevision.get(review.revision) ?? [];
+    // A reviewer who ran out of rounds, or who rejected outright, is recorded
+    // ON the deliverable rather than ending the run: the work survives for
+    // them to act on, and the marker is what makes their decision unmissable.
+    // Nothing here publishes anything — every deliverable still waits on a
+    // human — so this changes what a reviewer KEEPS, not what ships.
+    if (review.outcome !== undefined && review.outcome !== "approved") {
+      contentRepairs.push({
+        check: "human-review",
+        action: "unresolved",
+        detail: review.outcomeDetail ?? review.outcome,
+      });
+    }
 
     // ── 16-17: deliverable & manifest persistence ──
     const deliverableId = await finalizeDeliverable(wf, tools, ctx, {
@@ -518,7 +790,14 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
           datePublished: new Date().toISOString(),
           faqItems: draft.faqItems,
         });
-        return { ...draftWithoutCanonicalUrl, ...(canonicalUrl ? { canonicalUrl } : {}), jsonLd };
+        return {
+          ...draftWithoutCanonicalUrl,
+          ...(canonicalUrl ? { canonicalUrl } : {}),
+          jsonLd,
+          // Present only when something had to be repaired to get here, so a
+          // reviewer sees what changed instead of a silently edited article.
+          ...(contentRepairs.length > 0 ? { contentRepairs } : {}),
+        };
       },
       snapshot: (deliverableId) => ({ topic: selected.topic, source: selected.source, angle, targetKeyword: selected.targetKeyword, deliverableId }),
     });
@@ -529,8 +808,16 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
     // feedback pipeline (AU22: this step used to also call the now-retired
     // `ledger.feedbackAppend`, a write-only log nothing ever read). ──
     await wf.step.code("18-commit-and-record", async () => {
+      // A topic is only CONSUMED by a post that a reviewer approved. Before
+      // this PR a reject threw before ever reaching here; now it returns, so
+      // the guard has to be explicit or a rejected article would burn the
+      // topic it was written from and no future run could use it.
       if (selected.source === "reserved" && reservation.reservationKey) {
-        await tools["topics.commit"]!.execute({ reservationKey: reservation.reservationKey }, { ctx });
+        if (review.outcome !== undefined && review.outcome !== "approved") {
+          await tools["topics.release"]?.execute({ reservationKey: reservation.reservationKey }, { ctx }).catch(() => undefined);
+        } else {
+          await tools["topics.commit"]!.execute({ reservationKey: reservation.reservationKey }, { ctx });
+        }
       }
       // The write half of the anti-repetition loop: the shipped post joins
       // this agent's rolling excerpt window, read back by research.pull's

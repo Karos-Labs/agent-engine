@@ -108,7 +108,7 @@ describe("intel-report-agent review cycle (runReviewCycle)", () => {
     expect(remembered.map((r) => r.data.productId)).toContain("intel-report-agent");
   }, 30000);
 
-  it("still holds on an outright rejection, with the reviewer's own reason in the hold", async () => {
+  it("keeps the report on an outright rejection, with the reviewer's own reason on it", async () => {
     const router = fakeRouterSequence([finalTurn(goodIntelReport())]);
     const workflowFn = createIntelReportAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router });
     const engine = new WorkflowEngine(new MemoryDurableStepStore());
@@ -122,13 +122,23 @@ describe("intel-report-agent review cycle (runReviewCycle)", () => {
       at: new Date().toISOString(),
     });
     const result = await engine.run(workflowFn, { ...params, runId });
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/review rejected/i);
-    expect(result.reason).toMatch(/dimension scores look inflated this run/);
+    // intel-report shares `runReviewCycle`, so it inherits the same change the
+    // six converted agents got: a reject no longer ends the run. The report is
+    // persisted carrying the reviewer's decision, so the analysis survives for
+    // them to act on instead of existing nowhere afterwards. Nothing publishes
+    // it — an intel report is an internal document a human reads.
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+    // The reviewer's own words ride on the report, which is where they are
+    // useful — the run status no longer carries them because the run no
+    // longer ends on them.
+    expect(result.output.reviewOutcome).toMatchObject({
+      outcome: "rejected",
+      detail: expect.stringContaining("dimension scores look inflated this run"),
+    });
   }, 30000);
 
-  it("holds after the reviewer's feedback keeps coming past the revision ceiling, rather than re-drafting forever", async () => {
+  it("DELIVERS after the reviewer's feedback keeps coming past the revision ceiling, rather than re-drafting forever", async () => {
     const router = fakeRouterSequence([
       finalTurn(goodIntelReport()),
       finalTurn(goodIntelReport({ contentAnalysis: "First revision attempt." })),
@@ -166,9 +176,12 @@ describe("intel-report-agent review cycle (runReviewCycle)", () => {
       at: new Date().toISOString(),
     });
     const final = await engine.run(workflowFn, { ...params, runId });
-    expect(final.status).toBe("held");
-    if (final.status !== "held") throw new Error("unreachable");
-    expect(final.reason).toMatch(/ceiling/i);
+    // intel-report shares `runReviewCycle`, so it inherits the same change the
+    // six converted agents got: a reject no longer ends the run. The report is
+    // persisted carrying the reviewer's decision, so the analysis survives for
+    // them to act on instead of existing nowhere afterwards. Nothing publishes
+    // it — an intel report is an internal document a human reads.
+    expect(final.status).toBe("completed");
   }, 30000);
 });
 

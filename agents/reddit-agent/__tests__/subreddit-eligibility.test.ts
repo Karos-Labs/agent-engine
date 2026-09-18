@@ -2,6 +2,7 @@ import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createRedditAgentWorkflow } from "../src/workflow/create-reddit-agent-workflow.js";
 import {
+  deliveredReply,
   DEFAULT_TARGET_THREAD_TITLE,
   DEFAULT_TARGET_THREAD_URL,
   fakeRouterSequence,
@@ -86,23 +87,29 @@ describe("Reddit subreddit-rules gate (RFC-02 §5 migration audit, Reddit P0)", 
     expect(router.complete).not.toHaveBeenCalled();
   });
 
-  it("blocks after drafting when disclosure is required and the draft omits it", async () => {
+  it("APPENDS the required disclosure when the draft omits it, rather than blocking", async () => {
     await env.store.writeJson("acme", ["client", "subreddit-rules"], {
       smallbusiness: { disclosureRequired: true, requiredDisclosure: "I work for Acme" },
     });
     const promptStore = makePromptStore();
     const router = fakeRouterSequence([finalTurn(goodDraft())]);
-    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router });
+    const workflowFn = createRedditAgentWorkflow({ ...env.workflowOptions, tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "reddit_run_no_disclosure" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/disclosure/i);
-    // Drafting DID happen this time — disclosure can only be checked once real text exists.
-    expect(router.complete).toHaveBeenCalledTimes(1);
+    // The subreddit names the disclosure sentence verbatim, so appending it is
+    // an EXACT fix — no legal copy is invented on the client's behalf — and the
+    // reply ships disclosed instead of not shipping at all.
+    expect(result.status).toBe("completed");
+
+    const reply = await deliveredReply(env, "reddit_run_no_disclosure");
+    expect(reply["text"]).toContain("I work for Acme");
+    expect(reply["replyBody"]).toContain("I work for Acme");
+    expect(reply["disclosureIncluded"]).toBe(true);
+    // Drafting DID happen — disclosure can only be checked once real text exists.
+    expect(router.complete).toHaveBeenCalled();
   });
 
   it("completes normally when disclosure is required and the draft includes it", async () => {
@@ -133,7 +140,7 @@ describe("Reddit subreddit-rules gate (RFC-02 §5 migration audit, Reddit P0)", 
   });
 
   describe("account warming and mention-cooldown (Phase-1-stubbed data, real check logic)", () => {
-    it("holds the run when a disclosed mention ships while the account is still in its legacy warming period", async () => {
+    it("SHIPS the reply flagged when the account is still warming, rather than holding it", async () => {
       await env.store.writeJson("acme", ["client", "subreddit-rules"], {
         smallbusiness: {
           disclosureRequired: true,
@@ -149,9 +156,17 @@ describe("Reddit subreddit-rules gate (RFC-02 §5 migration audit, Reddit P0)", 
 
       const result = await engine.run(workflowFn, { ...baseParams, runId: "reddit_run_warming" });
 
-      expect(result.status).toBe("held");
-      if (result.status !== "held") throw new Error("unreachable");
-      expect(result.reason).toMatch(/warming/i);
+      // An account-POSTURE refusal is not about the words, so there is nothing
+      // in the text to redact — and this fixture configures no product-mention
+      // NAMES, so the workflow's "drop the mention instead" repair has nothing
+      // to drop either. The reply therefore ships FLAGGED: a human reads the
+      // warning and decides, which beats the run ending with nothing to read.
+      expect(result.status).toBe("completed");
+
+      const reply = await deliveredReply(env, "reddit_run_warming");
+      expect(reply["contentRepairs"]).toContainEqual(
+        expect.objectContaining({ action: "unresolved", detail: expect.stringMatching(/warming/i) }),
+      );
     });
 
     it("does not hold a value-only reply (no mention) even while the account is warming", async () => {
@@ -169,7 +184,7 @@ describe("Reddit subreddit-rules gate (RFC-02 §5 migration audit, Reddit P0)", 
       expect(result.status).toBe("completed");
     });
 
-    it("holds the run when a mention ships before the per-subreddit mention cooldown has elapsed", async () => {
+    it("SHIPS the reply flagged when the mention would land inside the cooldown, rather than holding it", async () => {
       const recentMention = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(); // 5 days ago
       await env.store.writeJson("acme", ["client", "subreddit-rules"], {
         smallbusiness: {
@@ -187,9 +202,15 @@ describe("Reddit subreddit-rules gate (RFC-02 §5 migration audit, Reddit P0)", 
 
       const result = await engine.run(workflowFn, { ...baseParams, runId: "reddit_run_cooldown" });
 
-      expect(result.status).toBe("held");
-      if (result.status !== "held") throw new Error("unreachable");
-      expect(result.reason).toMatch(/cooldown/i);
+      // Same reasoning as the warming case, and the same outcome: nothing in
+      // the text to redact and no configured mention name to drop, so the reply
+      // ships carrying the cooldown warning for a human to act on.
+      expect(result.status).toBe("completed");
+
+      const reply = await deliveredReply(env, "reddit_run_cooldown");
+      expect(reply["contentRepairs"]).toContainEqual(
+        expect.objectContaining({ action: "unresolved", detail: expect.stringMatching(/cooldown/i) }),
+      );
     });
 
     it("completes when a mention ships after the mention cooldown has elapsed", async () => {

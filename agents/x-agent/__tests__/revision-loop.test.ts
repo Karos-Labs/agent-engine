@@ -89,22 +89,23 @@ describe("x-agent revision loop", () => {
     const LEAKY = "Our new API key is sk-abcdefghijklmnopqrstuvwxyz123456 for testing.";
     const CLEAN = "We rotated our credentials this week. Internal data [1] shows no downtime.";
 
-    // Round 0 leaks. Because 14d now runs inside `draftOnce`, the run holds
-    // before ever registering the gate.
+    // Round 0 leaks. 14d runs inside `draftOnce`, so the leak is caught before
+    // the gate — and now REPAIRED there too, rather than ending the run. The
+    // reviewer is shown a clean post instead of nothing at all.
     const leakOnly = fakeRouterSequence([draft(LEAKY)]);
     const holdWorkflow = createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router: leakOnly });
     const holdStore = new MemoryDurableStepStore();
     const holdEngine = new WorkflowEngine(holdStore);
-    const held = await holdEngine.run(holdWorkflow, { ...params, runId: "x_leak_pre_gate" });
+    const repaired = await holdEngine.run(holdWorkflow, { ...params, runId: "x_leak_pre_gate" });
 
-    expect(held.status).toBe("held");
-    if (held.status !== "held") throw new Error("unreachable");
-    expect(held.reason).toMatch(/leak check failed/i);
+    // It reaches the human gate (no autoApprove here), which is the point: the
+    // leak cost the sentence, not the run.
+    expect(repaired.status).toBe("awaiting_gate");
 
     const heldIds = (await holdStore.listSteps("x_leak_pre_gate")).map((s) => s.stepId);
     expect(heldIds).toContain("14d-verify-no-leak");
-    // Never approved, because never asked.
-    expect(heldIds).not.toContain("15-batch-review-r0");
+    expect(heldIds).toContain("14r-repair-post");
+    // Still never persisted without an approval.
     expect(heldIds).not.toContain("18-persist-deliverable");
 
     // Now the revision path itself: a clean draft reaches the gate, the
@@ -169,7 +170,7 @@ describe("x-agent revision loop", () => {
     expect(remembered.map((r) => r.data.productId)).toContain("x-agent");
   }, 60000);
 
-  it("still holds on an outright rejection, because the gate exists to be able to say no", async () => {
+  it("keeps and MARKS the work on an outright rejection — the marker is how the gate says no", async () => {
     const router = fakeRouterSequence([draft(FIRST)]);
     const workflowFn = createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router });
     const engine = new WorkflowEngine(new MemoryDurableStepStore());
@@ -183,8 +184,13 @@ describe("x-agent revision loop", () => {
       at: new Date().toISOString(),
     });
     const result = await engine.run(workflowFn, { ...params, runId });
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/review rejected/i);
+    // This reverses a deliberate earlier decision, and the reversal is the
+    // point: a reject used to end the run, so a drafted post a reviewer had
+    // opinions about existed nowhere afterwards and the next run started from
+    // scratch. The gate still says no — the rejection rides on the deliverable
+    // where nobody can miss it, and no caller treats a rejected deliverable as
+    // shippable. What changed is that the reviewer keeps the work and the
+    // reason attached to it.
+    expect(result.status).toBe("completed");
   }, 60000);
 });

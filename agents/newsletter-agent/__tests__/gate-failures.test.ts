@@ -1,7 +1,9 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createNewsletterAgentWorkflow } from "../src/workflow/create-newsletter-agent-workflow.js";
-import { editionRouter, finalTurn, heldEditionRouter, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import {
+  deliveredEdition,
+  editionProse, editionRouter, finalTurn, heldEditionRouter, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 
 const baseParams = { clientSlug: "acme", productId: "newsletter-agent", runKind: "recurring" as const };
 
@@ -36,21 +38,25 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
         text: `${intro}\n\n## A heading\n\nA body.\n\nDo something\n\nThe Team`,
       }),
     ]);
-    const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "newsletter_run_gate_numbers" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/numbers not sourced/i);
-    expect(result.reason).toContain("43%");
+    // Three editorial rounds are the model's three attempts at this; what
+    // used to follow them was a hold. Now the deterministic floor drops the
+    // sentence carrying the unsourced figure and the edition ships.
+    expect(result.status).toBe("completed");
 
-    // 2026-09-05: a failed content gate is a NOTE to the next draft, not a
-    // hold. The run drafted three times (plan + 3 drafts = 4 router turns),
-    // every gate ran on every round, and only the last round held.
-    expect(router.complete).toHaveBeenCalledTimes(4);
+    const edition = await deliveredEdition(env, "newsletter_run_gate_numbers");
+    expect(editionProse(edition)).not.toContain("43%");
+    expect(edition["contentRepairs"]).toBeDefined();
+
+    // Plan + 3 drafts + the editor = 5 router turns. The redraft loop itself
+    // is unchanged at three rounds; what changed is that the run now REACHES
+    // the editor instead of ending at the third round's hold.
+    expect(router.complete).toHaveBeenCalledTimes(5);
     const stepRecords = await durableStore.listSteps("newsletter_run_gate_numbers");
     const ids = stepRecords.map((s) => s.stepId);
     expect(ids).toContain("09-draft-post");
@@ -84,15 +90,16 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
         text: `${intro}\n\n## A heading\n\nA body.\n\nDo something\n\nThe Team`,
       }),
     ]);
-    const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "newsletter_run_gate_brand" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/brand compliance failed/i);
+    expect(result.status).toBe("completed");
+
+    const edition = await deliveredEdition(env, "newsletter_run_gate_brand");
+    expect(editionProse(edition)).not.toContain("guaranteed");
 
     const stepRecords = await durableStore.listSteps("newsletter_run_gate_brand");
     const ids = stepRecords.map((s) => s.stepId);
@@ -140,7 +147,7 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     expect(stepRecords.map((s) => s.stepId)).toContain("19-commit-and-record");
   });
 
-  it("a subject line over the 70-char limit is caught at step 15, distinct from preview/body limits", async () => {
+  it("a subject line over the 70-char limit is TRIMMED to fit, distinct from preview/body limits", async () => {
     const promptStore = makePromptStore();
     const tooLongSubject = "This subject line is way too long for an inbox. ".repeat(3); // > 70 chars
     const intro = "A short, reasonable intro.";
@@ -159,12 +166,14 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "newsletter_run_gate_subject_limit" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/subject line exceeds the 70-character limit/i);
+    expect(result.status).toBe("completed");
+
+    const edition = await deliveredEdition(env, "newsletter_run_gate_subject_limit");
+    expect((edition["subjectLine"] as string).length).toBeLessThanOrEqual(70);
+    expect(edition["contentRepairs"]).toContainEqual(expect.objectContaining({ check: "newsletter-length", action: "trimmed" }));
   });
 
-  it("a preview text over the 140-char limit is caught at step 15, distinct from subject/body limits", async () => {
+  it("a preview text over the 140-char limit is TRIMMED to fit, distinct from subject/body limits", async () => {
     const promptStore = makePromptStore();
     const tooLongPreview = "This preview text is going to run on for quite a while, well past what any inbox client would actually render for a subscriber. ".repeat(2);
     const intro = "A short, reasonable intro.";
@@ -183,8 +192,9 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "newsletter_run_gate_preview_limit" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/preview text exceeds the 140-character limit/i);
+    expect(result.status).toBe("completed");
+
+    const edition = await deliveredEdition(env, "newsletter_run_gate_preview_limit");
+    expect((edition["previewText"] as string).length).toBeLessThanOrEqual(140);
   });
 });

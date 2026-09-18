@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createLinkedInAgentWorkflow } from "../src/workflow/create-linkedin-agent-workflow.js";
-import { fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { allProse, deliveredPost, fakeRouterSequence, finalTurn, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 
 const baseParams = { clientSlug: "acme", productId: "linkedin-agent", runKind: "recurring" as const };
 
@@ -16,7 +16,7 @@ function baseFields() {
   };
 }
 
-describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
+describe("content gate failures are REPAIRED, never held (RFC-02 §5 steps 09-14r)", () => {
   let env: TestEnvironment;
 
   beforeEach(async () => {
@@ -27,49 +27,53 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     await env.cleanup();
   });
 
-  it("an unsourced numeric claim fails gate.numbersSourced at step 10 -> held", async () => {
+  it("an unsourced numeric claim is removed from the post, which still ships", async () => {
     const promptStore = makePromptStore();
     const text = "Teams using anchor days saw scheduling conflicts fall 43% this quarter.";
     const router = fakeRouterSequence([
       finalTurn({ ...baseFields(), hook: text, body: text, text }),
     ]);
-    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "linkedin_run_gate_numbers" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/numbers not sourced/i);
+    // The old contract was `held`: the run ended and the client got an error
+    // message instead of the post. The gate keeps its authority over what may
+    // be PUBLISHED, asserted below; it lost the authority to end the run.
+    expect(result.status).toBe("completed");
 
-    const stepRecords = await durableStore.listSteps("linkedin_run_gate_numbers");
-    const ids = stepRecords.map((s) => s.stepId);
-    expect(ids).toContain("09-draft-post");
+    const post = await deliveredPost(env, "linkedin_run_gate_numbers");
+    expect(allProse(post)).not.toContain("43%");
+    expect(post["contentRepairs"]).toBeDefined();
+
+    const ids = (await durableStore.listSteps("linkedin_run_gate_numbers")).map((s) => s.stepId);
     expect(ids).toContain("10-verify-numbers-sourced");
-    expect(ids).not.toContain("11-verify-brand-compliance");
+    expect(ids).toContain("11-verify-brand-compliance");
+    expect(ids).toContain("14r-repair-post");
   });
 
-  it("a forbidden brand term fails gate.brandCompliance at step 11 -> held", async () => {
+  it("a forbidden brand term is removed from the post, which still ships", async () => {
     const promptStore = makePromptStore();
     const text = "This approach is guaranteed to work for every team, every time.";
     const router = fakeRouterSequence([
       finalTurn({ ...baseFields(), hook: text, body: text, text }),
     ]);
-    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "linkedin_run_gate_brand" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/brand compliance failed/i);
+    expect(result.status).toBe("completed");
 
-    const stepRecords = await durableStore.listSteps("linkedin_run_gate_brand");
-    const ids = stepRecords.map((s) => s.stepId);
+    const post = await deliveredPost(env, "linkedin_run_gate_brand");
+    expect(allProse(post)).not.toContain("guaranteed");
+
+    const ids = (await durableStore.listSteps("linkedin_run_gate_brand")).map((s) => s.stepId);
     expect(ids).toContain("11-verify-brand-compliance");
-    expect(ids).not.toContain("12-render-preview-check");
+    expect(ids).toContain("12-render-preview-check");
   });
 
   it("an over-limit first draft triggers a single self-critique revision, then completes", async () => {
@@ -117,7 +121,7 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     expect(result.status).toBe("completed");
   });
 
-  it("brand.requiredDisclaimer is actually passed to gate.brandCompliance and holds the run when the draft omits it", async () => {
+  it("brand.requiredDisclaimer is passed to gate.brandCompliance, and a post omitting it has it APPENDED", async () => {
     await env.store.writeJson("acme", ["client", "brand"], {
       forbiddenTerms: ["guaranteed", "the best", "#1"],
       requiredDisclaimer: "Results may vary by team.",
@@ -125,16 +129,26 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     const promptStore = makePromptStore();
     const text = "We tried a new onboarding flow this month and tracked how a small group of customers responded.";
     const router = fakeRouterSequence([finalTurn({ ...baseFields(), hook: text, body: text, text })]);
-    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "linkedin_run_gate_disclaimer_missing" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/brand compliance failed/i);
-    expect(result.reason).toMatch(/disclaimer/i);
+    // A missing disclaimer is the one brand failure fixed by ADDING rather
+    // than deleting, and it is fixable exactly: the client configured the
+    // sentence verbatim, so the repair appends that sentence and nothing else.
+    // No legal copy is invented on the client's behalf.
+    expect(result.status).toBe("completed");
+
+    const post = await deliveredPost(env, "linkedin_run_gate_disclaimer_missing");
+    expect(post["text"]).toContain("Results may vary by team.");
+    // ...and the original sentence survived the repair intact.
+    expect(post["text"]).toContain("We tried a new onboarding flow this month");
+
+    const repairs = post["contentRepairs"] as Array<{ action: string }>;
+    expect(repairs).toContainEqual(expect.objectContaining({ action: "rewritten" }));
+    expect(repairs).not.toContainEqual(expect.objectContaining({ action: "unresolved" }));
   });
 
   it("a draft that includes the client's required disclaimer verbatim clears gate.brandCompliance", async () => {
@@ -155,30 +169,30 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
     expect(result.status).toBe("completed");
   });
 
-  it("an unresolved placeholder marker holds the run at gate.noPlaceholder (step 13), never reaching step 14", async () => {
+  it("an unresolved placeholder marker is removed, and the leak check still runs after it", async () => {
     const promptStore = makePromptStore();
     const hook = "We tried something new with our onboarding flow this month.";
     const body = "We rolled out {{FEATURE_NAME}} to a small group of customers and tracked how they responded.";
     const callToAction = "Let us know if a similar approach might help your team.";
     const text = `${hook}\n\n${body}\n\n${callToAction}\n\n#HybridWork`;
     const router = fakeRouterSequence([finalTurn({ ...baseFields(), hook, body, callToAction, text })]);
-    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createLinkedInAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "linkedin_run_gate_placeholder" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/placeholder/i);
+    expect(result.status).toBe("completed");
 
-    const stepRecords = await durableStore.listSteps("linkedin_run_gate_placeholder");
-    const ids = stepRecords.map((s) => s.stepId);
+    const post = await deliveredPost(env, "linkedin_run_gate_placeholder");
+    expect(allProse(post)).not.toContain("{{FEATURE_NAME}}");
+
+    const ids = (await durableStore.listSteps("linkedin_run_gate_placeholder")).map((s) => s.stepId);
     expect(ids).toContain("13-verify-no-placeholder");
-    expect(ids).not.toContain("14-verify-no-leak");
+    expect(ids).toContain("14-verify-no-leak");
   });
 
-  it("a leaked local file path holds the run at gate.leakCheck (step 14), never reaching batch-review", async () => {
+  it("a leaked local file path is removed from every field before the post reaches a human", async () => {
     const promptStore = makePromptStore();
     const hook = "We tried something new with our onboarding flow this month.";
     const body = "Full rollout notes live at C:\\Users\\jane\\rollout-notes.txt if you want the detailed breakdown.";
@@ -191,13 +205,15 @@ describe("content gate failures (RFC-02 §5 steps 09-12)", () => {
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "linkedin_run_gate_leak" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/leak/i);
+    expect(result.status).toBe("completed");
 
-    const stepRecords = await durableStore.listSteps("linkedin_run_gate_leak");
-    const ids = stepRecords.map((s) => s.stepId);
+    // Gone from `body` too, not just the gated `text` — the deliverable ships
+    // every field, so this is the assertion that catches a half-repair.
+    const post = await deliveredPost(env, "linkedin_run_gate_leak");
+    expect(allProse(post)).not.toContain("rollout-notes.txt");
+
+    const ids = (await durableStore.listSteps("linkedin_run_gate_leak")).map((s) => s.stepId);
     expect(ids).toContain("14-verify-no-leak");
-    expect(ids).not.toContain("15-batch-review-r0");
+    expect(ids).toContain("15-batch-review-r0");
   });
 });

@@ -2,7 +2,9 @@ import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import type { AgentToolRegistry } from "@agent-engine/core";
 import { createNewsletterAgentWorkflow } from "../src/workflow/create-newsletter-agent-workflow.js";
-import { editionRouter, finalTurn, heldEditionRouter, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import {
+  deliveredEdition,
+  editionProse, editionRouter, finalTurn, heldEditionRouter, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 
 /**
  * Migration-audit remediation: the Newsletter agent previously had no
@@ -48,7 +50,7 @@ describe("compliance footer + banned promise/hype-language remediation (RFC-02 Â
     await env.cleanup();
   });
 
-  it('a banned promise/hype phrase ("guaranteed returns") fails gate.brandCompliance at step 10 -> redrafted twice, then held, even with no forbiddenTerms configured', async () => {
+  it('a banned promise/hype phrase ("guaranteed returns") is REDACTED after three rounds, even with no forbiddenTerms configured', async () => {
     // Empty (but present) brand config -- isolates the always-on hype bank from the
     // client's own forbiddenTerms, which setupTestEnvironment's default brand includes.
     await env.store.writeJson("acme", ["client", "brand"], {});
@@ -56,42 +58,45 @@ describe("compliance footer + banned promise/hype-language remediation (RFC-02 Â
     const promptStore = makePromptStore();
     const intro = "This strategy delivers guaranteed returns for every single subscriber.";
     const router = heldEditionRouter([finalTurn(draftWithIntro(intro))]);
-    const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "newsletter_run_hype_language" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/brand compliance failed/i);
-    expect(result.reason).toMatch(/guaranteed returns/i);
+    // Three editorial rounds are the model's three attempts; the phrase
+    // survived all of them, so the deterministic floor drops the sentence
+    // carrying it and the edition ships. The hype bank keeps its authority
+    // over what may be MAILED, which is what the assertion below checks.
+    expect(result.status).toBe("completed");
 
-    const stepRecords = await durableStore.listSteps("newsletter_run_hype_language");
-    const ids = stepRecords.map((s) => s.stepId);
+    const edition = await deliveredEdition(env, "newsletter_run_hype_language");
+    expect(editionProse(edition)).not.toContain("guaranteed returns");
+    expect(edition["contentRepairs"]).toContainEqual(expect.objectContaining({ action: "redacted" }));
+
+    const ids = (await durableStore.listSteps("newsletter_run_hype_language")).map((st) => st.stepId);
     expect(ids).toContain("10-verify-brand-compliance");
     expect(ids).toContain("09-draft-post-round-3");
-
-    const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", "newsletter_run_hype_language", "_"]);
-    expect(deliverables).toHaveLength(0);
+    // Round-scoped, like every step inside the editorial loop.
+    expect(ids).toContain("15r-repair-edition-round-3");
   });
 
-  it("a client-specific forbiddenTerm and the built-in hype bank both still apply on top of each other", async () => {
+  it("a client-specific forbiddenTerm and the built-in hype bank both still apply, and the flagged phrase is redacted", async () => {
     // Default brand config (forbiddenTerms: ["guaranteed", "the best", "#1"]) plus a draft
     // that only trips the built-in "risk-free" hype phrase, not any client-configured term.
     const promptStore = makePromptStore();
     const intro = "Here's a completely risk-free way to plan your next sprint.";
     const router = heldEditionRouter([finalTurn(draftWithIntro(intro))]);
-    const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router });
+    const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
 
     const result = await engine.run(workflowFn, { ...baseParams, runId: "newsletter_run_hype_language_2" });
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/brand compliance failed/i);
-    expect(result.reason).toMatch(/risk-free/i);
+    expect(result.status).toBe("completed");
+
+    const edition = await deliveredEdition(env, "newsletter_run_hype_language_2");
+    expect(editionProse(edition)).not.toContain("risk-free");
   });
 
   it("gate.brandCompliance's hype scan never receives requiredDisclaimer or footer text (Phase 2.5 fix), yet the disclaimer is still verified and persisted", async () => {

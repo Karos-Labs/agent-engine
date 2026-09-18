@@ -75,3 +75,22 @@ export async function setupTestEnvironment(opts: { withXHandle?: boolean } = {})
     cleanup: () => fs.rm(rootDir, { recursive: true, force: true }),
   };
 }
+
+/**
+ * The post as the client actually receives it.
+ *
+ * Reads the persisted deliverable rather than the workflow's return value: the
+ * deliverable spreads every draft field, and a repair that fixed `text` while
+ * leaving `mainPostText` or a thread part untouched would re-check clean and
+ * still publish the flagged string.
+ */
+export async function deliveredPost(env: TestEnvironment, runId: string): Promise<Record<string, unknown>> {
+  const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", runId, "_"]);
+  if (deliverables.length !== 1) throw new Error(`expected exactly one deliverable for ${runId}, found ${deliverables.length}`);
+  return (deliverables[0] as { data: { deliverable: Record<string, unknown> } }).data.deliverable;
+}
+
+/** The main post, its mirror field, and every thread part — concatenated. */
+export function allProse(post: Record<string, unknown>): string {
+  return JSON.stringify([post["text"], post["mainPostText"], post["thread"]]);
+}

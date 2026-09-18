@@ -1489,6 +1489,15 @@ export type SlidesDataSelfCheck = { ok: true } | { ok: false; reason: string };
 // ─────────────────────────────────────────────────────────────────────────
 
 export interface InstagramAgentWorkflowResult {
+  /**
+   * Present when a reviewer ran the cycle out of rounds or rejected the post
+   * outright.
+   *
+   * The carousel is kept and marked rather than the run ending, so the work
+   * survives for whoever has to act on it, and the topic reservation is
+   * released rather than consumed. Absent on an approval.
+   */
+  reviewOutcome?: { outcome: "revisions_exhausted" | "rejected"; detail: string };
   postId: string;
   topic: string;
   slideCount: number;
