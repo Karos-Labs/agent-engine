@@ -244,6 +244,27 @@ function buildTemplateShell(title: string, bodyHtml: string): string {
   body.ts-l { --ts: 1.18; }
   body.ta-center { text-align: center; }
   body.ta-end { text-align: end; }
+
+  /* ── AN UNFILLED PICTURE IS A HOLE, NOT A SLOT. ──
+     'fillTemplate' ERASES a slot nobody filled, so a template that asked for
+     a picture and did not get one renders '<img src="">' with the element
+     still in the document, still laid out, and still painting whatever
+     background its container carries. The Geektime prep carousel of
+     2026-09-18 opened on exactly that: a 1080x620 grey-green gradient
+     rectangle above the headline, where the cover photograph should have
+     been. A reader does not see "no image". They see a broken slide.
+
+     The bundled plates have carried the same rule for '.sc-figure-band'
+     since it shipped there once already, and 'figure-band-collapse.test.ts'
+     exists because of it. Studio templates are MODEL-AUTHORED markup with
+     class names nobody can predict, so the rule cannot name a class: it has
+     to be structural, and it has to live in the one shell code owns.
+
+     The container collapses only when its picture is the WHOLE of it — an
+     unfilled img, no filled img beside it, and no non-img child. A frame
+     that also holds a caption keeps its caption. */
+  img[src=""], img:not([src]) { display: none; }
+  :has(> img[src=""]):not(:has(> img[src]:not([src=""]))):not(:has(> *:not(img))) { display: none; }
 </style>
 </head>
 <body class="ts-{{fontScale}} ta-{{textAlign}}">

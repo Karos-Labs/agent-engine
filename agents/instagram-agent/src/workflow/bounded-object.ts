@@ -292,8 +292,38 @@ export function deviceFromText(text: string, source: string): RelayoutFigureDevi
   const sentence = sentencesWithOffsets(text).find((s) => figure.index >= s.start && figure.index < s.start + s.text.length);
   const scope = sentence ?? { text, start: 0 };
   const localIndex = figure.index - scope.start;
-  const label = clampWords(`${scope.text.slice(0, localIndex)} ${scope.text.slice(localIndex + figure.raw.length)}`, MAX_DEVICE_LABEL_LENGTH);
-  if (label.length === 0) return undefined;
+  const before = scope.text.slice(0, localIndex);
+  const after = scope.text.slice(localIndex + figure.raw.length);
+
+  // ── A FIGURE THAT COMPLETES A CLAUSE CANNOT JUST BE DELETED FROM IT. ──
+  //
+  // Splicing it out leaves the preposition in front of it holding nothing,
+  // and the shipped carousel of 2026-09-18 printed the result: *"Error
+  // stacks at every step, dropping accuracy to ."* — a sentence whose value
+  // is the one thing missing from it, set directly under that value at
+  // display size. This repo's own test enshrined a milder version of the
+  // same cut ("Onboarding then dropped to days."), so the rule was wrong
+  // rather than the input unusual.
+  //
+  // The cheap and correct read is the word immediately BEFORE the figure.
+  // When it is one of the connectors below, the figure is what the clause was
+  // heading towards, so the label ends where the clause starts heading there.
+  // "…dropping accuracy to 77%." becomes "…dropping accuracy", which is what
+  // a designer writing a caption under a number would have typed.
+  //
+  // When the preceding word is a verb ("we saved 4 hours a week") the splice
+  // was always right and is untouched.
+  const trailingConnector = /(?:^|\s)(?:to|of|by|at|in|on|for|from|with|than|into|over|under|about|around|per)\s*$/iu;
+  const spliced = trailingConnector.test(before) ? before.replace(trailingConnector, "") : `${before} ${after}`;
+
+  // The seam, tidied. A space before punctuation, a doubled space and a tail
+  // that is nothing but punctuation are artefacts of the cut, not anything
+  // the writer typed.
+  const label = clampWords(spliced.replace(/\s+([.,;:!?])/gu, "$1").replace(/[\s\-,;:.]+$/u, ""), MAX_DEVICE_LABEL_LENGTH);
+  // Two words is the floor for a caption that explains a number. Below it the
+  // label is a fragment, and a big number over a fragment is the
+  // "technically correct and empty" this function exists to refuse.
+  if (label.split(/\s+/u).filter((w) => w.length > 0).length < 2) return undefined;
   const trimmedSource = clampWords(source, MAX_DEVICE_SOURCE_LENGTH);
   if (trimmedSource.length === 0) return undefined;
   return { kind: "figure", value: figure.value, label, source: trimmedSource };
@@ -496,8 +526,35 @@ export function composeBoundedObjects(
       });
       return slide;
     }
+    // ── THE PROMOTED SENTENCE LEAVES THE BODY. ──
+    //
+    // Both limbs draw the device's LABEL out of the body, and the body then
+    // renders in full directly beneath the device. On the shipped carousel
+    // that printed slide 3's first sentence twice: once as the caption under
+    // "77%", once inside the paragraph below it. The rule against it is in
+    // this file's own doc, written for limb 2 — *"One subject, said once"* —
+    // and both limbs broke it on every plate they ever composed.
+    //
+    // Lifting the sentence out is what a designer does when a number is
+    // pulled from a paragraph. It is also why a body with nothing left over
+    // does not get a device at all: that plate has one sentence, and moving
+    // it would buy a device with an empty paragraph under it.
+    const sentences = sentencesOf(slide.body);
+    const promoted =
+      sentences.find((s) => s.includes(device.value)) ??
+      (clampWords(sentences[0] ?? "", MAX_DEVICE_LABEL_LENGTH) === device.label ? sentences[0] : undefined);
+    const remaining = promoted === undefined ? slide.body.trim() : sentences.filter((s) => s !== promoted).join(" ").trim();
+    if (remaining.length === 0) {
+      decisions.push({
+        slide: slide.n,
+        layout,
+        outcome: "refused",
+        reason: "the only sentence in the body is the one the device would be labelled with — a device here would print it twice or leave the paragraph empty",
+      });
+      return slide;
+    }
     decisions.push({ slide: slide.n, layout, outcome: "composed", reason: `built from a figure already in the slide's own copy`, value: device.value });
-    return { ...slide, device };
+    return { ...slide, device, body: remaining };
   });
   return { copy: { ...copy, slides }, decisions };
 }

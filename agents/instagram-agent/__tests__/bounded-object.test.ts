@@ -29,7 +29,11 @@ function slide(over: Record<string, unknown> = {}): InstagramSlideCopy {
   return {
     n: 3,
     headline: "Triage on arrival, not once the queue is deep",
-    body: "Sorting tickets the moment they land resolved 30% more of them.",
+    // Two sentences on purpose. A device's label is lifted OUT of the body,
+    // so a one-sentence body has nothing left to be a body — see
+    // `composeBoundedObjects`, and the shipped slide 3 that printed its first
+    // sentence twice.
+    body: "Sorting tickets the moment they land resolved 30% more of them. The queue never got deep enough to need triage.",
     visualNeed: "a small team gathered around a table reviewing printed charts",
     sourceRef: SIX_RESEARCH_FACTS[1]!.claim,
     layout: "headline_focus",
@@ -49,7 +53,7 @@ describe("boundedObjectFor: the object a statement plate can honestly carry", ()
       value: "30%",
       // The rest of the figure's own sentence, with the figure cut out by
       // position. Not a manufactured label.
-      label: "Sorting tickets the moment they land resolved more of them.",
+      label: "Sorting tickets the moment they land resolved more of them",
       source: "support dashboard export",
     });
   });
@@ -131,7 +135,7 @@ describe("boundedObjectFor: the object a statement plate can honestly carry", ()
     const device = boundedObjectFor(honest, FACTS)!;
     expect(device.value).toBe("4");
     expect(device.label).not.toContain("Inbound pipeline loss");
-    expect(device.label).toBe("Teams that automated the weekly report saved hours a week.");
+    expect(device.label).toBe("Teams that automated the weekly report saved hours a week");
     expect(device.source).toBe("internal client survey");
   });
   it("NEVER builds a device from a slide that cites no source, because an unsourced figure is the shape of a claim a reader should distrust", () => {
