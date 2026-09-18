@@ -36,12 +36,12 @@ describe("PromptStore resolution (RFC-01 §16.1)", () => {
 
     await agent.run(ctx, {});
 
-    // XDraftAgent pins "x-craft@7" (v7: D24 — X is text only, and the three
+    // XDraftAgent pins "x-craft@8" (v8 adds §12b, dated language; v7: D24 — X is text only, and the three
     // limits the gate now enforces; v5's research digest, trend candidate,
     // content mode, attached media, threads and media brief, plus C7's
     // learning context and the craft-rules section) — every earlier version
     // is kept frozen and never resolved at runtime.
-    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "x-craft", "7.md"), "utf8");
+    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "x-craft", "8.md"), "utf8");
     // SCRUM-298: `system` now also carries the response contract, appended
     // after the resolved skill body — assert the skill content is the
     // prefix, not that `system` equals it exactly.
@@ -111,6 +111,6 @@ describe("zero hardcoded prompts (RFC-01 §16.1)", () => {
 
   it("XDraftAgent's config carries a skillRef, not an inline system prompt field", () => {
     const configSource = readFileSync(path.join(SRC_ROOT, "agent", "x-draft-agent.ts"), "utf8");
-    expect(configSource).toMatch(/skillRef:\s*"x-craft@7"/);
+    expect(configSource).toMatch(/skillRef:\s*"x-craft@8"/);
   });
 });

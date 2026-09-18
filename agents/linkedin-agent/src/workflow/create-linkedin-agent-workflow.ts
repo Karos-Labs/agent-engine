@@ -60,6 +60,8 @@ import {
   type TrendResearch,
   type TrendScoutOutput,
   runCheckWithRepair,
+  relativeDayProblems,
+  stripRelativeDays,
   redactSentencesCarrying,
   localContentFail,
   localPass,
@@ -984,6 +986,50 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
         callToAction: redactSentencesCarrying(post.callToAction, spans, POST_WITHHELD).text,
       });
 
+      /**
+       * Every prose field a reader actually sees — the same six
+       * `redactAcrossDraft` covers. A rule that reaches only `text` leaves the
+       * offending phrase sitting in the `body` and `hook` the portal renders
+       * beside it, which reads as the rule not working.
+       */
+      const linkedInProse = (post: LinkedInPostOutput): readonly string[] => [
+        post.text,
+        post.headline,
+        post.hook,
+        post.body,
+        post.takeaway,
+        post.callToAction,
+      ];
+
+      /**
+       * One problem per distinct relative-day phrase across the whole draft —
+       * `relativeDayProblems` dedupes by phrase, so the count is stable
+       * whether a phrase appears in one field or all six. That matters:
+       * `runCheckWithRepair` keeps a repair only when strictly FEWER problems
+       * remain, so a count that moved with field duplication would make a real
+       * fix look like no progress.
+       */
+      const datedProblemsIn = (post: LinkedInPostOutput): string[] =>
+        relativeDayProblems(linkedInProse(post).join("\n\n"), "linkedin-craft §12a");
+
+      /** Deletion across every field at once, or nothing — see the floor below. */
+      const stripDatedAcrossDraft = (post: LinkedInPostOutput): LinkedInPostOutput | undefined => {
+        const next: LinkedInPostOutput = {
+          ...post,
+          text: stripRelativeDays(post.text),
+          headline: stripRelativeDays(post.headline),
+          hook: stripRelativeDays(post.hook),
+          body: stripRelativeDays(post.body),
+          takeaway: stripRelativeDays(post.takeaway),
+          callToAction: stripRelativeDays(post.callToAction),
+        };
+        if (linkedInProse(next).every((field, i) => field === linkedInProse(post)[i])) return undefined;
+        // Never hand back an empty post: a field that was nothing but the
+        // phrase is left as the caller wrote it rather than blanked.
+        if (next.text.trim().length === 0) return undefined;
+        return next;
+      };
+
       /** The four span-flagging gates, run together — they share an evidence shape and a repair. */
       const inspectSpans = async (post: LinkedInPostOutput): Promise<GateVerdict> => {
         const verdicts = await Promise.all([
@@ -1076,7 +1122,12 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
             ? null
             : `post exceeds the LinkedIn character limit (${previewInspection.characterCount} chars)`;
           const bodyUrl = linkInspection.bodyUrl;
-          if (flaggedSpans.length === 0 && overLimit === null && bodyUrl === null) return { post: draft, repairs: [] };
+          // A draft is written now and published later — a post drafted Friday
+          // and approved Monday cannot say "yesterday" (linkedin-craft@8 §12a).
+          const datedProblems = datedProblemsIn(draft);
+          if (flaggedSpans.length === 0 && overLimit === null && bodyUrl === null && datedProblems.length === 0) {
+            return { post: draft, repairs: [] };
+          }
 
           const repairs: ContentRepair[] = [];
           let post = draft;
@@ -1095,6 +1146,7 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
             ...(bodyUrl !== null
               ? [`The body contains a link (${bodyUrl}). On LinkedIn the link goes in firstCommentUrl, never in the body — move it there and write the body without it.`]
               : []),
+            ...(datedProblems.length > 0 ? [`The post was also rejected on dated language: ${datedProblems.join("; ")}.`] : []),
             "Keep everything else exactly as it is.",
           ].join(" ");
 
@@ -1103,11 +1155,12 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
             const candidate: LinkedInPostOutput = { ...redraft.finalOutput, text: reflowLinkedInText(redraft.finalOutput.text) };
             const candidateSpans = await inspectSpans(candidate);
             const candidatePreview = await previewOf(candidate);
-            const before = flaggedSpans.length + (overLimit === null ? 0 : 1) + (bodyUrl === null ? 0 : 1);
+            const before = flaggedSpans.length + (overLimit === null ? 0 : 1) + (bodyUrl === null ? 0 : 1) + datedProblems.length;
             const after =
               (candidateSpans.verdict === "content_fail" ? spansFromEvidence(candidateSpans.evidence).length : 0) +
               (candidatePreview.withinLimit ? 0 : 1) +
-              (BARE_URL_PATTERN.exec(candidate.text) ? 1 : 0);
+              (BARE_URL_PATTERN.exec(candidate.text) ? 1 : 0) +
+              datedProblemsIn(candidate).length;
             if (after < before) {
               post = candidate;
               repairs.push({
@@ -1188,6 +1241,30 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
           });
           post = linkOutcome.value;
           repairs.push(...linkOutcome.repairs);
+
+          // ── floor 3: dated language ──
+          //
+          // Deletion, never substitution. Nothing here knows what date the
+          // writer meant, and inventing one is the failure the rule exists to
+          // prevent: "closed its Series D yesterday" becomes "closed its
+          // Series D" — less specific, never false. Run BEFORE the length
+          // floor, since it can only shorten the post.
+          const datedOutcome = await runCheckWithRepair({
+            check: "linkedin-dated-language",
+            value: post,
+            verify: (value) => {
+              const problems = datedProblemsIn(value);
+              return Promise.resolve(
+                problems.length === 0
+                  ? localPass("linkedin-dated-language")
+                  : localContentFail("linkedin-dated-language", problems.join("; "), problems),
+              );
+            },
+            attempts: [{ action: "redacted", run: (value) => stripDatedAcrossDraft(value) }],
+            describeUnresolved: (verdict) => `${verdict.reason} — delivered with this noted rather than withheld`,
+          });
+          post = datedOutcome.value;
+          repairs.push(...datedOutcome.repairs);
 
           // ── floor 3: the character limit ──
           //
