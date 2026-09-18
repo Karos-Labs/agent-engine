@@ -84,6 +84,8 @@ export interface RunWorkflowParams {
   budget?: WorkflowBudget;
   /** Overrides `DEFAULT_AGENT_STEP_TIMEOUT_MS` for every `step.agent` call in this run. */
   agentStepTimeoutMs?: number;
+  /** Overrides `MAX_ABSORBED_STEP_TIMEOUTS` — how many step timeouts this run absorbs before one ends it. */
+  maxAbsorbedStepTimeouts?: number;
   /**
    * This run's own request -- the portal brief, a requested topic. Stored on
    * the run record so a resume after a gate reads the same brief the first
@@ -222,6 +224,13 @@ export class WorkflowEngine {
       now: this.now,
       ...(budget !== undefined ? { budget } : {}),
       ...(params.agentStepTimeoutMs !== undefined ? { agentStepTimeoutMs: params.agentStepTimeoutMs } : {}),
+      ...(params.maxAbsorbedStepTimeouts !== undefined ? { maxAbsorbedStepTimeouts: params.maxAbsorbedStepTimeouts } : {}),
+      // Minted per `run()` call, and deliberately NOT restored from the run
+      // record on resume: the cap bounds how long one EXECUTION will sit on a
+      // wedged provider, and a resume hours later is a fresh bet that the
+      // wedge has cleared. Persisting it would make a run that once absorbed
+      // its allowance un-absorbing forever.
+      absorbedStepTimeouts: { count: 0 },
     };
     const wf = buildWorkflowContext(runtime);
 

@@ -232,8 +232,13 @@ describe("AU5 / SCRUM-316 — step-timeout abort propagation", () => {
       { ...baseParams, agentStepTimeoutMs: 20 },
     );
 
-    // The pre-existing half: the run gives up instead of sitting at "running".
-    expect(result.status).toBe("degraded");
+    // The pre-existing half: the step gives up instead of sitting at
+    // "running". Since AU72 giving up is REPORTED rather than fatal, so the
+    // run itself completes and the verdict is on the step's result — the
+    // author decides what a wedged step costs them, not the engine.
+    expect(result.status).toBe("completed");
+    expect(result.status === "completed" ? (result.output as AgentExecutionResult<unknown>).status : null).toBe("tooling_error");
+    expect((await store.getStep("run_1", "wedged"))?.error).toContain('step "wedged" did not complete within 20ms');
 
     // The half this ticket adds: the agent was actually handed a live signal,
     // and that signal FIRED, carrying the timeout as its reason.

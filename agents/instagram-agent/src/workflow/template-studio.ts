@@ -324,6 +324,26 @@ export const SETUP_FAILURE_BACKOFF_RUNS: readonly number[] = [1, 1, 8];
 export const STUDIO_EMPTY_SETUP_COOLDOWN_DAYS = 30;
 
 /** The actor recorded on a studio row's first feedback entry. Deliberately queryable: "which templates did the studio write, and when". */
+/**
+ * The per-call bound on a studio DESIGN turn (`00c4`) and its repair (`00c7`),
+ * overriding `DEFAULT_AGENT_STEP_TIMEOUT_MS` for those steps only.
+ *
+ * Sized off measured durations, not guessed. The six design turns of prep run
+ * `pubsub-21224757585884749` took 113s, 275s, 320s, 412s and 500s — and the
+ * sixth crossed the 600s default and, before AU72, took the whole run with it.
+ * Those are not anomalies: a designer turn authors a full HTML+CSS template
+ * and its sample copy in one call, and every `claude-sonnet-4-6` turn in that
+ * window was 429-ing on Vertex and failing over to Anthropic, which roughly
+ * doubles the wall clock per turn (see the `model.failover` warnings for that
+ * run). A bound whose p99 is 500s cannot be 600s.
+ *
+ * 20 minutes is ~2.4x the slowest turn actually observed. It is deliberately
+ * NOT applied globally: raising `DEFAULT_AGENT_STEP_TIMEOUT_MS` would double
+ * how long every cheap step in the fleet can sit wedged to fix a problem that
+ * belongs to two steps.
+ */
+export const STUDIO_DESIGN_STEP_TIMEOUT_MS = 20 * 60_000;
+
 export const STUDIO_ACTOR = "studio";
 
 /**
