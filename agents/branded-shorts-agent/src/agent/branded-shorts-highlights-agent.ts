@@ -16,6 +16,6 @@ export class BrandedShortsHighlightsAgent extends BaseAgent<HighlightsOutput> {
     allowedTools: [],
     outputSchema: HighlightsOutputSchema,
     modelPolicy: resolveModelPolicy("branded-shorts-highlights", { policy: "pinned", model: "claude-sonnet-4-6" }),
-    skillRef: "branded-shorts-highlights@1",
+    skillRef: "branded-shorts-highlights@2",
   };
 }

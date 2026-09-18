@@ -14,6 +14,7 @@ import { BrandedShortsHighlightsAgent } from "../agent/branded-shorts-highlights
 import { deriveCutSegments, totalRetainedDuration } from "./cut-planner.js";
 import { assembleJob, resolveRunPaths, type RunPaths } from "./job-builder.js";
 import { deriveBrandSetup, type ResolveFontsOptions } from "./derive-brand-setup.js";
+import { applyHighlightRhythm } from "./highlight-rhythm.js";
 import {
   AssetLibraryIndexSchema,
   BrandedShortsClientConfigSchema,
@@ -598,7 +599,26 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
       if (highlightsResult.status !== "completed" && highlightsResult.status !== "content_fail") {
         throw new WorkflowToolingFailure(`highlights step resolved to "${highlightsResult.status}"`);
       }
-      const highlightStarts = highlightsResult.status === "completed" ? highlightsResult.finalOutput!.highlightStarts : [];
+      // The model's timestamps are a PROPOSAL, snapped here onto words that
+      // exist (2026-09-18). Its prompt has forbidden inventing one since v1
+      // and nothing checked: the schema is `z.array(z.number())`, so any
+      // number at all reached the render job's `highlight_starts`, where the
+      // engine emphasised whatever was nearest, or nothing. The clipping agent
+      // has validated its own model's timestamps from the beginning, for
+      // exactly the reason its comment gives — a model asked for a timestamp
+      // returns one whether or not the transcript supports it.
+      const rhythm = await wf.step.code(rev("06b-highlight-rhythm"), () =>
+        applyHighlightRhythm(highlightsResult.status === "completed" ? highlightsResult.finalOutput!.highlightStarts : [], kept),
+      );
+      const highlightStarts = rhythm.highlightStarts;
+      if (rhythm.dropped.length > 0) {
+        repairs.push({
+          check: "highlight-rhythm",
+          action: "redacted",
+          detail: `${rhythm.dropped.length} proposed emphasis word(s) were dropped: ${rhythm.dropped.join("; ")}`,
+        });
+        console.warn(`${rev("06b-highlight-rhythm")}: ${rhythm.dropped.join("; ")}`);
+      }
       if (highlightsResult.status === "content_fail") {
         repairs.push({
           check: "branded-shorts-highlights",
