@@ -227,7 +227,10 @@ describe("zero-held quality guarantee: a refusing gate never costs the post (RFC
     // fact cards and names the real-world things a picture could be OF. It is
     // outside the attempt loop, so a redraft never re-pays for it, which is
     // why every count below moves by exactly one however many attempts run.
-    const EXPECTED_TURNS = 3 + 1 + 2 * 2 + 5 + 1;
+    // 2026-09-18: + one `05r-revise-copy` per RETRY. Attempts 2 and 3 edit the
+    // previous draft instead of rewriting it, so each costs a revise turn on
+    // top of whatever it then buys.
+    const EXPECTED_TURNS = 3 + 1 + 2 * 2 + 5 + 1 + 2;
     const runId = "zero_held_quality_slides";
     const { router, durableStore, go } = run(
       [
@@ -261,35 +264,47 @@ describe("zero-held quality guarantee: a refusing gate never costs the post (RFC
   }, 90000);
 
   // ── RFC-19 §4 item 3: 07b craft hygiene ──
-  it("delivers a draft whose em dash the craft gate refused on every attempt, rather than holding", async () => {
+  //
+  // ── AND THE ONE CASE THAT NO LONGER REACHES IT AT ALL. ──
+  //
+  // This test used to assert that an em dash was refused on every attempt and
+  // the post shipped degraded. That was true, and it cost roughly $0.40 a run:
+  // the gate bounced an eight-slide carousel over one character, the redraft
+  // was a new random draw, and on the prep runs of 2026-09-18 the new draft
+  // usually broke something else.
+  //
+  // `repairMechanicalTells` replaces the dash with a comma before any gate
+  // sees it, so what this asserts now is the opposite and better outcome: ONE
+  // attempt, a clean ship, and the repair in the trace where a reviewer reads
+  // it. The gate itself is unchanged and its own unit tests still prove it
+  // refuses a dash; nothing here weakens it, the dash just stops arriving.
+  it("REPAIRS an em dash in code and ships clean, instead of buying a redraft over one character", async () => {
     const emDash = copyWithBody("Teams saved time — every single week, without fail.");
-    const EXPECTED_TURNS = 3 + 1 + 2 * 2 + 5 + 1;
+    // One attempt only: 3 pre-loop + entities + (copy, vetting) + the paid tail + packager.
+    const EXPECTED_TURNS = 3 + 1 + 2 + 3 + 1;
     const runId = "zero_held_quality_craft";
     const { router, durableStore, go } = run(
-      [
-        ...PRE_LOOP,
-        finalTurn(emDash),
-        finalTurn(goodImageVettingOutput()),
-        finalTurn(emDash),
-        finalTurn(goodImageVettingOutput()),
-        finalTurn(emDash),
-        finalTurn(goodImageVettingOutput()),
-        ...paidTail(),
-        finalTurn(DEFAULT_PACKAGE_TURN),
-      ],
+      [...PRE_LOOP, finalTurn(emDash), finalTurn(goodImageVettingOutput()), ...paidTail(), finalTurn(DEFAULT_PACKAGE_TURN)],
       runId,
     );
     const result = await go();
 
-    await expectDegradedDelivery({
-      result,
-      durableStore,
-      runId,
-      gate: "craft",
-      detail: /em dash/i,
-      premiseStepId: "07b-craft-hygiene-attempt-3",
-      premiseRefused: (o) => o["ok"] === false,
-    });
+    expect(result.status).toBe("completed");
+
+    // THE PREMISE: the gate really did run and really did pass, so this is not
+    // passing because the gate was skipped.
+    const craft = (await durableStore.getStep(runId, "07b-craft-hygiene-attempt-1")) as { output?: Record<string, unknown> } | undefined;
+    expect(craft?.output?.["ok"], "the craft gate did not pass, so the repair did not do its job").toBe(true);
+
+    // The repair is RECORDED, or a reviewer finds a comma nobody wrote.
+    const repair = (await durableStore.getStep(runId, "05m-repair-mechanical-tells-attempt-1")) as
+      | { output?: { repaired?: number; note?: string } }
+      | undefined;
+    expect(repair?.output?.repaired).toBeGreaterThan(0);
+    expect(repair?.output?.note).toMatch(/rather than buying a redraft/);
+
+    // No second attempt was bought.
+    expect(await durableStore.getStep(runId, "05-write-copy-attempt-2")).toBeUndefined();
     expect(router.complete).toHaveBeenCalledTimes(EXPECTED_TURNS);
   }, 90000);
 
@@ -305,6 +320,8 @@ describe("zero-held quality guarantee: a refusing gate never costs the post (RFC
       );
     // 3 pre-loop + 2 refused attempts × (copy, vetting, relevance) + the delivering attempt's 5 + 1 packager
     // = 15. `07g` is the first PAID step an attempt reaches, so a relevance refusal costs three turns, not two.
+    // No revise turns here: this run's retries carry no finding the reviser
+    // could act on, so `05r` never fires and the count is unchanged.
     const EXPECTED_TURNS = 3 + 1 + 2 * 3 + 5 + 1;
     const runId = "zero_held_quality_relevance";
     const copy = goodCopyOutput();
@@ -359,7 +376,10 @@ describe("zero-held quality guarantee: a refusing gate never costs the post (RFC
     };
     // 3 pre-loop + 3 full attempts × 5 + 1 packager = 19. Visual QA is the LAST step in the attempt, so a QA
     // refusal is the most expensive of all of them — and today it is also the one that threw the render away.
-    const EXPECTED_TURNS = 3 + 1 + 3 * 5 + 1;
+    // 2026-09-18: + one `05r-revise-copy` per RETRY. Attempts after the first
+    // edit the previous draft instead of rewriting it, so each costs a revise
+    // turn on top of whatever it then buys.
+    const EXPECTED_TURNS = 3 + 1 + 3 * 5 + 1 + 2;
     const runId = "zero_held_quality_visual_qa";
     const copy = goodCopyOutput();
     const { router, durableStore, go } = run(
@@ -403,7 +423,10 @@ describe("zero-held quality guarantee: a refusing gate never costs the post (RFC
     // returns `tooling_error` — and this fixture does not buy it. Both statuses reach the same Mechanism B
     // branch (RFC-19 §4 items 12/13), which is why one fixture covers the behaviour; only the price differs,
     // and in production the `tooling_error` route costs one extra `copyAttempt` at $0.181.
-    const EXPECTED_TURNS = 3 + 1 + 5 + 5 + 5 + 1;
+    // 2026-09-18: + one `05r-revise-copy` per RETRY. Attempts after the first
+    // edit the previous draft instead of rewriting it, so each costs a revise
+    // turn on top of whatever it then buys.
+    const EXPECTED_TURNS = 3 + 1 + 5 + 5 + 5 + 1 + 2;
     const runId = "zero_held_quality_salvage";
     const { router, durableStore, go } = run(
       [

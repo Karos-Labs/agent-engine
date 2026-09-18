@@ -85,8 +85,8 @@ function verdict(over: Partial<NativeEditorVerdict> = {}): NativeEditorVerdict {
 }
 
 describe("RFC-15 §6.2 — the rubric on disk", () => {
-  it("ships `2.md` and a byte-identical `latest.md` (prompt-bump checklist step 2)", async () => {
-    const [pinned, latest] = await Promise.all([readPrompt("2.md"), readPrompt("latest.md")]);
+  it("ships `3.md` and a byte-identical `latest.md` (prompt-bump checklist step 2)", async () => {
+    const [pinned, latest] = await Promise.all([readPrompt("3.md"), readPrompt("latest.md")]);
     expect(latest).toBe(pinned);
     expect(latest.length).toBeGreaterThan(2_000);
     // @1 stays on disk and stays resolvable: a checkpoint replayed from a run judged under the old rubric
