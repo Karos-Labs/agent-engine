@@ -629,6 +629,17 @@ export const STEP_COST_ESTIMATES_USD = {
    */
   copyAttempt: 0.315,
   /**
+   * A REVISION of an existing draft, which attempts 2 and 3 buy instead of a
+   * whole new carousel.
+   *
+   * The saving is almost entirely output. A copy attempt returns eight slides
+   * and a caption, roughly 17k tokens out, and output is the expensive half on
+   * Sonnet. A revision returns the fields that change: a handful of strings,
+   * a few hundred tokens. The draft it edits is the only long thing it reads,
+   * and it reads no research corpus at all.
+   */
+  copyRevise: 0.09,
+  /**
    * The SAME call on attempts 2..n, at the cache behaviour the estimator has
    * never known about.
    *

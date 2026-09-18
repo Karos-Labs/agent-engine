@@ -166,6 +166,11 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   // copy), it names no `gate.*`, and every figure it can touch is copied
   // verbatim out of a fact card the research already sourced.
   { promptId: "instagram-concept", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
+  // `instagram-copy-revise` (2026-09-18): the retry that EDITS instead of rewriting. It names no
+  // `gate.*` and reads no tool; every figure it can touch was already in the draft the gates read,
+  // and `applyCopyEdits` refuses any path the draft does not carry, so it cannot grow a post by a
+  // slide nobody wrote.
+  { promptId: "instagram-copy-revise", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
   {
     promptId: "instagram-copy",
     agent: "instagram-agent",
