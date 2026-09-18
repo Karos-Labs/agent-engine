@@ -174,3 +174,115 @@ re-render). They do not change what a feed post looks like.
 
 **Nothing here has run in prep.** The bar is [[instagram-definition-of-done]]:
 three prep posts the owner would publish.
+
+---
+
+# PART TWO — the owner's review of three more carousels, 2026-09-18 evening
+
+Three prep runs (`yLrcpz…` Karos, `aR7hPT…` Geektime, `Y6fH6Q…` Pitch by Deel)
+cost $2.39, $2.93 and $4.27. The owner's notes, and what each turned out to be.
+
+## 6. THE IMAGES WERE NOT "GENERIC". THEY WERE LITERAL.
+
+| headline | picture |
+|---|---|
+| "Two **clocks** run your marketing" | a gold pocket watch |
+| "Buyers open their **window** when they're ready" | a lit doorway in a wall |
+| "…on a publishing **schedule**" | a watch on a desk |
+
+Each illustrates a WORD from its own headline. It is the oldest failure in
+stock photography and this pipeline caused it: section 22 demands "a concrete
+noun phrase a photo library would index" and says nothing about WHICH noun, so
+the model returns the most concrete one in the sentence. The rule was written
+to stop abstract nouns (`"precision"`, `"trust"`) and over-corrected.
+
+`instagram-copy@25` states the opposite half, and `literalIllustrationOf`
+reports it back as a NOTE when the subject noun repeats a content word from the
+headline. A note and not a refusal: a slide about a real conference genuinely
+is about a stage, and no matcher tells that apart from a metaphor.
+
+## 7. MY OWN EXCLUSION LIST WAS WHY EVERY MADE FRAME WAS BORING
+
+The owner: *"generic AI images are boring, mostly because it is repetitive"*,
+and he was right about the cause as well as the symptom. The list I wrote that
+morning banned people, logos, brands and products outright, so the only thing
+left to draw was `"geometric forms, layered planes and connective lines"`.
+That is generic AI filler, eight times a carousel, and I wrote it.
+
+**The line is not the subject. It is whether the image could be read as a
+record of something that happened.** An illustrated figure in a declared
+register is commentary and every serious publication runs one weekly. A
+photorealistic frame of the same person is a fabricated photograph.
+
+- `ALWAYS_EXCLUDED`: no text, no staged event, nothing mocking.
+- `PHOTOREAL_ONLY_EXCLUDED`: no identifiable real person, no real brand mark.
+- Seven `ILLUSTRATION_REGISTERS`, one chosen per RUN, because one house style
+  repeated IS the repetition.
+- A named subject may appear only when there is a register to draw it in.
+
+**Where I pushed back and was half right.** A generated brand logo comes out as
+a smeared near-miss, so *rendering* a trademark is still refused. The route to
+"cool image with a real logo" is to generate the scene and composite the real
+mark over it. That half is NOT built; the entity press-kit tier exists and the
+compositing does not.
+
+## 8. THERE WAS ONLY EVER ONE BOUNDED PLACEMENT
+
+A full-bleed ground on `cover`/`photo`, and `.sc-figure-band` on the four
+panels: 300px, full width, at the top, every time. Every picture in all three
+carousels was one of those two.
+
+Four shapes ship: `band`, `tall`, `foot`, `bleed`. The interest-floor
+calibration sweep refused `side`/`side-end` four times over, and the last
+refusal is the interesting one: `_ds-fit.js` sizes type against the FIELD, and
+a side variant changes the field's width without telling it. The CSS is
+correct and stays; nothing selects it until the fit ladder knows about it.
+
+## 9. RECENCY WAS A TIE-BREAKER, SO IT NEVER REACHED A RANKING
+
+`publishedAt` appeared once in `rankTopicCandidates`: in the comparator, after
+the score and after `hasNumbers`. Two candidates with different scores never
+got that far. An evergreen abstraction beat anything that happened this week,
+every time, and all three carousels opened on one.
+
+`freshnessBonus` is a term in the score now. Undated is neutral (most good
+evergreen ideas have no date, and an absent one is not evidence of age); a
+future date is a clock skew; five weeks old competes as the evergreen idea it
+has become. It is a nudge at 1.35, not a veto.
+
+This one is upstream of the images: a post about a real, named, recent thing
+gives the picture something real to show.
+
+## 10. THE THREE ATTEMPTS
+
+$1.14 of a $2.39 run. What bought the second and third: a banned em dash,
+*"slides 4, 5, 8 all open with the word the"*, six words quoted from a fact
+card. Each is a targeted edit; each bounced an eight-slide carousel to be
+written again from nothing.
+
+The price is the smaller half. **A rewrite is a new random draw**, and in two of
+the three runs attempt 2 fixed the finding and broke something else. The loop
+was resampling, not converging, which is why every run reached its cap.
+
+- `repairMechanicalTells` fixes a dash in code. It is a trace step, not a
+  finding: a degrade marker asks a reviewer to weigh a defect, and this one
+  cost nothing.
+- `05r-revise-copy` edits the previous draft through a patch of named paths.
+  `applyCopyEdits` resolves every path against the draft that exists, so what
+  the gates accepted is untouched **by construction**. The full redraft stays
+  behind it for the findings no edit answers.
+
+## 11. HEBREW
+
+- `#` is a bidi neutral and landed at the far left of its line, detached from
+  its word. Every template already wraps the `@handle` SLOT in a `<bdi>`; a
+  hashtag arrives inside the copy and never did.
+- `instagram-native-editor@3` names three calques the editor ran over and
+  passed: `נחתך בחצי`, `מודיעין` for market intel, `שקופה` for candour.
+
+## 12. WHAT PART TWO DID NOT DO
+
+- **Logo compositing.** Generate the scene, place the real mark.
+- **The side-by-side figure**, pending a field-aware fit ladder.
+- **A one-sentence body still duplicates its device label** (Part One §6).
+- **Nothing has run in prep.** The bar is three posts the owner would publish.
