@@ -19,6 +19,44 @@ import { isCheckpointedStepStatus, type StepRecordStatus } from "../adapters/typ
 export const DEFAULT_AGENT_STEP_TIMEOUT_MS = 10 * 60_000;
 
 /**
+ * How many step timeouts one run will ABSORB (as returned `tooling_error`
+ * results) before the next one is thrown and ends the run.
+ *
+ * The cap exists because the two failure shapes this guard covers are
+ * genuinely different, and only one of them is worth absorbing:
+ *
+ *  - ONE step crossing its bound while its siblings finish — a slow template,
+ *    a provider hiccup, a single retry storm. Absorbing it costs one step and
+ *    the run still delivers. This is the common case and the case AU72 was
+ *    written for.
+ *  - EVERY step crossing its bound — a wedged provider, a dead network leg.
+ *    Absorbing those costs `timeoutMs` EACH, so a 40-step workflow would sit
+ *    there for hours and still deliver nothing. The lease heartbeat renews
+ *    while a run executes, so nothing else would stop it.
+ *
+ * Three rather than one because the whole point is to survive isolated
+ * faults, and rather than ten because past three the "isolated" reading is no
+ * longer available. Override per run with `WorkflowRuntime.maxAbsorbedStepTimeouts`.
+ */
+export const MAX_ABSORBED_STEP_TIMEOUTS = 3;
+
+/** Per-`step.agent` overrides. Today just the timeout — see {@link runStepAgent}. */
+export interface StepAgentOptions {
+  /**
+   * Overrides `WorkflowRuntime.agentStepTimeoutMs` / `DEFAULT_AGENT_STEP_TIMEOUT_MS`
+   * for THIS call.
+   *
+   * For steps whose honest p99 is known to sit near the default and which are
+   * not worth losing to it — a template-studio design turn takes 275–500s
+   * measured, and doubles again whenever every Sonnet call is failing over
+   * from Vertex to Anthropic on a 429. Raising the global default to cover
+   * them would un-bound every cheap step in the fleet; this raises the bound
+   * only where the measurement says it belongs.
+   */
+  timeoutMs?: number;
+}
+
+/**
  * The key on `AgentContext.metadata` carrying the step's abort signal
  * (AU5 / SCRUM-316).
  *
@@ -146,13 +184,50 @@ function describeAgentOutcome(result: AgentExecutionResult<unknown>): { error?: 
  * still reads `result.status` from the returned value to decide control flow;
  * nothing about that changed.
  *
- * `agent.run()` is raced against `DEFAULT_AGENT_STEP_TIMEOUT_MS` (override via
- * `WorkflowRuntime.agentStepTimeoutMs`) — a call that never settles throws
- * `WorkflowStepTimeout` instead of leaving this step, and the whole run, at
- * `"running"` forever. On timeout the step's `AbortSignal` — delivered to the
- * agent on `ctx.metadata[STEP_ABORT_SIGNAL_METADATA_KEY]`, readable via
+ * `agent.run()` is raced against `DEFAULT_AGENT_STEP_TIMEOUT_MS` (override per
+ * run via `WorkflowRuntime.agentStepTimeoutMs`, per call via
+ * `options.timeoutMs`) — a call that never settles resolves the step instead
+ * of leaving it, and the whole run, at `"running"` forever. On timeout the
+ * step's `AbortSignal` — delivered to the agent on
+ * `ctx.metadata[STEP_ABORT_SIGNAL_METADATA_KEY]`, readable via
  * `stepAbortSignal(ctx)` — is aborted with that same `WorkflowStepTimeout` as
  * its reason (AU5 / SCRUM-316).
+ *
+ * A timeout RETURNS `status: "tooling_error"`; it does not throw (AU72).
+ *
+ * It used to throw, and that is the defect this fixes. prep run
+ * `pubsub-21224757585884749` (instagram-agent, thepitchbydeel, 2026-09-18)
+ * designed five of six studio templates successfully and then lost the whole
+ * run — $1.57 spent, no deliverable — because the sixth,
+ * `00c4-design-template-quote_card`, crossed 600s while every `claude-sonnet-4-6`
+ * turn in that window was 429-ing on Vertex and failing over to Anthropic.
+ * The Instagram workflow ALREADY handles a failed designer turn: it drops
+ * that one archetype, records the reason, and ships the rest ("Nothing here
+ * may throw. Setup never blocks a run", `create-instagram-agent-workflow.ts`).
+ * The throw walked straight past that handling and every other author's like
+ * it, because an exception cannot be branched on by code that reads
+ * `result.status`.
+ *
+ * So the timeout is now reported the way EVERY other agent failure in this
+ * engine is reported: as a returned status. `BaseAgent` already reports a
+ * dead tool, a schema violation and an unpriced model as `tooling_error`
+ * rather than as an exception — a step that ran out of time is the same kind
+ * of fact about the same call, and it is the workflow author's to act on
+ * (RFC-01 §4). Callers already branching on `status !== "completed"` — which
+ * is the convention across the fleet — pick this up with no change.
+ *
+ * The result is synthetic, and honest about it: `steps: []` and
+ * `totalCostUsd: 0`, because the tokens the timed-out call was billing are
+ * genuinely unknown to us (it is still running; we stopped waiting, and
+ * `BaseAgent` does not consume the abort signal yet). Tool units metered
+ * before the bound DO survive — `consumed` is mutated in place by
+ * `runInToolUsageScope` — so generative media already paid for is still
+ * counted rather than silently written off. The step record carries the
+ * timeout message as its `error` and the span is marked failed, so an
+ * absorbed timeout is loud in the trace and in the run report, never silent.
+ *
+ * Absorbing is capped per run at `MAX_ABSORBED_STEP_TIMEOUTS` — past that the
+ * timeout throws as before. See that constant for why.
  *
  * Inside a `fanout` slot, `id` is namespaced by the slot (RFC-01 §5.5's
  * per-slot isolation) — sibling slots calling `step.agent("draft", ...)`
@@ -163,6 +238,7 @@ export async function runStepAgent<TOutput>(
   id: string,
   agent: BaseAgent<TOutput>,
   input: unknown,
+  options?: StepAgentOptions,
 ): Promise<AgentExecutionResult<TOutput>> {
   const stepId = scopedStepId(runtime, id);
   const existing = await runtime.store.getStep(runtime.runId, stepId);
@@ -211,13 +287,52 @@ export async function runStepAgent<TOutput>(
     async (span, markOutcome) => {
       const startedAt = runtime.now();
       await markStepRunning(runtime, stepId, "agent", startedAt);
-      const timeoutMs = runtime.agentStepTimeoutMs ?? DEFAULT_AGENT_STEP_TIMEOUT_MS;
+      // Precedence: the RUN-level override outranks the per-call one, which
+      // outranks the default. That order is deliberate and it is the less
+      // obvious of the two.
+      //
+      // `options.timeoutMs` is a statement about one step relative to the
+      // DEFAULT ("this designer turn honestly needs longer than ten
+      // minutes"). `runtime.agentStepTimeoutMs` is a statement by whoever
+      // dispatched the run about the whole run, and it is set by exactly two
+      // kinds of caller: an operator bounding a run, and a test. If the
+      // per-call value won, a run-wide bound would silently not apply to the
+      // steps most likely to hit it — the run's own setting would be a lie —
+      // and no test could bound such a step at all without waiting out its
+      // real timeout.
+      const timeoutMs = runtime.agentStepTimeoutMs ?? options?.timeoutMs ?? DEFAULT_AGENT_STEP_TIMEOUT_MS;
       // Tools the agent calls inside its ReAct loop (image.generate,
       // video.visualQaGate, a self-critique gate that spends Gemini tokens)
       // bill per unit, and `result.totalCostUsd` only ever counted the
       // model's tokens — see `tool-usage-scope.ts`.
       const consumed: ToolUnitUsage[] = [];
-      const result = await runInToolUsageScope(consumed, () => withStepTimeout(agent.run(ctx, input), stepId, timeoutMs, abortController));
+      // The timeout is CAUGHT and converted, not propagated — see this
+      // function's doc comment. `timedOut` is what makes the difference
+      // visible downstream: the synthetic result carries no turn telemetry, so
+      // `describeAgentOutcome` alone would record the useless
+      // `agent step resolved to "tooling_error"` in place of the one fact a
+      // reader needs, which is that it ran out of time and after how long.
+      let timedOut: WorkflowStepTimeout | undefined;
+      const result = await runInToolUsageScope(consumed, () => withStepTimeout(agent.run(ctx, input), stepId, timeoutMs, abortController)).catch(
+        (error: unknown): AgentExecutionResult<TOutput> => {
+          if (!(error instanceof WorkflowStepTimeout)) throw error;
+          // Past the cap this is a systemic wedge, not one flaky step. Rethrow
+          // BEFORE recording a checkpoint: `tooling_error` is a checkpointed
+          // status, so a record written here would make the step replay as a
+          // permanent failure on resume — the opposite of what a retry needs
+          // once the provider recovers.
+          // No counter threaded (a runtime built directly, which today means a
+          // primitive-level unit test) means no run-level budget to spend, so
+          // the timeout is absorbed. Fail-open toward delivering: `WorkflowEngine.run`
+          // always provides one, so the cap is live everywhere it is load-bearing.
+          const absorbed = (runtime.absorbedStepTimeouts?.count ?? 0) + 1;
+          const cap = runtime.maxAbsorbedStepTimeouts ?? MAX_ABSORBED_STEP_TIMEOUTS;
+          if (absorbed > cap) throw error;
+          if (runtime.absorbedStepTimeouts !== undefined) runtime.absorbedStepTimeouts.count = absorbed;
+          timedOut = error;
+          return { finalOutput: null, steps: [], totalCostUsd: 0, totalTokens: { input: 0, output: 0 }, status: "tooling_error" };
+        },
+      );
       const toolCostUsd = computeToolCostUsd(consumed);
       const costUsd = Math.round((result.totalCostUsd + toolCostUsd) * 1_000_000) / 1_000_000;
       const completedAt = runtime.now();
@@ -281,8 +396,12 @@ export async function runStepAgent<TOutput>(
       // RFC-01 §4) and `budget_exceeded` is a designed turn-ceiling stop, not
       // a broken call. Only `tooling_error` is an actual failure worth a
       // trace saying so.
+      // An absorbed timeout is a real malfunction and gets a failed span like
+      // any other `tooling_error` — absorbing it changes who DECIDES what
+      // happens next, never whether it is reported.
+      const outcomeError = timedOut?.message ?? describeAgentOutcome(result).error;
       if (result.status === "tooling_error") {
-        markOutcome(true, describeAgentOutcome(result).error ?? `agent step resolved to "${result.status}"`);
+        markOutcome(true, outcomeError ?? `agent step resolved to "${result.status}"`);
       }
 
       const record: StepRecord = {
@@ -291,7 +410,27 @@ export async function runStepAgent<TOutput>(
         // AU68: the step now says what the agent actually reported. It still
         // RAN and its output is still replayable, so it stays checkpointed and
         // resume is unchanged — see `isCheckpointedStepStatus`.
-        status: stepStatusFromAgentStatus(result.status),
+        //
+        // EXCEPT on an absorbed timeout (AU72), which records `failed` rather
+        // than the `tooling_error` it hands the caller. The two are not the
+        // same claim and the difference is the whole point:
+        //
+        //   - The RESULT is `tooling_error` because that is the vocabulary a
+        //     workflow author branches on, and every `status !== "completed"`
+        //     check in the fleet already reads it correctly.
+        //   - The RECORD is `failed` because `failed` is the one status
+        //     meaning "no output, nothing to replay" — and `failed` is not a
+        //     checkpointed status (`isCheckpointedStepStatus`), so a later
+        //     resume RE-ATTEMPTS this step instead of replaying a permanent
+        //     failure.
+        //
+        // Recording `tooling_error` here would checkpoint it, and a run that
+        // timed out once because Vertex was throttling would then carry that
+        // step as dead forever, across every future resume. That is the exact
+        // "an internal fault decides the outcome" failure this change exists
+        // to remove, moved one layer down. The agent never reached a verdict;
+        // we stopped waiting for one.
+        status: timedOut !== undefined ? "failed" : stepStatusFromAgentStatus(result.status),
         output: result,
         costUsd,
         ...(consumed.length > 0 ? { unitUsage: consumed.map((u) => ({ ...u })) } : {}),
@@ -299,6 +438,7 @@ export async function runStepAgent<TOutput>(
         startedAt,
         completedAt,
         ...describeAgentOutcome(result),
+        ...(outcomeError !== undefined ? { error: outcomeError } : {}),
       };
       await runtime.store.saveStep(runtime.runId, record);
       return result;

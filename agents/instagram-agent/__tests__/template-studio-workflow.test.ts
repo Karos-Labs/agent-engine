@@ -191,6 +191,66 @@ describe.skipIf(!STUDIO_WIRED)("the Template Studio in a real run", () => {
     expect((await env.templateStore.list({ clientSlug: "acme" })).length).toBe(0);
   }, 120_000);
 
+  /**
+   * THE RUN THIS TEST EXISTS FOR: prep `pubsub-21224757585884749`
+   * (thepitchbydeel, 2026-09-18). Six designer turns, five of them completed
+   * — 113s, 275s, 320s, 412s, 500s — and the sixth,
+   * `00c4-design-template-quote_card`, crossed the engine's 600s step bound
+   * while every `claude-sonnet-4-6` call in that window was 429-ing on Vertex
+   * and failing over to Anthropic.
+   *
+   * The whole run then FAILED. $1.57 spent, no deliverable, and five
+   * finished templates thrown away — even though the loop below was already
+   * written to drop one archetype and ship the rest. The bound threw, and an
+   * exception walks past `if (designExec.status !== "completed")` the way it
+   * walks past every other author's degradation branch.
+   *
+   * Two changes make this test pass, and it is here to hold both: the engine
+   * REPORTS a step timeout as `tooling_error` instead of throwing (AU72), and
+   * these two steps carry `STUDIO_DESIGN_STEP_TIMEOUT_MS` so a turn whose
+   * measured p99 is 500s is not bounded at 600s in the first place.
+   */
+  it("drops the one designer turn that ran out of time and still stores the rest", async () => {
+    // `standardTurns` emits turns in `TURN_ORDER`, so with no `brief` fixture
+    // index 0 is `00c3-write-design-brief` and indices 1..4 are the four
+    // `00c4` designer turns. Asserted rather than assumed — if the order ever
+    // moves, this fails loudly here instead of silently wedging some other
+    // step and quietly proving nothing.
+    const turns = [...standardTurns({ designBrief: designBriefOutput(), templateDesign: ALL_DRAFTS, setReview: setReviewOutput(), ...runTurns })];
+    const secondDesign = turns[2]!();
+    expect(secondDesign.output).toMatchObject({ type: "final", output: { archetypeId: STAT_DRAFT.archetypeId } });
+
+    // The wedged turn: STAT_DRAFT's. It never settles, exactly as a model
+    // call behind a 429-retry storm never settles inside the step's bound.
+    turns[2] = () => new Promise(() => {}) as never;
+
+    const durable = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(durable).run(workflow(fakeRouterSequence(turns)), {
+      runId: "studio_timeout",
+      ...base,
+      // 50ms stands in for the real 20-minute bound. What is under test is
+      // what the engine DOES when a designer turn crosses its bound, not the
+      // size of the bound.
+      agentStepTimeoutMs: 50,
+    });
+
+    // THE ASSERTION THE OWNER'S RULE COMES DOWN TO: the run delivers.
+    expect(result.status).toBe("completed");
+
+    const steps = await durable.listSteps("studio_timeout");
+    const wedged = steps.find((step) => step.stepId === "00c4-design-template-stat_callout");
+    // Recorded, with its reason, and NOT checkpointed as permanently dead —
+    // a later resume re-attempts it once the provider recovers.
+    expect(wedged?.status).toBe("failed");
+    expect(wedged?.error).toContain("did not complete within");
+
+    // ...and the other three are authored, validated and stored. Before the
+    // fix this list was empty, because there was no run left to store them.
+    const rows = await env.templateStore.list({ clientSlug: "acme", includeDisabled: true });
+    expect(rows.map((r) => r.archetypeId).sort()).toEqual(["closer", "cover", "list_takeaway"]);
+    expect(rows.map((r) => r.archetypeId)).not.toContain("stat_callout");
+  }, 120_000);
+
   it("reuses a fresh approved set and consumes NO studio turn", async () => {
     // The default seed: a fresh, approved four-template set. Exactly the
     // property the ~30 existing fixtures rely on.

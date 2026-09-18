@@ -1,7 +1,7 @@
 import type { AgentExecutionResult, BaseAgent, Gate, RunKind } from "@agent-engine/core";
 import type { DurableStepStore, StepKind, WorkflowBudget } from "../adapters/types.js";
 import { runStepCode } from "./step-code.js";
-import { runStepAgent } from "./step-agent.js";
+import { runStepAgent, type StepAgentOptions } from "./step-agent.js";
 import { runStepGate } from "./step-gate.js";
 import { runFanout, type FanoutOptions } from "./fanout.js";
 
@@ -51,6 +51,19 @@ export interface WorkflowRuntime {
   budget?: WorkflowBudget;
   /** Overrides `DEFAULT_AGENT_STEP_TIMEOUT_MS` for every `step.agent` call in this run. */
   agentStepTimeoutMs?: number;
+  /** Overrides `MAX_ABSORBED_STEP_TIMEOUTS` for this run. */
+  maxAbsorbedStepTimeouts?: number;
+  /**
+   * How many `step.agent` timeouts this run has already absorbed as returned
+   * `tooling_error`s, against that cap.
+   *
+   * A mutable box rather than a number because the cap is a RUN-level budget
+   * and `fanout` hands each slot `{ ...runtime, slotId }` — a plain counter
+   * would be copied per slot, so six concurrent slots would each get the full
+   * allowance and the run could absorb 6xN. The object survives the spread by
+   * reference, which is the whole reason it is one.
+   */
+  absorbedStepTimeouts?: { count: number };
   now(): number;
 }
 
@@ -103,8 +116,13 @@ export interface WorkflowContext {
   step: {
     /** A deterministic, checkpointed function call. Re-running an already-completed `id` returns the checkpointed output without calling `fn` again. */
     code<T>(id: string, fn: () => T | Promise<T>): Promise<T>;
-    /** Invokes a `BaseAgent`, checkpointing its full `AgentExecutionResult`. Layer 1 never inspects `.status` itself — that judgment is the workflow author's (RFC-01 §4). */
-    agent<TOutput>(id: string, agent: BaseAgent<TOutput>, input: unknown): Promise<AgentExecutionResult<TOutput>>;
+    /**
+     * Invokes a `BaseAgent`, checkpointing its full `AgentExecutionResult`.
+     * Layer 1 never inspects `.status` itself — that judgment is the workflow
+     * author's (RFC-01 §4), and since AU72 that includes a step that ran out
+     * of time, which resolves to `tooling_error` here rather than throwing.
+     */
+    agent<TOutput>(id: string, agent: BaseAgent<TOutput>, input: unknown, options?: StepAgentOptions): Promise<AgentExecutionResult<TOutput>>;
     /** Registers (or resolves) a human/policy gate (RFC-01 §8.3). Throws `AwaitingGateSignal` until a response is recorded via `WorkflowEngine.resolveGate`. */
     gate(id: string, def: GateDefinition): Promise<GateResponse>;
   };
@@ -185,7 +203,7 @@ export function buildWorkflowContext(runtime: WorkflowRuntime): WorkflowContext 
     costSoFarUsd: () => sumRunCost(runtime.store, runtime.runId),
     step: {
       code: (id, fn) => runStepCode(runtime, id, fn),
-      agent: (id, agent, input) => runStepAgent(runtime, id, agent, input),
+      agent: (id, agent, input, options) => runStepAgent(runtime, id, agent, input, options),
       gate: (id, def) => runStepGate(runtime, id, def),
     },
     fanout: (id, items, fn, options) => runFanout(runtime, id, items, fn, options),

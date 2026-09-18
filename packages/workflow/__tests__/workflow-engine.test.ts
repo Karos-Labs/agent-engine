@@ -478,49 +478,87 @@ describe("6. real-time in-progress checkpoints", () => {
   });
 });
 
-describe("6b. step.agent timeout (a reliability audit finding)", () => {
-  // prep run pubsub-21543515035218714 wedged at "06c-vet-scrape-attempt-2" in
-  // "running" state for hours: nothing ever threw, so the run itself never
-  // left "running" either, and RESUMABLE_FROM_STATUSES deliberately excludes
-  // "running" — nobody could even resume it. A bounded timeout turns that
-  // into a `degraded` run, which IS resumable.
-  it("resolves the run to 'degraded' instead of hanging forever when the model call never settles", async () => {
-    const store = new MemoryDurableStepStore();
-    const engine = new WorkflowEngine(store);
-
-    const neverSettles: ModelRouter = {
+describe("6b. step.agent timeout (a reliability audit finding, then AU72)", () => {
+  /** A router whose `complete` never settles — the wedged-call shape most of this block is about. */
+  const neverSettlingRouter = (): ModelRouter =>
+    ({
       complete: vi.fn(() => new Promise(() => {})), // deliberately never resolves or rejects
       completeAlias: vi.fn(async () => {
         throw new Error("not used in this test");
       }),
-    } as unknown as ModelRouter;
-    const wedgedAgent = makeSimpleAgent(DraftOutputSchema, neverSettles);
+    }) as unknown as ModelRouter;
 
-    const workflowFn = async (wf: WorkflowContext) => wf.step.agent("vet", wedgedAgent, {});
+  // prep run pubsub-21543515035218714 wedged at "06c-vet-scrape-attempt-2" in
+  // "running" state for hours: nothing ever threw, so the run itself never
+  // left "running" either, and RESUMABLE_FROM_STATUSES deliberately excludes
+  // "running" — nobody could even resume it. The bounded timeout fixed that.
+  //
+  // AU72 fixes what the bound then DID with its verdict. It threw, unwinding
+  // the whole workflow function: prep run pubsub-21224757585884749
+  // (instagram-agent) authored five of six studio templates, lost the sixth to
+  // this bound, and lost the run with it — $1.57 spent, no deliverable — past
+  // workflow code already written to drop one template and ship the other
+  // five. A timeout is now REPORTED to the author, as `tooling_error` (the
+  // same vocabulary as every other agent failure), instead of deciding the
+  // run's outcome on their behalf.
+  it("hands the workflow a tooling_error instead of killing the run, so the author's own degradation path runs", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+    const wedgedAgent = makeSimpleAgent(DraftOutputSchema, neverSettlingRouter());
+    const healthyAgent = makeSimpleAgent(DraftOutputSchema, fakeRouterAlwaysFinal({ body: "the other five templates" }));
+
+    const dropped: string[] = [];
+    const workflowFn = async (wf: WorkflowContext) => {
+      const wedged = await wf.step.agent("design-quote-card", wedgedAgent, {});
+      // Exactly the shape the Instagram studio loop already had.
+      if (wedged.status !== "completed") dropped.push(`dropped: ${wedged.status}`);
+      const ok = await wf.step.agent("design-cover", healthyAgent, {});
+      return { dropped, kept: ok.finalOutput };
+    };
 
     const result = await engine.run(workflowFn, { ...baseParams, agentStepTimeoutMs: 25 });
 
-    expect(result.status).toBe("degraded");
-    expect(result.status === "degraded" ? result.failureReason : "").toContain('step "vet" did not complete within 25ms');
-
-    const stepRecord = await store.getStep("run_1", "vet");
-    // Left at "running" — the timeout never cancels the underlying call, it
-    // just stops waiting on it. Resume tolerates this (see next test).
-    expect(stepRecord?.status).toBe("running");
+    // The run DELIVERS. That is the whole point of AU72.
+    expect(result.status).toBe("completed");
+    expect(result.status === "completed" ? result.output : null).toEqual({
+      dropped: ["dropped: tooling_error"],
+      kept: { body: "the other five templates" },
+    });
   });
 
-  it("lets a resume re-attempt a step left at 'running' by a prior timeout, rather than treating it as already done", async () => {
+  it("records the timed-out step as failed-with-a-reason, never as a silent skip", async () => {
     const store = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(store);
+    const wedgedAgent = makeSimpleAgent(DraftOutputSchema, neverSettlingRouter());
 
-    const neverSettles: ModelRouter = {
-      complete: vi.fn(() => new Promise(() => {})),
-      completeAlias: vi.fn(async () => {
-        throw new Error("not used in this test");
-      }),
-    } as unknown as ModelRouter;
-    const wedgedAgent = makeSimpleAgent(DraftOutputSchema, neverSettles);
-    const workflowFn = async (wf: WorkflowContext) => wf.step.agent("vet", wedgedAgent, {});
+    const workflowFn = async (wf: WorkflowContext) => {
+      const wedged = await wf.step.agent("vet", wedgedAgent, {});
+      return wedged.status;
+    };
+
+    const result = await engine.run(workflowFn, { ...baseParams, agentStepTimeoutMs: 25 });
+    expect(result.status === "completed" ? result.output : null).toBe("tooling_error");
+
+    const stepRecord = await store.getStep("run_1", "vet");
+    // `failed`, NOT `tooling_error`: the agent never reached a verdict — we
+    // stopped waiting for one. `failed` is the non-checkpointed status, which
+    // is exactly what lets the next test's resume re-attempt this step.
+    expect(stepRecord?.status).toBe("failed");
+    expect(stepRecord?.error).toContain('step "vet" did not complete within 25ms');
+  });
+
+  it("lets a resume re-attempt a step a prior timeout gave up on, rather than replaying it as permanently dead", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+    const wedgedAgent = makeSimpleAgent(DraftOutputSchema, neverSettlingRouter());
+    // This workflow REPORTS the failure rather than absorbing it — the shape
+    // an author picks when a step is load-bearing and there is nothing worth
+    // shipping without it. The run ends resumable either way.
+    const workflowFn = async (wf: WorkflowContext) => {
+      const vet = await wf.step.agent("vet", wedgedAgent, {});
+      if (vet.status !== "completed") throw new WorkflowToolingFailure("the vet never settled");
+      return vet.finalOutput;
+    };
 
     const first = await engine.run(workflowFn, { ...baseParams, agentStepTimeoutMs: 25 });
     expect(first.status).toBe("degraded");
@@ -531,6 +569,69 @@ describe("6b. step.agent timeout (a reliability audit finding)", () => {
 
     expect(second.status).toBe("completed");
     expect(second.status === "completed" ? second.output.finalOutput : null).toEqual({ body: "recovered" });
+  });
+
+  it("still ends the run once it has absorbed more timeouts than the cap — a wedged provider is not an isolated fault", async () => {
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+    const wedgedAgent = makeSimpleAgent(DraftOutputSchema, neverSettlingRouter());
+
+    const reached: string[] = [];
+    const workflowFn = async (wf: WorkflowContext) => {
+      for (const id of ["a", "b", "c", "d", "e"]) {
+        reached.push(id);
+        await wf.step.agent(id, wedgedAgent, {});
+      }
+      return "never";
+    };
+
+    const result = await engine.run(workflowFn, { ...baseParams, agentStepTimeoutMs: 25, maxAbsorbedStepTimeouts: 2 });
+
+    expect(result.status).toBe("degraded");
+    expect(result.status === "degraded" ? result.failureReason : "").toContain('step "c" did not complete within 25ms');
+    // Two absorbed, the third thrown — `d` and `e` are never reached.
+    expect(reached).toEqual(["a", "b", "c"]);
+  });
+
+  it("applies a per-call bound where the run set none, leaving its siblings on the default", async () => {
+    // The studio half of the fix: `STUDIO_DESIGN_STEP_TIMEOUT_MS` is passed
+    // per call precisely so one step's measured p99 does not force every
+    // cheap step in the fleet onto the same generous bound.
+    //
+    // Demonstrated with a per-call bound that is SHORTER than the default,
+    // which is the only way to show the option is read without sitting out
+    // the real 10-minute default to watch the sibling survive it.
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+    const slowAgent = makeSimpleAgent(DraftOutputSchema, fakeRouterAlwaysFinal({ body: "slow but finished" }, { delayMs: 120 }));
+
+    const workflowFn = async (wf: WorkflowContext) => {
+      const bounded = await wf.step.agent("bounded", slowAgent, {}, { timeoutMs: 20 });
+      const onDefault = await wf.step.agent("on-default", slowAgent, {});
+      return { bounded: bounded.status, onDefault: onDefault.status };
+    };
+
+    // No `agentStepTimeoutMs` — the per-call value is the only thing that can
+    // produce the asymmetry below.
+    const result = await engine.run(workflowFn, baseParams);
+    expect(result.status === "completed" ? result.output : null).toEqual({ bounded: "tooling_error", onDefault: "completed" });
+  });
+
+  it("lets the run-level bound outrank a per-call one, so an operator's ceiling is never a lie", async () => {
+    // The precedence that makes a run-wide bound mean what it says: without
+    // it, the steps most likely to hit an operator's ceiling would be exactly
+    // the ones exempt from it, and no test could bound such a step at all.
+    const store = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(store);
+    const slowAgent = makeSimpleAgent(DraftOutputSchema, fakeRouterAlwaysFinal({ body: "slow but finished" }, { delayMs: 120 }));
+
+    const workflowFn = async (wf: WorkflowContext) => {
+      const generous = await wf.step.agent("generous", slowAgent, {}, { timeoutMs: 5 * 60_000 });
+      return generous.status;
+    };
+
+    const result = await engine.run(workflowFn, { ...baseParams, agentStepTimeoutMs: 20 });
+    expect(result.status === "completed" ? result.output : null).toBe("tooling_error");
   });
 });
 
