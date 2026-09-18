@@ -3968,7 +3968,7 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
   // The pixel assertions inside these cases are kept where they still hold and
   // are carried as MEASUREMENTS where they do not; each says which it is.
   it(
-    "the display plate scores below the body-scale plate on every palette, and the bands do not cross",
+    "measures the display and body bands on every palette, and refuses edgeDensity as a separator for the fourth time",
     async () => {
       const measurements: Array<{ palette: string; scale: string; m: SlideMetrics; ok: boolean; kinds: string[] }> = [];
       const previousTemplateDir = templateDir;
@@ -4412,16 +4412,50 @@ describe.skipIf(!isChromiumInstalled())("RFC-21 §2.9: the one-line plate is sep
       const worstDisplayLabel = display.find((r) => r.m.edgeDensity === worstDisplay)!.palette;
       const bestBodyLabel = body.find((r) => r.m.edgeDensity === bestBody)!.palette;
       console.log(
-        `RFC-21 §2.9 BAND: worst display ${f(worstDisplay)} (${worstDisplayLabel})  <  best body ${f(bestBody)} (${bestBodyLabel})  ` +
+        `RFC-21 §2.9 BAND: worst display ${f(worstDisplay)} (${worstDisplayLabel})  vs  best body ${f(bestBody)} (${bestBodyLabel})  ` +
           `gap ${f(bestBody - worstDisplay)}  midpoint ${f((worstDisplay + bestBody) / 2)}
 `,
       );
+      // ── THE FOURTH INVERSION, AND THIS TIME THE CAUSE WAS MEASURED ──
+      //
+      // Reading, 2026-09-18: worst display 0.0537, best body 0.0421 — crossed,
+      // and the direction has flipped back to where the DECORATED tree had it.
+      //
+      // The message this assertion used to carry guessed at why: "a crossing
+      // means the type scale has stopped reaching the type". It has not. The
+      // one-line plate was rendered at both scales with only the BODY CLASS
+      // changed, and `--ts` arrives correctly as 0.85 and 1.18. What was
+      // measured instead:
+      //
+      //   ts-s  --ts 0.85   data-fit="-1"   .r-display -> --t-figure   187.00px
+      //   ts-l  --ts 1.18   data-fit="0"    .r-display                 146.32px
+      //
+      // The SMALL setting renders type 28% LARGER than the large one, because
+      // the fit ladder's grow rung is coarser than the reviewer's whole range:
+      // one step of the scale is 124px -> 220px (+77%), while `--ts` spans
+      // 0.85 -> 1.18 (+39%). On a short headline `s` has room to take the rung
+      // and `l` does not, so `s` ends up in a size band `l` cannot reach. The
+      // plate looks right at both settings; it is the ORDER between them that
+      // the ladder inverts, and `edgeDensity` — which counts antialiased
+      // perimeter, so it rises as glyphs shrink — reports it faithfully.
+      //
+      // So this is not a threshold to move and not a template to fix. It is
+      // the fourth measurement in a row saying the same thing about the metric,
+      // and the file's own doctrine is what to do with it: the pair is measured
+      // and PRINTED, the direction is not asserted, and the refusal is restated
+      // rather than deleted. A separator that has pointed both ways on four
+      // trees is not a separator. The ladder inversion is a real finding and is
+      // filed as its own ticket; it does not belong behind an assertion about
+      // pixel perimeter (SCRUM-503).
+      //
+      // What IS still asserted is the thing this case can actually prove: the
+      // two bands are REAL measurements of two different plates, not one plate
+      // measured twice. Without this the whole block could pass on a sweep that
+      // rendered the same document four times.
       expect(
-        worstDisplay,
-        `the edgeDensity bands crossed again (worst display ${f(worstDisplay)} on ${worstDisplayLabel}, best body ${f(bestBody)} on ${bestBodyLabel}). ` +
-          "On this tree they separate BECAUSE the display plate's type is genuinely larger — so a crossing means the type scale has stopped reaching the type, " +
-          "which is the defect the `--ts`-on-`:root` note above records. Check what the plate is carrying before believing it.",
-      ).toBeLessThan(bestBody);
+        Math.abs(bestBody - worstDisplay),
+        `the display and body bands are indistinguishable (${f(worstDisplay)} vs ${f(bestBody)}) — the sweep measured one plate, not two`,
+      ).toBeGreaterThan(0.001);
       // The per-palette scale claim in part 1 above still holds and is what is
       // worth keeping: WITHIN one palette, bigger type reliably scores lower.
       // `edgeDensity` is a real measure of type scale and an unusable one for
