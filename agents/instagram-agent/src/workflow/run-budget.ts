@@ -159,8 +159,20 @@ export const TARGET_RUN_SPEND_USD = 1.8;
  * — the binding one, outside every optional-spend check), and
  * `04m-concept-eligibility`, which reads `max(cap, this)` instead of treating
  * the cap as a veto.
+ *
+ * ## Why 3 and not 2
+ *
+ * It was 2, and 2 is arithmetically unable to do the job this constant exists
+ * for. `MIN_PICTURE_SLIDES` is 3, and a carousel whose draft opted out of
+ * every picture starts at 0 — so the guarantee ran out one frame short of the
+ * floor it is there to reach, every time. The Geektime prep run of
+ * 2026-09-18 shipped with 0 pictures having spent the whole guarantee.
+ *
+ * A guarantee that cannot satisfy the floor is not a guarantee, and the gap
+ * between the two numbers was never argued for anywhere: it is what 2 was
+ * before `MIN_PICTURE_SLIDES` moved to 3.
  */
-export const MIN_GENERATED_IMAGES_PER_RUN = 2;
+export const MIN_GENERATED_IMAGES_PER_RUN = 3;
 
 /**
  * The owner's hard max per Instagram run. **Its purpose is to break an
