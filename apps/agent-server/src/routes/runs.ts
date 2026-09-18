@@ -56,15 +56,19 @@ export interface RunsRouterDeps {
  */
 const StartRunRequestSchema = RunJobRequestSchema.extend({
   /**
-   * Accepted for forward compatibility with the Portal's own request shape,
-   * but not currently consumed: none of the six workflow factories accept a
-   * per-run input override today — each one reads entirely from persisted
-   * client state (`client.getConfig`, the topic catalog, memory) via its own
-   * internal tool calls. Wiring this through would mean adding a write path
-   * to `karos-client` (currently entirely read-only) or a new per-run
-   * override mechanism to every workflow, neither of which this phase asked
-   * for — so it's validated and accepted, not silently dropped, but it has
-   * no effect on the run yet.
+   * An older spelling of `input`, kept as an ALIAS rather than removed.
+   *
+   * The comment that used to live here said this was "validated and accepted,
+   * not silently dropped" because no workflow could read a per-run brief. That
+   * stopped being true: `input` is read (see `RunJobRequestSchema`, and
+   * `readRunBrief` in the workflow package), and the middleware and the portal
+   * both publish under that name. Nothing sends `inputParams` today.
+   *
+   * Deleting it would be worse than keeping it. Zod strips unknown keys, so a
+   * caller still using the old name would have its brief dropped in silence —
+   * which is precisely the defect this ticket exists to close, reintroduced
+   * one field over. It is folded into `input` below, and `input` wins a
+   * conflict, because a caller sending both means the new name.
    */
   inputParams: z.record(z.string(), z.unknown()).optional(),
   specId: z.string().optional(),
@@ -183,7 +187,15 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
       res.status(400).json({ error: "invalid request body", details: parsed.error.issues });
       return;
     }
-    const { clientSlug, productId, runKind } = parsed.data;
+    const { clientSlug, productId, runKind, stageModels } = parsed.data;
+    // C3's first mandatory fix (SCRUM-211). This route destructured three
+    // fields and handed only those three to the queue, so `input` and
+    // `stageModels` were validated and then thrown away — while the Pub/Sub
+    // push route and the pull consumer, reading the SAME schema, passed
+    // everything through. Two entry points, one payload, different runs: an
+    // HTTP-started run drafted whatever it liked and a queued one drafted the
+    // brief, and neither failed, which is why it survived.
+    const input = { ...parsed.data.inputParams, ...parsed.data.input };
 
     // AU46 / SCRUM-329: the request names its own target clientSlug (unlike
     // the runId-addressed routes below, there is no stored record to read it
@@ -220,7 +232,17 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
     }
 
     try {
-      const { runId } = await deps.enqueueRunJob({ clientSlug, productId, runKind });
+      const { runId } = await deps.enqueueRunJob({
+        clientSlug,
+        productId,
+        runKind,
+        // Omitted rather than sent empty: `input: {}` and an absent `input`
+        // mean different things to `readRunBrief` — "asked for nothing in
+        // particular" versus "not asked at all" — and a scheduled run is
+        // legitimately the second.
+        ...(Object.keys(input).length > 0 ? { input } : {}),
+        ...(stageModels ? { stageModels } : {}),
+      });
       // 202, not 201: nothing has been created yet beyond a queued message.
       // The run record appears when the worker claims it. `runId` is the id the
       // consumer WILL derive from this message, so a caller can poll
