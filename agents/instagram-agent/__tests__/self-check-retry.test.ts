@@ -76,7 +76,8 @@ describe("07-emit-slides-data: self-check retry, capped at two returns to step 0
     // scout + research + angle + (copy + vet) + (copy + vet + relevance + QA): a failed 07 self-check never reaches the relevance judge.
     expect(result.status).toBe("completed");
     // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
-    expect(router.complete).toHaveBeenCalledTimes(12);
+    // 2026-09-18: +1 per RETRY for `05r-revise-copy`, which every attempt after the first now buys instead of a full redraft.
+    expect(router.complete).toHaveBeenCalledTimes(13);
 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     expect(stepIds).toContain("05-write-copy-attempt-1");
@@ -147,7 +148,8 @@ describe("07-emit-slides-data: self-check retry, capped at two returns to step 0
     expect(result.status).toBe("completed");
     if (result.status !== "completed") throw new Error("unreachable");
     // Phase 5.5 (spec §2 A2): +1 for `04b3-extract-entities`, ONE model turn per REVISION (outside the attempt loop, so a redraft never re-pays).
-    expect(router.complete).toHaveBeenCalledTimes(14);
+    // 2026-09-18: +1 per RETRY for `05r-revise-copy`, which every attempt after the first now buys instead of a full redraft.
+    expect(router.complete).toHaveBeenCalledTimes(16);
 
     const stepIds = (await durableStore.listSteps(runId)).map((s) => s.stepId);
     expect(stepIds).toContain("05-write-copy-attempt-1");
