@@ -134,3 +134,61 @@ export function boundsFromTranscript(
     words: kept,
   };
 }
+
+/**
+ * The best legal clip in a transcript, chosen by code rather than by a model.
+ *
+ * The deterministic floor under the moment picker (2026-09-18, the
+ * always-deliver rule). Two things used to end a run outright here: a picker
+ * whose output did not clear its own validation, and a proposal that could not
+ * be snapped into a legal window — a 200-second answer, or a sentence shorter
+ * than the floor. Both are quality events, not faults: the transcript is in
+ * hand, it demonstrably contains speech, and *some* run of whole sentences in
+ * it is a legal clip. This finds that run.
+ *
+ * "Best" is the densest speech, not the longest window: words per second over
+ * complete sentences. A 45-second run containing 130 words is someone making
+ * an argument; a 45-second run containing 40 is someone pausing, and it is the
+ * pauses a viewer scrolls away during. Ties go to the earlier window, because
+ * the opening of a recording is where a speaker states what they are there to
+ * say.
+ *
+ * Returns `undefined` only when NO run of whole sentences fits between the
+ * floor and the ceiling — a recording of one unbroken 5-minute sentence, or one
+ * shorter than the floor. That is genuinely nothing to clip, and the caller
+ * treats it as such.
+ */
+export function bestLegalWindow(words: readonly TranscriptWordLike[], options: ClipBoundsOptions): ClipBoundsResult | undefined {
+  const sentences = sentenceBoundedWords(words);
+  if (sentences.length === 0) return undefined;
+
+  let best: { start: number; end: number; density: number } | undefined;
+  for (let i = 0; i < sentences.length; i++) {
+    const start = sentences[i]!.start;
+    // The furthest sentence end that still fits under the ceiling. Extending
+    // greedily rather than stopping at the floor: a viewer leaves a clip that
+    // ends before the point lands, and the ceiling is the real constraint.
+    let end: number | undefined;
+    for (let j = i; j < sentences.length; j++) {
+      const candidateEnd = sentences[j]!.end;
+      if (candidateEnd - start > options.maxSeconds) break;
+      end = candidateEnd;
+    }
+    if (end === undefined) continue;
+    const duration = end - start;
+    if (duration < options.minSeconds) continue;
+    const spoken = words.filter((w) => w.start >= start && w.end <= end).length;
+    const density = spoken / duration;
+    if (best === undefined || density > best.density) best = { start, end, density };
+  }
+  if (best === undefined) return undefined;
+
+  const kept = words.filter((w) => w.start >= best!.start && w.end <= best!.end);
+  return {
+    ok: true,
+    startSeconds: best.start,
+    endSeconds: best.end,
+    text: kept.map((w) => w.text).join(" ").trim(),
+    words: kept,
+  };
+}

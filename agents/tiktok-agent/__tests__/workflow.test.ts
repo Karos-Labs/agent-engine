@@ -101,12 +101,24 @@ interface StubOptions {
   config?: unknown;
   transcriptWords?: Array<{ text: string; start: number; end: number }>;
   failingGate?: string;
+  /**
+   * What `failingGate` reports as its offending literal(s).
+   *
+   * Absent means "objects, names nothing", which is a real shape a gate can
+   * take and the one the sweep above relies on. Present means the gate reports
+   * the span as it appears in the draft, which is what the deterministic
+   * redaction floor needs to do anything at all - so a test that does not set
+   * this is not testing the floor.
+   */
+  failingGateEvidence?: string[];
   reserveFails?: boolean;
   forbiddenTopics?: string[];
   /** Register `media.harvestVideo` answering success (Tier 2b serves). */
   harvestServes?: boolean;
   /** Register `video.findStockClip` answering success (Tier 3, the original short over stock footage, serves). `false` registers it answering not_available. */
   stockServes?: boolean;
+  /** 1-based beat the stock library refuses to serve, whatever query it is asked — the "one dark beat" case, as opposed to a library that is down entirely. */
+  stockMissesBeat?: number;
   /** Register `video.uploadDeliverable` (a media store is configured). */
   withUpload?: boolean;
   /** Register `video.synthesizeVoice` (a TTS provider is configured). */
@@ -127,10 +139,24 @@ function stubTools(opts: StubOptions = {}): Harness {
   const calls: string[] = [];
   const deliverables: Array<Record<string, unknown>> = [];
   const ok = (result: unknown) => ({ status: "success" as const, result });
-  const pass = (name: string) =>
-    opts.failingGate === name
-      ? { verdict: "content_fail" as const, evidence: [], reason: `${name} said no`, toolVersion: "1.0.0" }
-      : { verdict: "pass" as const, evidence: [], toolVersion: "1.0.0" };
+  /**
+   * A gate's verdict on the text it was actually handed.
+   *
+   * `text` matters: a gate that keeps objecting after its own offending span
+   * is gone would make the redaction floor untestable, because
+   * `runCheckWithRepair` keeps a repair only when strictly fewer pieces of
+   * evidence survive. A stub that never changes its mind would discard every
+   * repair and the test would pass for the wrong reason.
+   */
+  const pass = (name: string, text?: string) => {
+    if (opts.failingGate !== name) return { verdict: "pass" as const, evidence: [], toolVersion: "1.0.0" };
+    const evidence = opts.failingGateEvidence ?? [];
+    const stillThere = evidence.filter((span) => (text ?? "").includes(span));
+    if (evidence.length > 0 && stillThere.length === 0) {
+      return { verdict: "pass" as const, evidence: [], toolVersion: "1.0.0" };
+    }
+    return { verdict: "content_fail" as const, evidence: stillThere.length > 0 ? stillThere : evidence, reason: `${name} said no`, toolVersion: "1.0.0" };
+  };
 
   const tool = (name: string, run: (args: never) => unknown, schema?: ZodType) => ({
     name,
@@ -181,10 +207,10 @@ function stubTools(opts: StubOptions = {}): Harness {
       },
       ComposeSequenceInputSchema,
     ),
-    "gate.lintPost": tool("gate.lintPost", () => ok(pass("gate.lintPost"))),
-    "gate.brandCompliance": tool("gate.brandCompliance", () => ok(pass("gate.brandCompliance"))),
-    "gate.noPlaceholder": tool("gate.noPlaceholder", () => ok(pass("gate.noPlaceholder"))),
-    "gate.leakCheck": tool("gate.leakCheck", () => ok(pass("gate.leakCheck"))),
+    "gate.lintPost": tool("gate.lintPost", (args) => ok(pass("gate.lintPost", (args as { text?: string }).text))),
+    "gate.brandCompliance": tool("gate.brandCompliance", (args) => ok(pass("gate.brandCompliance", (args as { text?: string }).text))),
+    "gate.noPlaceholder": tool("gate.noPlaceholder", (args) => ok(pass("gate.noPlaceholder", (args as { text?: string }).text))),
+    "gate.leakCheck": tool("gate.leakCheck", (args) => ok(pass("gate.leakCheck", (args as { text?: string }).text))),
     "ledger.writeDeliverable": tool("ledger.writeDeliverable", (args) => {
       deliverables.push((args as { deliverable: Record<string, unknown> }).deliverable);
       return ok({ id: "deliv-1", created: true });
@@ -208,6 +234,12 @@ function stubTools(opts: StubOptions = {}): Harness {
       (args) => {
         const input = args as { outputName: string; query: string };
         stockCalls += 1;
+        // `outputName` is `plate-<beat>` / `plate-<beat>-b` / `plate-<beat>-repick`,
+        // so the beat a search belongs to is readable off it — which is what
+        // lets a test starve ONE beat rather than the whole library.
+        if (opts.stockMissesBeat !== undefined && new RegExp(`^plate-${opts.stockMissesBeat}(\\b|-)`).test(input.outputName)) {
+          return { status: "not_available" as const, reason: `nothing in the library for "${input.query}"` };
+        }
         return opts.stockServes
           ? ok({ path: `.media-cache/run/${input.outputName}.mp4`, pexelsId: 1000 + stockCalls, durationSeconds: 9, width: 1080, height: 1920, sourceUrl: `https://www.pexels.com/video/${1000 + stockCalls}/`, photographer: "Someone", license: "Pexels", query: input.query })
           : { status: "not_available" as const, reason: "PEXELS_API_KEY is not set" };
@@ -372,27 +404,38 @@ describe("tiktok-agent clip pipeline", () => {
     expect(h.calls).toContain("video.transcribe");
   });
 
-  it("holds when the selected moment is too short to be a clip", async () => {
+  it("cuts the densest legal window when the picked moment is too short, rather than ending the run", async () => {
+    // The owner's always-deliver rule (2026-09-17). A three-second proposal is
+    // a bad PROPOSAL, not an unusable recording: the transcript is in hand and
+    // paid for, and some run of whole sentences in it is a legal clip.
     const h = stubTools();
     const result = await run(h, "run-tt-short", {}, [{ ...GOOD_MOMENT, startSeconds: 10, endSeconds: 13 }, GOOD_COMMENTARY]);
 
-    expect(result.status).toBe("held");
-    expect(h.calls).toContain("topics.release");
-    expect(h.calls).not.toContain("video.cutClip");
+    expect(result.status).toBe("completed");
+    expect(h.calls).toContain("video.cutClip");
+    expect(h.calls).not.toContain("topics.release");
+    // …and the client is told the cut was chosen by code, not picked.
+    const repairs = h.deliverables[0]?.["contentRepairs"] as Array<{ check: string; action: string }> | undefined;
+    expect(repairs?.map((r) => r.check)).toContain("moment-selection");
+    expect(h.deliverables[0]?.["momentFallback"]).toMatch(/not clippable/);
   });
 
-  it("refuses a caption that does not name the source, even though a gate did not object", async () => {
-    // The one failure here with a party outside this system. Checked in code
-    // rather than asked of the model that wrote the caption.
+  it("appends the source credit the caption forgot instead of refusing the clip", async () => {
+    // The one failure here with a party outside this system — which is exactly
+    // why it is repaired rather than held on. The rule protects the person
+    // whose footage this is, and a dead run protects them no better than a
+    // credited caption while costing the client the clip.
     const h = stubTools();
     const result = await run(h, "run-tt-uncredited", {}, [
       GOOD_MOMENT,
       { ...GOOD_COMMENTARY, caption: "Our read on this: the number is right and the conclusion is wrong." },
     ]);
 
-    expect(result.status).toBe("held");
-    expect(h.calls).not.toContain("video.cutClip");
-    expect(h.calls).toContain("topics.release");
+    expect(result.status).toBe("completed");
+    expect(h.calls).toContain("video.cutClip");
+    expect(h.deliverables[0]?.["caption"]).toContain("Jane Doe on The Show ep. 12");
+    const repairs = h.deliverables[0]?.["contentRepairs"] as Array<{ check: string; action: string }>;
+    expect(repairs.find((r) => r.check === "source-credit")?.action).toBe("rewritten");
   });
 
   it.each([
@@ -400,35 +443,108 @@ describe("tiktok-agent clip pipeline", () => {
     ["gate.brandCompliance"],
     ["gate.noPlaceholder"],
     ["gate.leakCheck"],
-  ])("holds and releases the moment when %s fails", async (gate) => {
+  ])("delivers the clip flagged when %s objects, instead of holding the run", async (gate) => {
     const h = stubTools({ failingGate: gate });
     const result = await run(h, `run-tt-${gate.replace(".", "-")}`);
 
-    expect(result.status).toBe("held");
-    expect(h.calls).toContain("topics.release");
-    // Compliance runs before the render: a clip that cannot ship is never made.
-    expect(h.calls).not.toContain("video.cutClip");
+    // These four are quality events, not faults (RFC-19's carve-out): the
+    // client gets the clip, carrying the gate's own sentence.
+    expect(result.status).toBe("completed");
+    expect(h.calls).not.toContain("topics.release");
+    expect(h.calls).toContain("video.cutClip");
+    const repairs = h.deliverables[0]?.["contentRepairs"] as Array<{ check: string; action: string; detail: string }>;
+    // This harness's gates object with NO evidence here, so there is no span
+    // to redact and the honest end of the ladder is `unresolved` — delivered,
+    // and said so. A gate that names its spans redacts instead; see
+    // "redacts the sentence carrying a flagged span" below.
+    const objection = repairs.find((r) => r.check === "tiktok-text-gates");
+    expect(objection?.action).toBe("unresolved");
+    expect(objection?.detail).toContain(gate);
   });
 
-  it("holds when the blocking QA gate video.selfEvalGate fails", async () => {
+  it("delivers the clip flagged when the bitstream QA video.selfEvalGate objects", async () => {
     const h = stubTools({ failingGate: "video.selfEvalGate" });
     const result = await run(h, "run-tt-video-selfEvalGate");
 
-    expect(result.status).toBe("held");
-    expect(h.calls).toContain("topics.release");
-    expect(h.calls).not.toContain("ledger.writeDeliverable");
+    // A file this gate dislikes, that a person can watch, beats no file and a
+    // sentence — and the gate has no authority a reviewer watching the same
+    // clip lacks.
+    expect(result.status).toBe("completed");
+    expect(h.calls).toContain("ledger.writeDeliverable");
+    const repairs = h.deliverables[0]?.["contentRepairs"] as Array<{ check: string; action: string }>;
+    expect(repairs.find((r) => r.check === "video.selfEvalGate")?.action).toBe("unresolved");
   });
 
-  it("never persists a deliverable for a run that did not clear every gate", async () => {
-    // Swept across every gate rather than asserted once: the property is that
-    // no single failing gate has a path to the ledger.
+  it("always persists a deliverable, and always says what it had to repair", async () => {
+    // The inverse of the property this test used to assert. Swept across every
+    // gate rather than asserted once: the property is that no single failing
+    // content gate has a path to a run that ends with nothing in the client's
+    // hands, and that none of them ships silently either.
     for (const gate of ["gate.lintPost", "gate.leakCheck", "video.selfEvalGate"]) {
       const h = stubTools({ failingGate: gate });
       const result = await run(h, `run-tt-sweep-${gate.replace(".", "-")}`);
-      expect(result.status, gate).toBe("held");
-      expect(h.calls, gate).not.toContain("ledger.writeDeliverable");
-      expect(h.calls, gate).not.toContain("topics.commit");
+      expect(result.status, gate).toBe("completed");
+      expect(h.calls, gate).toContain("ledger.writeDeliverable");
+      expect(h.calls, gate).toContain("topics.commit");
+      expect((h.deliverables[0]?.["contentRepairs"] as unknown[] | undefined)?.length, gate).toBeGreaterThan(0);
     }
+  });
+
+  it("redacts the sentence carrying a flagged span and ships the rest of the caption", async () => {
+    // The floor doing real work, as opposed to the `unresolved` end of the
+    // ladder the sweep above exercises. `gate.brandCompliance` names the
+    // offending literal, the sentence carrying it goes, the sentence that does
+    // not is kept verbatim, and the gate then passes — so the repair is
+    // recorded `redacted`, not `unresolved`.
+    const h = stubTools({ failingGate: "gate.brandCompliance", failingGateEvidence: ["world-class"] });
+    const result = await run(h, "run-tt-redact", {}, [
+      GOOD_MOMENT,
+      {
+        ...GOOD_COMMENTARY,
+        caption: "Our read on this: the number is right and the conclusion is wrong. This is world-class analysis. Via Jane Doe on The Show ep. 12.",
+      },
+    ]);
+
+    expect(result.status).toBe("completed");
+    const caption = h.deliverables[0]?.["caption"] as string;
+    expect(caption).not.toContain("world-class");
+    expect(caption).toContain("the number is right and the conclusion is wrong");
+    // …and the credit survived the redaction, because it was in its own sentence.
+    expect(caption).toContain("Jane Doe on The Show ep. 12");
+    const repairs = h.deliverables[0]?.["contentRepairs"] as Array<{ check: string; action: string; detail: string }>;
+    const redaction = repairs.find((r) => r.check === "tiktok-text-gates");
+    expect(redaction?.action).toBe("redacted");
+    expect(redaction?.detail).toContain("world-class");
+  });
+
+  it("keeps a field the floor would empty, and records the objection unresolved", async () => {
+    // A caption is a required field. When every sentence in it carries the
+    // flagged span there is nothing to keep, and an empty caption is a broken
+    // deliverable rather than a repaired one — so the original stands and the
+    // gate's objection rides to the reviewer instead. This is the asymmetry
+    // that stops "always deliver" from turning into "deliver anything".
+    const h = stubTools({ failingGate: "gate.leakCheck", failingGateEvidence: ["Our read"] });
+    const result = await run(h, "run-tt-would-empty", {}, [
+      GOOD_MOMENT,
+      { ...GOOD_COMMENTARY, caption: "Our read.", about: "Our read." },
+    ]);
+
+    expect(result.status).toBe("completed");
+    expect(h.deliverables[0]?.["caption"]).toContain("Our read");
+    const repairs = h.deliverables[0]?.["contentRepairs"] as Array<{ check: string; action: string }>;
+    expect(repairs.find((r) => r.check === "tiktok-text-gates")?.action).toBe("unresolved");
+  });
+
+  it("attaches no repair ledger at all to a clean run", async () => {
+    // The asymmetry that keeps the marker readable: absent, never empty. A
+    // ledger attached unconditionally is the silent-degradation failure in
+    // reverse — shouting `repaired` at every clean clip until nobody reads it.
+    const h = stubTools();
+    const result = await run(h, "run-tt-clean-no-ledger");
+
+    expect(result.status).toBe("completed");
+    expect(h.deliverables[0]).not.toHaveProperty("contentRepairs");
+    expect(h.deliverables[0]).not.toHaveProperty("momentFallback");
   });
 
   it("runs the terminal topic guardrail before the human ever sees the clip", async () => {
@@ -674,17 +790,37 @@ describe("tiered source cascade", () => {
     expect(h.calls).toContain("topics.release");
   });
 
-  it("holds and releases the topic when the stock library is wired but cannot serve a beat and no still tier is registered", async () => {
+  it("reports a tooling failure, not a content verdict, when NOTHING can picture any beat", async () => {
+    // The end of the ladder, and the one branch the always-deliver rule does
+    // not reach: the library cannot serve, no still may be bought and the free
+    // text plate is not registered either, so there is no picture anywhere in
+    // the short and nothing to stand in for anything. That is RFC-19's
+    // carve-out #3 — a genuine tooling failure where no output exists at all —
+    // and it names which tools are missing rather than blaming the beat.
     const h = stubTools({ harvestServes: false, stockServes: false });
     const result = await run(h, "run-tt-stock-down", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], REPO_ROOT);
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toContain("no footage for beat 1");
-    expect(result.reason).toContain("image.generate is not registered");
-    expect(result.reason).toContain("video.textPlate is not registered");
+    expect(result.status).toBe("degraded");
+    if (result.status !== "degraded") throw new Error("unreachable");
+    expect(result.failureReason).toContain("no plate could be made for any");
+    expect(result.failureReason).toContain("video.textPlate is not registered");
     expect(h.calls).toContain("topics.release");
     expect(h.calls).not.toContain("ledger.writeDeliverable");
+  }, 20_000);
+
+  it("stands a neighbouring shot in for the ONE beat nothing could picture, and ships", async () => {
+    // The same failure, one beat instead of all of them: the library answers
+    // for beats 1 and 3 and misses beat 2. A repeated shot is a worse short;
+    // no short is no deliverable, and the owner's rule settles which we ship.
+    const h = stubTools({ harvestServes: false, stockServes: true, stockMissesBeat: 2 });
+    const result = await run(h, "run-tt-one-beat-dark", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], REPO_ROOT);
+
+    expect(result.status).toBe("completed");
+    const repairs = h.deliverables[0]?.["contentRepairs"] as Array<{ check: string; action: string; detail: string }>;
+    const stood = repairs.find((r) => r.check === "beat-footage");
+    expect(stood?.action).toBe("substituted");
+    expect(stood?.detail).toContain("beat 2");
+    expect(stood?.detail).toContain("beat 1");
   }, 20_000);
 
   it("mode \"commentary\" never generates: with no footage the run holds instead of making an original short", async () => {

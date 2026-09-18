@@ -182,12 +182,92 @@ export const DEFAULT_CLIP_CONFIG: TikTokClipConfig = TikTokClipConfigSchema.pars
 export type ClipSourceTier = "user-asset" | "owned-footage" | "web-harvest" | "stock" | "generated";
 
 /**
- * The product rule (2026-09-09): one short never costs more than two dollars,
- * all in. Enforced three ways: the dispatcher's `WorkflowBudget` (checked by
- * `step.code`/`step.agent` before every step), the workflow's own estimate
- * before the first plate is bought, and a guard before each purchase.
+ * The HARD ceiling: no short costs more than this, all in. Enforced three
+ * ways — the dispatcher's `WorkflowBudget` (checked by `step.code`/
+ * `step.agent` before every step), the workflow's own estimate before the
+ * first plate is bought, and a guard before each purchase.
+ *
+ * Unchanged since 2026-09-09. What changed on 2026-09-18 is what it MEANS:
+ * it is now the wall, not the plan. See `TARGET_RUN_SPEND_USD`.
  */
 export const MAX_RUN_COST_USD = 2;
+
+/**
+ * The SOFT target a short is planned against, and the owner's ruling of
+ * 2026-09-16 (*quality before cost*) applied to video.
+ *
+ * $2 was set on 2026-09-09 for one reason: Veo. Four prep runs had each paid
+ * roughly $13 for generated footage the visual QA called obviously
+ * AI-generated, and a hard wall was the right answer to that. Veo has not been
+ * a tier since; a typical short now prices well under this number, and the
+ * ceiling binds only on the long, voiced, many-beat shorts — which are exactly
+ * the ambitious ones.
+ *
+ * 1.80 matches what instagram-agent settled on for the same reason
+ * (`run-budget.ts`: $1.00 to $1.80, because "$1.00 was the number a run with
+ * ZERO generated images came in under"). A short and a carousel are different
+ * objects, but the RULE is the same one and the owner asked for the same
+ * number, so the fleet keeps one answer rather than two.
+ *
+ * The real change is not the figure. It is {@link BUDGET_RUNG_ORDER}.
+ */
+export const TARGET_RUN_SPEND_USD = 1.8;
+
+/**
+ * What a run gives up, in order, when its plan prices over the target — and
+ * the whole point of the 2026-09-18 budget work.
+ *
+ * The old order was an accident of the Veo era: at the ceiling the run skipped
+ * the STILL, then the VOICE, then the QA CALL. That is exactly backwards under
+ * *quality before cost*. A voice is what makes a short feel made rather than
+ * assembled; the QA watch is the only thing between a bad cut and a client;
+ * and both together cost less than a third of one generated photograph.
+ *
+ * So the ladder now spends its rungs on work whose own name is optional and
+ * arrives at the things that decide whether the short is watchable LAST:
+ *
+ * 1. `replan` — send the script back to the writer with the numbers. One
+ *    drafting call, and the only rung that costs the viewer nothing: a shorter
+ *    short that keeps its pictures and its voice.
+ * 2. `stills` — the bought photograph for a beat the library cannot serve
+ *    ($0.067 each, and the largest line in any plan). The free text plate sits
+ *    underneath it, so the beat still has a picture.
+ * 3. `voice` — run silent, the captions carrying the words.
+ * 4. `visual-qa` — the last thing cut, and only against the hard ceiling.
+ *
+ * Every member of this list is a lever that actually moves
+ * `estimateOriginalShortCost`'s number, and that is a rule. Dropping the
+ * second shot on a long beat, for instance, is NOT here: stock footage is
+ * free, so cutting it would spend picture quality and save nothing, while
+ * looking on the page like a saving. A rung that does not move the estimate is
+ * a note pretending to be a control.
+ *
+ * The PLANNING order above was already close to right; what was not was what
+ * happened once a run was live. The mid-run guards on the still tier, the
+ * voice and the QA watch all fired at the same number - the hard ceiling - so
+ * whichever came first in execution order won, and execution order is plates,
+ * then voice, then QA. A short could therefore spend its last cents on a
+ * $0.067 photograph for beat 5 and then run silent and unwatched, having paid
+ * the most for the least. `VOICE_AND_QA_RESERVE_USD` is the fix: the still
+ * tier may not eat the headroom the voice and the QA watch need.
+ *
+ * Nothing here is a hold. Every rung leaves a finished, deliverable short.
+ */
+export const BUDGET_RUNG_ORDER = ["replan", "stills", "voice", "visual-qa"] as const;
+export type BudgetRung = (typeof BUDGET_RUNG_ORDER)[number];
+
+/**
+ * Headroom the still tier may not spend, because the voice and the QA watch
+ * need it (2026-09-18).
+ *
+ * Sized from what those two actually cost: a 40-second narration is roughly
+ * 500 characters of ElevenLabs multilingual plus its timing transcription, and
+ * the QA call has run $0.003-0.005. A tenth of a dollar covers both with room,
+ * and it is less than two bought photographs - so on any plan where this binds,
+ * the trade is one or two stills for a narrator and a pair of eyes on the
+ * result. Under *quality before cost* that trade is not close.
+ */
+export const VOICE_AND_QA_RESERVE_USD = 0.1;
 
 /** A flat allowance for the Gemini visual QA call in the pre-purchase estimate; the real figure is token-billed after the fact and has run $0.003–0.005. */
 export const VISUAL_QA_ESTIMATE_USD = 0.01;
