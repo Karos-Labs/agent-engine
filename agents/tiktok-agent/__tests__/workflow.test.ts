@@ -1011,6 +1011,87 @@ describe("branded frame inputs", () => {
     return frameArgs!["brand"] as Record<string, unknown>;
   }
 
+  /**
+   * SCRUM-383's other half.
+   *
+   * instagram-agent fixed this in `brand-render-tokens.ts` and its comment
+   * cites tiktok's own derivation as the precedent — true of the accept rule
+   * ("only https://"), and not of the diagnostic. So a client whose BrandKit
+   * carried a `gs://` logoUrl got a cover with no logo, no error, no held run
+   * and nothing in the trace: indistinguishable from a client who never
+   * configured a logo at all.
+   */
+  async function videoBrandStepOutput(runId: string, brandResult: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const h = stubTools();
+    (h.tools as unknown as Record<string, unknown>)["client.getBrand"] = {
+      name: "client.getBrand",
+      version: "1.0.0",
+      inputSchema: { safeParse: (v: unknown) => ({ success: true as const, data: v }) },
+      async execute() {
+        return { status: "success" as const, result: brandResult };
+      },
+    };
+    const store = new MemoryDurableStepStore();
+    const workflow = createTikTokAgentWorkflow({
+      tools: h.tools,
+      promptStore: new FilePromptStore(PROMPTS_ROOT),
+      router: smartFakeRouter([GOOD_MOMENT, GOOD_COMMENTARY]),
+      autoApprove: true,
+    });
+    const result = await new WorkflowEngine(store).run(workflow, {
+      ...PARAMS,
+      runId,
+      input: { sourcePath: "/tmp/episode.mp4" },
+    });
+    expect(result.status).toBe("completed");
+    const step = (await store.listSteps(runId)).find((s) => s.stepId === "07b-load-video-brand");
+    expect(step, "07b-load-video-brand must have run").toBeDefined();
+    return step!.output as Record<string, unknown>;
+  }
+
+  it("records WHY it dropped a gs:// logo instead of looking like a client with no logo", async () => {
+    const brand = await videoBrandStepOutput("run-tt-logo-gs", {
+      colors: { neutralDark: "#101418", neutralLight: "#F2F0EA" },
+      logoUrl: "gs://karos-brand-assets/acme/logo.svg",
+    });
+
+    // No logo is still the outcome — brand furniture never holds a run.
+    expect(brand["logoUrl"]).toBeUndefined();
+    // But the reason is now a fact in the trace, and it names the URL, so the
+    // thing to fix is readable off the run rather than guessed at.
+    expect(brand["rejectedLogoUrlReason"]).toContain("gs://karos-brand-assets/acme/logo.svg");
+    expect(brand["rejectedLogoUrlReason"]).toContain("https://");
+  });
+
+  it("says nothing when there is nothing to say — a good logo and no logo both leave the field unset", async () => {
+    // The distinction only means something if it is absent in the ordinary
+    // cases. A reason on every run is a reason nobody reads.
+    const good = await videoBrandStepOutput("run-tt-logo-ok", {
+      colors: { neutralDark: "#101418", neutralLight: "#F2F0EA" },
+      logoUrl: "https://logos.example/mark.png",
+    });
+    expect(good["logoUrl"]).toBe("https://logos.example/mark.png");
+    expect(good["rejectedLogoUrlReason"]).toBeUndefined();
+
+    const none = await videoBrandStepOutput("run-tt-logo-none", {
+      colors: { neutralDark: "#101418", neutralLight: "#F2F0EA" },
+    });
+    expect(none["logoUrl"]).toBeUndefined();
+    expect(none["rejectedLogoUrlReason"]).toBeUndefined();
+  });
+
+  it("leaves a javascript: logoUrl failing exactly the way it always has", async () => {
+    // Scoped to gs:// on purpose, the same scoping SCRUM-383 chose: a
+    // javascript:/file:// value is not a BrandKit misconfiguration anybody
+    // makes, and widening the "loud" class is a different change from this one.
+    const brand = await videoBrandStepOutput("run-tt-logo-js", {
+      colors: { neutralDark: "#101418", neutralLight: "#F2F0EA" },
+      logoUrl: "javascript:alert(1)",
+    });
+    expect(brand["logoUrl"]).toBeUndefined();
+    expect(brand["rejectedLogoUrlReason"]).toBeUndefined();
+  });
+
   it("overlays a mark that clears the floor on the bar with no plate behind it", async () => {
     expect(contrastRatio("#FFFFFF", "#101418")).toBeGreaterThanOrEqual(BRAND_LOGO_CONTRAST_FLOOR);
     const brand = await frameBrandForLogo("run-tt-logo-legible", WHITE_MARK);
