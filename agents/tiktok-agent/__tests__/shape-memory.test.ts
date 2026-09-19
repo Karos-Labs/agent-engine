@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   SHAPE_WINDOW,
+  clipWindowEntry,
+  clippedWindowDirective,
   openingDevice,
   parseShapeMemory,
   shapeRepeatDirective,
   skeletonEntry,
   skeletonOf,
   stockClipEntry,
+  windowsOverlap,
 } from "../src/workflow/shape-memory.js";
 
 /**
@@ -154,5 +157,48 @@ describe("shapeRepeatDirective", () => {
     // to satisfy it, which would cost more than the repetition does.
     const directive = shapeRepeatDirective(Array.from({ length: 4 }, () => shape("negation")))!;
     expect(directive).toContain("never the substance");
+  });
+});
+
+describe("clipped windows (2026-09-19)", () => {
+  const EP = "https://example.test/episode-12";
+
+  it("round-trips a window through the shared ledger", () => {
+    const memory = parseShapeMemory([clipWindowEntry(EP, 120.4, 168.9), "media/instagram/run-1/cover.png"]);
+    expect(memory.clippedWindows).toEqual([{ source: EP, startSeconds: 120, endSeconds: 169 }]);
+  });
+
+  it("keeps a source URL intact even though it contains an @", () => {
+    // The entry is `<start>-<end>@<source>` and a source is routinely a URL
+    // with its own "@" in it — splitting on the last one loses the episode.
+    const signed = "https://example.test/ep?token=a@b&x=1";
+    expect(parseShapeMemory([clipWindowEntry(signed, 10, 40)]).clippedWindows[0]!.source).toBe(signed);
+  });
+
+  it("skips a malformed window rather than taking the run down", () => {
+    const memory = parseShapeMemory(["tiktok:clip:notanumber@ep", "tiktok:clip:10-5@ep", "tiktok:clip:10-40@", clipWindowEntry(EP, 10, 40)]);
+    // `10-5` is inverted and `10-40@` names no source; both are dropped.
+    expect(memory.clippedWindows).toEqual([{ source: EP, startSeconds: 10, endSeconds: 40 }]);
+  });
+
+  it("only calls two windows of the SAME recording an overlap", () => {
+    const a = { source: EP, startSeconds: 100, endSeconds: 140 };
+    expect(windowsOverlap(a, { source: EP, startSeconds: 130, endSeconds: 170 })).toBe(true);
+    expect(windowsOverlap(a, { source: EP, startSeconds: 140, endSeconds: 180 })).toBe(false); // touching is not overlapping
+    expect(windowsOverlap(a, { source: "https://example.test/episode-13", startSeconds: 100, endSeconds: 140 })).toBe(false);
+  });
+
+  it("says nothing about a recording this client has never clipped", () => {
+    expect(clippedWindowDirective(EP, [])).toBeUndefined();
+    expect(clippedWindowDirective(EP, [{ source: "https://example.test/other", startSeconds: 0, endSeconds: 30 }])).toBeUndefined();
+  });
+
+  it("steers rather than forbids, and says what to do when the best moment is inside a used window", () => {
+    // A two-hour episode sometimes has one genuinely best moment. Refusing it
+    // in code would veto the strongest clip because a worse neighbour shipped
+    // first, and a worse clip is not an improvement on a repeated one.
+    const directive = clippedWindowDirective(EP, [{ source: EP, startSeconds: 120, endSeconds: 169 }])!;
+    expect(directive).toContain("120s-169s");
+    expect(directive).toContain("pick it anyway");
   });
 });

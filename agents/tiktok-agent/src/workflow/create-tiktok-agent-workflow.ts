@@ -10,6 +10,7 @@ import {
   shingles,
   type AgentContext,
   type AgentToolRegistry,
+  type DedupeVerdict,
   type GateVerdict,
   type ModelRouter,
   type PromptStore,
@@ -73,7 +74,16 @@ import { TikTokScriptAgent } from "../agent/tiktok-script-agent.js";
 import { TikTokTopicScoutAgent } from "../agent/tiktok-topic-scout-agent.js";
 import { bestLegalWindow, boundsFromTranscript, sentenceBoundedWords, type TranscriptWordLike } from "./clip-bounds.js";
 import { checkDraftLanguage, isJudgeableLanguage, languageRedraftDirective, resolveTargetLanguage, type ResolvedTargetLanguage } from "./target-language.js";
-import { parseShapeMemory, shapeRepeatDirective, skeletonEntry, skeletonOf, stockClipEntry } from "./shape-memory.js";
+import {
+  clipWindowEntry,
+  clippedWindowDirective,
+  parseShapeMemory,
+  shapeRepeatDirective,
+  skeletonEntry,
+  skeletonOf,
+  stockClipEntry,
+  windowsOverlap,
+} from "./shape-memory.js";
 import { scoreMoment } from "./moment-floor.js";
 import { alignScriptToTimings, beatHoldsFromTimings, buildPhraseCues, buildPhraseGroups, cuesToSrt, scriptWords } from "./captions.js";
 import {
@@ -1045,14 +1055,15 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
      */
     const shapeMemory = await wf.step.code("01e-read-shape-memory", async () => {
       const list = tools["ledger.listUsedImages"];
-      if (list === undefined) return { usedStockIds: [], skeletons: [] };
+      const nothing = { usedStockIds: [] as number[], skeletons: [] as string[], clippedWindows: [] as Array<{ source: string; startSeconds: number; endSeconds: number }> };
+      if (list === undefined) return nothing;
       try {
         const outcome = await list.execute({}, { ctx });
-        if (outcome.status !== "success") return { usedStockIds: [], skeletons: [] };
+        if (outcome.status !== "success") return nothing;
         return parseShapeMemory((outcome.result as { imagePaths?: string[] }).imagePaths ?? []);
       } catch (error) {
         console.error("01e-read-shape-memory: could not read what this account has already made", error);
-        return { usedStockIds: [], skeletons: [] };
+        return nothing;
       }
     });
     const shapeDirective = shapeRepeatDirective(shapeMemory.skeletons);
@@ -1526,6 +1537,15 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
      * they are watching.
      */
     let momentFallback: string | undefined;
+    /**
+     * What names this run's source recording in the cross-run ledger.
+     *
+     * The harvested URL, the attached asset's URI, or a dispatched path —
+     * whichever this run actually read. `undefined` for a stock-footage
+     * original short, which is assembled rather than cut, so there is no
+     * recording to have used part of.
+     */
+    const clipSourceKey: string | undefined = intake.sourceContext?.url ?? (intake.sourceTier === "stock" ? undefined : intake.sourcePath);
     /** Set when the cut is under the watchability floor and nothing in the transcript scored better. */
     let momentFloorNote: string | undefined;
     /** Observations the floor made that never decided anything — carried to the reviewer, never acted on. */
@@ -1599,6 +1619,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       // ── 03: PICK-moment (judgment) ──
       moment = await wf.step.code("03-select-moment", async () => {
         const agent = new TikTokMomentAgent({ router: options.router, tools, promptStore: options.promptStore });
+        const alreadyClipped = clipSourceKey !== undefined ? clippedWindowDirective(clipSourceKey, shapeMemory.clippedWindows) : undefined;
         const exec = await wf.step.agent("03a-moment", agent, {
           // Which moment to clip is exactly the kind of thing a client's
           // direction speaks to ("the part where they talk about pricing"),
@@ -1612,6 +1633,13 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           transcript: sentenceBoundedWords(words),
           durationMin: CLIP_DURATION_MIN_SECONDS,
           durationMax: CLIP_DURATION_MAX_SECONDS,
+          // What this client has already published OUT OF THIS RECORDING
+          // (2026-09-19). The topic catalog stops the same subject being made
+          // twice; nothing stopped the same forty seconds of the same episode
+          // being cut twice, and a client with one long podcast and a broad
+          // topic could meet overlapping clips weeks apart. A steer, not an
+          // exclusion - see `clippedWindowDirective`.
+          ...(alreadyClipped !== undefined ? { alreadyClipped } : {}),
         });
         if (exec.status === "content_fail") {
           // The picker produced nothing schema-valid. The transcript is still
@@ -1873,7 +1901,14 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
        * FLAGGED with the model's reason, and the person decides. Absent when
        * the gate is not registered in the deployment.
        */
-      visualQa?: { passed: boolean; reason?: string; evidence: string[]; weakBeats?: Array<{ index: number; relevance: number; note: string }> };
+      visualQa?: {
+        passed: boolean;
+        reason?: string;
+        evidence: string[];
+        weakBeats?: Array<{ index: number; relevance: number; note: string }>;
+        /** The model's read on where the CUT falls. Commentary clips only — an original short is assembled, not cut. */
+        moment?: { opensOnCompleteThought: boolean; closesAfterPayoff: boolean; note: string };
+      };
       /** The beats' time windows in the finished clip, for the visual QA's per-beat relevance read. Original shorts only. */
       beatWindows?: Array<{ index: number; start: number; end: number; narration: string }>;
       /** Per beat, where the b-roll came from — so a reviewer knows which plates are real footage. Original shorts only. */
@@ -1909,6 +1944,28 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     }
 
     /**
+     * The ledger line for a draft that was still too close to a published post
+     * after its last redraft, or nothing when it came back clean.
+     *
+     * `unresolved`, not `redacted`: nothing was fixed. The words went out as
+     * written, and the only honest thing left is to put the number in front of
+     * the person deciding whether to publish them.
+     */
+    const dedupeRepair = (verdict: DedupeVerdict): ContentRepair[] =>
+      verdict.status !== "similar"
+        ? []
+        : [
+            {
+              check: "output-dedupe",
+              action: "unresolved" as const,
+              detail:
+                `this draft is ${Math.round(verdict.maxSimilarity * 100)}% similar to a post this client already published` +
+                `${verdict.mostSimilarRunId !== undefined ? ` (run ${verdict.mostSimilarRunId})` : ""}, over the ${Math.round(verdict.threshold * 100)}% threshold, ` +
+                `and the writer was already asked once to move away from it`,
+            },
+          ];
+
+    /**
      * A drafting step's result: the draft itself, and what producing it had to
      * adapt around.
      *
@@ -1941,7 +1998,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       verifyStepId: string,
       draft: (attemptStepId: string, dedupeAvoid: string | undefined) => Promise<T>,
       scoredText: (draft: T) => string,
-    ): Promise<T> => {
+    ): Promise<{ draft: T; verdict: DedupeVerdict }> => {
       let dedupeRetrySteer: string | undefined;
       for (let attempt = 1; attempt <= MAX_DEDUPE_ATTEMPTS; attempt++) {
         /** Attempt 1 keeps the ORIGINAL step ids, so a run that never repeats itself has a byte-identical trace to what it had before this check existed. */
@@ -1952,7 +2009,14 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           dedupeRetrySteer = dedupeRetryDirective(verdict, outputHistory);
           continue;
         }
-        return drafted;
+        // The VERDICT comes back with the draft (2026-09-19). This loop's own
+        // doc comment has always claimed that on the final attempt a `similar`
+        // draft "ships FLAGGED rather than held" — and it did not: the verdict
+        // was written to a step checkpoint and dropped on the floor, so a
+        // caption 70% identical to one this client published last week reached
+        // the reviewer looking exactly like a clean one. The checkpoint is an
+        // audit trail, not a channel to a human.
+        return { draft: drafted, verdict };
       }
       // Unreachable: the loop's last attempt always returns, because the
       // `continue` above is guarded on `attempt < MAX_DEDUPE_ATTEMPTS`.
@@ -2166,13 +2230,13 @@ ${credit}`,
           }),
         (c) => `${c.value.caption}\n\n${c.value.about}`,
       );
-      const commentary = commentaryDraft.value;
+      const commentary = commentaryDraft.draft.value;
 
       // ── 07: compliance pass — repairs, never holds ──
       const compliance = await wf.step.code(
         rev("07-compliance"),
         async (): Promise<{ caption: string; about: string; repairs: ContentRepair[] }> => {
-          const repairs: ContentRepair[] = [...commentaryDraft.repairs];
+          const repairs: ContentRepair[] = [...commentaryDraft.draft.repairs, ...dedupeRepair(commentaryDraft.verdict)];
           // Source credit first, and checked in code rather than asked of the
           // model that wrote it. The legacy rule is explicit that the on-clip
           // attribution block is not enough — the caption has to name it — and
@@ -2344,9 +2408,14 @@ ${credit}`,
           const feedback = budgetFeedback;
           // A footage-only revision keeps the approved words: no writer, no
           // dedupe (the same words were already verified), one cheap step.
-          const scriptDraft: Drafted<ShortScript> =
+          const scriptDraft: { draft: Drafted<ShortScript>; verdict: DedupeVerdict } =
             footageRevision !== undefined
-              ? await wf.step.code(planRev("03s-script"), async (): Promise<Drafted<ShortScript>> => ({ value: footageRevision.script, repairs: [] }))
+              ? // A footage-only revision keeps words a reviewer already
+                // accepted, so there is nothing new to score against history.
+                {
+                  draft: await wf.step.code(planRev("03s-script"), async (): Promise<Drafted<ShortScript>> => ({ value: footageRevision.script, repairs: [] })),
+                  verdict: { status: "ok", comparedCount: 0, maxSimilarity: 0, threshold: 1 },
+                }
               : await draftWithVerifiedDedupe<Drafted<ShortScript>>(
             planRev,
             "03s-script",
@@ -2506,9 +2575,32 @@ ${credit}`,
                   .filter((s): s is string => s !== undefined)
                   .join("\n");
                 const second = repairScriptStructure(await draftOnce(`${agentStepId}-fix`, note));
-                const secondVoice = scriptVoiceIssues(second.repaired);
-                if (secondVoice.length > 0) console.warn(`${agentStepId}-fix: the redraft still reads off: ${secondVoice.join("; ")}; shipping to the reviewer as is`);
                 const settled = second.issues.length === 0 ? second.repaired : dropRepeatedBeats(second.repaired);
+                // All FOUR craft checks re-run on the redraft (2026-09-19),
+                // not just the voice. Only `scriptVoiceIssues` was re-checked
+                // before, and only as a `console.warn` nobody reads — so a
+                // redraft that fixed the sentence lengths and introduced a
+                // sales pitch, a one-room shot list or a circular ending
+                // shipped with all three unmentioned. The first draft's
+                // problems were named to the writer; the second draft's were
+                // named to nobody.
+                //
+                // Not a hold and not a third attempt: the writer has had its
+                // one steer, and what it still gets wrong is a taste call the
+                // person at the gate is there to make. It just has to REACH
+                // them, which is the only thing that changed.
+                const stillWrong = [
+                  ...scriptVoiceIssues(settled),
+                  ...shotVarietyIssues(settled),
+                  ...salesPitchIssues(settled, runDirection.direction),
+                  ...circularEndingIssues(settled),
+                ];
+                if (stillWrong.length > 0) console.warn(`${agentStepId}-fix: the redraft still reads off: ${stillWrong.join("; ")}; shipping to the reviewer flagged`);
+                const craftRepairs: ContentRepair[] = stillWrong.map((issue) => ({
+                  check: "script-craft",
+                  action: "unresolved" as const,
+                  detail: `${issue} — the writer was asked once and did not fix it, so the short ships with it named`,
+                }));
                 // One redraft, then deliver. A second wrong-language draft is
                 // a model that cannot write this language today, and a third
                 // attempt buys another one at the same odds - so the short
@@ -2526,11 +2618,11 @@ ${credit}`,
                       },
                     ];
                 if (!secondLanguage.ok) console.warn(`${agentStepId}-fix: ${secondLanguage.reason}; delivering flagged`);
-                return { value: settled, repairs: [...assembled(settled), ...languageRepairs] };
+                return { value: settled, repairs: [...assembled(settled), ...craftRepairs, ...languageRepairs] };
               }),
             (s) => `${s.value.caption}\n\n${s.value.about}`,
           );
-          const draftedScript = scriptDraft.value;
+          const draftedScript = scriptDraft.draft.value;
           // The client's config outranks the model's per-piece call; on `auto`
           // the model decided and said why.
           const voiceover = config.voiceover === "always" ? true : config.voiceover === "never" ? false : draftedScript.voiceover;
@@ -2571,7 +2663,7 @@ ${credit}`,
             // A repaired hook has to reach beat 1 too, or the cold open says
             // one thing and the voice says another — `repairScriptStructure`'s
             // own invariant, re-established after the redaction.
-            return { script: repairScriptStructure(repaired).repaired, repairs: [...scriptDraft.repairs, ...gated.repairs] };
+            return { script: repairScriptStructure(repaired).repaired, repairs: [...scriptDraft.draft.repairs, ...dedupeRepair(scriptDraft.verdict), ...gated.repairs] };
           });
           const script = complied.script;
 
@@ -2695,11 +2787,21 @@ ${credit}`,
         const render = tools["video.textPlate"];
         if (render === undefined) return undefined;
         const font = captionFontFor(targetLanguage.tag);
+        // `workDir`, not `baseWorkDir` (2026-09-19). Every plate step id is
+        // revision-scoped and every plate FILE name was not, so round 1 wrote
+        // `plate-2-text.mp4` straight over round 0's copy. The finished
+        // composite for round 0 already existed by then, so nothing shipped
+        // wrong — but the r0 gate record links a reviewer to a work directory
+        // whose intermediates had been overwritten by a later round, and a
+        // replay that re-renders from those files would build round 1's
+        // pictures under round 0's checkpoint. The `r{n}` directory exists for
+        // exactly this and the plates were the one thing still outside it.
+        await fs.mkdir(workDir, { recursive: true });
         const outcome = await render.execute(
           {
             text: text.length > 160 ? `${text.slice(0, 157).trimEnd()}…` : text,
             ...(stat !== undefined ? { stat } : {}),
-            outputPath: path.join(baseWorkDir, `${outputName}.mp4`),
+            outputPath: path.join(workDir, `${outputName}.mp4`),
             durationSeconds: seconds,
             ground: videoBrand.ground,
             fg: videoBrand.fg,
@@ -2785,7 +2887,7 @@ ${credit}`,
               const span = Math.max(0, clientFootage.durationSeconds - beat.seconds);
               const start = Number((script.beats.length === 1 ? 0 : (span * i) / (script.beats.length - 1)).toFixed(2));
               const end = Number(Math.min(start + beat.seconds, clientFootage.durationSeconds).toFixed(2));
-              const outcome = await cutTool.execute({ sourcePath: clientFootage.path, startSeconds: start, endSeconds: end, outputPath: path.join(baseWorkDir, `plate-${i + 1}-client.mp4`) }, { ctx });
+              const outcome = await cutTool.execute({ sourcePath: clientFootage.path, startSeconds: start, endSeconds: end, outputPath: path.join(workDir, `plate-${i + 1}-client.mp4`) }, { ctx });
               if (outcome.status === "success") return { shots: [{ path: (outcome.result as { outputPath: string }).outputPath, source: "client" }] };
               console.warn(`04p-plate-${i + 1}: cutting the client's footage at ${start}s failed (${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""}); the library serves this beat`);
             }
@@ -2905,7 +3007,7 @@ ${credit}`,
           const clip = await stillToClip.execute(
             {
               imagePath: path.resolve(repoRoot, candidate.path),
-              outputPath: path.join(baseWorkDir, `plate-${i + 1}-still.mp4`),
+              outputPath: path.join(workDir, `plate-${i + 1}-still.mp4`),
               durationSeconds: beat.seconds,
               move: i % 2 === 0 ? "push-in" : "pull-back",
             },
@@ -3441,7 +3543,12 @@ ${credit}`,
       //         gate records that it was skipped rather than pretending it
       //         passed. ──
       type WeakBeat = { index: number; relevance: number; note: string };
-      const visualQa = await wf.step.code(rev("10b-visual-qa"), async (): Promise<{ skipped: true; note: string } | { skipped: false; passed: boolean; reason?: string; evidence: string[]; weakBeats: WeakBeat[] }> => {
+      type MomentFit = { opensOnCompleteThought: boolean; closesAfterPayoff: boolean; note: string };
+      const visualQa = await wf.step.code(
+        rev("10b-visual-qa"),
+        async (): Promise<
+          { skipped: true; note: string } | { skipped: false; passed: boolean; reason?: string; evidence: string[]; weakBeats: WeakBeat[]; moment?: MomentFit }
+        > => {
         const gate = tools["video.visualQaGate"];
         if (gate === undefined) return { skipped: true, note: "video.visualQaGate is not registered in this deployment" };
         if ((await wf.costSoFarUsd()) >= costCapUsd) return { skipped: true, note: "skipped: the run has reached its cost ceiling; the reviewer judges the clip unaided" };
@@ -3460,6 +3567,18 @@ ${credit}`,
               // The beats and their windows, so the model says WHICH shot is
               // wallpaper under its line, not only that one is.
               ...(draft.beatWindows !== undefined && draft.beatWindows.length > 0 ? { beats: draft.beatWindows.slice(0, 6) } : {}),
+              // A commentary clip's own words, so the model can judge the CUT
+              // (2026-09-19). Every other expectation on this call is about
+              // the TREATMENT - captions, frame, artefacts, per-beat footage -
+              // and a clipping run's entire product is the choice of moment.
+              // A clip could score 9 here with perfect captions and an intact
+              // frame while opening halfway through a sentence.
+              //
+              // Only for a commentary clip: an original short is ASSEMBLED
+              // from beats rather than cut out of a recording, so "does it
+              // open on a complete thought" is a question about writing that
+              // `scriptVoiceIssues` already answers, not about an edit.
+              ...(format === "commentary-clip" && bounds.text.trim().length > 0 ? { clipText: bounds.text } : {}),
             },
           },
           { ctx },
@@ -3470,16 +3589,19 @@ ${credit}`,
         // the human to judge it unaided, recorded as such — never a failed
         // run over a review nobody got to give.
         if (outcome.status !== "success") return { skipped: true, note: `video.visualQaGate ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}; the reviewer judges the clip unaided` };
-        const verdict = outcome.result as GateVerdict & { beats?: WeakBeat[] };
+        const verdict = outcome.result as GateVerdict & { beats?: WeakBeat[]; moment?: MomentFit };
         if (verdict.verdict === "tooling_error") return { skipped: true, note: `video.visualQaGate could not review the clip (${verdict.reason}); the reviewer judges it unaided` };
         // A beat scored under 5 is footage that does not fit its line: named
         // to the reviewer beside the play button, never a hold on its own.
         const weakBeats = (verdict.beats ?? []).filter((b) => b.relevance < 5);
+        // The read on the CUT, carried whether it passed or not: "the cut is
+        // in the right place" is worth as much to a reviewer as the objection.
+        const moment = verdict.moment !== undefined ? { moment: verdict.moment } : {};
         if (verdict.verdict === "content_fail") {
           console.warn(`${rev("10b-visual-qa")}: visual QA flagged the clip, shipping to review flagged rather than held: ${verdict.reason}`);
-          return { skipped: false, passed: false, reason: verdict.reason, evidence: verdict.evidence, weakBeats };
+          return { skipped: false, passed: false, reason: verdict.reason, evidence: verdict.evidence, weakBeats, ...moment };
         }
-        return { skipped: false, passed: true, evidence: verdict.evidence, weakBeats };
+        return { skipped: false, passed: true, evidence: verdict.evidence, weakBeats, ...moment };
       });
 
       // ── 10: terminal topic guardrail ──
@@ -3511,6 +3633,23 @@ ${credit}`,
       // verdicts that used to be holds — one ledger, in the order the run met
       // them, so a reviewer reads the whole story of this clip in one place.
       const repairs: ContentRepair[] = [...(draft.repairs ?? [])];
+      if (visualQa.skipped === false && visualQa.moment !== undefined && (!visualQa.moment.opensOnCompleteThought || !visualQa.moment.closesAfterPayoff)) {
+        // The cut is in the wrong place, which for a clipping run is a verdict
+        // on the product itself rather than on its treatment. Not a hold and
+        // not a re-cut: re-cutting would need a second moment pick, a second
+        // transcription window and a second render, and the person at the gate
+        // can see the timeline and decide in seconds what that would cost
+        // dollars to guess at. What they could not do before is KNOW.
+        const wrong = [
+          !visualQa.moment.opensOnCompleteThought ? "it opens part-way through a thought" : undefined,
+          !visualQa.moment.closesAfterPayoff ? "it ends before the point lands" : undefined,
+        ].filter((v): v is string => v !== undefined);
+        repairs.push({
+          check: "moment-fit",
+          action: "unresolved",
+          detail: `the reviewer model says the cut is in the wrong place: ${wrong.join(" and ")}${visualQa.moment.note.length > 0 ? ` — ${visualQa.moment.note}` : ""}`,
+        });
+      }
       if (!selfEval.passed) {
         repairs.push({
           check: "video.selfEvalGate",
@@ -3545,6 +3684,7 @@ ${credit}`,
                 ...(visualQa.reason !== undefined ? { reason: visualQa.reason } : {}),
                 evidence: visualQa.evidence,
                 ...(visualQa.weakBeats.length > 0 ? { weakBeats: visualQa.weakBeats } : {}),
+                ...(visualQa.moment !== undefined ? { moment: visualQa.moment } : {}),
               },
             }),
       };
@@ -3704,6 +3844,25 @@ ${credit}`,
     if (momentFallback !== undefined) {
       contentRepairs.push({ check: "moment-selection", action: "substituted", detail: momentFallback });
     }
+    if (
+      clipSourceKey !== undefined &&
+      bounds.needsCut &&
+      shapeMemory.clippedWindows.some((w) => windowsOverlap(w, { source: clipSourceKey, startSeconds: bounds.startSeconds, endSeconds: bounds.endSeconds }))
+    ) {
+      // The picker was shown the windows this recording has already given up
+      // and chose an overlapping one anyway. That is allowed — a long episode
+      // can hold one genuinely best moment, and refusing it in code would veto
+      // the strongest clip because a worse neighbour went out first. What it
+      // may not be is SILENT: the reviewer is the one who knows whether this
+      // account's audience saw the earlier clip.
+      contentRepairs.push({
+        check: "clip-window-reuse",
+        action: "unresolved",
+        detail:
+          `this cut (${Math.round(bounds.startSeconds)}s-${Math.round(bounds.endSeconds)}s) overlaps a window this client has already published from the same recording — ` +
+          `the picker was shown the earlier windows and chose this one anyway`,
+      });
+    }
     if (momentFloorNote !== undefined) {
       contentRepairs.push({
         check: "moment-floor",
@@ -3847,6 +4006,12 @@ ${credit}`,
           const entries = [
             ...(review.output.plateStockIds ?? []).flatMap((p) => p.ids.map(stockClipEntry)),
             ...(script !== undefined ? [skeletonEntry(skeletonOf(script))] : []),
+            // The window of the recording this clip came out of. Until now a
+            // clipping run recorded NOTHING across runs — `skeletonOf` only
+            // fires for an original short and a commentary clip buys no
+            // library footage — so the same forty seconds of the same episode
+            // could ship twice weeks apart, each time passing every check.
+            ...(clipSourceKey !== undefined && bounds.needsCut ? [clipWindowEntry(clipSourceKey, bounds.startSeconds, bounds.endSeconds)] : []),
           ];
           if (entries.length > 0) await record.execute({ imagePaths: entries }, { ctx });
         }

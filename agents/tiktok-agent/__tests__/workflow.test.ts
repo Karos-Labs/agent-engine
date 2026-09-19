@@ -140,12 +140,18 @@ interface StubOptions {
   withVoice?: boolean;
   /** Register `video.visualQaGate`; `"fail"` makes it send the clip back. */
   withVisualQa?: boolean | "fail";
+  /** What the visual QA reports about where the CUT falls. Absent: the model had no opinion. */
+  qaMoment?: { opensOnCompleteThought: boolean; closesAfterPayoff: boolean; note: string };
+  /** What this client has already published, for the dedupe check to score against. */
+  outputHistory?: Array<{ runId: string; excerpt: string }>;
 }
 
 /** Records every tool call so a test can assert what did and did not happen. */
 interface Harness {
   tools: AgentToolRegistry;
   calls: string[];
+  /** Every `video.visualQaGate` payload, for asserting what the model was actually asked. */
+  qaArgs: Array<Record<string, unknown>>;
   /** Every `ledger.writeDeliverable` payload, for asserting what shipped. */
   deliverables: Array<Record<string, unknown>>;
 }
@@ -153,6 +159,7 @@ interface Harness {
 function stubTools(opts: StubOptions = {}): Harness {
   const calls: string[] = [];
   const deliverables: Array<Record<string, unknown>> = [];
+  const qaArgs: Array<Record<string, unknown>> = [];
   const ok = (result: unknown) => ({ status: "success" as const, result });
   /**
    * A gate's verdict on the text it was actually handed.
@@ -272,12 +279,21 @@ function stubTools(opts: StubOptions = {}): Harness {
   if (opts.withVisualQa) {
     tools["video.visualQaGate"] = tool(
       "video.visualQaGate",
-      () =>
-        opts.withVisualQa === "fail"
-          ? ok({ verdict: "content_fail" as const, evidence: ["looksAiGenerated: obviously"], reason: "the clip obviously looks AI-generated", toolVersion: "1.0.0" })
-          : ok({ verdict: "pass" as const, evidence: ["overallScore: 9"], toolVersion: "1.0.0" }),
+      (args) => {
+        qaArgs.push(args as unknown as Record<string, unknown>);
+        const moment = opts.qaMoment !== undefined ? { moment: opts.qaMoment } : {};
+        return opts.withVisualQa === "fail"
+          ? ok({ verdict: "content_fail" as const, evidence: ["looksAiGenerated: obviously"], reason: "the clip obviously looks AI-generated", toolVersion: "1.5.0", ...moment })
+          : ok({ verdict: "pass" as const, evidence: ["overallScore: 9"], toolVersion: "1.5.0", ...moment });
+      },
       VisualQaGateInputSchema,
     );
+  }
+  if (opts.outputHistory !== undefined) {
+    // The real tool returns `{ entries }`, not `{ excerpts }` — a fake with
+    // the wrong key reads as an empty history and the test passes for the
+    // wrong reason.
+    tools["ledger.listOutputExcerpts"] = tool("ledger.listOutputExcerpts", () => ok({ entries: opts.outputHistory }));
   }
   if (opts.withUpload) {
     tools["video.uploadDeliverable"] = tool(
@@ -286,7 +302,7 @@ function stubTools(opts: StubOptions = {}): Harness {
       UploadDeliverableInputSchema,
     );
   }
-  return { tools: tools as unknown as AgentToolRegistry, calls, deliverables };
+  return { tools: tools as unknown as AgentToolRegistry, calls, qaArgs, deliverables };
 }
 
 async function run(harness: Harness, runId: string, input: Record<string, unknown> = {}, candidates: unknown[] = [GOOD_MOMENT, GOOD_COMMENTARY], repoRoot?: string) {
@@ -1068,5 +1084,63 @@ describe("moment floor", () => {
     await run(h, "run-tt-floor-quiet");
     expect(h.deliverables[0]).not.toHaveProperty("contentRepairs");
     expect(h.deliverables[0]).not.toHaveProperty("momentNotes");
+  }, 20_000);
+});
+
+/**
+ * The four audit leftovers that were only ever half-built (2026-09-19).
+ *
+ * Each of these is a rule the code already stated somewhere — in a comment, a
+ * prompt or a step name — and never actually carried out.
+ */
+describe("audit leftovers", () => {
+  it("tells the reviewer when the caption is still a near-duplicate after its redraft", async () => {
+    // `draftWithVerifiedDedupe`'s own doc comment has always claimed that on
+    // the final attempt a `similar` draft "ships FLAGGED rather than held".
+    // The verdict went to a step checkpoint and nowhere else, so a caption 70%
+    // identical to last week's reached the reviewer looking clean.
+    const h = stubTools({
+      outputHistory: [{ runId: "run-tt-last-week", excerpt: GOOD_COMMENTARY.caption }],
+    });
+    const result = await run(h, "run-tt-dedupe-surfaced");
+
+    expect(result.status).toBe("completed");
+    const repairs = h.deliverables[0]?.["contentRepairs"] as Array<{ check: string; action: string; detail: string }>;
+    const flagged = repairs.find((r) => r.check === "output-dedupe");
+    expect(flagged?.action).toBe("unresolved");
+    expect(flagged?.detail).toContain("run-tt-last-week");
+    expect(flagged?.detail).toMatch(/\d+% similar/);
+  }, 20_000);
+
+  it("says nothing about dedupe on a caption with no history to repeat", async () => {
+    const h = stubTools();
+    await run(h, "run-tt-dedupe-quiet");
+    const repairs = (h.deliverables[0]?.["contentRepairs"] as Array<{ check: string }> | undefined) ?? [];
+    expect(repairs.map((r) => r.check)).not.toContain("output-dedupe");
+  }, 20_000);
+
+  it("flags a cut the reviewer model says is in the wrong place", async () => {
+    // Every other expectation on the QA call is about the TREATMENT, and a
+    // clipping run's whole product is the choice of moment — so a clip could
+    // score 9 with perfect captions while opening mid-sentence.
+    const h = stubTools({ withVisualQa: true, qaMoment: { opensOnCompleteThought: false, closesAfterPayoff: true, note: "starts four words into the sentence" } });
+    const result = await run(h, "run-tt-moment-fit");
+
+    expect(result.status).toBe("completed");
+    // The clip's own words were sent, or the model had nothing to judge against.
+    expect((h.qaArgs[0]!["expectations"] as Record<string, unknown>)["clipText"]).toBeTruthy();
+    const repairs = h.deliverables[0]?.["contentRepairs"] as Array<{ check: string; detail: string }>;
+    const fit = repairs.find((r) => r.check === "moment-fit");
+    expect(fit?.detail).toContain("opens part-way through a thought");
+    expect(fit?.detail).toContain("starts four words into the sentence");
+  }, 20_000);
+
+  it("never asks an original short whether its cut is in the right place", async () => {
+    // An original short is ASSEMBLED from beats rather than cut out of a
+    // recording, so "does it open on a complete thought" is a question about
+    // writing that the script checks already answer, not about an edit.
+    const h = stubTools({ withVisualQa: true, stockServes: true, harvestServes: false });
+    await run(h, "run-tt-no-moment-for-shorts", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], os.tmpdir());
+    expect((h.qaArgs[0]!["expectations"] as Record<string, unknown>)["clipText"]).toBeUndefined();
   }, 20_000);
 });
