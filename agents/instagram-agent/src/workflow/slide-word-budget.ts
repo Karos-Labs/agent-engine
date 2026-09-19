@@ -125,13 +125,44 @@ export const TARGET_WORDS_PER_SLIDE = 20;
  * One structured block: a list row, a comparison column.
  *
  * The owner's lower number, applied to the unit a reader actually reads in one
- * go. A `list_takeaway` with four 20-word rows is 80 words on the plate and
- * passes here; that is intentional and it is the pixel gates' question, not
- * this one's. Clause F (`TEXT_SHARE_CEILING = 0.55`) measures the rendered
- * frame and refuses a plate that is genuinely a wall, and it measures it on
- * the pixels rather than guessing from a word count.
+ * go.
  */
 export const MAX_WORDS_PER_BLOCK = 20;
+
+/**
+ * What the whole plate may carry, blocks included.
+ *
+ * ## The delegation that was tried and did not hold
+ *
+ * This file used to say, in the comment above: *"a `list_takeaway` with four
+ * 20-word rows is 80 words on the plate and passes here; that is intentional
+ * and it is the pixel gates' question, not this one's"*, and pointed at clause
+ * F's `TEXT_SHARE_CEILING` to refuse a plate that is genuinely a wall.
+ *
+ * The delegation was reasonable and it did not hold. Slide 4 of the Karos
+ * carousel of 2026-09-19 carried a headline and FOUR items each with a two or
+ * three line note: about 100 words. Every block was under 20, the statement
+ * was under 30, clause F passed it, and the owner read the shipped plate and
+ * said what a reader sees: *"there are slides with too much copy for one
+ * slide"*, and then, when type size was raised separately, *"a lot of copy on
+ * one page is not good either, regardless of small type"*.
+ *
+ * Text share cannot see this. A hundred words set small covers the same share
+ * of the frame as fifty words set large, and the second is a slide while the
+ * first is a page.
+ *
+ * ## Why 60
+ *
+ * A good three-item list plate is a six-word headline and three rows of a
+ * five-word title and a twelve-word note: 57. Four rows of the same is 74 and
+ * the shipped plate was 100. 60 admits the first and refuses both others,
+ * which is the line the owner drew.
+ *
+ * It does NOT cap the number of rows, deliberately. Four SHORT rows read
+ * perfectly well and come in around 46; the defect is the volume, not the
+ * count, and a count rule would refuse the good version of the same plate.
+ */
+export const MAX_WORDS_PER_SLIDE_TOTAL = 60;
 
 /**
  * Rendered slide fields that are a CITATION or a bare figure rather than prose
@@ -252,6 +283,21 @@ export function checkSlideWordBudget(slidesData: RenderCarouselInput, copy: Inst
           `Copy this long is set smaller to fit, and at feed size smaller is unreadable`,
       });
       continue; // one finding per slide is enough to send it back
+    }
+
+    // The whole plate, blocks included. See `MAX_WORDS_PER_SLIDE_TOTAL`: every
+    // block can be legal and the slide still be a page rather than a slide.
+    if (load.total > MAX_WORDS_PER_SLIDE_TOTAL) {
+      findings.push({
+        ruleId: WORD_BUDGET_RULE_ID,
+        slide: slide.n,
+        measured: { words: load.total, limit: MAX_WORDS_PER_SLIDE_TOTAL, scope: "slide-total" },
+        reason:
+          `${where} carries ${load.total} words in total, over the ${MAX_WORDS_PER_SLIDE_TOTAL}-word limit for a whole plate. ` +
+          `Each part is short enough on its own; together they are a page. Cut a row, or cut the notes to one line each, ` +
+          `and move the detail into the caption. A reader gives a slide a second and a half`,
+      });
+      continue;
     }
 
     const over = load.blocks.find((b) => b.words > MAX_WORDS_PER_BLOCK);

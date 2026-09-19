@@ -600,6 +600,22 @@ const PINNED_SCALARS: Readonly<Record<string, number>> = {
   TYPE_STEP_CEILING: 3,
   TYPE_CONTRAST_FLOOR: 1.8,
   ALIGNMENT_COLUMN_CEILING: 2,
+  // ── ADDED 2026-09-19, A FOURTH LIMB ON THE SAME CLAUSE, ALSO DISARMED. ──
+  //
+  // The one number in this file that was not chosen and did not need a sweep:
+  // `_ds-fit.js` shrinks a plate's type a step at a time and STOPS AT TWO, so
+  // `FIT_STEP_CEILING = 1` is the ladder's own bound and a plate above it is a
+  // plate the ladder could not fit. Moving this number means disagreeing with
+  // the ladder, which is a source diff and not a threshold argument.
+  //
+  // Disarmed behind `FIT_STEP_CEILING_ARMED`, and for a sharper reason than
+  // the three above it: armed, it fires AFTER the render, so every firing
+  // costs a redraft plus a second render -- and it fires on plates no redraft
+  // can fix (Hebrew sets long unbroken words; the reviewer's `ts-l` scale
+  // starts the ladder 18% higher). The defect it names is refused for free one
+  // step earlier by `MAX_WORDS_PER_SLIDE_TOTAL`, on the draft, before a pixel
+  // is rendered.
+  FIT_STEP_CEILING: 1,
 };
 
 /**

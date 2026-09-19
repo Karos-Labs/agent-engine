@@ -91,6 +91,18 @@ import { measureSlidePng, type SlideMetrics, type SlideProbe } from "./slide-met
  * was inert on the wire. Semver already means "nothing a caller can observe
  * moved", which is exactly the claim being made here.
  *
+ * 1.9.0 — `fitStep`. ONE new optional key on `probe`, read off
+ * `document.body[data-fit-step]`, which `_ds-fit.js` has written since the
+ * design system shipped and which no production file has ever read. Every
+ * other number is byte-identical: the read happens before the element walk,
+ * touches nothing in it, and is wrapped in a `try` so a caller with a fake
+ * DOM and no `body` reads exactly what it read at 1.8.0.
+ *
+ * MINOR rather than PATCH under this file's own rule: a caller can observe
+ * the key, and a run record made after this change answers a question a
+ * record made before it cannot -- "did this plate have to shrink its type to
+ * fit, and by how much". The ladder knew; nothing asked.
+ *
  * 1.6.0 — RFC-22's collision instrument, and the type-step set. Three things
  * move on the wire and all three are additive: a new optional input
  * `reservedZone`, and a new per-slide result `geometry` carrying
@@ -142,7 +154,7 @@ import { measureSlidePng, type SlideMetrics, type SlideProbe } from "./slide-met
  * a version left at 1.7.0 while the judgement under it changed, which is the
  * gate doing exactly its job.
  */
-const TOOL_VERSION = "1.8.0";
+const TOOL_VERSION = "1.9.0";
 
 // n/template/fields/images have no existing TSDoc to transcribe (SCRUM-293 flag) — descriptions
 // below synthesized from fillTemplate's/validateRenderInputs' usage of each field.
@@ -526,6 +538,34 @@ export function probePage(canvas: { n: number; w: number; h: number }): {
   markRuns: number;
   markRunsPainted: number;
   /**
+   * Which rung of the fit ladder this plate came to rest on: 0, 1 or 2, and
+   * `undefined` when the ladder did not run at all.
+   *
+   * ## Why this had to become a reported number
+   *
+   * `_ds-fit.js` measures the laid-out boxes and shrinks the type a step at a
+   * time until the plate fits, and it stops at two. Its own comment says what
+   * the last rung means: *"a plate that still does not fit at step 2 is a
+   * copy-length problem that the content-weight floor should refuse rather
+   * than something type can hide"*. It has always written the answer to
+   * `document.body[data-fit-step]` so that *"a render check, the interest
+   * floor and a failing test can all see which rung was used"*.
+   *
+   * Nothing read it. The attribute appears in the eight plate templates, in
+   * `_ds-fit.js` and in ONE test, and in no production file at all -- so a
+   * plate that had shrunk its type as far as the system allows was
+   * indistinguishable from one that set at its natural size, and the owner
+   * found the difference by reading the shipped carousel: *"there are slides
+   * with too much copy for one slide and type that is too small"*.
+   *
+   * `undefined` rather than 0 when the attribute is absent, and the
+   * distinction is load-bearing: 0 is the ladder reporting that nothing
+   * needed shrinking, and absent is a Template Studio plate that carries no
+   * ladder. Treating the second as the first would silently report every
+   * custom template as perfectly fitted.
+   */
+  fitStep?: number;
+  /**
    * The largest rendered font size on the plate, as a FRACTION OF FRAME
    * HEIGHT. 0 when nothing text-bearing rendered.
    *
@@ -563,6 +603,26 @@ export function probePage(canvas: { n: number; w: number; h: number }): {
   // family and no pixels. Counting them would put a font nothing renders in
   // into `fontFamiliesUsed` — which is the field the script-font check reads.
   const nonVisual = ["script", "style", "head", "meta", "link", "title", "noscript", "template"];
+
+  // The fit ladder's own verdict, off the body. Defensive to a fault because
+  // this function runs in three places: Chromium via Playwright, a fake DOM in
+  // this package's tests, and a fake DOM in the agent's. Two of the three have
+  // supplied no `document.body` for the whole life of the probe, and a probe
+  // that throws returns no metrics at all rather than one fewer.
+  let fitStep: number | undefined;
+  try {
+    const body: unknown = (document as unknown as { body?: unknown }).body;
+    const raw =
+      body !== null && typeof body === "object" && typeof (body as { getAttribute?: unknown }).getAttribute === "function"
+        ? (body as { getAttribute: (name: string) => string | null }).getAttribute("data-fit-step")
+        : null;
+    // `Number("")` is 0, and an empty attribute is not a ladder reporting
+    // that nothing needed shrinking — it is an attribute nothing wrote.
+    const parsed = raw === null || String(raw).trim() === "" ? Number.NaN : Number(raw);
+    if (isFinite(parsed)) fitStep = parsed;
+  } catch {
+    fitStep = undefined;
+  }
 
   const all = document.querySelectorAll("*");
   const overflowing: string[] = [];
@@ -721,6 +781,7 @@ export function probePage(canvas: { n: number; w: number; h: number }): {
     markRuns,
     markRunsPainted,
     displayTypeScale: canvas.h > 0 ? maxFontPx / canvas.h : 0,
+    ...(fitStep === undefined ? {} : { fitStep }),
   };
 }
 

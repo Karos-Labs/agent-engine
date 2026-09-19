@@ -203,6 +203,13 @@ const HAPPY_PATH_STEP_IDS = [
   // Zero-held guarantee: confirms every selected image is still on disk, so a
   // file lost since vetting degrades that slide instead of failing the render.
   "06f-verify-images-on-disk-attempt-1",
+  // ONE PICTURE, ONE SLIDE. Every slide is vetted independently against one
+  // shared pool, so the best picture in it wins every slide it is offered to,
+  // and `usedImagesSet` only ever stopped a repeat ACROSS runs. This clears a
+  // repeat inside ONE post, ahead of the imagery floor at `06h` so a cleared
+  // slide is sourced again rather than left bare. `wf.step.code`, $0, and it
+  // runs on every attempt whether or not it finds anything.
+  "06f2-one-picture-one-slide-attempt-1",
   // Phase 5.5 (spec §2 A4). ONE SET, NOT THREE PICTURES: the frozen
   // treatment, the hero's own token and the scrim strength are written onto
   // EVERY hero regardless of provenance, so a carousel with a generated frame,

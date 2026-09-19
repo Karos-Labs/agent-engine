@@ -253,7 +253,14 @@ import {
   type SkeletonHistory,
   type SkeletonVarietyVerdict,
 } from "./skeleton-memory.js";
-import { PERFORMANCE_BELIEF_KEY, readPerformanceStore, withPost, type PostArm } from "./post-performance.js";
+import {
+  PERFORMANCE_BELIEF_KEY,
+  arrowBulletSteer,
+  readPerformanceStore,
+  usesArrowBullets,
+  withPost,
+  type PostArm,
+} from "./post-performance.js";
 import { countComparedEntities, selectSeries, seriesDirectedSlides, seriesDirective, seriesLibraryFor, SERIES_DIRECTIVE_SLIDES } from "./editorial-series.js";
 import {
   buildGateVerdict,
@@ -359,6 +366,7 @@ import {
   creditLineFor,
   ENTITY_CANDIDATES_WANTED,
   groundEntities,
+  MAX_ENTITIES_INTO_COPY,
   licenceAdmissible,
   licenceClassFor,
   needsLikenessConsent,
@@ -373,6 +381,7 @@ import {
 import { gradePictureSet, heroScrimCssBlock, imageTreatmentCssBlock, resolveGenerationStyle, type GenerationStyle } from "./style-lock.js";
 import { literalIllustrationOf, planImageBackfill, registerFor, resolveRescuedSelection } from "./image-density.js";
 import { describeRepairs, repairMechanicalTells } from "./mechanical-repair.js";
+import { entitiesInDraft, entityPictureBrief } from "./draft-entities.js";
 import { addressableFields, applyCopyEdits, describeRevision, type CopyRevision } from "./copy-revision.js";
 
 /** One slide the picture floor wants filled, and whether it is a slide that ASKED and failed or one that never asked. */
@@ -1631,6 +1640,28 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      * workflow already produces by another route.
      */
     const performanceStore = structuralMemory.performance;
+
+    /**
+     * A device this client's feed has used until it stopped being a device.
+     *
+     * The owner, 2026-09-19, on arrow bullets: *"once in a while it is fine,
+     * but repetitive things like this look AI"*. He was right and the habit
+     * was ours: `instagram-copy@23` section 2 PERMITS arrow bullets among
+     * prose, the writer read the permission as a recommendation, and every
+     * post got them.
+     *
+     * A prompt sentence could not have fixed it. "Use this at most one post in
+     * three" asks a model with no memory across runs to count something it
+     * cannot see. So the fact is recorded at `09b` on the post that ships and
+     * read back here, which is the only place in this workflow that knows what
+     * the last three posts actually did.
+     *
+     * `undefined` on nearly every run today and that is correct: the field is
+     * new, no historical record carries it, and `arrowBulletSteer` counts only
+     * an explicit `true`. It will start firing after three shipped posts, for
+     * the clients that have the habit, and stay silent for the rest.
+     */
+    const deviceSteer = arrowBulletSteer(performanceStore);
 
     /**
      * Phase 5.5, item D — the cross-client variety pressure: which series and
@@ -7145,6 +7176,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // banned phrase — so the redraft fixes the finding instead of
         // repeating the draft blind.
         ...(priorFindings !== undefined ? { selfCheckSteer: priorFindings } : {}),
+        // Not a steer from a FAILED attempt like the five above it: this one
+        // comes from the client's shipped HISTORY, is the same on every
+        // attempt of this run, and refuses nothing. It names one device the
+        // last three posts leaned on (today: arrow bullets) and asks for a
+        // different move, which no per-run check could ever notice.
+        ...(deviceSteer !== undefined ? { deviceSteer } : {}),
         // The post format (2026-09): `carousel` (6-8 slides) or `single` (one
         // designed slide and a deep caption). The copy step echoes it back and
         // `checkSlidesData` holds the slide count to it.
@@ -7390,6 +7427,65 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // reintroduce the dash this run already paid code to remove.
       previousDraft = copy;
 
+      // ── THE NAMES THE DRAFT SAYS, WHICH NOTHING WAS READING. ──
+      //
+      // `04b3-extract-entities` runs BEFORE the copy step, so it sees the
+      // topic, the angle and the research cards and nothing the writer
+      // introduced. The Karos carousel of 2026-09-19 put *"a buyer hears your
+      // name from ChatGPT"* in a list note and no step ever asked for a
+      // picture of it, while its Geektime sibling carried a real LinkedIn logo
+      // on the cover because LinkedIn happened to be the whole topic.
+      //
+      // The owner's instruction is the general case: read the names on every
+      // post, and for every slide that gets a picture decide which picture is
+      // the relevant one. So the draft's own names join `postEntities`, and a
+      // picture slide that names one and briefed no `entityRef` gets pointed
+      // at it.
+      //
+      // `kind` is a GUESS and is marked as one by being the only field derived
+      // here: a two-word capitalised name reads as a person, anything else as
+      // a company. It steers which sourcing tier is tried first and nothing
+      // else, and `planEntitySourcing` treats an unknown-licence result the
+      // same for both unless the subject is a private individual.
+      const draftEntities = entitiesInDraft(copy, [ctx.clientSlug, ...(brief.offers ?? []).map((o) => o.name)].filter((n): n is string => typeof n === "string"));
+      const attemptEntities: RecognisedEntity[] = [
+        ...postEntities,
+        ...draftEntities
+          .filter((d) => !postEntityNames.some((n) => n.toLowerCase() === d.name.toLowerCase()))
+          .slice(0, MAX_ENTITIES_INTO_COPY)
+          .map((d) => ({
+            name: d.name,
+            kind: (d.name.trim().split(/\s+/u).length === 2 ? "person" : "company") as RecognisedEntity["kind"],
+            // A public figure by construction: this is a name the post says in
+            // its own prose about a public subject, and the likeness path is
+            // what `00e-check-likeness-consent` already governs.
+            isPublicFigure: true,
+            cardIds: [],
+            salience: d.inHeadline ? 5 : Math.min(4, 2 + d.mentions),
+          })),
+      ];
+      const attemptEntityNames = attemptEntities.map((e) => e.name);
+      if (draftEntities.length > 0) {
+        copy = {
+          ...copy,
+          slides: copy.slides.map((slide) => {
+            const need = normaliseVisualNeed(slide);
+            if (need.source === "none" || need.subject.entityRef !== undefined) return slide;
+            const named = draftEntities.find((d) => d.slides.includes(slide.n));
+            if (named === undefined) return slide;
+            return {
+              ...slide,
+              visualNeed: {
+                ...(typeof slide.visualNeed === "string" ? { scene: slide.visualNeed } : slide.visualNeed),
+                scene: entityPictureBrief(named),
+                source: need.source,
+                subject: { ...need.subject, noun: named.name, entityRef: named.name },
+              },
+            } as typeof slide;
+          }),
+        };
+      }
+
       // ── THE SCENE-BRIEF GUARDS (Phase 5.5, item A3) ──
       //
       // karoslabs' one photo slide asked for *"a server infrastructure
@@ -7408,7 +7504,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // picture-quality rule that can cost a post is the defect this phase is
       // here to remove, not one to add.
       sceneBriefFindings = checkSceneBriefs(copy.slides, {
-        entityNames: postEntityNames,
+        entityNames: attemptEntityNames,
         personEntityNames,
         // Injected rather than imported: `scene-brief.ts` deliberately imports
         // nothing from the workflow, and clause L9's illustration rule lives in
@@ -7820,7 +7916,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // leave the slide to `05b` exactly as it was before this step existed.
       /** What the entity route did, per slide, for the gate payload. */
       const entitySourcingReport: Array<{ slide: number; entity: string; tiers: Array<{ tier: string; why: string; got: number }> }> = [];
-      if (postEntities.length > 0 && imageCandidatePool.length === 0 && !clientMediaOnly && slidesNeedingSource.length > 0) {
+      if (attemptEntities.length > 0 && imageCandidatePool.length === 0 && !clientMediaOnly && slidesNeedingSource.length > 0) {
         const harvestTool = tools["media.harvestArticleImages"];
         const searchTool = tools["web.search_web"];
         const entitySourced = await wf.step.code(rev(`05b1-source-entity-images-attempt-${attempt}`), async () => {
@@ -7828,9 +7924,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           const report: typeof entitySourcingReport = [];
           for (const slide of slidesNeedingSource) {
             const need = normaliseVisualNeed(slide);
-            const refName = resolveEntityRef(need.subject.entityRef, postEntityNames);
+            const refName = resolveEntityRef(need.subject.entityRef, attemptEntityNames);
             if (refName === undefined) continue;
-            const entity = postEntities.find((e) => e.name === refName);
+            const entity = attemptEntities.find((e) => e.name === refName);
             if (entity === undefined) continue;
             // The URLs this slide's own citation already points at. $0 — the
             // run fetched them in `04a3` and the draft cites them by claim.
@@ -8835,6 +8931,66 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             ? { ...sel, imagePath: null, reason: `${sel.reason} (the file was no longer on disk at render time)` }
             : sel,
         );
+        unfillable = selections.filter(isUnfillable);
+      }
+
+      // ── THE SAME PICTURE MAY NOT APPEAR TWICE IN ONE POST. ──
+      //
+      // Every slide is vetted INDEPENDENTLY against one shared pool, so the
+      // best picture in that pool wins every slide it is offered to. The
+      // entity tiers make it sharper rather than softer: a press kit publishes
+      // a handful of images, so a post whose subject is one company draws the
+      // same logo shot for every slide that names it. The Geektime carousel of
+      // 2026-09-19 carried the same LinkedIn photograph three times.
+      //
+      // There is already a dedupe and it answers a different question:
+      // `usedImagesSet` stops a picture repeating ACROSS RUNS. Nothing stopped
+      // it repeating inside one.
+      //
+      // The FIRST slide keeps it, which is deliberate rather than arbitrary: a
+      // reader meets the picture there, and the vet's own ordering put the
+      // strongest claim first. The later slides are cleared and flow into the
+      // same unfilled path as every other sourcing failure, which is where the
+      // backfill and the generation guarantee already live, so a cleared slide
+      // gets a DIFFERENT picture rather than none.
+      //
+      // ── AND IT COUNTS WHAT A READER SEES, NOT WHAT THE VET SELECTED. ──
+      //
+      // Only slides whose archetype RENDERS a hero are counted. A typographic
+      // plate can carry a vetted selection that nothing paints, and that
+      // reserve is not an appearance: it is what `promote-image-to-cover`
+      // promotes onto a cover that has no picture of its own. An earlier cut
+      // of this step counted the reserve, cleared it, and sent the remedy
+      // ladder down to `switch-archetype` -- a worse cover, produced by a rule
+      // about repetition acting on something a reader was never going to see
+      // twice. The owner's note is about the reader: *"you repeated the same
+      // LinkedIn image three times in the post"*.
+      const repeatedInPost = await wf.step.code(rev(`06f2-one-picture-one-slide-attempt-${attempt}`), () => {
+        const rendersHero = new Set(
+          copy.slides.filter((slide) => HERO_IMAGE_LAYOUTS.has(resolveLayout(slide, availableTemplates).layout)).map((slide) => slide.n),
+        );
+        const firstUse = new Map<string, number>();
+        const repeats: Array<{ n: number; path: string; firstOn: number }> = [];
+        for (const sel of selections) {
+          if (sel.imagePath === null || !rendersHero.has(sel.n)) continue;
+          const seen = firstUse.get(sel.imagePath);
+          if (seen === undefined) firstUse.set(sel.imagePath, sel.n);
+          else repeats.push({ n: sel.n, path: sel.imagePath, firstOn: seen });
+        }
+        return repeats;
+      });
+      if (repeatedInPost.length > 0) {
+        const repeatOf = new Map(repeatedInPost.map((r) => [r.n, r]));
+        selections = selections.map((sel) => {
+          const repeat = repeatOf.get(sel.n);
+          return repeat === undefined
+            ? sel
+            : {
+                ...sel,
+                imagePath: null,
+                reason: `the same picture already appears on slide ${repeat.firstOn}; one picture may appear once in a post, so this slide is sourced again`,
+              };
+        });
         unfillable = selections.filter(isUnfillable);
       }
 
@@ -13680,6 +13836,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 slideCount: slidesData.slides.length,
                 publishedAt: new Date().toISOString(),
                 ...(review.output.copy.hookPattern !== undefined ? { hookPattern: review.output.copy.hookPattern } : {}),
+                // What the shipped caption DID, so the next post can be told.
+                // Measured off the text rather than asked of the writer: a
+                // self-report about one's own tics is the one label in this
+                // record that would be worth less than reading it.
+                usedArrowBullets: usesArrowBullets(review.output.copy.caption),
                 imageSource: slidesData.slides.some((slide) => slide.images?.["hero"] !== undefined) ? "present" : "none",
               }),
               [CUSTOM_ARCHETYPE_BELIEF_KEY]: customArchetypeHistory,

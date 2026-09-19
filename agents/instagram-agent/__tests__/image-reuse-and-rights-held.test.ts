@@ -159,7 +159,11 @@ describe("P0 parity-audit Fix 3: cross-post image-reuse prevention", () => {
     // failure can be pinned to exactly slide 1. The workflow's own
     // deterministic check must catch the reuse even though nothing in the
     // model's own selections array flagged it.
-    const otherPaths = [pool[1]!.path, pool[2]!.path];
+    // EVERY other candidate, not two of them. Two paths cycled over five
+    // slides is three repeats, and `06f2-one-picture-one-slide` clears a
+    // repeat -- which would downgrade slides this case needs left alone so
+    // that the one downgrade it asserts is the reuse on slide 1.
+    const otherPaths = pool.slice(1).map((c) => c.path);
     const vetting = selectionsWith({ imagePath: (n) => (n === 1 ? alreadyUsedPath : otherPaths[n % otherPaths.length]!) });
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),

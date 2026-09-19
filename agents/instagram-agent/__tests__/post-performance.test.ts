@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   armsAllowedFor,
+  arrowBulletSteer,
   ctaKindFor,
   DECAY_HALF_LIFE_DAYS,
   decayWeight,
@@ -14,6 +15,7 @@ import {
   selectArm,
   slideRangeFor,
   summariseArms,
+  usesArrowBullets,
   withPost,
   type PostArm,
   type PostPerformanceRecord,
@@ -277,5 +279,107 @@ describe("the store on disk", () => {
     for (const junk of [undefined, null, 42, "text", {}, { [PERFORMANCE_BELIEF_KEY]: 7 }, { [PERFORMANCE_BELIEF_KEY]: { records: "no" } }]) {
       expect(readPerformanceStore(junk)).toEqual({ records: [] });
     }
+  });
+});
+
+
+describe("arrow bullets, the device that stopped being one", () => {
+  const post = (runId: string, daysBack: number, usedArrowBullets?: boolean): PostPerformanceRecord => ({
+    runId,
+    arm: "carousel-edu",
+    slideCount: 7,
+    publishedAt: new Date(Date.now() - daysBack * 86_400_000).toISOString(),
+    ...(usedArrowBullets === undefined ? {} : { usedArrowBullets }),
+  });
+
+  describe("usesArrowBullets", () => {
+    it("sees every spelling the copy prompt permits, at a line start", () => {
+      for (const glyph of ["\u2192", "\u21d2", "\u00bb", "->", "=>"]) {
+        expect(usesArrowBullets(`A caption.\n\n${glyph} the first point\n${glyph} the second`)).toBe(true);
+      }
+    });
+
+    it("sees one on the very first line, with no caption above it", () => {
+      expect(usesArrowBullets("\u2192 straight in")).toBe(true);
+    });
+
+    it("ignores an arrow INSIDE a sentence, which is prose and not a bullet", () => {
+      // The owner's note was about a repeated layout device. A sentence that
+      // uses an arrow to mean "and then" is writing, and banning it would be
+      // a worse rule than the tell it fixed.
+      expect(usesArrowBullets("Revenue fell 4% -> the round was pulled the same week.")).toBe(false);
+      expect(usesArrowBullets("The mapping is old \u2192 new and nothing else changed.")).toBe(false);
+    });
+
+    it("ignores an arrow with nothing after it", () => {
+      expect(usesArrowBullets("A caption.\n\n-> ")).toBe(false);
+    });
+
+    it("finds one after a CRLF, because captions travel through Windows", () => {
+      expect(usesArrowBullets("A caption.\r\n\r\n\u2192 the point")).toBe(true);
+    });
+  });
+
+  describe("arrowBulletSteer", () => {
+    it("says nothing about an empty history", () => {
+      expect(arrowBulletSteer({ records: [] })).toBeUndefined();
+    });
+
+    it("says nothing when the device appeared ONCE in the last three", () => {
+      // Once is a device. The steer exists to catch a signature.
+      const store: PerformanceStore = { records: [post("a", 1, true), post("b", 2, false), post("c", 3, false)] };
+      expect(arrowBulletSteer(store)).toBeUndefined();
+    });
+
+    it("speaks up at two of the last three, and names an alternative rather than a ban", () => {
+      const store: PerformanceStore = { records: [post("a", 1, true), post("b", 2, true), post("c", 3, false)] };
+      const steer = arrowBulletSteer(store);
+      expect(steer).toBeDefined();
+      expect(steer).toContain("2 of this client's last 3 posts");
+      // A ban would flatten the writing; the note the owner made was about
+      // repetition. The steer has to offer somewhere else to go.
+      expect(steer).toContain("numbered list");
+      expect(steer?.toLowerCase()).not.toContain("never use");
+    });
+
+    it("counts only the lookback window, so an old habit that stopped is forgotten", () => {
+      const store: PerformanceStore = {
+        records: [post("new1", 1, false), post("new2", 2, false), post("new3", 3, false), post("old1", 40, true), post("old2", 41, true)],
+      };
+      expect(arrowBulletSteer(store)).toBeUndefined();
+    });
+
+    it("reads the window by DATE, not by array order", () => {
+      const store: PerformanceStore = { records: [post("old", 40, false), post("a", 1, true), post("b", 2, true)] };
+      expect(arrowBulletSteer(store)).toBeDefined();
+    });
+
+    it("treats an ABSENT field as unknown, never as false and never as true", () => {
+      // Every record written before 2026-09-19 lacks the field. A history of
+      // them must not manufacture a steer, and must not suppress one either.
+      const legacy: PerformanceStore = { records: [post("a", 1), post("b", 2), post("c", 3)] };
+      expect(arrowBulletSteer(legacy)).toBeUndefined();
+      const mixed: PerformanceStore = { records: [post("a", 1, true), post("b", 2, true), post("c", 3)] };
+      expect(arrowBulletSteer(mixed)).toBeDefined();
+    });
+
+    it("survives a history shorter than the lookback", () => {
+      const store: PerformanceStore = { records: [post("a", 1, true), post("b", 2, true)] };
+      expect(arrowBulletSteer(store)).toContain("last 2 posts");
+    });
+  });
+
+  it("round-trips the field through the store reader, and drops a non-boolean", () => {
+    const beliefs = {
+      instagramPostPerformance: {
+        records: [
+          { runId: "yes", arm: "carousel-edu", publishedAt: new Date().toISOString(), slideCount: 7, usedArrowBullets: true },
+          { runId: "junk", arm: "carousel-edu", publishedAt: new Date().toISOString(), slideCount: 7, usedArrowBullets: "true" },
+        ],
+      },
+    };
+    const read = readPerformanceStore(beliefs);
+    expect(read.records[0]?.usedArrowBullets).toBe(true);
+    expect(read.records[1]?.usedArrowBullets).toBeUndefined();
   });
 });

@@ -242,8 +242,73 @@ function withFakeDom<T>(elements: FakeElement[], body: () => T): T {
   }
 }
 
+/**
+ * The same fake DOM, plus the `document.body` the real one has.
+ *
+ * `withFakeDom` has never supplied a `body` -- it installs
+ * `{ querySelectorAll }` and nothing else -- which is exactly why the fit-step
+ * read is wrapped in a `try` and a shape check rather than written as
+ * `document.body.getAttribute(...)`. That line would have thrown here, and a
+ * probe that throws returns NO metrics rather than one fewer.
+ */
+function withFakeDomBody<T>(elements: FakeElement[], fitStep: string | null, body: () => T): T {
+  return withFakeDom(elements, () => {
+    const global = globalThis as unknown as Record<string, unknown>;
+    const document = global["document"] as Record<string, unknown>;
+    document["body"] = { getAttribute: (name: string) => (name === "data-fit-step" ? fitStep : null) };
+    return body();
+  });
+}
+
 describe("probePage (the in-page half, driven against a fake DOM)", () => {
   const canvas = { n: 3, w: 1080, h: 1440 };
+
+  /**
+   * ── THE LADDER'S OWN VERDICT, WHICH NOTHING READ FOR THE LIFE OF THE
+   *    DESIGN SYSTEM. ──
+   *
+   * `_ds-fit.js` writes `data-fit-step` to the body precisely so that "a
+   * render check, the interest floor and a failing test can all see which rung
+   * was used". Before 1.9.0 the attribute appeared in the eight templates, in
+   * the ladder, and in one test of the type scale: in no production file at
+   * all.
+   */
+  describe("fitStep", () => {
+    const plate: FakeElement[] = [
+      { tagName: "HTML", childCount: 1, box: { left: 0, top: 0, width: 1080, height: 1440 } },
+      { tagName: "DIV", className: "copy", text: "A headline", box: { left: 64, top: 1100, width: 952, height: 180 } },
+    ];
+
+    it("reports the rung the ladder came to rest on", () => {
+      expect(withFakeDomBody(plate, "2", () => probePage(canvas)).fitStep).toBe(2);
+      expect(withFakeDomBody(plate, "0", () => probePage(canvas)).fitStep).toBe(0);
+    });
+
+    it("is ABSENT, not 0, when no ladder ran", () => {
+      // A Template Studio plate carries no ladder. Reporting 0 for it would
+      // say "this plate fitted perfectly" about a plate nothing measured.
+      expect(withFakeDomBody(plate, null, () => probePage(canvas)).fitStep).toBeUndefined();
+      expect("fitStep" in withFakeDomBody(plate, null, () => probePage(canvas))).toBe(false);
+    });
+
+    it("is absent when the document has no body at all, and every other metric still reports", () => {
+      // The condition two of the three callers of this function are in.
+      const probe = withFakeDom(plate, () => probePage(canvas));
+      expect(probe.fitStep).toBeUndefined();
+      expect(probe.elementCount).toBe(2);
+      expect(probe.textBoxShare).toBeGreaterThan(0);
+    });
+
+    it("ignores an attribute that is not a number", () => {
+      expect(withFakeDomBody(plate, "", () => probePage(canvas)).fitStep).toBeUndefined();
+      expect(withFakeDomBody(plate, "two", () => probePage(canvas)).fitStep).toBeUndefined();
+    });
+
+    it("round-trips through the wire schema", () => {
+      const probe = withFakeDomBody(plate, "2", () => probePage(canvas));
+      expect(SlideProbeSchema.parse(probe)).toEqual(probe);
+    });
+  });
 
   it("reports a well-fitting page as clean and names the font family in use", () => {
     const probe = withFakeDom(

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ALIGNMENT_COLUMN_CEILING,
   ALIGNMENT_COLUMN_CEILING_ARMED,
+  FIT_STEP_CEILING_ARMED,
   checkInterestFloor,
   TYPE_CONTRAST_FLOOR,
   TYPE_CONTRAST_FLOOR_ARMED,
@@ -98,11 +99,29 @@ describe("type discipline: measured, printed, and armed by nobody yet", () => {
    * one-line diff — with the sweep's distribution beside it, which is the
    * whole mechanism.
    */
-  it("all three ship disarmed", () => {
+  it("all four ship disarmed", () => {
     expect(TYPE_STEP_CEILING_ARMED).toBe(false);
     expect(TYPE_CONTRAST_FLOOR_ARMED).toBe(false);
     expect(ALIGNMENT_COLUMN_CEILING_ARMED).toBe(false);
-    expect(verdict({ typeSteps: [132, 124, 104, 96, 46, 22], alignmentColumns: 6 }).ok).toBe(true);
+    expect(FIT_STEP_CEILING_ARMED).toBe(false);
+    expect(verdict({ typeSteps: [132, 124, 104, 96, 46, 22], alignmentColumns: 6, fitStep: 2 }).ok).toBe(true);
+  });
+
+  /**
+   * The plate the owner read on 2026-09-19 reached the ladder's floor, and
+   * before `render-carousel` 1.9.0 nothing in this system could have said so.
+   */
+  it("a plate at the ladder's floor is reported, and a plate that fitted is not", () => {
+    const atFloor = verdict({ fitStep: 2 });
+    expect(atFloor.warnings.some((w) => w.kind === "type-discipline" && /shrunk 2 step/u.test(w.sentence))).toBe(true);
+    expect(verdict({ fitStep: 0 }).warnings.some((w) => w.kind === "type-discipline")).toBe(false);
+    expect(verdict({ fitStep: 1 }).warnings.some((w) => w.kind === "type-discipline")).toBe(false);
+  });
+
+  it("a template with no ladder abstains rather than reporting a perfect fit", () => {
+    // Absent is not 0. A Template Studio plate runs no ladder at all, and
+    // reading its silence as "fitted" would be a guard that cannot fail.
+    expect(verdict({}).warnings.some((w) => w.kind === "type-discipline")).toBe(false);
   });
 
   /**
@@ -121,29 +140,37 @@ describe("type discipline: measured, printed, and armed by nobody yet", () => {
    * are testable with no mocking — and this is the half that was untrue.
    */
   describe("the arming switch routes per limb, and each limb answers for itself", () => {
-    const measured = { distinct: 6, contrast: 1.1, columns: 4, measuredSteps: true, comparableSteps: true };
-    const none = { steps: false, contrast: false, columns: false };
+    const measured = { distinct: 6, contrast: 1.1, columns: 4, measuredSteps: true, comparableSteps: true, fitStep: 2 };
+    const none = { steps: false, contrast: false, columns: false, fit: false };
 
     it("disarmed: every out-of-band limb is out of band and none of them gates", () => {
       const limbs = typeDisciplineLimbs(measured, none);
-      expect(limbs.map((l) => l.out)).toEqual([true, true, true]);
+      expect(limbs.map((l) => l.out)).toEqual([true, true, true, true]);
       expect(limbs.filter((l) => l.out && l.armed)).toEqual([]);
     });
 
     it("arming ONE limb gates that limb and only that limb", () => {
       const limbs = typeDisciplineLimbs(measured, { ...none, contrast: true });
       expect(limbs.filter((l) => l.out && l.armed).map((l) => l.clause)).toEqual([`largest/second 1.10x (floor ${TYPE_CONTRAST_FLOOR}x)`]);
-      expect(limbs.filter((l) => l.out && !l.armed)).toHaveLength(2);
+      expect(limbs.filter((l) => l.out && !l.armed)).toHaveLength(3);
+    });
+
+    it("the fit limb arms on its own, and says what a redraft would have to change", () => {
+      const limbs = typeDisciplineLimbs(measured, { ...none, fit: true });
+      const gating = limbs.filter((l) => l.out && l.armed);
+      expect(gating).toHaveLength(1);
+      expect(gating[0]?.clause).toContain("shrunk 2 step");
+      expect(gating[0]?.clause).toContain("longer than the plate holds");
     });
 
     it("an armed limb that is IN band still gates nothing — the flag arms a clause, it does not assert one", () => {
-      const clean = { distinct: 2, contrast: 2.7, columns: 1, measuredSteps: true, comparableSteps: true };
-      expect(typeDisciplineLimbs(clean, { steps: true, contrast: true, columns: true }).filter((l) => l.out)).toEqual([]);
+      const clean = { distinct: 2, contrast: 2.7, columns: 1, measuredSteps: true, comparableSteps: true, fitStep: 1 };
+      expect(typeDisciplineLimbs(clean, { steps: true, contrast: true, columns: true, fit: true }).filter((l) => l.out)).toEqual([]);
     });
 
     it("a limb the probe did not measure is never out of band, armed or not", () => {
       const unmeasured = { distinct: 0, contrast: 1, columns: undefined, measuredSteps: false, comparableSteps: false };
-      expect(typeDisciplineLimbs(unmeasured, { steps: true, contrast: true, columns: true }).filter((l) => l.out)).toEqual([]);
+      expect(typeDisciplineLimbs(unmeasured, { steps: true, contrast: true, columns: true, fit: true }).filter((l) => l.out)).toEqual([]);
     });
   });
 });
