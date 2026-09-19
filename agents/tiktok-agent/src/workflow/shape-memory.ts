@@ -40,6 +40,7 @@ import type { ShortScript } from "./types.js";
 const NAMESPACE = "tiktok:";
 const STOCK_PREFIX = `${NAMESPACE}stock:`;
 const SHAPE_PREFIX = `${NAMESPACE}shape:`;
+const CLIP_PREFIX = `${NAMESPACE}clip:`;
 
 /** How many recent shapes the writer is shown. Enough to see a pattern, short enough to read. */
 export const SHAPE_WINDOW = 6;
@@ -122,11 +123,45 @@ export function skeletonEntry(skeleton: string): string {
   return `${SHAPE_PREFIX}${skeleton}`;
 }
 
+/**
+ * A window of a source recording this client has already published.
+ *
+ * The clipping agent had NO cross-run memory of any kind until 2026-09-19:
+ * `skeletonOf` runs only for an original short, and a commentary clip buys no
+ * library footage, so nothing at all was recorded. The topic catalog stopped
+ * the same SUBJECT being made twice and nothing stopped the same forty seconds
+ * of the same episode being cut twice — a client with one long podcast and a
+ * broad topic could be handed overlapping clips weeks apart, each passing
+ * every check.
+ *
+ * `source` is whatever names the recording: the harvested URL, the attached
+ * asset's URI, or a dispatched `sourcePath`. It is stored verbatim rather than
+ * hashed, so a human reading this client's ledger can see which episode a
+ * window belongs to.
+ */
+export function clipWindowEntry(source: string, startSeconds: number, endSeconds: number): string {
+  return `${CLIP_PREFIX}${Math.round(startSeconds)}-${Math.round(endSeconds)}@${source}`;
+}
+
+/** One previously published window of one recording. */
+export interface ClippedWindow {
+  source: string;
+  startSeconds: number;
+  endSeconds: number;
+}
+
+/** Whether two windows of the SAME recording overlap at all. Different recordings never overlap, whatever their timestamps say. */
+export function windowsOverlap(a: ClippedWindow, b: ClippedWindow): boolean {
+  return a.source === b.source && a.startSeconds < b.endSeconds && b.startSeconds < a.endSeconds;
+}
+
 export interface ShapeMemory {
   /** Library clips this client's shorts have already used, so a new one is genuinely new footage. */
   usedStockIds: number[];
   /** The skeletons of this client's recent shorts, oldest first. */
   skeletons: string[];
+  /** Windows of source recordings this client has already published a clip from. */
+  clippedWindows: ClippedWindow[];
 }
 
 /**
@@ -142,6 +177,7 @@ export interface ShapeMemory {
 export function parseShapeMemory(entries: readonly string[]): ShapeMemory {
   const usedStockIds: number[] = [];
   const skeletons: string[] = [];
+  const clippedWindows: ClippedWindow[] = [];
   for (const entry of entries) {
     if (entry.startsWith(STOCK_PREFIX)) {
       const id = Number(entry.slice(STOCK_PREFIX.length));
@@ -149,9 +185,42 @@ export function parseShapeMemory(entries: readonly string[]): ShapeMemory {
     } else if (entry.startsWith(SHAPE_PREFIX)) {
       const shape = entry.slice(SHAPE_PREFIX.length);
       if (shape.length > 0) skeletons.push(shape);
+    } else if (entry.startsWith(CLIP_PREFIX)) {
+      // `<start>-<end>@<source>`. Split on the FIRST "@" only: a source is a
+      // URL and routinely contains more.
+      const rest = entry.slice(CLIP_PREFIX.length);
+      const at = rest.indexOf("@");
+      const span = at === -1 ? "" : rest.slice(0, at);
+      const source = at === -1 ? "" : rest.slice(at + 1);
+      const [from, to] = span.split("-").map((n) => Number(n));
+      if (source.length > 0 && Number.isFinite(from) && Number.isFinite(to) && to! > from!) {
+        clippedWindows.push({ source, startSeconds: from!, endSeconds: to! });
+      }
     }
   }
-  return { usedStockIds, skeletons };
+  return { usedStockIds, skeletons, clippedWindows };
+}
+
+/**
+ * What the moment picker is told about this recording, or `undefined` when
+ * this client has never published a clip from it.
+ *
+ * A steer, deliberately, not an exclusion. A long episode can legitimately
+ * yield two good clips, and refusing an overlap in code would silently veto
+ * the best moment in a recording because a worse one near it went out first.
+ * The picker is shown what has already been used and asked to find something
+ * else; the run records the overlap if it picks one anyway.
+ */
+export function clippedWindowDirective(source: string, windows: readonly ClippedWindow[]): string | undefined {
+  const mine = windows.filter((w) => w.source === source);
+  if (mine.length === 0) return undefined;
+  const spans = mine.map((w) => `${Math.round(w.startSeconds)}s-${Math.round(w.endSeconds)}s`).join(", ");
+  return (
+    `This client has ALREADY published a clip from this recording, cut at ${spans}. ` +
+    `Pick a moment outside those windows: a viewer scrolling this account would meet the same seconds twice. ` +
+    `If the strongest moment in the recording genuinely sits inside one of them, say so in your rationale and pick it anyway - ` +
+    `a worse clip is not an improvement on a repeated one.`
+  );
 }
 
 /**

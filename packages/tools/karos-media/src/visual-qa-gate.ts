@@ -20,7 +20,13 @@ import { stripCodeFence, type VisionAnalysisClient, type VisionPart } from "./vi
 // in the footage; it is evidence for the human, not a verdict on its own.
 // 1.4.0: the gate watches the clip with gemini-3.8-flash instead of
 // gemini-2.5-flash, and bills the matching SKU ids.
-const TOOL_VERSION = "1.4.0";
+// 1.5.0 (2026-09-19): `moment`. Every other field here judges the TREATMENT,
+// and a clipping run's whole product is the choice of moment - so a clip could
+// score 9 with perfect captions while opening mid-sentence. Given the clip's
+// own transcript, the reviewer now also says whether the CUT opens on a
+// complete thought and closes after the payoff. Absent for an original short,
+// which is assembled rather than cut.
+const TOOL_VERSION = "1.5.0";
 
 /**
  * `video.visualQaGate` — a vision model WATCHES the finished clip before it
@@ -77,6 +83,13 @@ export const VisualQaExpectationsSchema = z.object({
     .max(6)
     .optional()
     .describe("An original short's beats with their time windows, so the reviewer can score how well each window's footage fits the line said over it. Absent: no per-beat scoring."),
+  clipText: z
+    .string()
+    .max(4000)
+    .optional()
+    .describe(
+      "A commentary clip's own transcript, so the reviewer can judge the CUT: whether it opens on a complete thought and closes after the payoff rather than before it. Absent: no moment scoring.",
+    ),
   format: z
     .enum(["commentary-clip", "original-short"])
     .describe("Which pipeline produced it. An `original-short` is stock footage and stills under a voice; a `commentary-clip` is cut from licensed source footage. Since 2026-09-09 neither is judged for generation artefacts as a hard rule: an artefact lowers the score and is reported in evidence."),
@@ -113,6 +126,23 @@ export const VisualQaReportSchema = z.object({
   notes: z.array(z.string()).default([]),
   /** Per beat, how well the footage in its window fits the line said over it (0-10). Only when `expectations.beats` was given. */
   beats: z.array(z.object({ index: z.number().int().positive(), relevance: z.number().min(0).max(10), note: z.string().max(300).default("") })).default([]),
+  /**
+   * Whether the CUT is in the right place. Only when `expectations.clipText`
+   * was given, which is only ever a commentary clip.
+   *
+   * The question nobody was asking. Every other field here judges the
+   * TREATMENT - captions, frame, artefacts, per-beat footage - and a clipping
+   * run's whole product is the choice of moment. A clip can have perfect
+   * captions, an intact brand frame, no artefacts and a 9 overall while
+   * starting halfway through a sentence and ending before the point lands.
+   */
+  moment: z
+    .object({
+      opensOnCompleteThought: z.boolean(),
+      closesAfterPayoff: z.boolean(),
+      note: z.string().max(300).default(""),
+    })
+    .optional(),
 });
 export type VisualQaReport = z.infer<typeof VisualQaReportSchema>;
 
@@ -143,7 +173,8 @@ function videoMimeFor(location: string): string | undefined {
   return VIDEO_MIME_BY_EXTENSION[path.extname(location.split("?")[0]!).toLowerCase()];
 }
 
-function buildReviewPrompt(expectations: VisualQaExpectations): string {
+/** The review the model is asked for, as text. Exported for the test: the prompt IS the contract, and a silently-dropped section is how a dimension stops being judged. */
+export function buildReviewPrompt(expectations: VisualQaExpectations): string {
   const brief: string[] = [
     "You are a senior short-form video editor reviewing a TikTok before it is published. Watch the whole clip, sound on.",
     "",
@@ -159,6 +190,16 @@ function buildReviewPrompt(expectations: VisualQaExpectations): string {
     expectations.brandColors !== undefined && expectations.brandColors.length > 0
       ? `- Brand colours the frame (bars, header, caption styling) should use: ${expectations.brandColors.join(", ")}`
       : undefined,
+    ...(expectations.clipText !== undefined && expectations.clipText.trim().length > 0
+      ? [
+          "",
+          "THE CUT. This clip was cut out of a longer recording, and where it starts and stops is the whole product. Judge it against the words below, which are what is said in it:",
+          `"""${expectations.clipText.trim().slice(0, 3500)}"""`,
+          "- opensOnCompleteThought: false when the first sentence is already in progress when the clip begins - a viewer meets half a thought and has to reconstruct the other half.",
+          "- closesAfterPayoff: false when the clip ends before the point lands: a setup with no conclusion, a question with no answer, a sentence cut mid-clause.",
+          "Both are about the EDIT, never about whether you find the content interesting.",
+        ]
+      : []),
     ...(expectations.beats !== undefined && expectations.beats.length > 0
       ? [
           "",
@@ -178,6 +219,9 @@ function buildReviewPrompt(expectations: VisualQaExpectations): string {
     '  "thirdPartyMarks": ["every visible logo, brand name or legible third-party text IN THE FOOTAGE with when it shows (a lighting brand on a softbox at 0:07, a shop sign, a product label); the client\'s own header, handle and logo do not count; [] when none"],',
     '  "notes": ["anything else the editor should hear, one observation per line"]' + (expectations.beats !== undefined && expectations.beats.length > 0 ? "," : ""),
     ...(expectations.beats !== undefined && expectations.beats.length > 0 ? ['  "beats": [{"index": 1, "relevance": 0-10, "note": "<one short line on the fit>"}, ...one per beat]'] : []),
+    ...(expectations.clipText !== undefined && expectations.clipText.trim().length > 0
+      ? ['  "moment": {"opensOnCompleteThought": true|false, "closesAfterPayoff": true|false, "note": "<one short line on where the cut should have been>"}']
+      : []),
     "}",
     "",
     "Be exact and unforgiving: an artefact you are unsure about belongs in notes, not artifacts; an artefact you saw belongs in artifacts even if brief.",

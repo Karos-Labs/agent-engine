@@ -7,6 +7,7 @@ import { computeToolCostUsd, type GateVerdict } from "@agent-engine/core";
 import {
   VisualQaGateInputSchema,
   VisualQaReportSchema,
+  buildReviewPrompt,
   createKarosMediaTools,
   createVisualQaGate,
   visualQaFailures,
@@ -141,7 +142,7 @@ describe("video.visualQaGate — verdicts", () => {
     const { client } = recordingVision(JSON.stringify(GOOD_REPORT));
     const verdict = verdictOf(await createVisualQaGate({ client }).execute(qaInput({ videoPath: clipPath, expectations: expectations() }), CTX));
     expect(verdict.verdict).toBe("pass");
-    expect(verdict.toolVersion).toBe("1.4.0");
+    expect(verdict.toolVersion).toBe("1.5.0");
     expect((verdict as { evidence: string[] }).evidence).toEqual([
       "overallScore: 8.5",
       "hookLandsInFirstTwoSeconds: true",
@@ -268,5 +269,63 @@ describe("video.visualQaGate — billing and wiring", () => {
 
     const off = createKarosMediaTools({ env: {}, generationClient: null, videoGenerationClient: null, visionClient: null, scraper: null, videoQaClient: null });
     expect((await off["video.visualQaGate"]!.execute(qaInput({ videoPath: clipPath, expectations: expectations() }), CTX)).status).toBe("not_available");
+  });
+});
+
+/**
+ * `moment` — whether the CUT is in the right place (1.5.0).
+ *
+ * Every other field this gate returns judges the TREATMENT: captions, frame,
+ * artefacts, per-beat footage. A clipping run's whole product is the choice of
+ * moment, and a clip could score 9 here with perfect captions while opening
+ * halfway through a sentence.
+ */
+describe("video.visualQaGate — the cut", () => {
+  it("asks about the cut only when it is given the clip's own words", async () => {
+    const withText = buildReviewPrompt({
+      topic: "hiring",
+      captionsExpected: true,
+      voiceoverExpected: false,
+      format: "commentary-clip",
+      clipText: "The first hire is the one you fire. Nobody tells you that.",
+    });
+    expect(withText).toContain("THE CUT");
+    expect(withText).toContain("opensOnCompleteThought");
+    expect(withText).toContain("The first hire is the one you fire");
+
+    const without = buildReviewPrompt({ topic: "hiring", captionsExpected: true, voiceoverExpected: false, format: "commentary-clip" });
+    expect(without).not.toContain("THE CUT");
+    expect(without).not.toContain('"moment"');
+  });
+
+  it("asks nothing about the cut for an original short, which is assembled rather than cut", () => {
+    // The workflow never sends `clipText` for one; this pins that the tool
+    // would stay silent even if it did, so the two halves cannot drift.
+    const assembled = buildReviewPrompt({ topic: "hiring", captionsExpected: true, voiceoverExpected: true, format: "original-short" });
+    expect(assembled).not.toContain("THE CUT");
+  });
+
+  it("parses a moment verdict off the model's report", () => {
+    const parsed = VisualQaReportSchema.parse({
+      overallScore: 9,
+      hookLandsInFirstTwoSeconds: true,
+      captions: { present: true, legible: true, syncedToSpeech: true },
+      brandFrameIntact: true,
+      looksAiGenerated: "no",
+      moment: { opensOnCompleteThought: false, closesAfterPayoff: true, note: "starts four words in" },
+    });
+    expect(parsed.moment).toEqual({ opensOnCompleteThought: false, closesAfterPayoff: true, note: "starts four words in" });
+  });
+
+  it("leaves `moment` absent when the model did not answer, rather than inventing a verdict", () => {
+    // A clip nobody judged and a clip judged fine must stay distinguishable.
+    const parsed = VisualQaReportSchema.parse({
+      overallScore: 9,
+      hookLandsInFirstTwoSeconds: true,
+      captions: { present: true, legible: true, syncedToSpeech: true },
+      brandFrameIntact: true,
+      looksAiGenerated: "no",
+    });
+    expect(parsed.moment).toBeUndefined();
   });
 });

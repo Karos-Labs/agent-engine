@@ -1402,3 +1402,71 @@ describe("shape memory across runs", () => {
     expect(h.usedMedia.filter((e) => e.startsWith("tiktok:"))).toHaveLength(0);
   }, 20_000);
 });
+
+/**
+ * What the redraft still gets wrong now REACHES someone (2026-09-19).
+ *
+ * Four craft checks run on the first draft and every problem is named to the
+ * writer. Only one of them — `scriptVoiceIssues` — was re-run on the redraft,
+ * and only as a `console.warn`. So a redraft that fixed the sentence lengths
+ * and introduced a sales pitch, a one-room shot list or a circular ending
+ * shipped with all three unmentioned: the first draft's problems went to the
+ * writer, the second draft's went to nobody.
+ */
+describe("craft checks on the redraft", () => {
+  /** A script that ends on a pitch — `salesPitchIssues` objects to the last beat. */
+  const PITCHY = {
+    ...VOICED_SCRIPT,
+    beats: [
+      ...VOICED_SCRIPT.beats.slice(0, 2),
+      { ...VOICED_SCRIPT.beats[2]!, narration: "We show you the plan before anything else.", onScreenText: "We show you the plan" },
+    ],
+  };
+
+  it("ships a redraft's surviving craft problems to the reviewer, named", async () => {
+    // Draft 1 trips the voice check; the redraft fixes that and pitches instead.
+    // The long sentence goes in beat TWO, not beat one: `repairScriptStructure`
+    // rewrites beat 1 from the hook before any craft check reads it, so a
+    // fixture that put it there would be repaired into cleanliness and the
+    // redraft would never happen.
+    const longWinded = {
+      ...VOICED_SCRIPT,
+      beats: [
+        VOICED_SCRIPT.beats[0]!,
+        { ...VOICED_SCRIPT.beats[1]!, narration: "You end up hiring for the company that you have right now instead of the one that you are actually in the middle of becoming." },
+        ...VOICED_SCRIPT.beats.slice(2),
+      ],
+    };
+    const h = stubTools();
+    const result = await run(h, "run-os-craft-survives", [longWinded, PITCHY]);
+
+    expect(result.status).toBe("completed");
+    const repairs = h.deliverables[0]?.["contentRepairs"] as Array<{ check: string; action: string; detail: string }>;
+    const craft = repairs.filter((r) => r.check === "script-craft");
+    expect(craft.length).toBeGreaterThan(0);
+    // `salesPitchIssues` has two branches: an explicit CTA pattern says
+    // "pitches", and a last beat about what the client offers says "sells".
+    // This fixture trips the second.
+    expect(craft.map((r) => r.detail).join(" ")).toContain("the last beat sells");
+    expect(craft[0]!.action).toBe("unresolved");
+  }, 20_000);
+
+  it("says nothing when the redraft actually fixed everything", async () => {
+    // The long sentence goes in beat TWO, not beat one: `repairScriptStructure`
+    // rewrites beat 1 from the hook before any craft check reads it, so a
+    // fixture that put it there would be repaired into cleanliness and the
+    // redraft would never happen.
+    const longWinded = {
+      ...VOICED_SCRIPT,
+      beats: [
+        VOICED_SCRIPT.beats[0]!,
+        { ...VOICED_SCRIPT.beats[1]!, narration: "You end up hiring for the company that you have right now instead of the one that you are actually in the middle of becoming." },
+        ...VOICED_SCRIPT.beats.slice(2),
+      ],
+    };
+    const h = stubTools();
+    await run(h, "run-os-craft-clean", [longWinded, VOICED_SCRIPT]);
+    const repairs = (h.deliverables[0]?.["contentRepairs"] as Array<{ check: string }> | undefined) ?? [];
+    expect(repairs.map((r) => r.check)).not.toContain("script-craft");
+  }, 20_000);
+});

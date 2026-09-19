@@ -36,6 +36,6 @@ export class TikTokMomentAgent extends BaseAgent<MomentSelection> {
     // arrived with none), the "the topic is a hint, the footage is the truth"
     // rule for attached recordings, and the long-episode guidance. v1 stays
     // frozen.
-    skillRef: "tiktok-moment@2",
+    skillRef: "tiktok-moment@3",
   };
 }
