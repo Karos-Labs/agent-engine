@@ -287,7 +287,24 @@ describe("05b-source-images", () => {
   // phase, shot from above"). Retrieval cannot fix that; generation can.
 
   /** Vetting output where every slide but `gaps` is filled from the pool. */
+  /**
+   * ONE PICTURE PER SLIDE, NEVER THE SAME ONE TWICE.
+   *
+   * This helper used to write `filledPath` onto every slide that was not a
+   * gap, which made each of these tests a post carrying one photograph three
+   * times. That went unnoticed until `06f2-one-picture-one-slide` started
+   * asking the question: the repeats were cleared, the cleared slides became
+   * gaps, and six tests that assert "exactly ONE slide was downgraded" saw
+   * three.
+   *
+   * The repeats were never what any of these tests is about -- each one is
+   * about what happens to the slide named in `gaps` -- so the fixture hands
+   * out distinct paths and `filledPath` keeps the first filled slide, which
+   * is the one the callers assert against.
+   */
   function selectionsWithGaps(copy: ReturnType<typeof goodCopyOutput>, filledPath: string, gaps: number[]) {
+    const paths = [filledPath, ...goodImageCandidatePool().map((c) => c.path).filter((p) => p !== filledPath)];
+    let filledSoFar = 0;
     return {
       selections: copy.slides.map((s) =>
         gaps.includes(s.n)
@@ -303,7 +320,7 @@ describe("05b-source-images", () => {
             }
           : {
               n: s.n,
-              imagePath: filledPath,
+              imagePath: paths[filledSoFar++ % paths.length]!,
               reason: "matches",
               license: "Unsplash License",
               rightsUsable: true,
@@ -718,9 +735,14 @@ describe("archetype-aware sourcing", () => {
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(copy),
       finalTurn({
-        selections: photoNs.map((n) => ({
+        // A DIFFERENT picture per slide. This fixture used to put `pool[0]`
+        // on all four, which `06f2-one-picture-one-slide` now clears down to
+        // one -- and this test is about which slides get SOURCED at all, not
+        // about repeats, so three of its four photo slides would have been
+        // downgraded for a reason it never meant to exercise.
+        selections: photoNs.map((n, i) => ({
           n,
-          imagePath: pool[0]!.path,
+          imagePath: pool[i % pool.length]!.path,
           reason: "matches",
           license: "CC0, test fixture",
           rightsUsable: true,

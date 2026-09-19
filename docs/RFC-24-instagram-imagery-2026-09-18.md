@@ -286,3 +286,146 @@ was resampling, not converging, which is why every run reached its cap.
 - **The side-by-side figure**, pending a field-aware fit ladder.
 - **A one-sentence body still duplicates its device label** (Part One §6).
 - **Nothing has run in prep.** The bar is three posts the owner would publish.
+
+
+# PART THREE — the owner's review of two more carousels, 2026-09-19
+
+Two carousels, `ZGT0oH1aQOuLhur0bzP6` (Karos) and `V9gmy8j2J2vtioHZueGj`
+(Geektime), and four notes. They are written here in the order the fixes
+landed, with the mechanism first and the fix second, because in three of the
+four the mechanism was ours and had been written down as a rule.
+
+## 13. A PLATE WAS LEGAL BLOCK BY BLOCK AND WAS STILL A PAGE
+
+> *"there are slides with too much copy for one slide and type that is too
+> small"*, and then, when I raised the type question separately: *"a lot of
+> copy on one page is not good either, regardless of small type"*.
+
+Slide 4 of the Karos carousel: a headline and four items, each with a two or
+three line note. About a hundred words.
+
+Every check passed it, and each was right about its own question. Every block
+was under `MAX_WORDS_PER_BLOCK` (20). The statement was under its own limit.
+Clause F's `TEXT_SHARE_CEILING` measures the share of the FRAME the type
+covers, and a hundred words set small covers the same share as fifty words set
+large — the second is a slide and the first is a page, and text share cannot
+tell them apart. `slide-word-budget.ts` had explicitly delegated this case to
+clause F, in its own comment: *"a `list_takeaway` with four 20-word rows is 80
+words on the plate and passes here; that is intentional and it is the pixel
+gates' question, not this one's"*. The delegation was reasonable and it did
+not hold.
+
+**Fixed:** `MAX_WORDS_PER_SLIDE_TOTAL = 60`, checked on the whole plate with
+every block counted together, and `instagram-copy@26` §7 says so to the
+writer.
+
+**And the count of rows is NOT the defect**, which I got wrong in the first
+draft of both the prompt paragraph and my summary. The owner pushed back —
+*"what are you talking about, maybe four is not too much"* — and he is right:
+four short rows come to about 46 words and read perfectly well. What does not
+fit is four rows each carrying a two-line note. The word budget refuses the
+volume and admits every good four-row plate; a row-count rule would have
+refused the good version of the same slide. The prompt now says *"cut the
+words, not the points"*.
+
+## 14. THE LADDER KNEW THE COPY WAS TOO LONG AND TOLD NOBODY
+
+The second half of the same note was about type size, and the answer was
+already in the repo.
+
+`_ds-fit.js` shrinks a plate's type one step of the scale at a time until it
+fits, and stops at two. Its own comment says what the last rung means: *"a
+plate that still does not fit at step 2 is a copy-length problem that the
+content-weight floor should refuse rather than something type can hide"*. It
+writes the rung it used to `document.body[data-fit-step]`, and the comment
+beside that line says why: *"so a render check, the interest floor and a
+failing test can all see which rung was used without re-deriving it"*.
+
+Nothing read it. `data-fit-step` appears in the eight plate templates, in the
+ladder, and in one test of the type scale. In no production file, for the
+whole life of the design system. The ladder shrank the Karos plate to its
+floor, wrote down that it had, and the post shipped.
+
+**Fixed:** `render-carousel` 1.9.0 reports `probe.fitStep`, and
+`interest-floor.ts` has a fourth type-discipline limb reading it against
+`FIT_STEP_CEILING = 1` — the ladder's own bound, so no threshold is invented.
+
+**It ships DISARMED, and that is a decision.** The owner asked for two things
+in one message: fix the small type, and stop burning three drafting attempts
+per run because *"it is a waste of money"*. An armed clause here serves the
+first and defeats the second: it fires after the render, so every firing costs
+a redraft plus a second render, and it fires on plates no redraft can fix —
+Hebrew sets long unbroken words and the reviewer's `ts-l` scale starts the
+ladder 18% higher, either of which can reach step 2 on copy that is the right
+length. The defect the owner read is refused a step earlier and for free by
+§13's word budget, which runs on the draft before a pixel is rendered. So this
+ships as the instrument, on the same `*_ARMED` discipline as the three limbs
+beside it, and it is armed from the distribution it collects.
+
+## 15. THE ARROWS WERE A PERMISSION THE WRITER READ AS A HABIT
+
+> *"in every post now you do these arrows in the text that go up with the
+> post, like this. Once in a while it is fine, but repetitive things like this
+> look AI."*
+
+Mine, and written down. `instagram-copy@23` §2 says, in these words, *"arrow
+bullets among prose are not"* refused — written off the reference accounts,
+which do use them. The writer read a permission as a recommendation and used
+it every time.
+
+A prompt sentence could not have fixed this. "Use this at most one post in
+three" asks a model with no memory across runs to count something it cannot
+see, which is the class of instruction this repo keeps learning not to write.
+
+**Fixed as memory, not as a rule.** `PostPerformanceRecord.usedArrowBullets`
+is measured off the caption that ships (not asked of the writer: a
+self-report about one's own tics is the one label in that record worth less
+than reading it), and `arrowBulletSteer` hands the next run a sentence when
+two of the last three posts used the device. `instagram-copy@26` §16 takes it
+as `deviceSteer`, the first steer in that section that is not about a failed
+attempt.
+
+The steer names alternatives and does not ban the arrow. A ban is the same
+mistake in the other direction, and this repo has already paid for one: see
+§5 of part one, where a connector rule I was sure of was falsified by the
+repo's own fixtures.
+
+## 16. ONE PICTURE, THREE SLIDES
+
+> *"the LinkedIn combination is amazing, but you repeated the same LinkedIn
+> image three times in the post. Think like a CMO."*
+
+Every slide is vetted INDEPENDENTLY against one shared candidate pool, so the
+best picture in the pool wins every slide it is offered to. The entity tiers
+added in part two make this sharper rather than softer: a press kit publishes
+a handful of images, so a post whose subject is one company draws the same
+logo shot for every slide that names it.
+
+There was already a dedupe and it answers a different question:
+`05a-list-used-images` and `usedImagesSet` stop a picture repeating ACROSS
+RUNS. Nothing stopped it repeating inside one.
+
+**Fixed:** `06f2-one-picture-one-slide-attempt-N`. The first slide keeps the
+picture — the reader meets it there and the vet's own ordering put the
+strongest claim first — and the later slides are cleared into the same
+unfilled path every other sourcing failure takes, which is where the backfill
+and the generation guarantee already live. A cleared slide gets a DIFFERENT
+picture, never none.
+
+## 17. AND THE NAMES THE DRAFT SAYS, WHICH NOTHING WAS READING
+
+> *"really read the names on every post and then decide, for every page that
+> has a picture, what is the more interesting and more relevant picture."*
+
+`04b3-extract-entities` runs BEFORE the copy step. It sees the topic, the
+angle and the research cards, and nothing the writer introduced. The Karos
+carousel put *"a buyer hears your name from ChatGPT"* in a list note and no
+step ever asked for a picture of OpenAI, while its Geektime sibling carried a
+real LinkedIn logo on the cover only because LinkedIn happened to be the whole
+topic.
+
+**Fixed:** `entitiesInDraft` reads the settled draft for proper nouns, merges
+them into `postEntities` for the rest of the attempt, and rewrites the
+`visualNeed` of any picture slide that names one and briefed no `entityRef`.
+The existing sourcing tiers then do what they already do.
+

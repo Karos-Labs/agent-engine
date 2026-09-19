@@ -4,6 +4,7 @@ import { assembleSlidesData } from "../src/workflow/slides-data.js";
 import {
   MAX_WORDS_PER_BLOCK,
   MAX_WORDS_PER_SLIDE,
+  MAX_WORDS_PER_SLIDE_TOTAL,
   TARGET_WORDS_PER_SLIDE,
   checkSlideWordBudget,
   countWords,
@@ -163,18 +164,27 @@ describe("checkSlideWordBudget: what each archetype actually renders", () => {
   });
 
   it("counts a list on its ROWS, one at a time, because a reader takes a row in at a glance", () => {
-    // Four rows of 15 words is 60 words on the plate and passes: the sum is not
-    // the measurement. Prompt §7 invites two to four items each with a note, so
-    // charging the sum would refuse every compliant `list_takeaway` — a
-    // threshold moved to catch something it was not measuring.
+    // ── THE SUM IS NOW ALSO A MEASUREMENT, AND THE PROMPT MOVED WITH IT. ──
+    //
+    // This used to assert that four rows of 15 words passed, on the grounds
+    // that prompt §7 invited two to four items each with a note and charging
+    // the sum would refuse a compliant draft. The reasoning was sound and the
+    // premise stopped being true: the owner read a shipped plate with four
+    // rows and four notes, about a hundred words, and said *"a lot of copy on
+    // one page is not good either, regardless of small type"*.
+    //
+    // So `MAX_WORDS_PER_SLIDE_TOTAL` exists and `instagram-copy@26` §7 asks
+    // for three rows with notes, or four with short ones. A compliant draft
+    // still passes; this fixture is no longer one, so it is the SHORT four-row
+    // shape now, which is the version §7 invites.
     const spread = check([
       {
         layout: "list_takeaway",
         items: [
-          { title: filler(7), note: filler(8) },
-          { title: filler(7), note: filler(8) },
-          { title: filler(7), note: filler(8) },
-          { title: filler(7), note: filler(8) },
+          { title: filler(5), note: filler(6) },
+          { title: filler(5), note: filler(6) },
+          { title: filler(5), note: filler(6) },
+          { title: filler(5), note: filler(6) },
         ],
       },
     ]);
@@ -266,5 +276,76 @@ describe("slideWordLoad", () => {
       { label: "right column", words: 5 },
     ]);
     expect(load.total).toBe(20);
+  });
+});
+
+/**
+ * # THE PLATE THAT WAS LEGAL PART BY PART
+ *
+ * Slide 4 of the Karos carousel of 2026-09-19: a headline and four items each
+ * with a two or three line note. Every block under 20, the statement under 30,
+ * the pixel gate passed it, about a hundred words on the plate.
+ *
+ * The owner, twice: *"there are slides with too much copy for one slide"*, and
+ * then, after type size was raised separately, *"a lot of copy on one page is
+ * not good either, regardless of small type"*.
+ */
+describe("MAX_WORDS_PER_SLIDE_TOTAL", () => {
+  it("refuses the shipped plate, and says what it measured", () => {
+    const shipped = check([
+      {
+        layout: "list_takeaway",
+        headline: "What attribution misses by design",
+        items: [
+          { title: filler(3), note: filler(20) },
+          { title: filler(6), note: filler(21) },
+          { title: filler(5), note: filler(17) },
+          { title: filler(5), note: filler(18) },
+        ],
+      },
+    ]);
+    expect(shipped).toHaveLength(1);
+    expect(shipped[0]!.measured.scope).toBe("slide-total");
+    expect(shipped[0]!.measured.limit).toBe(MAX_WORDS_PER_SLIDE_TOTAL);
+    expect(shipped[0]!.measured.words).toBeGreaterThan(90);
+    expect(shipped[0]!.reason).toMatch(/together they are a page/);
+  });
+
+  it("admits the three-row shape prompt §7 now asks for", () => {
+    // A six-word headline and three rows of a five-word title and a twelve-word
+    // note: 57. This is the version the guide invites, and a gate that refused
+    // it would be refusing a compliant draft.
+    expect(
+      check([
+        {
+          layout: "list_takeaway",
+          headline: filler(6),
+          items: [
+            { title: filler(5), note: filler(12) },
+            { title: filler(5), note: filler(12) },
+            { title: filler(5), note: filler(12) },
+          ],
+        },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("does NOT count rows, because four short rows read perfectly well", () => {
+    // The defect is volume, not count. A count rule would refuse the good
+    // version of the same plate.
+    expect(
+      check([
+        {
+          layout: "list_takeaway",
+          headline: filler(5),
+          items: [
+            { title: filler(4), note: filler(5) },
+            { title: filler(4), note: filler(5) },
+            { title: filler(4), note: filler(5) },
+            { title: filler(4), note: filler(5) },
+          ],
+        },
+      ]),
+    ).toEqual([]);
   });
 });

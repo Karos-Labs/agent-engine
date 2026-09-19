@@ -557,6 +557,13 @@ export const SlideProbeSchema = z.object({
     .describe(
       "The largest rendered font size on the plate, as a fraction of frame height. 0 when nothing text-bearing rendered. The typography half of what makes a plate interesting — a consumer reads it beside `groundInkContrast` (the contrast half) and `imageryOrDeviceShare` (the visuals half), which are the three things a good plate has and a neglected one does not.",
     ),
+  fitStep: z
+    .number()
+    .int()
+    .optional()
+    .describe(
+      "Which rung of the fit ladder the plate came to rest on: 0 (set at its natural size), 1, or 2 (the ladder's floor). `_ds-fit.js` has written this to `document.body[data-fit-step]` since the design system shipped and nothing read it. 2 means the copy did not fit at two steps down and the ladder ran out of room, which its own comment calls 'a copy-length problem that the content-weight floor should refuse rather than something type can hide'. ABSENT means no ladder ran (a Template Studio plate), which is not the same as 0 and must not be read as one.",
+    ),
 });
 export type SlideProbe = z.infer<typeof SlideProbeSchema>;
 

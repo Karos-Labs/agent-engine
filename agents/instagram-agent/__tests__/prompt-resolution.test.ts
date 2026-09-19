@@ -501,8 +501,8 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // this asserts is that the rows exist at all, which is the step a prompt
     // bump most often forgets.
     const registry = readFileSync(path.join(PROMPTS_ROOT, "..", "..", "..", "scripts", "prompt-registry.ts"), "utf8");
-    expect(registry).toContain(`"14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25"`);
-    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,700}latestVersion: "25"/);
+    expect(registry).toContain(`"14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26"`);
+    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,700}latestVersion: "26"/);
     // Phase 5 (RFC-18 §6.1). The packager's prompt is the one THIS phase added,
     // and the WIP commit this branch inherited had shipped both prompt files
     // with no registry row at all — which `check:prompts` fails on and which
@@ -540,7 +540,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // by nothing.
     const promptStore = makePromptStore();
     const copy = new InstagramCopyAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@25");
+    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@26");
     const packager = new InstagramPostPackagerAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((packager as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-post-package@2");
     const qa = new InstagramVisualQaAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
@@ -562,7 +562,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // its version pin names.
     const promptStore = makePromptStore();
     for (const [promptId, version, h1] of [
-      ["instagram-copy", "25", "# Instagram Copy Craft Guide, v25"],
+      ["instagram-copy", "26", "# Instagram Copy Craft Guide, v26"],
       ["instagram-post-package", "2", "# Instagram Post Package Guide, v2"],
       ["instagram-image-vet", "6", "# Instagram Image Vetting Craft Guide — v6"],
       ["instagram-entities", "1", "# Instagram Entity Extraction — v1"],
@@ -621,8 +621,10 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     const v23 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "23.md"));
     const v24 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "24.md"));
     const v25 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "25.md"));
+    const v26 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "26.md"));
     const latest = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "latest.md"));
-    expect(latest.equals(v25), "latest.md must be byte-identical to 25.md, not merely equivalent").toBe(true);
+    expect(latest.equals(v26), "latest.md must be byte-identical to 26.md, not merely equivalent").toBe(true);
+    expect(v25.equals(v26), "@25 and @26 are the same file, so the bump changed nothing").toBe(false);
     expect(v24.equals(v25), "@24 and @25 are the same file, so the bump changed nothing").toBe(false);
     expect(v23.equals(v24), "@23 and @24 are the same file, so the bump changed nothing").toBe(false);
     expect(v22.equals(v23), "@22 and @23 are the same file, so the bump changed nothing").toBe(false);

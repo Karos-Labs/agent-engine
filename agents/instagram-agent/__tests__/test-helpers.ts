@@ -489,6 +489,27 @@ export function goodImageCandidatePool(): ImageCandidate[] {
     { path: "fixtures/images/photo-1.png", description: "a bright modern open-plan office with people actively collaborating at a whiteboard, daytime, no visible branding" },
     { path: "fixtures/images/photo-2.png", description: "a close-up of hands typing on a laptop keyboard at a clean desk" },
     { path: "fixtures/images/photo-3.png", description: "a small team gathered around a table reviewing printed charts" },
+    // SIX, one per slide, and the last three are load-bearing. `goodImageVettingOutput`
+    // cycles this pool with `pool[i % pool.length]` and the imagery band gives
+    // the happy-path carousel four full-bleed slides, so with three candidates
+    // slide 4 was handed slide 1's photograph. That went unnoticed until
+    // `06f2-one-picture-one-slide` started asking whether one picture appears
+    // twice in one post, at which point the happy path stopped being happy: the
+    // duplicate was cleared and `07a` downgraded the slide to a text plate.
+    //
+    // Four was not enough either: the cycle runs over SIX slides, so slides 5
+    // and 6 then repeated slides 1 and 2, which is invisible on a run where
+    // the imagery band makes those two text plates and very visible on one
+    // where it does not. Six paths, one per slide, and the fixture stops
+    // having a repeat in it at all.
+    //
+    // The file is a byte copy of photo-1.png. The system identifies a picture
+    // by its PATH, which is what a real harvested pool gives it, so a distinct
+    // path is the whole fixture; identical pixels keep every render assertion
+    // reading what it read before.
+    { path: "fixtures/images/photo-4.png", description: "a whiteboard covered in a process diagram, mid-discussion, no visible branding" },
+    { path: "fixtures/images/photo-5.png", description: "two people reading the same screen, one pointing at a chart" },
+    { path: "fixtures/images/photo-6.png", description: "an empty meeting room with a long table and morning light" },
   ];
 }
 

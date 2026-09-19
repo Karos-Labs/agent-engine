@@ -81,6 +81,25 @@ export interface PostPerformanceRecord {
   funnelStage?: FunnelStage;
   /** §29's four shapes, when the writer declared one. */
   hookPattern?: string;
+  /**
+   * Whether the shipped caption opened lines with arrow bullets.
+   *
+   * Recorded so the NEXT post can be told. The owner, 2026-09-19: *"in every
+   * post now you do these arrows in the text, like this. Once in a while it is
+   * fine, but repetitive things like this look AI"* -- on a device the copy
+   * prompt had explicitly PERMITTED (@23 section 2, "arrow bullets among prose
+   * are not" refused), and which the writer therefore used every time.
+   *
+   * A prompt sentence cannot carry this on its own. "Use this at most one post
+   * in three" asks a model with no memory across runs to count something it
+   * cannot see, which is the class of instruction that reads well and does
+   * nothing. The memory is here; the prompt only reads it.
+   *
+   * Optional, and absent on every record written before 2026-09-19. Absent is
+   * NOT false: `arrowBulletSteer` counts only explicit `true`, so a history of
+   * old records can never manufacture a steer out of what it did not record.
+   */
+  usedArrowBullets?: boolean;
   slideCount: number;
   /** Where the pictures came from — `generated`, `sourced`, `client`, `mixed`, `none`. Recorded for the same reason the arm is. */
   imageSource?: string;
@@ -378,6 +397,7 @@ export function readPerformanceStore(beliefs: unknown): PerformanceStore {
       publishedAt: r["publishedAt"],
       ...(typeof r["mediaId"] === "string" ? { mediaId: r["mediaId"] } : {}),
       ...(typeof r["hookPattern"] === "string" ? { hookPattern: r["hookPattern"] } : {}),
+      ...(typeof r["usedArrowBullets"] === "boolean" ? { usedArrowBullets: r["usedArrowBullets"] } : {}),
       ...(typeof r["imageSource"] === "string" ? { imageSource: r["imageSource"] } : {}),
       ...(metrics !== null && typeof metrics === "object" ? { metrics: readMetrics(metrics as Record<string, unknown>) } : {}),
     });
@@ -407,4 +427,48 @@ function readMetrics(raw: Record<string, unknown>): PostMetrics {
 export function withPost(store: PerformanceStore, record: PostPerformanceRecord): PerformanceStore {
   const kept = store.records.filter((r) => r.runId !== record.runId);
   return { records: [...kept, record].slice(-MAX_STORED_POSTS) };
+}
+
+/**
+ * The arrow bullets the copy prompt permits: the glyph, the double glyph, a
+ * guillemet, or either ASCII spelling.
+ *
+ * Anchored to a line start because that is what makes it a BULLET. An arrow
+ * inside a sentence ("revenue fell 4% -> the round was pulled") is prose and
+ * is none of this rule's business.
+ */
+const ARROW_BULLET = /(?:^|\r?\n)[ \t]*(?:→|⇒|»|->|=>)[ \t]+\S/u;
+
+export function usesArrowBullets(caption: string): boolean {
+  return ARROW_BULLET.test(caption);
+}
+
+/**
+ * How many of this client's last posts opened lines with an arrow, and the
+ * sentence the copy prompt is handed when that has become a habit.
+ *
+ * `undefined` -- no steer at all -- is the normal answer and the honest one
+ * for a new client, for a client whose history predates the field, and for a
+ * client who uses the device occasionally. A device in one of the last three
+ * posts is a device; in two or more it is a signature, which is the line the
+ * owner drew.
+ *
+ * The steer names ALTERNATIVES rather than banning the arrow outright,
+ * deliberately. A ban would be the same mistake in the other direction: the
+ * repo has already learned once (see `a-heuristic-check-is-a-note`) that a
+ * blunt prohibition on a legitimate device costs more in flattened writing
+ * than the tell costs in recognisability.
+ */
+export function arrowBulletSteer(store: PerformanceStore, lookback = 3): string | undefined {
+  const recent = [...store.records]
+    .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt))
+    .slice(0, lookback);
+  const used = recent.filter((r) => r.usedArrowBullets === true).length;
+  if (used < 2) return undefined;
+  return (
+    `${used} of this client's last ${recent.length} posts opened lines in the caption with an arrow bullet. ` +
+    `It is a real device and on this feed it has stopped being one: the same move every post reads as a template rather than as a writer. ` +
+    `Write those lines some other way this time: as prose that carries its own turn, as a numbered list, or as plain short sentences on their own lines. ` +
+    `This is about the repetition, not about the arrow: one arrow somewhere it genuinely earns is fine.`
+  );
 }

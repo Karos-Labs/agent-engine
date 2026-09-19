@@ -27,9 +27,12 @@ describe("06-vet-images: no viable image ships text-only rather than holding (gu
     const promptStore = makePromptStore();
     const copy = goodCopyOutput();
     const vetting = {
-      selections: copy.slides.map((s) => ({
+      // A DIFFERENT picture per slide, because `06f2-one-picture-one-slide`
+      // clears a repeat and this case is about the slide that found NOTHING,
+      // not about the ones that found the same thing.
+      selections: copy.slides.map((s, i) => ({
         n: s.n,
-        imagePath: s.n === 3 ? null : goodImageCandidatePool()[0]!.path,
+        imagePath: s.n === 3 ? null : goodImageCandidatePool()[i % goodImageCandidatePool().length]!.path,
         reason: s.n === 3 ? "nothing in the pool shows this slide's specific visual need" : "candidate matches closely enough",
         license: s.n === 3 ? "n/a — no candidate qualified" : "CC0, test fixture",
         rightsUsable: s.n !== 3,

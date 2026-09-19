@@ -266,10 +266,17 @@ function selectionsFor(
   imagePath: string,
   claimMatchByN: Record<number, number> = {},
 ) {
+  // `imagePath` lands on the FIRST slide and the rest take distinct
+  // candidates. Writing one path onto every slide made each of these runs a
+  // post carrying one picture several times, which `06f2-one-picture-one-slide`
+  // now clears -- turning slides these cases need filled into gaps, for a
+  // reason none of them is about.
+  const rest = goodImageCandidatePool().map((c) => c.path).filter((p) => p !== imagePath);
+  let filled = 0;
   return {
     selections: copy.slides.map((s) => ({
       n: s.n,
-      imagePath,
+      imagePath: filled++ === 0 ? imagePath : rest[(filled - 2) % rest.length]!,
       reason: "candidate matches the slide's claim",
       license: "CC0, test fixture",
       rightsUsable: true,

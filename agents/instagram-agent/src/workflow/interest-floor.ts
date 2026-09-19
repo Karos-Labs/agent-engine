@@ -198,6 +198,21 @@ export interface SlideProbe {
   /** Of those, the ones a computed style actually paints — a background image, or a transparent colour clipped to the text. */
   markRunsPainted?: number | undefined;
   /**
+   * Which rung of `_ds-fit.js`'s ladder this plate came to rest on: 0, 1 or 2.
+   *
+   * The ladder shrinks a plate's type a step at a time until it fits and stops
+   * at two, and its own comment says what the last rung means: *"a plate that
+   * still does not fit at step 2 is a copy-length problem that the
+   * content-weight floor should refuse rather than something type can hide"*.
+   * It has written the answer to the body since the design system shipped;
+   * `render-carousel` 1.9.0 is the first thing to read it.
+   *
+   * Optional and absent-not-zero, for the same reason every other field here
+   * is: a Template Studio plate carries no ladder, and reading its silence as
+   * "fitted perfectly" would be a guard that cannot fail.
+   */
+  fitStep?: number | undefined;
+  /**
    * The largest rendered font size on the plate, as a fraction of frame
    * height. See `probePage` for why typography needed an instrument of its
    * own: contrast and imagery were both already measured and type scale was
@@ -2006,6 +2021,41 @@ export const TYPE_STEP_CEILING_ARMED = false;
 export const TYPE_CONTRAST_FLOOR_ARMED = false;
 export const ALIGNMENT_COLUMN_CEILING_ARMED = false;
 
+/**
+ * The rung above which a plate is reporting that its copy did not fit.
+ *
+ * 1, so only the ladder's FLOOR is out of band. This is the one threshold in
+ * this block that is not a guess and did not need a sweep to choose: step 2 is
+ * where `_ds-fit.js` stops, and a plate that reached it is a plate the ladder
+ * could not fit and stopped trying to.
+ */
+export const FIT_STEP_CEILING = 1;
+/**
+ * ── AND IT IS NOT ARMED, WHICH IS A DECISION AND NOT AN OVERSIGHT. ──
+ *
+ * The owner asked for two things in the same message on 2026-09-19: that a
+ * slide should not carry a page of copy at type too small to read, and that
+ * the agent should stop burning three drafting attempts on every run, because
+ * *"it is a waste of money and it is not smart"*.
+ *
+ * An armed clause here serves the first and defeats the second. It fires
+ * AFTER the render, so every firing costs a redraft plus a second render, and
+ * it fires on plates no redraft can fix: Hebrew sets long unbroken words, the
+ * reviewer's `ts-l` scale starts the ladder 18% higher, and either can reach
+ * step 2 on copy that is the right length. A gate that cannot be satisfied by
+ * the thing it asks the writer to change is a gate that spends the budget and
+ * ships the same post.
+ *
+ * The defect the owner actually read is refused a step EARLIER and for free:
+ * `MAX_WORDS_PER_SLIDE_TOTAL` (60) runs on the draft, before a pixel is
+ * rendered, and a plate that stays under it does not reach the ladder's floor
+ * except for the reasons above. So this ships as the instrument, printed on
+ * every row of the gate-zero sweep, and it is armed from the distribution it
+ * collects rather than from this paragraph — which is the same rule the three
+ * flags above it follow, and the reason the block above them exists.
+ */
+export const FIT_STEP_CEILING_ARMED = false;
+
 /** Facts a reviewer and `08b` should see, that must never fail an attempt. */
 export type InterestWarningKind =
   | "low-occupancy"
@@ -3147,7 +3197,8 @@ export function checkInterestFloor(
   const typeWarnings: InterestWarning[] = [];
   const steps = probe?.typeSteps;
   const columns = probe?.alignmentColumns;
-  if (steps !== undefined || columns !== undefined) {
+  const fitStep = probe?.fitStep;
+  if (steps !== undefined || columns !== undefined || fitStep !== undefined) {
     const distinct = steps === undefined ? 0 : new Set(steps).size;
     const sorted = steps === undefined ? [] : [...new Set(steps)].sort((a, b) => b - a);
     // 1 when there is no second step to compare against: a one-step plate has
@@ -3158,16 +3209,23 @@ export function checkInterestFloor(
     // armed set and watch the clause refuse. Read off the module constants
     // here and only here.
     const limbs = typeDisciplineLimbs(
-      { distinct, contrast, columns, measuredSteps: steps !== undefined, comparableSteps: sorted.length >= 2 },
-      { steps: TYPE_STEP_CEILING_ARMED, contrast: TYPE_CONTRAST_FLOOR_ARMED, columns: ALIGNMENT_COLUMN_CEILING_ARMED },
+      { distinct, contrast, columns, measuredSteps: steps !== undefined, comparableSteps: sorted.length >= 2, fitStep },
+      {
+        steps: TYPE_STEP_CEILING_ARMED,
+        contrast: TYPE_CONTRAST_FLOOR_ARMED,
+        columns: ALIGNMENT_COLUMN_CEILING_ARMED,
+        fit: FIT_STEP_CEILING_ARMED,
+      },
     );
     const measuredTypeDiscipline = {
       typeSteps: distinct,
       typeContrast: contrast,
       ...(columns !== undefined ? { alignmentColumns: columns } : {}),
+      ...(fitStep !== undefined ? { fitStep } : {}),
       typeStepCeiling: TYPE_STEP_CEILING,
       typeContrastFloor: TYPE_CONTRAST_FLOOR,
       alignmentColumnCeiling: ALIGNMENT_COLUMN_CEILING,
+      fitStepCeiling: FIT_STEP_CEILING,
     };
     const REFERENCE = "the reference plates set two or three steps with a real jump between the first two, ranged against one or two columns.";
     const gating = limbs.filter((limb) => limb.out && limb.armed);
@@ -3221,10 +3279,17 @@ export function checkInterestFloor(
  * a finding and the rest into a warning.
  */
 export function typeDisciplineLimbs(
-  measured: { distinct: number; contrast: number; columns: number | undefined; measuredSteps: boolean; comparableSteps: boolean },
-  armed: { steps: boolean; contrast: boolean; columns: boolean },
+  measured: {
+    distinct: number;
+    contrast: number;
+    columns: number | undefined;
+    measuredSteps: boolean;
+    comparableSteps: boolean;
+    fitStep?: number | undefined;
+  },
+  armed: { steps: boolean; contrast: boolean; columns: boolean; fit: boolean },
 ): { out: boolean; armed: boolean; clause: string }[] {
-  const { distinct, contrast, columns, measuredSteps, comparableSteps } = measured;
+  const { distinct, contrast, columns, measuredSteps, comparableSteps, fitStep } = measured;
   return [
     {
       out: measuredSteps && distinct > TYPE_STEP_CEILING,
@@ -3240,6 +3305,13 @@ export function typeDisciplineLimbs(
       out: columns !== undefined && columns > ALIGNMENT_COLUMN_CEILING,
       armed: armed.columns,
       clause: `${columns ?? 0} alignment column(s) (ceiling ${ALIGNMENT_COLUMN_CEILING})`,
+    },
+    {
+      // `undefined` abstains: no ladder ran, which is a fact about the
+      // template and not a measurement of this plate.
+      out: fitStep !== undefined && fitStep > FIT_STEP_CEILING,
+      armed: armed.fit,
+      clause: `the type was shrunk ${fitStep ?? 0} step(s) to fit (ceiling ${FIT_STEP_CEILING}), so the copy is longer than the plate holds`,
     },
   ];
 }
