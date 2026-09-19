@@ -41,9 +41,21 @@ interface CheckResult {
 }
 
 const tempRoots: string[] = [];
+/**
+ * Explicit timeout, for the same reason the `describe` below carries one — and
+ * it is NOT covered by that one: vitest's `hookTimeout` is a separate budget
+ * from `testTimeout`, so a describe-level `timeout` leaves this hook on the 10s
+ * default.
+ *
+ * Every case here copies the whole `agents/` tree, so this deletes eight of
+ * them. On a filesystem where a recursive delete is slow (Windows, or a runner
+ * under load) that overruns 10s while every test has already passed — a file
+ * that fails with `Tests 14 passed` reads as a broken suite and is really a
+ * broken teardown.
+ */
 afterAll(() => {
   for (const dir of tempRoots) rmSync(dir, { recursive: true, force: true });
-});
+}, 120_000);
 
 /**
  * Runs `scripts/check-prompts.ts --json` against `root`. Returns the parsed
@@ -144,14 +156,19 @@ describe("SCRUM-325: prompt registry and latest.md drift", { timeout: 120_000 },
   it("injects a prompt version present on disk but absent from the registry and fails", () => {
     const root = fixtureRoot((r) => {
       const dir = path.dirname(promptFile(r, "tiktok-agent", "tiktok-moment", "latest.md"));
-      // The registry declares versions 1 and 2 of this prompt; 3 is the one
-      // nobody declared.
-      cpSync(path.join(dir, "1.md"), path.join(dir, "3.md"));
+      // `999`, not "the next number up". This fixture used to inject `3`
+      // because the registry declared 1 and 2 — and then `tiktok-moment@3`
+      // shipped (2026-09-19) and the injected version was a REAL one, so the
+      // drift this test exists to provoke did not happen and the test failed
+      // for a reason that had nothing to do with the guard. A version number
+      // no prompt will ever legitimately reach cannot collide with the repo
+      // growing.
+      cpSync(path.join(dir, "1.md"), path.join(dir, "999.md"));
     });
     const { result, exitCode } = runCheck(root);
     const mismatch = result.problems.filter((p) => p.kind === "registry-version-mismatch" && p.promptId === "tiktok-moment");
     expect(mismatch).toHaveLength(1);
-    expect(mismatch[0]!.detail).toContain("present but undeclared: 3");
+    expect(mismatch[0]!.detail).toContain("present but undeclared: 999");
     expect(exitCode).toBe(1);
   });
 
