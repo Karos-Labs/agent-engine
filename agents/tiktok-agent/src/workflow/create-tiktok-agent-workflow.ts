@@ -681,6 +681,13 @@ interface VideoBrand {
   handle?: string;
   seriesHeader?: string;
   logoUrl?: string;
+  /**
+   * Why a configured `logoUrl` was NOT taken, when one was configured and
+   * rejected. Set only for `gs://`, and never read by any render — see the
+   * derivation in `07b-load-video-brand` for what this field is for and why
+   * it is a recorded reason rather than a thrown error.
+   */
+  rejectedLogoUrlReason?: string;
   /** The brand kit's stated content language, when it states one — the default voiceover/caption language. */
   language?: string;
 }
@@ -1736,7 +1743,40 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       const brand = (brandOutcome?.status === "success" ? brandOutcome.result : {}) as Record<string, unknown>;
       const colors = (brand["colors"] ?? {}) as Record<string, unknown>;
       const rawHandle = typeof brand["handle"] === "string" ? brand["handle"].trim() : "";
-      const logoUrl = typeof brand["logoUrl"] === "string" && /^https:\/\//i.test(brand["logoUrl"]) ? brand["logoUrl"] : undefined;
+      // A `gs://` logoUrl is a real BrandKit misconfiguration, and dropping
+      // it to `undefined` here made it indistinguishable from a client who
+      // configured no logo at all: no logo on the cover, no error, no held
+      // run, nothing in the trace. instagram-agent fixed exactly this in
+      // SCRUM-383 (`brand-render-tokens.ts`) and its comment cites THIS
+      // derivation as the precedent it was matching — true of the accept
+      // rule and not of the diagnostic, so the two agents have been half
+      // agreeing ever since. This is the other half.
+      //
+      // The reason is recorded, not thrown, and nothing downstream reads it:
+      // brand furniture must never be able to hold a run (the same invariant
+      // `prepareLogo` below follows, where every download failure is silently
+      // no logo). `07b-load-video-brand` is a `wf.step.code`, so its return
+      // value is in the run trace — which is where the fact "this client's
+      // logo was rejected, and here is the URL that was rejected" now lives.
+      //
+      // Scoped to `gs://` only, deliberately and for the same reason
+      // SCRUM-383 gave: a `javascript:`/`file://` value is not a real-world
+      // BrandKit misconfiguration, and keeps failing the way it always has.
+      let logoUrl: string | undefined;
+      let rejectedLogoUrlReason: string | undefined;
+      {
+        const raw = brand["logoUrl"];
+        if (typeof raw === "string") {
+          if (/^https:\/\//i.test(raw)) {
+            logoUrl = raw;
+          } else if (/^gs:\/\//i.test(raw)) {
+            rejectedLogoUrlReason =
+              `brand logoUrl "${raw}" is a gs:// URL, not https:// — downloadBrandLogo (@agent-engine/tool-karos-media) ` +
+              "fetches only https:// URLs, so the cover renders with no logo. Recorded here rather than dropped " +
+              "silently (SCRUM-383's fix, applied to tiktok-agent).";
+          }
+        }
+      }
       const language = readString(brand, "language");
       return {
         ground: asHex(colors["neutralDark"]) ?? "#17181C",
@@ -1754,6 +1794,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             ? { seriesHeader: profile.name.trim().slice(0, 60) }
             : {}),
         ...(logoUrl !== undefined ? { logoUrl } : {}),
+        ...(rejectedLogoUrlReason !== undefined ? { rejectedLogoUrlReason } : {}),
         ...(language !== undefined ? { language } : {}),
       };
     });
