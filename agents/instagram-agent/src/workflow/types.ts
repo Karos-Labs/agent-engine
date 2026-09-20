@@ -1384,6 +1384,49 @@ export function selectionPlacement(
   };
 }
 
+/**
+ * ── A `null` THE VET'S OWN SCORES DO NOT SUPPORT. ──
+ *
+ * `selectionPlacement` above is a ladder: ground, or inside the plate, or
+ * refused. A vet that returns `imagePath: null` has taken the third rung. This
+ * function asks whether its own numbers agreed.
+ *
+ * ## The run this is measured on
+ *
+ * `pubsub-21902648165262839`, 2026-09-20, slides 1 and 6. The pool held two
+ * Wikimedia pictures of ChatGPT and a Pexels shot of the ChatGPT interface,
+ * for slides whose subject was ChatGPT. The vet returned `null` on both, with
+ * `subjectMatch 3, claimMatch 3` and the reason *"only shows the ChatGPT logo
+ * on a phone and does not illustrate the UI layout of sponsored ads beneath
+ * organic responses"* -- the slide's PROPOSITION, which no photograph can
+ * depict, marked against the picture twice.
+ *
+ * Those exact scores are `selectionPlacement`'s middle rung: **bounded**, a
+ * picture set inside the plate beside the type. The machinery to use the
+ * picture existed, was correct, and never saw it, because the vet had already
+ * thrown the path away. Both carousels shipped with zero and one pictures.
+ *
+ * ## What this returns and what it deliberately does not do
+ *
+ * It reports a CONTRADICTION; it does not repair one. A null selection carries
+ * no `imagePath`, so nothing downstream can recover the picture from here --
+ * the honest remedy is upstream (`instagram-image-vet@7` section 1d tells the
+ * vet to return the candidate and let the ladder decide) and in the rescue
+ * path. What this buys is that the failure can never again be silent: a vet
+ * that refuses a picture its own numbers would have placed is now a fact the
+ * run can print, rather than a slide that is simply empty.
+ *
+ * `undefined` `subjectMatch` returns false. The pre-5.5 vets did not report
+ * one, and a missing number is not evidence of a contradiction.
+ */
+export function nullSelectionContradictsItsScores(
+  selection: Pick<ImageSelection, "imagePath" | "rightsUsable" | "watermarkFree" | "claimMatch" | "subjectMatch">,
+): boolean {
+  if (selection.imagePath !== null) return false;
+  if (selection.subjectMatch === undefined) return false;
+  return selectionPlacement(selection).placement !== "refuse";
+}
+
 export const ImageVettingOutputSchema = z.object({
   selections: z.array(ImageSelectionSchema).min(1),
 });

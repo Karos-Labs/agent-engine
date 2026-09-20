@@ -305,13 +305,17 @@ describe("instagram-concept@1 — the prompt that authors the metaphor", () => {
   });
 });
 
-describe("instagram-image-vet@6 §1c — a declared metaphor is judged on what was drawn", () => {
+describe("instagram-image-vet §1c — a declared metaphor is judged on what was drawn", () => {
   it("a good metaphor is not rejected", async () => {
     const { selection, system, slides } = await vet(RIVALRY_SLIDE, GOOD_METAPHOR);
 
-    // The premise of the whole case: the agent really did send @6, and the
-    // declaration really did reach it.
-    expect(system.startsWith(readFileSync(path.join(PROMPTS_ROOT, "instagram-image-vet", "6.md"), "utf8"))).toBe(true);
+    // The premise of the whole case: the agent really did send the pinned
+    // prompt, and the declaration really did reach it. Read through
+    // `latest.md` rather than a frozen number — the claim is "the agent sent
+    // the prompt it is pinned to", and hard-coding 6 turned that into "the
+    // agent sent a file that happens to still exist", which is what went red
+    // when @7 shipped.
+    expect(system.startsWith(readFileSync(path.join(PROMPTS_ROOT, "instagram-image-vet", "latest.md"), "utf8"))).toBe(true);
     expect((slides as Array<{ conceptual?: ConceptualBlock }>)[0]!.conceptual?.pattern).toBe("rivalry");
 
     expect(selection.claimMatch).toBeGreaterThanOrEqual(MIN_CLAIM_MATCH);
