@@ -182,6 +182,51 @@ export const DEFAULT_CLIP_CONFIG: TikTokClipConfig = TikTokClipConfigSchema.pars
 export type ClipSourceTier = "user-asset" | "owned-footage" | "web-harvest" | "stock" | "generated";
 
 /**
+ * How much this run knows about the right to publish the footage it clipped.
+ *
+ * Not a legal opinion and not a permission — a statement of PROVENANCE, in the
+ * four shapes provenance actually comes in here, so the person at
+ * `11-clip-review` is deciding with the same facts the cascade had.
+ */
+export type ClipLicenseConfidence =
+  /** The client handed this file over themselves, or it came out of their own library. */
+  | "client-provided"
+  /** Somebody else's recording, from a show the client named on their `sourcePool` as one they clip. */
+  | "client-cleared"
+  /** A stock library clip, licensed by the provider for this use. */
+  | "stock-licensed"
+  /** Somebody else's recording that nobody cleared: an open search, or a page pasted into the run. */
+  | "unknown";
+
+/**
+ * Provenance from the two facts that determine it: which tier served, and how
+ * that tier found the footage.
+ *
+ * RFC-25 §1 says the human gate "was always the real protection" for a clip of
+ * someone else's podcast — and a gate is only a protection if the thing being
+ * protected against is visible at it. Shipped 2026-09-20, the gate carried the
+ * source TIER and nothing else, so `web-harvest` read the same whether the
+ * show was one the client clears every week or one a search turned up ninety
+ * seconds earlier. Those are not the same decision.
+ *
+ * A pasted link is `unknown` on purpose, and it is the one row that might
+ * surprise: the client chose it, so it is their decision, but choosing a
+ * recording is not the same as holding a right to republish forty seconds of
+ * it — and the person approving the clip is better served by being told which
+ * of the two they have.
+ */
+export function clipLicenseConfidence(
+  tier: ClipSourceTier,
+  discovery: "allowlist" | "open" | "pasted" | undefined,
+): ClipLicenseConfidence {
+  if (tier === "stock" || tier === "generated") return "stock-licensed";
+  if (tier === "owned-footage") return "client-provided";
+  if (tier === "user-asset") return discovery === "pasted" ? "unknown" : "client-provided";
+  // web-harvest: cleared only when the client's own source list put it there.
+  return discovery === "allowlist" ? "client-cleared" : "unknown";
+}
+
+/**
  * The HARD ceiling: no short costs more than this, all in. Enforced three
  * ways — the dispatcher's `WorkflowBudget` (checked by `step.code`/
  * `step.agent` before every step), the workflow's own estimate before the
@@ -291,8 +336,24 @@ export interface TikTokIntake {
   sourcePath?: string;
   /** Which tier the footage came from. A `generated` source has no transcript — the spoken-moment steps are skipped for it. */
   sourceTier: ClipSourceTier;
-  /** Where harvested/attached footage came from — the honest basis for the caption's source credit. */
-  sourceContext?: { title?: string; channel?: string; url?: string; label?: string };
+  /**
+   * Where harvested/attached footage came from — the honest basis for the
+   * caption's source credit, and since RFC-25 also the basis for judging it.
+   *
+   * `discovery`/`harvestQuery` are set only by the web-harvest tier. "We
+   * searched the open web for this, with these words" is a fact about the
+   * clip rather than an implementation detail: it is what tells a reviewer
+   * whether they are looking at a show the client holds rights to or at the
+   * best thing a search turned up.
+   */
+  sourceContext?: {
+    title?: string;
+    channel?: string;
+    url?: string;
+    label?: string;
+    discovery?: "allowlist" | "open" | "pasted";
+    harvestQuery?: string;
+  };
   /**
    * What every tier ABOVE the one that served said (2026-09-10). Present on a
    * `stock` intake: the client's own footage was not used, and the reviewer
@@ -437,6 +498,48 @@ export const ShortScriptSchema = z.object({
   language: z.string().min(2).max(16),
 });
 export type ShortScript = z.infer<typeof ShortScriptSchema>;
+
+/**
+ * Whether the recording this run is about to clip is worth clipping FOR THIS
+ * CLIENT (RFC-25 phase 3).
+ *
+ * Open discovery searches all of YouTube, and all of YouTube contains clip
+ * farms, re-uploads, conference B-roll and a competitor's own show. Nothing
+ * else in this pipeline is positioned to notice any of that: the moment picker
+ * reads a transcript and answers "which 40 seconds", the visual QA watches a
+ * finished render, and neither is asked "should we have been in this recording
+ * at all".
+ *
+ * It MARKS and never blocks. A low score is a `ContentRepair` and a field on
+ * the gate payload, under the standing always-deliver rule — the human at
+ * `11-clip-review` is the one who can tell "a competitor, do not touch" from
+ * "a competitor, and that is exactly why the take lands".
+ */
+export const SourceFitSchema = z.object({
+  /** 0-10. Under `MIN_SOURCE_FIT` the clip reaches the reviewer flagged. */
+  score: z.number().min(0).max(10),
+  /** One line a reviewer reads: what this recording is, and why it does or does not serve this client. */
+  reason: z.string().min(1).max(400),
+  /**
+   * Named problems, each one short. Empty is the normal answer.
+   *
+   * Separate from `reason` because these are the things a person may want to
+   * act on rather than read past: a competitor's show, a re-upload, a channel
+   * that only posts clips of other people's podcasts.
+   */
+  concerns: z.array(z.string().min(1).max(200)).max(5).default([]),
+});
+export type SourceFit = z.infer<typeof SourceFitSchema>;
+
+/**
+ * Below this, the recording is a poor match and the reviewer is told so.
+ *
+ * 5, matching `WEAK_BEAT_RELEVANCE` in the visual QA, and for the same reason:
+ * the two scores are read by the same person on the same screen, and two
+ * different meanings of "5 out of 10" on one gate payload is a worse problem
+ * than either bar being slightly off.
+ */
+export const MIN_SOURCE_FIT = 5;
 
 /** The caption/about pair every finished clip carries, whatever its format. `sourceCredit` exists only for a clip of someone else's words. */
 export interface ClipCopy {

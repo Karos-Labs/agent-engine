@@ -419,12 +419,24 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "tiktok-commentary",
     agent: "tiktok-agent",
-    versions: ["1", "2", "3", "4", "5"],
-    latestVersion: "5",
+    versions: ["1", "2", "3", "4", "5", "6"],
+    latestVersion: "6",
     requires: { languageDirective: true, structuredOutput: true },
     structuredOutputFields: ["caption", "about", "sourceCredit"],
   },
   { promptId: "tiktok-moment", agent: "tiktok-agent", versions: ["1", "2", "3"], latestVersion: "3" },
+  // RFC-25 phase 3. Open discovery searches all of YouTube, and nothing else
+  // in the clip pipeline is positioned to ask whether the run should have been
+  // in this recording at all — the moment picker answers "which forty seconds"
+  // and the visual QA judges a finished render.
+  {
+    promptId: "tiktok-source-fit",
+    agent: "tiktok-agent",
+    versions: ["1"],
+    latestVersion: "1",
+    requires: { structuredOutput: true },
+    structuredOutputFields: ["score", "reason", "concerns"],
+  },
   {
     promptId: "tiktok-script",
     agent: "tiktok-agent",

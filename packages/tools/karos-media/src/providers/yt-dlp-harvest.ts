@@ -6,17 +6,25 @@ import { createDefaultProcessRunner, type ProcessRunnerLike } from "../process-r
 /**
  * `media.harvestVideo`'s first real backend: `yt-dlp`, rights-restricted.
  *
- * ## Why it never searches the open web
+ * ## Two search postures, and the caller picks
  *
  * The commentary-clip format lives on OTHER people's footage — a podcast
- * segment, a keynote moment — and the only thing that makes publishing it
- * defensible is that the client holds clipping rights to that specific show
- * (their `tiktokClips.sourcePool`). So the search is scoped per allowed
- * source (`ytsearchN:<source> <query>`), every hit is then checked to
- * actually be FROM that source (uploader/channel/title), and a client whose
- * pool names no shows gets a refusal rather than a best-effort web search.
- * "Found something on topic" is not a rights basis; "found it on a channel
- * the client may clip" is.
+ * segment, a keynote moment — so how it was found is a fact about the clip.
+ *
+ * `discovery: "allowlist"` is the original, and the default. The search is
+ * scoped per allowed source (`ytsearchN:<source> <query>`), every hit is then
+ * checked to actually be FROM that source (uploader/channel/title), and a
+ * client whose pool names no shows gets a refusal rather than a best-effort
+ * web search. "Found something on topic" is not a rights basis; "found it on
+ * a channel the client may clip" is.
+ *
+ * `discovery: "open"` searches the whole of YouTube for the query and takes
+ * the best-scoring result on topic. It is the weaker posture and it exists
+ * because the owner chose reach on 2026-09-20 —
+ * `docs/RFC-25-tiktok-clipping-sources.md` records that decision, the
+ * alternatives it was chosen over, and what still protects the client: every
+ * clip reaches a human before publication, the caption must credit the
+ * source, and the reviewer is told which of these two searches found it.
  *
  * ## Why it downloads itself
  *
@@ -165,17 +173,129 @@ export function createYtDlpHarvestProvider(options: YtDlpHarvestProviderOptions 
 
   return {
     name: "yt-dlp",
-    async findVideo(q: VideoHarvestQuery): Promise<VideoHarvestFind> {
-      if (q.allowedSources.length === 0) {
+    /**
+     * One page, no search (RFC-25 phase 4).
+     *
+     * `--dump-single-json` on a watch URL returns that video's metadata, which
+     * is how the duration bounds still apply to a page somebody chose by hand:
+     * a three-hour stream is a download the run cannot afford however it was
+     * picked, and finding that out before the download is the whole point of
+     * asking first.
+     */
+    async resolveUrl(sourceUrl, q): Promise<VideoHarvestFind> {
+      const probe = await runner(ytDlpBin, [sourceUrl, "--dump-single-json", "--no-warnings", "--skip-download", ...cookieArgs]);
+      if (probe.exitCode !== 0) {
+        throw new Error(`yt-dlp could not read ${sourceUrl}: exited ${probe.exitCode} (${tail(probe.stderr || probe.stdout, 300) || "no output"})`);
+      }
+      let meta: YtDlpFlatEntry;
+      try {
+        meta = JSON.parse(probe.stdout) as YtDlpFlatEntry;
+      } catch {
+        throw new Error(`yt-dlp's metadata for ${sourceUrl} was not JSON`);
+      }
+      const duration = typeof meta.duration === "number" ? meta.duration : undefined;
+      // A page that resolves to nothing clippable is a CONTENT outcome, not a
+      // broken tool: the paste worked, the video is just not one this pipeline
+      // can use, and the caller needs to tell those two apart.
+      if (duration === undefined) {
+        return { candidate: null, reason: `${sourceUrl} reports no duration — it may be a live stream or a playlist rather than an episode` };
+      }
+      if (duration < q.minDurationSeconds || duration > q.maxDurationSeconds) {
         return {
           candidate: null,
-          reason: "no allowed sources: the client's sourcePool names no shows, and this provider never searches the open web unrestricted",
+          reason: `${sourceUrl} is ${Math.round(duration)}s, outside the ${q.minDurationSeconds}-${q.maxDurationSeconds}s a clip can be cut from`,
+        };
+      }
+      const channel = meta.channel ?? meta.uploader;
+      return {
+        candidate: {
+          sourceUrl,
+          ...(meta.title !== undefined ? { title: meta.title } : {}),
+          ...(channel !== undefined ? { channel } : {}),
+          durationSeconds: duration,
+          download: (destDirAbs) => downloadInto(sourceUrl, destDirAbs, q.maxBytes),
+        },
+      };
+    },
+
+    async findVideo(q: VideoHarvestQuery): Promise<VideoHarvestFind> {
+      if (q.discovery === "allowlist" && q.allowedSources.length === 0) {
+        return {
+          candidate: null,
+          reason: "no allowed sources: the client's sourcePool names no shows, and an allowlist search never searches the open web unrestricted",
         };
       }
 
       const queryTokens = tokens(q.query);
       const perSource: string[] = [];
       const broken: string[] = [];
+
+      /** Scores usable entries the way both postures do, and builds the candidate: nearest on topic first, newest as the tie-break. */
+      const pickBest = (usable: readonly YtDlpFlatEntry[]): VideoHarvestCandidate => {
+        const scored = usable
+          .map((entry) => {
+            const titleTokens = tokens(entry.title ?? "");
+            let overlap = 0;
+            for (const token of queryTokens) if (titleTokens.has(token)) overlap += 1;
+            return { entry, overlap, published: publishedAt(entry) };
+          })
+          .sort((a, b) => b.overlap - a.overlap || b.published - a.published);
+        const best = scored[0]!.entry;
+        const sourceUrl = watchUrl(best)!;
+        const channel = best.channel ?? best.uploader;
+        return {
+          sourceUrl,
+          ...(best.title !== undefined ? { title: best.title } : {}),
+          ...(channel !== undefined ? { channel } : {}),
+          ...(typeof best.duration === "number" ? { durationSeconds: best.duration } : {}),
+          download: (destDirAbs) => downloadInto(sourceUrl, destDirAbs, q.maxBytes),
+        };
+      };
+
+      /** The checks that are about the VIDEO rather than about its source: a clippable length, and an address to fetch it from. */
+      const withinBounds = (entry: YtDlpFlatEntry): boolean => {
+        // An entry with no duration cannot be proven not to be a Short, so it
+        // is treated as out of bounds rather than guessed at.
+        const duration = typeof entry.duration === "number" ? entry.duration : undefined;
+        if (duration === undefined || duration < q.minDurationSeconds || duration > q.maxDurationSeconds) return false;
+        return watchUrl(entry) !== undefined;
+      };
+
+      // ── The open search: one query, the whole provider, best on topic ──
+      //
+      // `searchPerSource * 4` rather than `searchPerSource`: the allowlist
+      // path gets that many results PER show and takes the first show that
+      // answers, so a handful each is plenty. Here one search carries the
+      // whole run, and the duration filter alone discards most of a YouTube
+      // result page (Shorts, clips, trailers).
+      if (q.discovery === "open") {
+        const result = await runner(ytDlpBin, [
+          `ytsearch${searchPerSource * 4}:${q.query}`,
+          "--dump-single-json",
+          "--flat-playlist",
+          "--no-warnings",
+          "--skip-download",
+          ...cookieArgs,
+        ]);
+        if (result.exitCode !== 0) {
+          throw new Error(`yt-dlp open search exited ${result.exitCode} (${tail(result.stderr || result.stdout, 300) || "no output"})`);
+        }
+        let entries: YtDlpFlatEntry[];
+        try {
+          const parsed = JSON.parse(result.stdout) as { entries?: unknown };
+          entries = Array.isArray(parsed.entries) ? (parsed.entries as YtDlpFlatEntry[]) : [];
+        } catch {
+          throw new Error("yt-dlp's open search output was not JSON");
+        }
+        const usable = entries.filter(withinBounds);
+        if (usable.length === 0) {
+          return {
+            candidate: null,
+            reason: `open search found no video for "${q.query}" inside ${q.minDurationSeconds}-${q.maxDurationSeconds}s (${entries.length} result(s) before filtering)`,
+          };
+        }
+        return { candidate: pickBest(usable) };
+      }
 
       for (const source of q.allowedSources) {
         const result = await runner(ytDlpBin, [
@@ -207,13 +327,11 @@ export function createYtDlpHarvestProvider(options: YtDlpHarvestProviderOptions 
             otherChannel += 1;
             return false;
           }
-          // An entry with no duration cannot be proven not to be a Short, so it is treated as out of bounds rather than guessed at.
-          const duration = typeof entry.duration === "number" ? entry.duration : undefined;
-          if (duration === undefined || duration < q.minDurationSeconds || duration > q.maxDurationSeconds) {
+          if (!withinBounds(entry)) {
             outsideBounds += 1;
             return false;
           }
-          return watchUrl(entry) !== undefined;
+          return true;
         });
 
         if (usable.length === 0) {
@@ -223,26 +341,7 @@ export function createYtDlpHarvestProvider(options: YtDlpHarvestProviderOptions 
           continue;
         }
 
-        const scored = usable
-          .map((entry) => {
-            const titleTokens = tokens(entry.title ?? "");
-            let overlap = 0;
-            for (const token of queryTokens) if (titleTokens.has(token)) overlap += 1;
-            return { entry, overlap, published: publishedAt(entry) };
-          })
-          .sort((a, b) => b.overlap - a.overlap || b.published - a.published);
-
-        const best = scored[0]!.entry;
-        const sourceUrl = watchUrl(best)!;
-        const channel = best.channel ?? best.uploader;
-        const candidate: VideoHarvestCandidate = {
-          sourceUrl,
-          ...(best.title !== undefined ? { title: best.title } : {}),
-          ...(channel !== undefined ? { channel } : {}),
-          ...(typeof best.duration === "number" ? { durationSeconds: best.duration } : {}),
-          download: (destDirAbs) => downloadInto(sourceUrl, destDirAbs, q.maxBytes),
-        };
-        return { candidate };
+        return { candidate: pickBest(usable) };
       }
 
       // Every source answered and none had a usable episode: a real "nothing
