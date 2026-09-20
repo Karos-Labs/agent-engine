@@ -150,6 +150,7 @@ import {
   CANDIDATES_PER_PHOTO_SLIDE,
   DEFAULT_RUN_SHAPE,
   // Phase 5.5, spec §2 A1 — the generated-image floor no lever may cross.
+  GENERATED_IMAGES_PER_RUN_CAP,
   MIN_GENERATED_IMAGES_PER_RUN,
   RUN_BUDGET_BELIEF_KEY,
   RunSpendMeter,
@@ -224,7 +225,7 @@ import { checkSlideWordBudget, formatWordBudgetFindings, MAX_WORDS_PER_SLIDE } f
 import { ceilingFor, enforceImageryBand, imageryShortfallsFor, MIN_PICTURE_SLIDES, type ImageryDemotion, type ImageryPromotion, type ImageryShortfall } from "./imagery-floor.js";
 // Phase 5.5, spec §2 A1b — the split every optional-spend gate in the generate
 // ladder consults, so the image floor is enforced where it actually binds.
-import { partitionGaps } from "./image-gap-partition.js";
+import { guaranteedGapCount, partitionGaps } from "./image-gap-partition.js";
 import { planInterestRelayout, type InterestRelayoutPlan } from "./interest-relayout.js";
 // RFC-19 §4 item 17 — the deterministic headline fact cards `04b` falls back to, and the one hold it keeps.
 import { headlineFallbackResearch, NO_READABLE_SOURCE } from "./research-fallback.js";
@@ -1269,6 +1270,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     };
     /** Images the `generate` rescue tier has requested this run, against the plan's `generatedImagesCap`. Run-scoped: the cap is per run, not per attempt. */
     let generatedSoFar = 0;
+    /**
+     * Every path `image.generate` has handed back this run.
+     *
+     * The guarantee is denominated in generated frames that SURVIVED, and a
+     * selection only carries an `imagePath` — nothing on it says which tier the
+     * file came from. This set is what makes that question answerable, so the
+     * floor can tell "the vet refused my frames" (still owed) from "retrieval
+     * found stock instead" (not owed a generation on that account).
+     */
+    const generatedPaths = new Set<string>();
 
     // ── 02b: the client's own voice/profile context — best-effort, never blocking ──
     //
@@ -8161,6 +8172,49 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       let selections: ImageSelection[];
       let unfillable: ImageSelection[];
 
+      /**
+       * Generated frames this run is actually HOLDING — frames `image.generate`
+       * made that then SURVIVED vetting and are still on a slide.
+       *
+       * ## This is the unit `MIN_GENERATED_IMAGES_PER_RUN` is denominated in
+       *
+       * The three generation gates used to ask `generatedSoFar`, which counts
+       * frames BOUGHT: it is incremented from `tierPool.length` the moment the
+       * tool returns, before any vet looks at one. So three refused frames
+       * discharged the guarantee, and the two pictureless carousels of
+       * 2026-09-20 are what that looks like from the reader's side — the worked
+       * example is in `guaranteedGapCount`'s comment.
+       *
+       * ## And why it is not simply "pictures on the post"
+       *
+       * That was the first fix here and it was too blunt: it let RETRIEVED stock
+       * photographs discharge a guarantee that exists to buy GENERATED ones.
+       * The constant's own docs are explicit that it covers the two gaps
+       * retrieval provably cannot — the drawn concept frame, and a named entity
+       * with no licensable photograph — and the owner's 2026-09-18 ruling 3 asks
+       * for made conceptual visuals by name, not for three pictures of any
+       * provenance. `run-budget-workflow.test.ts` pins that: a run holding two
+       * retrieved photos still owes its generated frames.
+       *
+       * `generatedSoFar` keeps its one honest job — bounding how much MORE
+       * generation the run may buy, which is a money question, and money spent
+       * is spent whatever the vet then said.
+       */
+      const generatedLanded = (): number =>
+        selections.filter((sel) => sel.imagePath !== null && generatedPaths.has(sel.imagePath) && !isUnfillable(sel)).length;
+
+      /**
+       * Frames this run may still buy at all, floor included.
+       *
+       * The guarantee re-arms while the vet keeps refusing, so without this the
+       * generate tier claims a fresh guarantee every attempt — `keep` takes the
+       * whole `guaranteed` slice BEFORE the plan's own budget narrows it, and
+       * the cap test measured eleven frames against a ceiling of eight. The
+       * plan's `generatedImagesCap` is the softer, adaptable number; this is the
+       * one no re-arming may cross, with `meter.crossedMax` above it.
+       */
+      const framesAllowance = (): number => Math.max(0, GENERATED_IMAGES_PER_RUN_CAP - generatedSoFar);
+
       if (attemptPool.length === 0) {
         // An empty pool has exactly one possible vetting verdict, so asking a
         // model for it buys nothing — the run that prompted this comment
@@ -8555,7 +8609,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // optional in what the first left.
         /** Skip the optional part of this tier with `reason`, and keep the guaranteed part. Returns false when nothing is left to do. */
         const skipOptional = (reason: string, conceptDecline: string): boolean => {
-          const { guaranteed, optional } = partitionGaps(gaps, generatedSoFar, conceptOnThisTier && conceptSlideN !== undefined ? { conceptSlide: conceptSlideN } : {});
+          const { guaranteed, optional } = partitionGaps(gaps, generatedLanded(), conceptOnThisTier && conceptSlideN !== undefined ? { conceptSlide: conceptSlideN, ceiling: framesAllowance() } : { ceiling: framesAllowance() });
           for (const g of optional) rescueSkipped.set(g.n, reason);
           // ONLY when the concept gap really ended up in `optional`. A concept
           // that survived as a guarantee is still pending and must not be
@@ -8607,7 +8661,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // rather than another number the plan can zero.
         if (tier.id === "generate") {
           const budget = remainingGenerationBudget(generatedSoFar, budgetPlan.generatedImagesCap);
-          const { guaranteed, optional } = partitionGaps(gaps, generatedSoFar, conceptOnThisTier && conceptSlideN !== undefined ? { conceptSlide: conceptSlideN } : {});
+          const { guaranteed, optional } = partitionGaps(gaps, generatedLanded(), conceptOnThisTier && conceptSlideN !== undefined ? { conceptSlide: conceptSlideN, ceiling: framesAllowance() } : { ceiling: framesAllowance() });
           const keep = [...guaranteed, ...optional.slice(0, Math.max(0, budget - guaranteed.length))];
           const kept = new Set(keep.map((g) => g.n));
           for (const over of gaps.filter((g) => !kept.has(g.n))) rescueSkipped.set(over.n, `generation budget for this run spent (${budgetPlan.generatedImagesCap} images)`);
@@ -8661,6 +8715,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           let tierPool = (sourced.result as { candidates: ImageCandidate[] }).candidates;
           if (tier.id === "generate") {
             generatedSoFar += tierPool.length;
+            for (const cand of tierPool) generatedPaths.add(cand.path);
             spend(rev(`06d-generate-images-attempt-${attempt}`), undefined, tierPool.length * STEP_COST_ESTIMATES_USD.generatedImage);
           } else {
             spend(rev(`06b-scrape-images-attempt-${attempt}`), undefined, batch.gaps.length * STEP_COST_ESTIMATES_USD.scraperExecution);
@@ -9036,8 +9091,30 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         if (withPicture >= MIN_PICTURE_SLIDES) {
           return { action: "ok" as const, pictureSlides: withPicture, generated: generatedSoFar, gaps: [] as FloorGap[] };
         }
-        /** What is left of the run's generation guarantee. Zero once it has been spent, whatever the vet then did with the frames. */
-        const guaranteeLeft = Math.max(0, MIN_GENERATED_IMAGES_PER_RUN - generatedSoFar);
+        // ── WHAT IS LEFT OF THE GUARANTEE, COUNTED IN PICTURES THAT LANDED. ──
+        //
+        // This read `MIN_GENERATED_IMAGES_PER_RUN - generatedSoFar` until
+        // 2026-09-20, and its own comment conceded the flaw in the clause that
+        // made it wrong: *"zero once it has been spent, WHATEVER THE VET THEN
+        // DID WITH THE FRAMES"*. The pass condition four lines up had already
+        // been moved to outcome-only for exactly this reason; the re-entry
+        // budget was left on the intent counter, so the floor became able to
+        // state the defect and unable to repair it. Both prep carousels of
+        // 2026-09-20 ended here: `generated: 3`, `pictureSlides: 0` and `1`,
+        // `action: "unfilled"` — the guarantee reported PAID by three frames the
+        // vet had refused, on posts with no pictures in them.
+        //
+        // A frame the vet refused did not buy a picture, so it did not pay down
+        // a guarantee denominated in pictures. The money is NOT refunded: it is
+        // billed, it rides `ewmaRatio` into the next run's plan, and
+        // `generatedSoFar` still bounds the ceiling below.
+        //
+        // THE CEILING IS WHAT MAKES THIS SAFE. A vet that refuses everything
+        // re-arms the guarantee on every attempt, so the floor is bounded by the
+        // widest plan's frame count for the whole run — `meter.crossedMax`
+        // remains the unconditional loop-breaker above it, and
+        // `maxSelfCheckAttempts` bounds how many times this point is reached.
+        const guaranteeLeft = Math.min(guaranteedGapCount(generatedLanded()), framesAllowance());
         const want = Math.min(MIN_PICTURE_SLIDES - withPicture, guaranteeLeft);
 
         // ── THE FLOOR USED TO SEE ONLY THE SLIDES THAT ASKED. ──
@@ -9092,7 +9169,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             : generateTier?.tool === undefined
               ? "image.generate is not registered on this deployment"
               : guaranteeLeft === 0
-                ? `this run already generated ${generatedSoFar} image(s) — its whole guarantee of ${MIN_GENERATED_IMAGES_PER_RUN} — and ${withPicture === 0 ? "none of them" : "not enough of them"} survived vetting, ` +
+                ? `this run has generated ${generatedSoFar} image(s) — the whole per-run ceiling of ${GENERATED_IMAGES_PER_RUN_CAP} — and ${withPicture === 0 ? "none of them" : "not enough of them"} survived vetting, ` +
                   `so there is no generation left to buy and ${withPicture} slide(s) carry a picture against a floor of ${MIN_PICTURE_SLIDES}`
                 : gaps.length === 0
                   ? "every slide already carries a picture or cannot hold one, so there is nothing left to fill"
@@ -9117,6 +9194,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           if (floorSourced.status === "success") {
             const floorPool = (floorSourced.result as { candidates: ImageCandidate[] }).candidates;
             generatedSoFar += floorPool.length;
+            for (const cand of floorPool) generatedPaths.add(cand.path);
             spend(rev(`06d2-generate-floor-images-attempt-${attempt}`), undefined, floorPool.length * STEP_COST_ESTIMATES_USD.generatedImage);
             if (floorPool.length > 0) {
               const floorVet = await wf.step.agent(rev(`06h2-vet-floor-images-attempt-${attempt}`), imageAgent, {

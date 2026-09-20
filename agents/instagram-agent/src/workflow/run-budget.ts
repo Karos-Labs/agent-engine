@@ -2031,6 +2031,29 @@ export function planRunBudget(
   // an identical candidate pool. Rung 4 is the deliverable, so it goes last and
   // it stops at `MIN_GENERATED_IMAGES_PER_RUN`.
   //
+  // ## "INVISIBLE TO A READER" IS A CLAIM ABOUT RUNG 1 THAT WAS FALSE FOR TWO
+  // ## RUNS, AND WHAT ACTUALLY MAKES IT TRUE (2026-09-20)
+  //
+  // Both pictureless prep carousels of 2026-09-20 fired rung 1, and rung 1 is
+  // what `07a-downgrade-unfillable-slides` NAMED when it stripped the
+  // photographs: *"optional rescue re-vets skipped by the run budget plan"*.
+  // The most visible rung on the ladder was sitting at the top of it, wearing
+  // this comment.
+  //
+  // The premise was not wrong about rescue work — it was wrong about which
+  // rescue work the flag reaches. `skipOptional` keeps the GUARANTEED part of
+  // every tier and drops only the optional remainder, so rung 1 is invisible
+  // exactly as claimed *provided the guarantee is solvent*. It was not: the
+  // guarantee was counted in frames BOUGHT (`generatedSoFar`), three frames had
+  // been bought and refused, and a spent guarantee makes every gap optional —
+  // so the rung that may only take the optional remainder took the pictures.
+  //
+  // The counter is now denominated in pictures HELD (`guaranteedGapCount`), so
+  // a run under the floor always has a non-empty guarantee for this rung to
+  // leave alone. THAT is what makes the sentence above true, and it is a
+  // property of another module: if `partitionGaps` ever goes back to counting
+  // intent, this rung silently becomes the picture-deleting rung again.
+  //
   // 1. Optional rescue re-vets off. THIS FLAG NO LONGER CARRIES `07i1`.
   //
   //    Phase 5 hung `07i1-verify-lead-claim` on this same flag — "one flag,
