@@ -143,6 +143,23 @@ export const BrandTokensSchema = z.object({
   renderTokens: z
     .object({
       ground: z.string().min(1).optional(),
+      /**
+       * A SECOND ground this client's posts may render on, instead of
+       * `ground`, chosen once per post.
+       *
+       * Absent for every client today, and that is the correct default: with
+       * no second ground declared, every post renders on `ground` and a
+       * carousel can never be part one colour and part another. A client gets
+       * alternation only by their own brand record saying which other shade
+       * fits — the owner's rule of 2026-09-20, after `karoslabs` (one ground,
+       * `#f2f1ec`, one accent) had a quarter of its posts rendered on near
+       * black because the engine inverted `ground` against `fg` on its own.
+       *
+       * Read from the client's documents like every other colour here. Never
+       * derived, never defaulted, never inferred from having a dark neutral
+       * in the palette — most brands have one and it is not a page ground.
+       */
+      altGround: z.string().min(1).optional(),
       surface: z.string().min(1).optional(),
       fg: z.string().min(1).optional(),
       fg2: z.string().min(1).optional(),

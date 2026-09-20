@@ -6110,6 +6110,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               ground: effectiveKit.cssVars["--bg"],
               fg: effectiveKit.cssVars["--fg"],
               directivePinned: Object.keys(styleDirectiveResult.overrides).length > 0,
+              // From the client's own record and nowhere else — see
+              // `GroundFgInversionConfig.alternateGroundDeclared` and
+              // `StyleOverrides.altGround`. Explicit, never derived: no client
+              // declares one today, so no carousel alternates today.
+              alternateGroundDeclared: effectiveKit.cssVars["--alt-ground"] !== undefined,
             }
           : undefined;
 
@@ -8988,41 +8993,133 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         }
       }
 
+      // ── 06e2: PUT THE CHOSEN BYTES SOMEWHERE THAT OUTLIVES THIS CONTAINER ──
+      //
+      // `.media-cache/` is an `emptyDir` with `medium: Memory` — a tmpfs in
+      // the instance's own RAM, capped at 384Mi, mounted per instance on a
+      // service that scales to 5. It is not a volume in any durable sense:
+      // when the instance goes, every byte in it goes, and no other instance
+      // could ever see it in the first place.
+      //
+      // That is not a rare event. prep run `pubsub-21904879061334183`
+      // (karoslabs, 2026-09-20) took a SIGTERM at 14:14:00 and was reclaimed
+      // by a fresh instance at 14:21:22 — "no heartbeat for at least 300s".
+      // The run had four pictures: a geo-verified ChatGPT photograph the
+      // entity route found, two more retrieved frames, and three generated
+      // images it had paid Gemini for. All seven files were in the RAM of a
+      // container that no longer existed.
+      //
+      // So the bytes are copied to the media bucket the moment they are
+      // chosen. Checkpointed on purpose — the MAP is the durable knowledge,
+      // and re-running this after a resume could not work anyway, since the
+      // local files it would read are exactly what went missing.
+      const stagedImageUris = await wf.step.code(rev(`06e2-stage-images-durably-attempt-${attempt}`), async () => {
+        const stage = tools["media.stageAsset"];
+        const uris: Record<string, string> = {};
+        if (stage === undefined) return uris;
+        for (const sel of selections) {
+          if (sel.imagePath === null) continue;
+          try {
+            const outcome = await stage.execute({ repoRoot: options.repoRoot, runId: wf.runId, path: sel.imagePath }, { ctx });
+            if (outcome.status !== "success") continue;
+            uris[sel.imagePath] = (outcome.result as { gcsUri: string }).gcsUri;
+          } catch {
+            // Best effort by design. A picture that could not be staged is
+            // no worse off than every picture was before this step existed;
+            // it just cannot be recovered if the instance dies.
+          }
+        }
+        return uris;
+      });
+
       // ── Pre-flight: does every selected image still EXIST on disk? ──
       //
       // `publish.renderCarousel` reports a missing image file as
       // `content_fail`, which used to hold the whole post at step 08 — after
       // copy, vetting, every rescue tier and the self-checks had all been
-      // paid for. That is the one image-caused hold that survived the
-      // guaranteed-delivery work, and it is reachable for real: the media
-      // cache lives on an in-memory volume (see karos-media's README), so a
-      // Cloud Run instance recycling between vetting and render genuinely
-      // loses the bytes.
+      // paid for.
       //
-      // Checked here instead, where a missing file is just another reason the
-      // slide has no usable picture, so it flows into the SAME downgrade path
-      // as every other sourcing failure rather than needing its own outcome.
-      const missingOnDisk = await wf.step.code(rev(`06f-verify-images-on-disk-attempt-${attempt}`), async () => {
-        const gone: number[] = [];
-        for (const sel of selections) {
-          if (sel.imagePath === null) continue;
-          try {
-            await fs.access(path.resolve(options.repoRoot, sel.imagePath));
-          } catch {
-            gone.push(sel.n);
-          }
+      // ## Why this is no longer a `wf.step.code`
+      //
+      // It was one, and that is exactly why it did not fire on the run that
+      // needed it. A `step.code` is CHECKPOINTED: on the resume above, this
+      // step replayed its stored `[]` from Firestore in the same millisecond
+      // as eight of its neighbours and never touched the disk at all. A guard
+      // whose whole job is to observe the CURRENT filesystem cannot be
+      // allowed to answer from a recording — it is dead in precisely the
+      // situation it was written for, which is a resume onto a fresh
+      // instance. `08-render-carousel` was then the first step to actually
+      // open a file, found `n1-gen0.png` gone, and returned `content_fail`;
+      // the post fell through to the typographic fallback and shipped with
+      // zero pictures.
+      //
+      // Plain inline code, so it re-runs on every execution of this workflow
+      // function, replay or not. It is free and it has no side effects beyond
+      // the rehydration below.
+      //
+      // ## And a missing file is now recoverable, not just reportable
+      //
+      // The old remedy was to null the selection and let the slide take the
+      // typographic downgrade. But the bytes were BOUGHT — retrieved, vetted,
+      // in three cases generated — and since `06e2` they are in the media
+      // bucket. Dropping a picture we still have is throwing away the thing
+      // the owner has asked for three times over. Re-fetch first; downgrade
+      // only if the re-fetch fails too.
+      const rehydrated: number[] = [];
+      const gone: number[] = [];
+      for (const sel of selections) {
+        if (sel.imagePath === null) continue;
+        try {
+          await fs.access(path.resolve(options.repoRoot, sel.imagePath));
+          continue;
+        } catch {
+          // Missing locally — recoverable only if `06e2` staged it.
         }
-        return gone;
-      });
-      if (missingOnDisk.length > 0) {
-        const goneSet = new Set(missingOnDisk);
+        const uri = stagedImageUris[sel.imagePath];
+        const ingest = tools["media.ingestAssets"];
+        if (uri === undefined || ingest === undefined) {
+          gone.push(sel.n);
+          continue;
+        }
+        try {
+          const outcome = await ingest.execute({ repoRoot: options.repoRoot, runId: wf.runId, assets: [{ uri, slot: sel.n }] }, { ctx });
+          if (outcome.status !== "success") {
+            gone.push(sel.n);
+            continue;
+          }
+          const back = (outcome.result as { candidates: ImageCandidate[] }).candidates[0];
+          if (back === undefined) {
+            gone.push(sel.n);
+            continue;
+          }
+          // `media.ingestAssets` writes under a name it derives itself, so the
+          // recovered frame has a NEW repo-relative path. Re-point the
+          // selection at it rather than at the address the bytes used to have.
+          selections = selections.map((row) => (row.n === sel.n ? { ...row, imagePath: back.path } : row));
+          rehydrated.push(sel.n);
+        } catch {
+          gone.push(sel.n);
+        }
+      }
+      if (rehydrated.length > 0) {
+        const note = `image cache miss on slide(s) ${rehydrated.join(", ")} — the local media cache did not have the bytes (an instance recycle), and they were re-fetched from the media bucket`;
+        console.warn(`06f-verify-images-on-disk: ${note}`);
+        try {
+          await tools["ledger.appendEvent"]?.execute({ runId: wf.runId, eventId: `${wf.runId}__image-rehydrate-${attempt}`, level: "info", message: note }, { ctx });
+        } catch {
+          /* the ledger is a record, never a gate */
+        }
+      }
+      if (gone.length > 0) {
+        const goneSet = new Set(gone);
         selections = selections.map((sel) =>
           goneSet.has(sel.n)
-            ? { ...sel, imagePath: null, reason: `${sel.reason} (the file was no longer on disk at render time)` }
+            ? { ...sel, imagePath: null, reason: `${sel.reason} (the file was no longer on disk at render time and could not be re-fetched)` }
             : sel,
         );
         unfillable = selections.filter(isUnfillable);
       }
+      if (rehydrated.length > 0 || gone.length > 0) unfillable = selections.filter(isUnfillable);
 
       // ── THE SAME PICTURE MAY NOT APPEAR TWICE IN ONE POST. ──
       //

@@ -591,6 +591,9 @@ export function deriveBrandRenderTokens(brand: unknown, brandTokens: BrandTokens
   }
 
   for (const [key, varName] of [
+    // `altGround` rides the same explicit-override path as the rest: present
+    // only when the client's own record names it. See `StyleOverrides`.
+    ["altGround", "--alt-ground"],
     ["surface", "--surface"],
     ["fg2", "--fg2"],
     ["line", "--line"],
