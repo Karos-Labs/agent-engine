@@ -218,6 +218,11 @@ const HAPPY_PATH_STEP_IDS = [
   // slide is sourced again rather than left bare. `wf.step.code`, $0, and it
   // runs on every attempt whether or not it finds anything.
   "06f2-one-picture-one-slide-attempt-1",
+  // Whether two GENERATED frames came out of near-identical briefs. A report
+  // and nothing else — it cannot remove a picture, because a removed picture
+  // becomes a text plate at `07a` and that is the complaint underneath
+  // (2026-09-20). Variety is bought at `06d`, before the quota is spent.
+  "06f3-generated-frame-variety-attempt-1",
   // Phase 5.5 (spec §2 A4). ONE SET, NOT THREE PICTURES: the frozen
   // treatment, the hero's own token and the scrim strength are written onto
   // EVERY hero regardless of provenance, so a carousel with a generated frame,
