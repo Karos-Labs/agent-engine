@@ -373,6 +373,11 @@ describe("tiktok-agent clip pipeline", () => {
     expect(result.status).toBe("completed");
     expect(h.deliverables[0]).not.toHaveProperty("signedUrl");
     expect(h.deliverables[0]).toMatchObject({ sourceTier: "user-asset" });
+    // The client handed the file over, so the provenance says so. The
+    // contrast with the harvested run below is the whole reason the field
+    // exists — both were `user-asset` or `web-harvest` and told a reviewer
+    // nothing about whose recording they were about to publish.
+    expect(h.deliverables[0]).toMatchObject({ licenseConfidence: "client-provided" });
   });
 
   it("runs a client with no tiktokClips block at all when footage was handed to it — the block gates other people's shows, not the client's own recording", async () => {
@@ -411,6 +416,10 @@ describe("tiktok-agent clip pipeline", () => {
 
     // It is a real commentary clip off harvested footage, not an original short.
     expect(h.deliverables[0]).toMatchObject({ sourceTier: "web-harvest", format: "commentary-clip" });
+    // Provenance as a FIELD, not only as a sentence inside a repair: a tier
+    // name does not distinguish a show the client clears from one a search
+    // found, and the portal cannot render a distinction it is not sent.
+    expect(h.deliverables[0]).toMatchObject({ licenseConfidence: "unknown" });
     // …and the provenance rides on the deliverable, which outlives the gate.
     const repairs = h.deliverables[0]!["contentRepairs"] as Array<{ check: string; detail: string }>;
     const provenance = repairs.find((r) => r.check === "source-discovery");

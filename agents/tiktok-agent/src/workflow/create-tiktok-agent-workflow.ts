@@ -92,6 +92,7 @@ import {
   CLIP_DURATION_MAX_SECONDS,
   CLIP_DURATION_MIN_SECONDS,
   CLIP_LANE,
+  clipLicenseConfidence,
   DEFAULT_CLIP_CONFIG,
   formatForVariant,
   modeForVariant,
@@ -3916,6 +3917,18 @@ ${credit}`,
           clipPath: draft.renderedPath,
           durationSeconds: draft.durationSeconds,
           sourceTier: intake.sourceTier,
+          // WHOSE RECORDING THIS IS, at the gate that decides whether to
+          // publish forty seconds of it. RFC-25 §1 rests its whole case on
+          // this gate being "the real protection" for a clip of somebody
+          // else's podcast, and until now the gate carried the source TIER
+          // and nothing else — `web-harvest` read identically whether the
+          // show was one the client clears every week or one a search turned
+          // up ninety seconds earlier. A reviewer cannot weigh a risk whose
+          // subject is not on the screen.
+          ...(intake.sourceContext?.url !== undefined ? { sourceUrl: intake.sourceContext.url } : {}),
+          ...(intake.sourceContext?.channel !== undefined ? { sourceChannel: intake.sourceContext.channel } : {}),
+          ...(intake.sourceContext?.title !== undefined ? { sourceTitle: intake.sourceContext.title } : {}),
+          licenseConfidence: clipLicenseConfidence(intake.sourceTier, intake.sourceContext?.discovery),
           // What the judge made of the recording itself, whatever it scored.
           // "We looked at this show and it is the right kind of show" is worth
           // as much to a reviewer as the objection would be.
@@ -4191,6 +4204,11 @@ ${credit}`,
             about: copy.about,
             ...(copy.sourceCredit !== undefined ? { sourceCredit: copy.sourceCredit } : {}),
             ...(intake.sourceContext ? { sourceContext: intake.sourceContext } : {}),
+            // Persisted with what shipped, not only shown at the gate: the
+            // question "whose footage is this clip of" is asked again every
+            // time somebody reopens the deliverable, and a tier name does not
+            // answer it.
+            licenseConfidence: clipLicenseConfidence(intake.sourceTier, intake.sourceContext?.discovery),
             hookLine: review.output.hookLine,
             // The visual QA model's read, persisted with what shipped so the
             // portal can show a flagged clip as flagged after the fact.
