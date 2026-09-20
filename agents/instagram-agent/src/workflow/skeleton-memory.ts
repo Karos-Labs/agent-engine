@@ -171,6 +171,35 @@ export interface SkeletonEntry {
    * see last week's number cannot notice.
    */
   coverFigure?: string;
+  /**
+   * Which of the five topic engines produced this post's subject
+   * (`TopicEngine`), when the run recorded one.
+   *
+   * Optional for exactly the reason `seriesId` and `systemId` are, and read by
+   * `recentTopicEngines` for the same rotation the series layer already does.
+   *
+   * It is here rather than in a sibling belief because the rotation question
+   * this answers — "where have the last few subjects come FROM" — is the same
+   * question at a different resolution from "what shape did they take", and
+   * two keys would let them disagree about which run was last.
+   */
+  topicEngine?: string;
+  /**
+   * A coarse SUBJECT tag for this post — `topicSubjectCluster` of the claimed
+   * topic and headline.
+   *
+   * The distance check that already exists compares word-shingles against the
+   * recent posts' own text, which catches a subject re-posted in the same
+   * WORDS and nothing else. "Sponsored AI agents in search" and "GEO
+   * visibility in AI answer engines" share almost no shingles, score a
+   * distance near 1.0, and are the same post to a reader — which is what the
+   * owner saw across karoslabs' feed on 2026-09-20.
+   *
+   * So the cluster is recorded alongside the wording, and
+   * `rankTopicCandidates` penalises the CLUSTER. Optional, for the reason
+   * every field above it is: history written before this existed has none.
+   */
+  subjectCluster?: string;
 }
 
 export interface SkeletonHistory {
@@ -339,6 +368,8 @@ export function readSkeletonHistory(beliefs: unknown): SkeletonHistory {
             // Same tolerant posture as every field above: a row written
             // before the series layer existed simply has none.
             ...(typeof e["seriesId"] === "string" && e["seriesId"].length > 0 ? { seriesId: e["seriesId"] } : {}),
+            ...(typeof e["topicEngine"] === "string" && e["topicEngine"].length > 0 ? { topicEngine: e["topicEngine"] } : {}),
+            ...(typeof e["subjectCluster"] === "string" && e["subjectCluster"].length > 0 ? { subjectCluster: e["subjectCluster"] } : {}),
             ...(typeof e["systemId"] === "string" && e["systemId"].length > 0 ? { systemId: e["systemId"] } : {}),
             ...(typeof e["coverFigure"] === "string" && e["coverFigure"].length > 0 ? { coverFigure: e["coverFigure"] } : {}),
           },
@@ -380,6 +411,27 @@ export function previousSkeleton(history: SkeletonHistory): SkeletonEntry | unde
  * padding matters: a padded `undefined` would occupy a slot in the hold and
  * silently shorten the real window to one.
  */
+export function recentTopicEngines(history: SkeletonHistory): string[] {
+  return [...history.entries]
+    .reverse()
+    .map((entry) => entry.topicEngine)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+}
+
+/**
+ * The SUBJECT CLUSTERS of the recently shipped posts, newest first — the
+ * rotation input `rankTopicCandidates` penalises a repeat against.
+ *
+ * Skips entries with none, for the reason `recentSeriesIds` skips entries with
+ * no `seriesId`, stated there in full.
+ */
+export function recentSubjectClusters(history: SkeletonHistory): string[] {
+  return [...history.entries]
+    .reverse()
+    .map((entry) => entry.subjectCluster)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+}
+
 export function recentSeriesIds(history: SkeletonHistory): string[] {
   return [...history.entries]
     .reverse()

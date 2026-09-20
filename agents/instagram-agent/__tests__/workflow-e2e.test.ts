@@ -116,6 +116,11 @@ const HAPPY_PATH_STEP_IDS = [
   // five-engine ranking `03g` selects from.
   "03e-topic-signals",
   "03f-rank-topic-candidates",
+  // Which topic engines had material and still offered no candidate. Recorded
+  // rather than enforced — the fit and interest scores are the scout's to give
+  // — but an engine that never enters the race cannot be rotated to, and
+  // before this the omission was invisible (2026-09-20).
+  "03f2-engine-coverage",
   "03g-select-topic",
   // Phase 1 (RFC-13 item J): `04a-research-pull` is RETIRED. Three lanes
   // (news 7d, insight 90d, the client's own domains) replace its single

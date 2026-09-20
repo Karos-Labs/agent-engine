@@ -10,7 +10,6 @@ import {
 import type { ClientBrief } from "@agent-engine/tools";
 import {
   CATALOG_MIN_FIT_RATIO,
-  EVERGREEN_OFF_MODE_MULTIPLIER,
   MAX_ALTERNATIVES,
   MODE_BONUS,
   OWN_ASSET_WITH_OFFER_BONUS,
@@ -332,15 +331,26 @@ describe("rankTopicCandidates: the engine bonuses", () => {
     expect(scoreOf(withOffer, asset.topic)).toBeCloseTo(scoreOf(withOffer, news.topic) * OWN_ASSET_WITH_OFFER_BONUS, 5);
   });
 
-  it("discounts an evergreen angle except on a deep-value week", () => {
+  it("no longer charges an evergreen angle a second time for being undated, and still ranks it below the week's mode", () => {
+    // ── THE 0.8 IS GONE (2026-09-20). ──
+    //
+    // An evergreen angle is undated by definition, so it already sits at
+    // freshness 1.0 while a dated story reaches 1.35. The extra off-mode 0.8
+    // took the same fact out of its score twice, and the two together came to
+    // a handicap no brand fit could clear: on karoslabs' run
+    // `pubsub-21904879061334183` the best evergreen idea scored 15.74 against
+    // 38.81 for a news item, and the feed published its third AI-search post
+    // in a row.
+    //
+    // What remains is the MODE bonus, which is the honest half of the
+    // distinction and still says evergreen is what a deep-value week is for.
     const evergreen = candidate({ topic: "what practitioners get wrong about retainers", engine: "evergreen", mode: "deep-value" });
     const onDeepValue = rankTopicCandidates([evergreen], { ...RANK_BASE, mode: "deep-value" });
     expect(onDeepValue.ranked[0]!.components.engineBonus).toBe(1);
 
-    // Same candidate, a hot-news week: it also loses the mode bonus, which is
-    // the point — evergreen is what you post when there is no news.
     const onHotNews = rankTopicCandidates([evergreen], { ...RANK_BASE, mode: "hot-news" });
-    expect(onHotNews.ranked[0]!.components).toMatchObject({ engineBonus: EVERGREEN_OFF_MODE_MULTIPLIER, modeBonus: 1 });
+    expect(onHotNews.ranked[0]!.components).toMatchObject({ engineBonus: 1, modeBonus: 1 });
+    // Still lower on a news week — carried by the mode bonus alone now.
     expect(onHotNews.ranked[0]!.score).toBeLessThan(onDeepValue.ranked[0]!.score);
   });
 
