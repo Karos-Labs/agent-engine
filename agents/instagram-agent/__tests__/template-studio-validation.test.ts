@@ -224,6 +224,60 @@ const validate = (draft: StudioTemplateDraft, deps: StudioValidationDeps, extra:
 
 // ─────────────────────────────────────────────────────────────────────────
 
+describe("the standing furniture the designer was told it may use", () => {
+  /**
+   * ── THE ONE ARGUMENT THAT COST karoslabs ITS WHOLE TEMPLATE SET. ──
+   *
+   * `buildDesignerInput` hands the designer `standingFurniture` — `brandHandle`,
+   * `slideIndex`, `seriesBadge`, `dir`, `accentColor`, `kicker` and the rest —
+   * as fields its document receives whatever it declares. Gate 2 skips that
+   * same set by name. Gate 3 then passed only `declared` to `assertSafeMarkup`,
+   * so a template that took the offer was refused for reading a slot the
+   * prompt had just offered it.
+   *
+   * The 2026-09-18 karoslabs setup (`pubsub-21896063218741941`) authored six
+   * templates and lost all six to this — five on `{{brandHandle}}`, one on
+   * `{{slideIndex}}`. A studio that keeps nothing records `empty`, which is a
+   * judgement about the client rather than a fault, and bought a 30-day
+   * cooldown. Every karoslabs post since has rendered on the shared bundled
+   * archetypes: the owner's *"the templates repeat, the previous posts have
+   * exactly the same templates"*.
+   */
+  it("does not refuse a template for reading {{brandHandle}}, which it never declared and never needed to", async () => {
+    const deps = makeDeps();
+    const draft = statDraft({
+      bodyHtml: `<div class="plate"><p class="figure">{{figure}}</p><p class="sub">{{subLabel}}</p><p class="lede">{{body}}</p><p class="src">{{sourceLine}}</p>{{html:device}}<span class="handle">{{brandHandle}}</span></div>`,
+    });
+    const result = await validate(draft, deps);
+
+    const furnitureRefusals = result.failures.filter((f) => /brandHandle/.test(f.reason));
+    expect(furnitureRefusals, `gate ${furnitureRefusals[0]?.gate ?? "?"} refused the standing furniture: ${furnitureRefusals[0]?.reason ?? ""}`).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
+  it("does not refuse a template for reading {{slideIndex}} either — the numeral the glyph ground sets", async () => {
+    const deps = makeDeps();
+    const draft = statDraft({
+      bodyHtml: `<div class="plate"><span class="idx">{{slideIndex}}</span><p class="figure">{{figure}}</p><p class="sub">{{subLabel}}</p><p class="lede">{{body}}</p><p class="src">{{sourceLine}}</p>{{html:device}}</div>`,
+    });
+    const result = await validate(draft, deps);
+
+    expect(result.failures.filter((f) => /slideIndex/.test(f.reason))).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
+  it("still refuses a placeholder that is NEITHER declared NOR standing furniture — the guard did not just get switched off", async () => {
+    const deps = makeDeps();
+    const draft = statDraft({
+      bodyHtml: `<div class="plate"><p class="figure">{{figure}}</p><p class="sub">{{subLabel}}</p><p class="lede">{{body}}</p><p class="src">{{sourceLine}}</p>{{html:device}}<span>{{inventedSlot}}</span></div>`,
+    });
+    const result = await validate(draft, deps);
+
+    expect(result.ok).toBe(false);
+    expect(result.failures.some((f) => /inventedSlot/.test(f.reason))).toBe(true);
+  });
+});
+
 describe("a template that passes every gate", () => {
   it("is stored with its measured numbers, and renders exactly once", async () => {
     const deps = makeDeps();

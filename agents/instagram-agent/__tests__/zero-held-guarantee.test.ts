@@ -144,7 +144,7 @@ describe("zero-held guarantee: a picture problem never costs the post", () => {
     // already made typographic never asked for one, so it cannot be
     // DOWNGRADED for want of it; the guarantee this case is about, that every
     // picture slide ships as type rather than holding the post, is unchanged.
-    expect(downgrade?.downgraded).toEqual(pictureSlidesOfGoodCopy(copy));
+    expect(downgrade?.downgraded).toEqual(pictureSlidesOfGoodCopy(copy, "zero_held_total_blackout"));
     expect(steps.map((s) => s.stepId)).toContain("09b-deliver-and-log");
 
     const slidesData = steps.find((s) => s.stepId === "07c-emit-slides-data-attempt-1")?.output as

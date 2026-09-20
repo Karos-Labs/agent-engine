@@ -37,6 +37,77 @@ const layoutsOf = (copy: InstagramCopyOutput): InstagramSlideLayout[] => copy.sl
 const pictures = (copy: InstagramCopyOutput): number => layoutsOf(copy).filter((l) => FULL_BLEED_IMAGE_LAYOUTS.has(l)).length;
 const capable = (copy: InstagramCopyOutput): number => layoutsOf(copy).filter((l) => HERO_IMAGE_LAYOUTS.has(l)).length;
 
+describe("where the pictures land, run to run (2026-09-20)", () => {
+  /**
+   * The owner, on a feed of posts that each had photographs in the same four
+   * places: *"אני רוצה שמיקומי התמונות ישתנו לפעמים כי תבניות גנריות בכל
+   * הפוסטים נראה AI"*.
+   *
+   * They were in the same places because both halves of the band walked the
+   * carousel in slide order — promote lowest-numbered first, demote
+   * highest-numbered first — which is perfectly deterministic and therefore
+   * identical on every post a client has ever published.
+   */
+  const textOnlyEight = () => carousel("cover", "text_only", "text_only", "text_only", "text_only", "text_only", "text_only", "closer");
+  const placed = (seed: string | undefined): number[] =>
+    enforceImageryBand(textOnlyEight(), undefined, undefined, seed).promotions.map((p) => p.slide);
+
+  /**
+   * REAL run ids, not `run-a`/`run-b`. The seeds a client's posts actually
+   * carry share a 20-character prefix and differ only in their last digits,
+   * and that is the case a placement scheme is most likely to fail on: raw
+   * FNV-1a's high bits barely move across them, so the first version of this
+   * put all eight of these inside phase 0.41-0.44 and produced the IDENTICAL
+   * placement for every one. Toy seeds would have passed it.
+   */
+  const REAL_RUN_IDS = [
+    "pubsub-21904879061334183",
+    "pubsub-21896063218741941",
+    "pubsub-21895722571509959",
+    "pubsub-21899590279354945",
+    "pubsub-21120774919499971",
+    "pubsub-21066011420549815",
+    "pubsub-21868183257380937",
+    "pubsub-21864573169935321",
+  ];
+
+  it("puts the pictures in different places across real run ids", () => {
+    const seen = new Set(REAL_RUN_IDS.map((seed) => placed(seed).join(",")));
+    // Most of them distinct, not merely "more than one": the failure this
+    // guards against produced exactly one, and a scheme that produced two or
+    // three out of eight would still read as the same post every time.
+    expect(seen.size, `placements across ${REAL_RUN_IDS.length} real run ids: ${[...seen].join(" | ")}`).toBeGreaterThanOrEqual(5);
+  });
+
+  it("gives one run the same answer every time, because the band runs before sourcing and its result is checkpointed", () => {
+    expect(placed("run-stable")).toEqual(placed("run-stable"));
+  });
+
+  it("still puts a picture in the front half, whichever way the seed falls", () => {
+    // The editorial argument the old slide order carried inside it: an early
+    // photograph earns the swipe. The seed chooses WHICH slides; it does not
+    // get to leave the first half bare.
+    for (const seed of REAL_RUN_IDS) {
+      const result = enforceImageryBand(textOnlyEight(), undefined, undefined, seed);
+      const early = result.copy.slides.filter((slide) => slide.n <= 4 && FULL_BLEED_IMAGE_LAYOUTS.has(slide.layout ?? "photo"));
+      expect(early.length, `seed "${seed}" left the front half with no picture`).toBeGreaterThan(0);
+    }
+  });
+
+  it("still lands inside the band, whichever way the seed falls", () => {
+    // Moving the pictures must not change HOW MANY there are.
+    for (const seed of REAL_RUN_IDS) {
+      const result = enforceImageryBand(textOnlyEight(), undefined, undefined, seed);
+      expect(pictures(result.copy), `seed "${seed}"`).toBeGreaterThanOrEqual(MIN_PICTURE_SLIDES);
+      expect(pictures(result.copy), `seed "${seed}"`).toBeLessThanOrEqual(MAX_PICTURE_SLIDES);
+    }
+  });
+
+  it("with no seed, keeps the old slide order exactly — a fixture must not move because a run would have", () => {
+    expect(placed(undefined)).toEqual([2, 3]);
+  });
+});
+
 describe("enforceImageryBand", () => {
   it("promotes text_only to photo until the floor is met — the thepitchbydeel carousel, which shipped zero pictures", () => {
     // The real one, read off `pubsub-21559620763659451`'s deliverable: one

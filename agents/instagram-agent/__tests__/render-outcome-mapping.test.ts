@@ -68,13 +68,13 @@ describe("08-render-carousel: the three-way outcome mapping, never confused (RFC
     expect(result.status).toBe("completed");
 
     const steps = await durableStore.listSteps(params.runId);
-    // The pre-flight is what caught it, upstream of the renderer.
-    const gone = steps.find((s) => s.stepId === "06f-verify-images-on-disk-attempt-1")?.output as number[] | undefined;
-    // Every slide the VETTING fixture selected an image for, which is all six:
-    // this case hands the model a selection per slide and then deletes every
-    // file, so `06f` verifies six paths and `07a` downgrades the six it was
-    // handed, whatever the imagery band did to the layouts upstream.
-    expect(gone).toEqual(copy.slides.map((s) => s.n));
+    // The pre-flight is what caught it, upstream of the renderer. It is no
+    // longer a step to read — a checkpointed guard answers from its recording
+    // instead of from the disk, which is exactly how a post shipped with no
+    // pictures (2026-09-20) — so what is asserted is the effect it had:
+    // the renderer was never handed a missing file, and the downgrade below
+    // names the disk as the reason.
+    expect(steps.find((s) => s.stepId === "08-render-carousel-attempt-1")?.status).not.toBe("content_fail");
     // And it flowed into the ordinary downgrade path, not a bespoke one.
     const downgrade = steps.find((s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-1")?.output as
       | { downgraded: number[]; reason: string }
@@ -84,7 +84,7 @@ describe("08-render-carousel: the three-way outcome mapping, never confused (RFC
     // imagery band that is four of the six. The gap between this list and `gone`
     // above is the band, which makes the pair of them the one assertion in this
     // file that would go quiet if the band stopped working.
-    expect(downgrade?.downgraded).toEqual(pictureSlidesOfGoodCopy(copy));
+    expect(downgrade?.downgraded).toEqual(pictureSlidesOfGoodCopy(copy, params.runId));
     expect(downgrade?.reason).toMatch(/no longer on disk/i);
     // Delivered, with no image attached to any slide.
     expect(steps.map((s) => s.stepId)).toContain("09b-deliver-and-log");

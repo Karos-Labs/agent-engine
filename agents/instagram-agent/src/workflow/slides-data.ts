@@ -323,6 +323,17 @@ export function clampEyebrow(text: string): string {
 export const VARIATION_MIX = 0.25;
 
 /**
+ * The share of RUNS whose carousel renders inverted (dark ground, light ink).
+ *
+ * A per-POST probability, not a per-slide one — see `decideGroundFgInversion`
+ * for why that distinction is the whole point. Held at `VARIATION_MIX`'s old
+ * value so the fleet-wide rate of dark posts is unchanged; what changed is
+ * that the quarter is now a quarter of posts instead of a quarter of slides
+ * inside every post.
+ */
+export const GROUND_POLARITY_MIX = 0.25;
+
+/**
  * (sqrt(5)-1)/2 — the golden ratio's conjugate, the real number classically
  * used to build a low-discrepancy (Weyl/additive-recurrence) sequence: adding
  * it modulo 1 on every step equidistributes over any window (so a long
@@ -415,6 +426,29 @@ export interface GroundFgInversionConfig {
    * before this ticket and IGSTYLE-10 does not revisit it.
    */
   directivePinned: boolean;
+  /**
+   * ── THE CLIENT'S OWN SECOND GROUND, OR NOTHING. ──
+   *
+   * True only when this client's brand record declares a ground to alternate
+   * to (`renderTokens.altGround`), read from the client's documents like
+   * every other colour in the kit.
+   *
+   * It exists because "invert" was, on its own, the engine INVENTING a second
+   * ground. `karoslabs` declares exactly one — `--bg: #f2f1ec`, the grey it is
+   * supposed to be — and one accent, and nothing in its brand record says a
+   * near-black page is ever acceptable. Rendering a quarter of its posts on
+   * `--fg` was the engine deciding that for it.
+   *
+   * The owner's rule, 2026-09-20: *"לכל לקוח הצבעים וכל הפונטים וכל הידע על
+   * הלקוח יהיה לפי המסמכים שיש לנו על הלקוח"* — and, for the ground
+   * specifically, *"אם הרקע הוא כבר אפור כזה כמו שהוא אמור להיות בKAROS אז לא
+   * אמור להיות עוד צבע"*. Between-run variety is welcome where the client's
+   * palette actually supports it, *"אם יש עוד גוון רקע שיתאים"*, and nowhere
+   * else. So this is a capability a client's record grants, never a default:
+   * no declared alternate, no alternation, and the post renders on the one
+   * ground the client has.
+   */
+  alternateGroundDeclared: boolean;
 }
 
 /** One axis's status for one slide, for the gate payload's `variationPlan` (§10e). */
@@ -572,18 +606,41 @@ function resolveSlideAccent(
 
 /**
  * §10a/10c — whether slide `index` inverts its ground/fg pairing, and why
- * not when it doesn't. The walk is seeded from `paletteSeed`, namespaced
+ * not when it doesn't. The draw is seeded from `paletteSeed`, namespaced
  * (`:groundFg`) so this axis's phase needn't coincide with the accent axis's
  * own walk over the same seed.
+ *
+ * ── ONE POLARITY PER CAROUSEL (2026-09-20). ──
+ *
+ * This used to be a per-SLIDE draw at `VARIATION_MIX` (0.25), and the owner
+ * rejected the result on sight: prep run `pubsub-21904879061334183` rendered
+ * slides 1 and 4 of 8 on a dark ground and the other six on cream — *"זה לא
+ * נראה טוב שחלק מהפוסט אז הרקע לבן וחלק שחור"*. Two of eight is exactly the
+ * 25% the mix asks for, so the axis was working as specified and the
+ * specification was wrong.
+ *
+ * It is the same mistake, on a third axis, that Phase 5.5 item C already
+ * fixed for the accent ring (four colours inside one post) and that the
+ * numeral ground was cut back for before that. The owner's ruling then is
+ * the ruling now: **within-carousel variety is the wrong axis — a carousel is
+ * ONE visual system, and variety belongs ACROSS runs and clients.**
+ *
+ * So the draw stays seeded and stays random, and simply moves up a level:
+ * `paletteSeed` is per run, so roughly `GROUND_POLARITY_MIX` of a client's
+ * POSTS come out dark and the rest light, while any one post is wholly one or
+ * wholly the other. Nothing here reduces variation; it relocates it to where
+ * a reader can actually perceive it as a choice rather than as an accident.
  */
 function decideGroundFgInversion(
-  index: number,
   paletteSeed: string | undefined,
-  slideAccent: string,
+  carouselAccents: readonly string[],
   config: GroundFgInversionConfig | undefined,
 ): { used: boolean; reason?: VariationPlanEntry["reason"] } {
   if (config === undefined) return { used: false, reason: "no-ground-pair" };
   if (config.directivePinned) return { used: false, reason: "directive-pinned" };
+  // No second ground in the client's own record means there is no alternation
+  // to make — see `alternateGroundDeclared`.
+  if (!config.alternateGroundDeclared) return { used: false, reason: "no-ground-pair" };
   // §10c-2: the constraint that actually bites — the accent must still clear
   // the floor against what BECOMES the ground once inverted (today's fg).
   // Checked BEFORE the walk (not after): the accent itself can vary per
@@ -592,10 +649,19 @@ function decideGroundFgInversion(
   // floor should say so regardless of whether the walk would have picked it
   // — the walk deciding "not this slide's turn" is the only case honestly
   // reported as no reason at all.
-  if (contrastRatio(slideAccent, config.fg) < INVERTED_ACCENT_GROUND_CONTRAST_FLOOR) {
+  //
+  // Read against EVERY accent the carousel can paint, not against one
+  // slide's. Now that the polarity is a property of the post, a single
+  // ring member that cannot clear the floor on the inverted ground vetoes
+  // the whole post rather than just its own slide — a veto that applied per
+  // slide would reintroduce the mixed carousel by the back door.
+  if (carouselAccents.some((accent) => contrastRatio(accent, config.fg) < INVERTED_ACCENT_GROUND_CONTRAST_FLOOR)) {
     return { used: false, reason: "accent-fails-inverted-ground" };
   }
-  if (!isVariationSlot(index, VARIATION_MIX, `${paletteSeed ?? ""}:groundFg`)) return { used: false };
+  // `index` 0, always: the seeded draw decides the POST's polarity, and the
+  // same answer is handed to every slide in it. See this function's doc
+  // comment.
+  if (!isVariationSlot(0, GROUND_POLARITY_MIX, `${paletteSeed ?? ""}:groundFg`)) return { used: false };
   return { used: true };
 }
 
@@ -626,6 +692,9 @@ export function buildVariationPlan(params: {
   carouselWideAccent?: boolean | undefined;
 }): VariationPlanEntry[] {
   const plan: VariationPlanEntry[] = [];
+  // Every accent this post can paint, for the carousel-level polarity veto.
+  const carouselAccents: readonly string[] =
+    params.accentRing !== undefined && params.accentRing.length > 0 ? params.accentRing : [params.brandAccentFallback];
   const alignments = planTextAlign(params.slideNs.length, params.paletteSeed);
   params.slideNs.forEach((n, index) => {
     const { accent, rotates } = resolveSlideAccent(n, params.accentRing, params.paletteSeed, params.brandAccentFallback, params.carouselWideAccent === true);
@@ -639,7 +708,7 @@ export function buildVariationPlan(params: {
       ...(rotates ? {} : { reason: params.carouselWideAccent === true && (params.accentRing?.length ?? 0) > 1 ? ("carousel-wide" as const) : ("ring=1" as const) }),
     });
 
-    const groundFg = decideGroundFgInversion(n, params.paletteSeed, accent, params.groundFgInversion);
+    const groundFg = decideGroundFgInversion(params.paletteSeed, carouselAccents, params.groundFgInversion);
     plan.push({ slide: n, axis: "groundFg", used: groundFg.used, ...(groundFg.reason !== undefined ? { reason: groundFg.reason } : {}) });
 
     // RFC-17 §5.5. `used` means "the seeded walk decided this slide's
@@ -2537,6 +2606,11 @@ export function assembleSlidesData(params: {
   // slot (no client-name field exists anywhere in this agent's per-slide contract to
   // put next to one), so wiring it through would have nothing real to attach to.
   const accentColor = params.brandTokens.accentColor ?? params.brandAccentFallback ?? "#C4552F";
+  // Same set, same order, as `buildVariationPlan` builds — the two must agree
+  // on the polarity or the gate payload would report a post the plates did
+  // not render.
+  const carouselAccents: readonly string[] =
+    params.accentRing !== undefined && params.accentRing.length > 0 ? params.accentRing : [accentColor];
 
   // One direction for the whole carousel, not per slide — a post is written
   // in one language, and a stat figure or kicker (short, often just digits or
@@ -2624,7 +2698,7 @@ export function assembleSlidesData(params: {
     // this slide actually renders on: an inverted slide's ground is the kit's
     // `--fg`, and `block` is legal on one of the pair and refused on the
     // other.
-    const { used: inverted } = decideGroundFgInversion(slide.n, params.paletteSeed, slideAccentColor, params.groundFgInversion);
+    const { used: inverted } = decideGroundFgInversion(params.paletteSeed, carouselAccents, params.groundFgInversion);
     const effectiveGround = inverted ? params.foregroundHex : params.groundHex;
     const effectiveFg = inverted ? params.groundHex : params.foregroundHex;
     // RFC-20 — `refuseBlock` is resolved HERE, where `layout` already is, and

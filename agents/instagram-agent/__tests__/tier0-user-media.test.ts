@@ -157,7 +157,7 @@ describe("instagram Tier 0: client-supplied media", () => {
     // The slides that asked for a picture, which is no longer every slide: the
     // imagery band demotes the last two of this all-photo fixture at 04m2,
     // before 05b asks any harvester for anything.
-    expect(seen.needs?.map((n) => n.n)).toEqual(pictureSlidesOfGoodCopy(copy));
+    expect(seen.needs?.map((n) => n.n)).toEqual(pictureSlidesOfGoodCopy(copy, params.runId));
   });
 
   it("asks for every slide when nothing was attached, exactly as before Tier 0 existed", async () => {
@@ -167,7 +167,7 @@ describe("instagram Tier 0: client-supplied media", () => {
     // The slides that asked for a picture, which is no longer every slide: the
     // imagery band demotes the last two of this all-photo fixture at 04m2,
     // before 05b asks any harvester for anything.
-    expect(seen.needs?.map((n) => n.n)).toEqual(pictureSlidesOfGoodCopy(copy));
+    expect(seen.needs?.map((n) => n.n)).toEqual(pictureSlidesOfGoodCopy(copy, params.runId));
   });
 
   it("ignores an attachment whose role is not a usable image slot", async () => {
@@ -259,7 +259,7 @@ describe("instagram Tier 0: client-supplied media", () => {
     // The slides that asked for a picture, which is no longer every slide: the
     // imagery band demotes the last two of this all-photo fixture at 04m2,
     // before 05b asks any harvester for anything.
-    expect(seen.needs?.map((n) => n.n)).toEqual(pictureSlidesOfGoodCopy(copy));
+    expect(seen.needs?.map((n) => n.n)).toEqual(pictureSlidesOfGoodCopy(copy, params.runId));
   });
 
   // ── RFC-14 item T: the upload also joins the client's media library ──

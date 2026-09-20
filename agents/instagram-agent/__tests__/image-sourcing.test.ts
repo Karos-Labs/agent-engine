@@ -120,7 +120,7 @@ describe("05b-source-images", () => {
     // The slides that asked for a picture, which is no longer every slide: the
     // imagery band demotes the last two of this all-photo fixture at 04m2,
     // before 05b asks any harvester for anything.
-    expect(needs.map((n) => n.n)).toEqual(pictureSlidesOfGoodCopy(copy));
+    expect(needs.map((n) => n.n)).toEqual(pictureSlidesOfGoodCopy(copy, params.runId));
     // Phase 3, item R: the retrieval query is `retrievalQueryFor(...)`, not
     // the raw need. This fixture's slides carry the LEGACY bare string, and
     // the rule for one is "the first eight words" — a keyword index cannot
@@ -130,7 +130,7 @@ describe("05b-source-images", () => {
     expect(needs.map((n) => n.query)).toEqual(
       // The same slides the needs above came from, for the same reason.
       copy.slides
-        .filter((s) => pictureSlidesOfGoodCopy(copy).includes(s.n))
+        .filter((s) => pictureSlidesOfGoodCopy(copy, params.runId).includes(s.n))
         .map((s) => String(s.visualNeed).split(/\s+/).slice(0, 8).join(" ")),
     );
     expect(seen?.["repoRoot"]).toBe(env.repoRoot);
@@ -390,7 +390,7 @@ describe("05b-source-images", () => {
     // which the imagery band turned into a slide that never asked for one and
     // so could never be downgraded for want of it. Derived, so the case keeps
     // meaning "a picture slide whose picture cannot be found".
-    const UNFILLABLE = pictureSlidesOfGoodCopy().at(-1)!;
+    const UNFILLABLE = pictureSlidesOfGoodCopy(undefined, "instagram_run_rescue_exhausted").at(-1)!;
     const copy = goodCopyOutput();
     const pool = goodImageCandidatePool();
 

@@ -1270,7 +1270,7 @@ describe("assembleSlidesData: ground/fg inversion axis (IGSTYLE-10, §10a/10c)",
     }));
   }
 
-  it("some slides render through the inverted sibling file when a derived ground/fg pair is present and legal", () => {
+  it("EVERY slide renders through the inverted sibling file when the client declares an alternate ground and the seed draws it", () => {
     const data = assembleSlidesData({
       clientSlug: "acme",
       postId: "post_1",
@@ -1284,12 +1284,15 @@ describe("assembleSlidesData: ground/fg inversion axis (IGSTYLE-10, §10a/10c)",
       // once inverted — chosen deliberately so this test isolates the walk,
       // not the accent-contrast gate (see the accent-bound test below for that).
       brandAccentFallback: "#C4552F",
-      groundFgInversion: { ground: "#17181C", fg: "#F4F2EC", directivePinned: false },
+      groundFgInversion: { ground: "#17181C", fg: "#F4F2EC", directivePinned: false, alternateGroundDeclared: true },
       paletteSeed: "run-inv-1",
     });
     const templates = data.slides.map((s) => s.template);
-    expect(templates.some((t) => t === invertedTemplateFileName("slide.html"))).toBe(true);
-    expect(templates.some((t) => t === "slide.html")).toBe(true);
+    // One polarity for the whole post (2026-09-20). A carousel that is part
+    // cream and part near-black is the defect this asserts against, so the
+    // check is that the set of templates has exactly ONE member — the thing
+    // a `some(...)` pair could never catch.
+    expect(new Set(templates)).toEqual(new Set([invertedTemplateFileName("slide.html")]));
     for (const t of templates) expect([`slide.html`, invertedTemplateFileName("slide.html")]).toContain(t);
   });
 
@@ -1318,7 +1321,7 @@ describe("assembleSlidesData: ground/fg inversion axis (IGSTYLE-10, §10a/10c)",
         selections: sixSelections(),
         canvas: CANVAS,
         brandAccentFallback: "#A5E82B",
-        groundFgInversion: { ground: "#17181C", fg: "#F4F2EC", directivePinned: true },
+        groundFgInversion: { ground: "#17181C", fg: "#F4F2EC", directivePinned: true, alternateGroundDeclared: true },
         paletteSeed: seed,
       });
       for (const s of data.slides) expect(s.template, `seed ${seed}`).toBe("slide.html");
@@ -1339,7 +1342,7 @@ describe("assembleSlidesData: ground/fg inversion axis (IGSTYLE-10, §10a/10c)",
       selections: sixSelections(),
       canvas: CANVAS,
       brandAccentFallback: "#5938b7",
-      groundFgInversion: { ground: "#faf4ee", fg: "#1b1b1b", directivePinned: false },
+      groundFgInversion: { ground: "#faf4ee", fg: "#1b1b1b", directivePinned: false, alternateGroundDeclared: true },
       paletteSeed: "run-inv-1",
     });
     for (const s of data.slides) expect(s.template).toBe("slide.html");
@@ -1360,7 +1363,7 @@ describe("assembleSlidesData: ground/fg inversion axis (IGSTYLE-10, §10a/10c)",
       // fallback deliberately disagrees, proving which one was consulted.
       brandAccentFallback: "#A5E82B",
       accentRing: ["#C4552F"], // ring.length <= 1: the accent axis cannot rotate
-      groundFgInversion: { ground: "#17181C", fg: "#F4F2EC", directivePinned: false },
+      groundFgInversion: { ground: "#17181C", fg: "#F4F2EC", directivePinned: false, alternateGroundDeclared: true },
       paletteSeed: "run-inv-1",
     });
     expect(data.slides.some((s) => s.template === invertedTemplateFileName("slide.html"))).toBe(true);
@@ -1400,7 +1403,7 @@ describe("assembleSlidesData: ground/fg inversion axis (IGSTYLE-10, §10a/10c)",
       selections: sixSelections(),
       canvas: CANVAS,
       brandAccentFallback: "#C4552F",
-      groundFgInversion: { ground, fg, directivePinned: false },
+      groundFgInversion: { ground, fg, directivePinned: false, alternateGroundDeclared: true },
       paletteSeed: "run-inv-1",
     });
     const invertedCount = data.slides.filter((s) => s.template === invertedTemplateFileName("slide.html")).length;
@@ -1436,7 +1439,7 @@ describe("buildVariationPlan (IGSTYLE-10, §10e — the gate payload's own repor
       accentRing: ["#C4552F"],
       paletteSeed: "run-plan-1",
       brandAccentFallback: "#A5E82B",
-      groundFgInversion: { ground: "#17181C", fg: "#F4F2EC", directivePinned: false },
+      groundFgInversion: { ground: "#17181C", fg: "#F4F2EC", directivePinned: false, alternateGroundDeclared: true },
     });
     const accentEntries = plan.filter((e) => e.axis === "accent");
     expect(accentEntries).toHaveLength(6);
@@ -1445,7 +1448,10 @@ describe("buildVariationPlan (IGSTYLE-10, §10e — the gate payload's own repor
       expect(e.reason).toBe("ring=1");
     }
     const groundFgEntries = plan.filter((e) => e.axis === "groundFg");
-    expect(groundFgEntries.some((e) => e.used)).toBe(true);
+    // Honest groundFg status = the same status on every slide. Which way the
+    // seed fell is this seed's business; that the post agrees with itself is
+    // the invariant (2026-09-20).
+    expect(new Set(groundFgEntries.map((e) => e.used)).size).toBe(1);
   });
 
   it("reports 'no-ground-pair' for every slide's groundFg axis when inversion is unavailable", () => {
@@ -1464,7 +1470,7 @@ describe("buildVariationPlan (IGSTYLE-10, §10e — the gate payload's own repor
       slideNs: [1, 2, 3, 4, 5, 6, 7, 8],
       paletteSeed: "run-plan-2",
       brandAccentFallback: "#A5E82B",
-      groundFgInversion: { ground: "#17181C", fg: "#F4F2EC", directivePinned: true },
+      groundFgInversion: { ground: "#17181C", fg: "#F4F2EC", directivePinned: true, alternateGroundDeclared: true },
     });
     for (const e of plan.filter((e) => e.axis === "groundFg")) {
       expect(e.used).toBe(false);
@@ -1477,7 +1483,7 @@ describe("buildVariationPlan (IGSTYLE-10, §10e — the gate payload's own repor
       slideNs: [1, 2, 3, 4, 5, 6],
       paletteSeed: "run-plan-3",
       brandAccentFallback: "#5938b7",
-      groundFgInversion: { ground: "#faf4ee", fg: "#1b1b1b", directivePinned: false },
+      groundFgInversion: { ground: "#faf4ee", fg: "#1b1b1b", directivePinned: false, alternateGroundDeclared: true },
     });
     for (const e of plan.filter((e) => e.axis === "groundFg")) {
       expect(e.used).toBe(false);
@@ -1486,7 +1492,7 @@ describe("buildVariationPlan (IGSTYLE-10, §10e — the gate payload's own repor
   });
 
   it("agrees with assembleSlidesData's own template choice, slide for slide", () => {
-    const groundFgInversion = { ground: "#17181C", fg: "#F4F2EC", directivePinned: false };
+    const groundFgInversion = { ground: "#17181C", fg: "#F4F2EC", directivePinned: false, alternateGroundDeclared: true };
     const copy = copyWith(Array.from({ length: 8 }, () => ({})));
     const selections: ImageSelection[] = Array.from({ length: 8 }, (_, i) => ({
       n: i + 1,
@@ -1516,7 +1522,9 @@ describe("buildVariationPlan (IGSTYLE-10, §10e — the gate payload's own repor
       groundFgInversion,
       paletteSeed: "run-plan-agree",
     });
-    expect(data.slides.some((s) => s.template === invertedTemplateFileName("slide.html"))).toBe(true);
+    // The two must agree slide for slide, whichever way this seed fell — and
+    // they must agree on ONE answer for the whole post.
+    expect(new Set(data.slides.map((s) => s.template)).size).toBe(1);
     for (const slide of data.slides) {
       const wasInverted = slide.template === invertedTemplateFileName("slide.html");
       const planEntry = plan.find((e) => e.slide === slide.n && e.axis === "groundFg")!;

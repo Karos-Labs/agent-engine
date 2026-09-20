@@ -16,6 +16,7 @@ import {
   goodImageVettingOutput,
   goodResearchOutput,
   goodVisualQaOutput,
+  goodBrandTokens,
   makePromptStore,
   setupTestEnvironment,
   type TestEnvironment,
@@ -72,7 +73,14 @@ function draftTurns(copyOutput: ReturnType<typeof goodCopyOutput>) {
 describe("ground/fg inversion, end to end (IGSTYLE-10, §10a/10b/10c/10e)", () => {
   let env: TestEnvironment;
   beforeEach(async () => {
-    env = await setupTestEnvironment();
+    // ── This client DECLARES a second ground. ──
+    //
+    // Since 2026-09-20 alternation is a capability a client's own record
+    // grants (`renderTokens.altGround`) rather than something the engine does
+    // by default — `karoslabs` has one ground and must always render on it.
+    // This fixture is the other case: a brand that says a dark page is
+    // legitimate for it, which is what these tests are about.
+    env = await setupTestEnvironment({ brandTokens: { ...goodBrandTokens(), renderTokens: { ...(goodBrandTokens().renderTokens ?? {}), altGround: "#17181C" } } });
   });
   afterEach(async () => {
     await env.cleanup();
@@ -88,15 +96,16 @@ describe("ground/fg inversion, end to end (IGSTYLE-10, §10a/10b/10c/10e)", () =
     });
   }
 
-  it("materializes an inverted sibling template with ground/fg swapped, points the seeded slide at it, and reports it in the gate's variationPlan", async () => {
+  it("materializes an inverted sibling template with ground/fg swapped, points EVERY slide at it, and reports it in the gate's variationPlan", async () => {
     await env.store.writeJson("acme", ["client", "brand"], INVERTIBLE_BRAND);
     const copy = goodCopyOutput();
     const router = fakeRouterSequence([finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), ...draftTurns(copy)]);
     const durableStore = new MemoryDurableStepStore();
     const engine = new WorkflowEngine(durableStore);
-    // Verified empirically (see this ticket's own implementation notes): this
-    // runId's seeded walk lands on slide 5 of 6 — one genuine alternate,
-    // spread out, matching §10b's own "not a per-slide coin flip" shape.
+    // This runId's seeded draw comes out INVERTED, so the whole carousel is
+    // dark. It used to invert slide 5 of 6 and leave the other five cream,
+    // which is the mixed post the owner rejected on 2026-09-20 — see
+    // `decideGroundFgInversion`. The seed is unchanged; what it decides is.
     const runId = "igstyle10_ground_fg_inversion";
 
     const r0 = await engine.run(workflowFn(router), { ...base, runId });
@@ -106,11 +115,14 @@ describe("ground/fg inversion, end to end (IGSTYLE-10, §10a/10b/10c/10e)", () =
     const slidesData = slidesStep?.output as { slides: Array<{ n: number; template: string }> };
     const invertedFile = invertedTemplateFileName("slide.html");
     const invertedSlides = slidesData.slides.filter((s) => s.template === invertedFile);
-    expect(invertedSlides.map((s) => s.n)).toEqual([5]);
-    // Every other slide keeps the primary file, unchanged.
-    for (const s of slidesData.slides) {
-      if (s.n !== 5) expect(s.template).toBe("slide.html");
-    }
+    // ── THE POST IS ONE POLARITY. ──
+    //
+    // Not "slide 5 is inverted": every slide is. A carousel that is part
+    // cream and part near-black is the defect, and the assertion that would
+    // have caught it is this one — a count, not a membership test.
+    expect(invertedSlides.map((s) => s.n)).toEqual(slidesData.slides.map((s) => s.n));
+    const distinctTemplates = new Set(slidesData.slides.map((s) => s.template));
+    expect(distinctTemplates).toEqual(new Set([invertedFile]));
 
     // The inverted file actually exists on disk, with the swap baked in —
     // not just named in the slide data.
@@ -150,8 +162,9 @@ describe("ground/fg inversion, end to end (IGSTYLE-10, §10a/10b/10c/10e)", () =
     expect(payload.variationPlan).toBeDefined();
     const groundFgEntries = payload.variationPlan!.filter((e) => e.axis === "groundFg");
     expect(groundFgEntries).toHaveLength(6);
-    expect(groundFgEntries.find((e) => e.slide === 5)?.used).toBe(true);
-    expect(groundFgEntries.filter((e) => e.used)).toHaveLength(1);
+    // The payload must report what the plates rendered: all six, or none.
+    expect(groundFgEntries.filter((e) => e.used)).toHaveLength(6);
+    expect(new Set(groundFgEntries.map((e) => e.used))).toEqual(new Set([true]));
     // The accent axis is reported too, honestly — a one-colour ring here.
     const accentEntries = payload.variationPlan!.filter((e) => e.axis === "accent");
     expect(accentEntries.every((e) => e.used === false && e.reason === "ring=1")).toBe(true);

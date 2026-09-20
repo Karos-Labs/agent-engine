@@ -200,9 +200,12 @@ const HAPPY_PATH_STEP_IDS = [
   "04p-resolve-visual-system",
   "05-write-copy-attempt-1",
   "06-vet-images-attempt-1",
-  // Zero-held guarantee: confirms every selected image is still on disk, so a
-  // file lost since vetting degrades that slide instead of failing the render.
-  "06f-verify-images-on-disk-attempt-1",
+  // The chosen bytes, copied off this instance's in-RAM media cache and into
+  // the media bucket, so a resume onto a fresh instance can get them back
+  // (2026-09-20). The on-disk verification that USES them is deliberately not
+  // a step: a checkpointed guard replays its verdict instead of looking at
+  // the disk, which is how a post shipped with no pictures at all.
+  "06e2-stage-images-durably-attempt-1",
   // ONE PICTURE, ONE SLIDE. Every slide is vetted independently against one
   // shared pool, so the best picture in it wins every slide it is offered to,
   // and `usedImagesSet` only ever stopped a repeat ACROSS runs. This clears a
@@ -669,7 +672,7 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     // Derived, never a literal — see `signatureOfGoodCopy`. What this asserts is
     // that the belief the run writes back names the carousel it actually
     // rendered, including what the imagery band and the bounded object did to it.
-    expect(payload?.skeleton?.signature).toBe(signatureOfGoodCopy());
+    expect(payload?.skeleton?.signature).toBe(signatureOfGoodCopy(undefined, runId));
 
     await engine.resolveGate(runId, "09a-batch-review-r0", { decision: "approve", actor: "jane@karoslabs.com", at: new Date().toISOString() });
     expect((await engine.run(workflowFn, { ...params, runId })).status).toBe("completed");
@@ -694,11 +697,21 @@ describe("end-to-end: the 9-step Instagram agent workflow (RFC-03)", () => {
     expect(history.entries).toHaveLength(1);
     expect(history.entries[0]!.runId).toBe(runId);
     // Four pictures and two typographic plates, which is the imagery band: this
-    // fixture asks for six `photo` slides and `ceilingFor(6)` puts four in force,
-    // so `04m2` hands the last two back before anything is sourced. Written out
-    // rather than derived, because the point of this assertion is that the belief
-    // records what SHIPPED and not what the writer asked for.
-    expect(history.entries[0]!.archetypes).toEqual(["photo", "photo", "photo", "photo", "text_only", "text_only"]);
+    // fixture asks for six `photo` slides and `ceilingFor(6)` puts four in
+    // force, so `04m2` hands two of them back before anything is sourced.
+    //
+    // WHICH two is a property of the run since 2026-09-20 — the band varies the
+    // positions, seeded on the run id — so what is pinned here is the count and
+    // the fact that it is not what the writer asked for. Still deliberately NOT
+    // derived through `enforceImageryBand`, for the reason this assertion has
+    // always had: the point is that the belief records what SHIPPED, and
+    // deriving it through the very function the workflow used would assert only
+    // that the function equals itself.
+    const archetypes = history.entries[0]!.archetypes;
+    expect(archetypes).toHaveLength(6);
+    expect(archetypes.filter((a) => a === "photo")).toHaveLength(4);
+    expect(archetypes.filter((a) => a === "text_only")).toHaveLength(2);
+    expect(archetypes, "the belief recorded the writer's six photo slides rather than the four that shipped").not.toEqual(Array<string>(6).fill("photo"));
     expect(history.entries[0]!.roles).toEqual(["cover", "interior", "interior", "interior", "interior", "closer"]);
     expect(history.entries[0]!.edited).toBe(false);
     expect(beliefs?.[RUN_BUDGET_BELIEF_KEY]).toBeDefined();
