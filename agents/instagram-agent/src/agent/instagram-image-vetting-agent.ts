@@ -150,6 +150,6 @@ export class InstagramImageVettingAgent extends BaseAgent<ImageVettingOutput> {
     // so a commentary post may use a press photograph of the public figure it
     // is about. ≈ +400 input tokens and ≈ +60 output tokens per call. v5
     // frozen.
-    skillRef: "instagram-image-vet@6",
+    skillRef: "instagram-image-vet@7",
   };
 }

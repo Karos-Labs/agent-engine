@@ -162,20 +162,24 @@ describe("step 2 — the payload stops presenting the grade as central", () => {
    */
   it("the prompt carries the sentence that does the work", () => {
     const prompt = readFileSync(fileURLToPath(new URL("../prompts/instagram-image-vet/latest.md", import.meta.url)), "utf8");
-    expect(prompt).toContain("v6");
+    expect(prompt).toContain("v7");
     expect(prompt).toContain("`scene` is DECORATIVE");
     expect(prompt).toContain("a picture may never be refused for");
     expect(prompt.replace(/\s+/gu, " ")).toContain("a picture may never be refused for lacking a treatment named in `scene`.");
     expect(prompt).toContain("subjectMatch");
     expect(prompt).toContain("Never cite technique in");
-    // And the two prompt files are the same file.
-    const six = readFileSync(fileURLToPath(new URL("../prompts/instagram-image-vet/6.md", import.meta.url)), "utf8");
-    expect(six).toBe(prompt);
+    // And the two prompt files are the same file. Pinned to the version the
+    // agent READS (@7 from 2026-09-20), not to a frozen number: the point of
+    // the assertion is that `latest.md` has not drifted from the version the
+    // registry names, and a hard-coded 6 would go on passing against a stale
+    // file for as long as nobody looked.
+    const seven = readFileSync(fileURLToPath(new URL("../prompts/instagram-image-vet/7.md", import.meta.url)), "utf8");
+    expect(seven).toBe(prompt);
   });
 
   it("the agent is pinned to @6, on the tier the harder question is worth", () => {
     const config = (new InstagramImageVettingAgent({ router: {} as never, tools: {} }) as unknown as { config: { skillRef: string; modelPolicy?: { model?: string } } }).config;
-    expect(config.skillRef).toBe("instagram-image-vet@6");
+    expect(config.skillRef).toBe("instagram-image-vet@7");
     expect(config.modelPolicy?.model).toBe("gemini-3.1-pro-preview");
   });
 });

@@ -519,7 +519,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect(registry).toContain(`{ promptId: "instagram-native-editor", agent: "instagram-agent", versions: ["1", "2", "3"], latestVersion: "3" }`);
     // Phase 3 (items Q and R). Phase 5.5 item A3 bumps the vet to @6: the
     // SUBJECT is separated from the scene, and `scene` is declared decorative.
-    expect(registry).toContain(`{ promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5", "6"], latestVersion: "6" }`);
+    expect(registry).toContain(`{ promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5", "6", "7"], latestVersion: "7" }`);
     // Phase 5.5 item A2: `04b3-extract-entities`, the prompt this package added.
     expect(registry).toContain(`{ promptId: "instagram-entities", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
     // Phase 5.5 items C/D bump the director to @2: it now also derives the six
@@ -534,7 +534,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect(registry).toContain(`{ promptId: "instagram-concept", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
   });
 
-  it("every agent reads the version this phase shipped: copy @24, post package @2, visual QA @5, image vet @6, entities @1, art director @2, concept @1", async () => {
+  it("every agent reads the version this phase shipped: copy @24, post package @2, visual QA @5, image vet @7, entities @1, art director @2, concept @1", async () => {
     // The last line of a prompt bump, and the one most often forgotten: a new
     // prompt file that no `skillRef` points at exists, resolves, and is read
     // by nothing.
@@ -546,7 +546,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     const qa = new InstagramVisualQaAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((qa as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-visual-qa@5");
     const vet = new InstagramImageVettingAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((vet as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-image-vet@6");
+    expect((vet as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-image-vet@7");
     const entities = new InstagramEntityAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((entities as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-entities@1");
     const director = new InstagramArtDirectorAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
@@ -555,7 +555,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect((concept as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-concept@1");
   });
 
-  it("instagram-copy@24, instagram-post-package@2, instagram-image-vet@6, instagram-entities@1, instagram-art-director@2 and instagram-concept@1 resolve, each byte-identical to its own latest.md", async () => {
+  it("instagram-copy@24, instagram-post-package@2, instagram-image-vet@7, instagram-entities@1, instagram-art-director@2 and instagram-concept@1 resolve, each byte-identical to its own latest.md", async () => {
     // Phase 3 (items Q and R). The byte comparison is the one `check:prompts`
     // makes too, and it is here as well because a drifted `latest.md` is the
     // failure mode where a run silently reads a DIFFERENT prompt from the one
@@ -564,7 +564,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     for (const [promptId, version, h1] of [
       ["instagram-copy", "26", "# Instagram Copy Craft Guide, v26"],
       ["instagram-post-package", "2", "# Instagram Post Package Guide, v2"],
-      ["instagram-image-vet", "6", "# Instagram Image Vetting Craft Guide — v6"],
+      ["instagram-image-vet", "7", "# Instagram Image Vetting Craft Guide — v7"],
       ["instagram-entities", "1", "# Instagram Entity Extraction — v1"],
       ["instagram-art-director", "2", "# Instagram Art Direction Guide — v2"],
       ["instagram-concept", "1", "# Instagram Concept Direction Guide — v1"],
