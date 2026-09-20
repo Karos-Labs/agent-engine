@@ -66,24 +66,39 @@ export interface CrossChannelHistory {
 }
 
 export interface SocialAccountRef {
-  platform: "x" | "instagram" | "reddit" | "tiktok";
+  platform: "x" | "instagram" | "reddit" | "tiktok" | "linkedin";
   username: string;
 }
+
+const SOCIAL_ACCOUNT_PLATFORMS = ["x", "instagram", "reddit", "tiktok", "linkedin"] as const;
 
 /**
  * The client's own accounts, from their standing configuration.
  *
  * Explicit `socialAccounts: [{platform, username}]` in `client/config.json`
- * wins; the handles the channel agents already read (`xHandle`, and the
- * brand kit's Instagram `handle`) are folded in so a client who configured an
- * X handle for posting is read on X without a second setting. LinkedIn is
- * absent because the scraper seam has no LinkedIn capability.
+ * wins; the handles the channel agents already read (`xHandle`, the brand
+ * kit's Instagram `handle`, and `linkedinHandle`) are folded in so a client
+ * who configured a handle for posting is read on that platform without a
+ * second setting.
+ *
+ * `linkedinHandle` is a bare vanity slug or a full profile URL, exactly as
+ * `research.socialHistory`'s `username` field documents — a client whose own
+ * LinkedIn presence is a company page, not a person, must configure the full
+ * `.../company/<slug>` URL there, since a bare slug is always read as a
+ * person profile.
  */
 export function socialAccountsFromClient(config: Record<string, unknown> | undefined, brand: Record<string, unknown> | undefined): SocialAccountRef[] {
   const accounts: SocialAccountRef[] = [];
   const push = (platform: SocialAccountRef["platform"], raw: unknown) => {
     if (typeof raw !== "string") return;
-    const username = raw.trim().replace(/^@/, "").replace(/^https?:\/\/[^/]+\//i, "").replace(/\/.*$/, "");
+    // A full LinkedIn URL carries meaning in its path (/in/ vs /company/) that
+    // stripping "everything after the host" would destroy, so linkedin keeps
+    // a URL whole rather than being reduced to a bare handle like every other
+    // platform here.
+    const username =
+      platform === "linkedin" && /^https?:\/\//i.test(raw.trim())
+        ? raw.trim()
+        : raw.trim().replace(/^@/, "").replace(/^https?:\/\/[^/]+\//i, "").replace(/\/.*$/, "");
     if (username.length === 0) return;
     if (!accounts.some((a) => a.platform === platform && a.username.toLowerCase() === username.toLowerCase())) accounts.push({ platform, username });
   };
@@ -92,13 +107,16 @@ export function socialAccountsFromClient(config: Record<string, unknown> | undef
     for (const entry of explicit) {
       if (entry && typeof entry === "object" && typeof (entry as Record<string, unknown>)["platform"] === "string") {
         const platform = (entry as Record<string, unknown>)["platform"] as string;
-        if (platform === "x" || platform === "instagram" || platform === "reddit" || platform === "tiktok") push(platform, (entry as Record<string, unknown>)["username"]);
+        if ((SOCIAL_ACCOUNT_PLATFORMS as readonly string[]).includes(platform)) {
+          push(platform as SocialAccountRef["platform"], (entry as Record<string, unknown>)["username"]);
+        }
       }
     }
   }
   push("x", config?.["xHandle"]);
   push("instagram", config?.["instagramHandle"] ?? brand?.["instagramHandle"] ?? brand?.["handle"]);
   push("tiktok", config?.["tiktokHandle"]);
+  push("linkedin", config?.["linkedinHandle"]);
   return accounts.slice(0, 6);
 }
 
@@ -218,6 +236,7 @@ const CHANNEL_LABEL: Record<string, string> = {
   instagram: "Instagram (the client's own account)",
   tiktok: "TikTok (the client's own account)",
   reddit: "Reddit (the client's own account)",
+  linkedin: "LinkedIn (the client's own account)",
 };
 
 /**

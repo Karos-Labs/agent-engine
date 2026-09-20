@@ -138,6 +138,40 @@ describe("reddit.discoverThreads — live thread discovery from Reddit's own fee
     expect(result.scanned[0]!.notFound).toBeUndefined();
     expect(result.candidates).toEqual([]);
   });
+
+  it("prefers a dedicated subreddit-feed capability over the searchSocial approximation, when the scraper has one", async () => {
+    const fedSubreddits: string[] = [];
+    const scraper: ScraperProvider = {
+      name: "fake-scraper",
+      async fetchSubredditFeed(subreddit) {
+        fedSubreddits.push(subreddit);
+        const t = DEFAULT_THREADS[1]!;
+        const record: ScrapedRecord = { id: threadUrl(t), url: threadUrl(t), title: t.title, text: t.body!, publishedAt: t.publishedAt!, author: t.author! };
+        return [record];
+      },
+      async searchSocial() {
+        throw new Error("should not fall back to searchSocial when fetchSubredditFeed exists");
+      },
+      async extractUrl() {
+        return undefined;
+      },
+      async searchKeyword() {
+        return [];
+      },
+      async socialHistory() {
+        return [];
+      },
+      async fetchRaw() {
+        return undefined;
+      },
+    };
+    const { tools } = toolsFor({ statusFor: () => 429 }, scraper);
+    const result = await discover(tools, { subreddits: ["smallbusiness"], keywords: ["late-paying clients"] });
+
+    expect(fedSubreddits).toEqual(["smallbusiness"]);
+    expect(result.scanned[0]).toMatchObject({ subreddit: "smallbusiness", source: "scraper", fetched: 1 });
+    expect(result.candidates[0]).toMatchObject({ url: "https://www.reddit.com/r/smallbusiness/comments/def456/", source: "scraper" });
+  });
 });
 
 describe("reddit.fetchThread — the poster's text and the existing replies", () => {
@@ -184,6 +218,38 @@ describe("reddit.fetchThread — the poster's text and the existing replies", ()
     const thread = (outcome as { result: FetchThreadResult }).result;
     expect(thread).toMatchObject({ source: "scraper", body: "Full page text of the post.", comments: [] });
     expect(thread.note).toMatch(/does not separate out the existing replies/);
+  });
+
+  it("reads real comments on the scraper fallback when the provider has a dedicated post-comments route", async () => {
+    const scraper: ScraperProvider = {
+      name: "fake-scraper",
+      async extractUrl(url) {
+        return { id: url, url, title: "Our team tried a 4-day work week", text: "Full page text of the post." };
+      },
+      async fetchPostComments() {
+        const record: ScrapedRecord = { id: "c1", url: DEFAULT_TARGET_THREAD_URL, text: "We tried the same and it stuck.", author: "u/some_commenter", publishedAt: "2026-09-01T00:00:00.000Z" };
+        return [record];
+      },
+      async searchSocial() {
+        return [];
+      },
+      async searchKeyword() {
+        return [];
+      },
+      async socialHistory() {
+        return [];
+      },
+      async fetchRaw() {
+        return undefined;
+      },
+    };
+    const { tools } = toolsFor({ statusFor: () => 403 }, scraper);
+    const outcome = await tools["reddit.fetchThread"]!.execute({ url: DEFAULT_TARGET_THREAD_URL }, { ctx });
+    expect(outcome.status).toBe("success");
+    const thread = (outcome as { result: FetchThreadResult }).result;
+    expect(thread.source).toBe("scraper");
+    expect(thread.comments).toEqual([{ author: "some_commenter", body: "We tried the same and it stuck.", postedAt: "2026-09-01T00:00:00.000Z" }]);
+    expect(thread.note).not.toMatch(/does not separate out the existing replies/);
   });
 });
 

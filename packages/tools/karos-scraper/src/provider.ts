@@ -17,7 +17,7 @@
  */
 
 /** Which social network an account-history request targets. Mirrors the capability sources the provider exposes. */
-export type SocialPlatform = "x" | "instagram" | "reddit" | "tiktok";
+export type SocialPlatform = "x" | "instagram" | "reddit" | "tiktok" | "linkedin";
 
 /**
  * One scraped item, normalised across every capability.
@@ -64,7 +64,17 @@ export interface SearchOptions extends ScrapeOptions {
 
 export interface SocialHistoryRequest extends ScrapeOptions {
   readonly platform: SocialPlatform;
-  /** Handle without a leading `@`. */
+  /**
+   * Handle without a leading `@`, for every platform except `linkedin`.
+   *
+   * LinkedIn's own capabilities (`account_posts` for a person, `company_posts`
+   * for a company page) key off a profile URL, not a bare handle, and the two
+   * are not interchangeable. So for `linkedin` this field accepts either a
+   * full `linkedin.com/in/...` or `linkedin.com/company/...` URL (routed to
+   * the matching capability), or a bare vanity slug, which is assumed to name
+   * a PERSON profile (`/in/<slug>`) — a client whose own account is a company
+   * page must configure the full `.../company/<slug>` URL.
+   */
   readonly username: string;
 }
 
@@ -155,6 +165,12 @@ export interface SitemapEntry {
   readonly url: string;
   /** ISO 8601 `<lastmod>`, when the sitemap carries one. */
   readonly lastModified?: string;
+}
+
+/** Filters `fetchSubredditFeed` passes through to a provider's own community-feed capability, when it has one. */
+export interface RedditFeedOptions extends ScrapeOptions {
+  readonly sort?: "new" | "hot" | "top";
+  readonly time?: "hour" | "day" | "week" | "month" | "year" | "all";
 }
 
 /** One `sitemap.xml` (or one leaf of a sitemap index), parsed. */
@@ -249,4 +265,25 @@ export interface ScraperProvider {
    * `options.maxDepth` and `options.limit`.
    */
   crawlSite?(seedUrl: string, options?: CrawlOptions): Promise<SiteCrawlResult>;
+
+  /**
+   * Reddit's own community feed (new/hot/top), when the provider has a
+   * dedicated route rather than only keyword search standing in for one.
+   *
+   * Optional for the same reason the crawl capabilities are: added later than
+   * the five core methods, for one caller (`reddit-agent`'s scraper fallback,
+   * which used to approximate this with `searchSocial("reddit", "subreddit:x
+   * ...")` — a query-string convention nobody had verified the vendor
+   * actually honoured). A caller checks for this before using it and falls
+   * back to `searchSocial` when it is absent.
+   */
+  fetchSubredditFeed?(subreddit: string, options?: RedditFeedOptions): Promise<ScrapedRecord[]>;
+
+  /**
+   * Existing comments on one Reddit post, when the provider has a dedicated
+   * route. Without this, a scraper fallback can only read the post body via
+   * `extractUrl` — the existing replies a reply is meant to respond to are
+   * simply unavailable on that path.
+   */
+  fetchPostComments?(postUrl: string, options?: ScrapeOptions): Promise<ScrapedRecord[]>;
 }

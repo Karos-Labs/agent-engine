@@ -11,9 +11,12 @@ import { contentFail, defineTool, notAvailable, success } from "@agent-engine/to
  * before that from one made after (the rule `scripts/check-tool-versions.ts`
  * enforces: a changed tool file declares a changed version).
  */
-const GET_BRIEF_VERSION = "1.1.0";
-/** `client.writeBrief`'s own version — new in Phase 1, so it starts at 1.0.0 rather than inheriting the reader's. */
-const WRITE_BRIEF_VERSION = "1.0.0";
+// 1.2.0: `referenceAccounts.platform` accepts "linkedin" — a brief a 1.1.0
+// reader would have rejected can now validate, so this is a widened contract,
+// not a neutral edit.
+const GET_BRIEF_VERSION = "1.2.0";
+/** `client.writeBrief`'s own version — new in Phase 1, so it starts at 1.0.0 rather than inheriting the reader's. 1.1.0: same `referenceAccounts` widening as `GET_BRIEF_VERSION`. */
+const WRITE_BRIEF_VERSION = "1.1.0";
 
 /**
  * The Client Brief — the one compact document that says who a client is,
@@ -49,10 +52,12 @@ const WRITE_BRIEF_VERSION = "1.0.0";
  * - `coreTerms` is `min(1)`: a brief with no vocabulary cannot ground a
  *   search query, and the deterministic writer always has at least the
  *   industry to fall back on.
- * - `referenceAccounts.platform` is restricted to the four platforms
+ * - `referenceAccounts.platform` is restricted to the platforms
  *   `research.socialHistory` can actually read (x, instagram, reddit,
- *   tiktok). A LinkedIn or YouTube reference would be a row nothing can act
- *   on, so the schema refuses it rather than letting it look useful.
+ *   tiktok, linkedin). A YouTube reference would be a row nothing can act on,
+ *   so the schema refuses it rather than letting it look useful. LinkedIn's
+ *   `handle` follows `research.socialHistory`'s own convention: a bare slug
+ *   (read as a person profile) or a full `.../in/` or `.../company/` URL.
  * - `referenceAccounts.domain` is the one field on that row a web search can
  *   filter by, and it is deliberately separate from `handle`: a handle is a
  *   social identifier ("lennysan", "SaaS"), never a hostname, and a research
@@ -115,7 +120,7 @@ export const ClientBriefSchema = z.object({
   referenceAccounts: z
     .array(
       z.object({
-        platform: z.enum(["x", "instagram", "reddit", "tiktok"]),
+        platform: z.enum(["x", "instagram", "reddit", "tiktok", "linkedin"]),
         handle: z.string().min(1),
         why: z.string().min(1),
         /**

@@ -17,15 +17,30 @@ function fakeTool(name: string, handler: (args: unknown) => unknown): AgentTool 
 describe("socialAccountsFromClient", () => {
   it("folds the configured handles and explicit accounts into one de-duplicated list, stripping @ and URLs", () => {
     const accounts = socialAccountsFromClient(
-      { xHandle: "@acmehq", socialAccounts: [{ platform: "x", username: "AcmeHQ" }, { platform: "tiktok", username: "acme.tok" }, { platform: "linkedin", username: "ignored" }] },
+      {
+        xHandle: "@acmehq",
+        socialAccounts: [
+          { platform: "x", username: "AcmeHQ" },
+          { platform: "tiktok", username: "acme.tok" },
+          { platform: "linkedin", username: "acme-hq" },
+        ],
+      },
       { handle: "https://instagram.com/acme.gram/" },
     );
     expect(accounts).toEqual([
       { platform: "x", username: "AcmeHQ" },
       { platform: "tiktok", username: "acme.tok" },
+      { platform: "linkedin", username: "acme-hq" },
       { platform: "instagram", username: "acme.gram" },
     ]);
     expect(socialAccountsFromClient(undefined, undefined)).toEqual([]);
+  });
+
+  it("reads linkedin from linkedinHandle, keeping a full company/person URL whole rather than reducing it to a bare handle", () => {
+    expect(socialAccountsFromClient({ linkedinHandle: "satya-nadella" }, undefined)).toEqual([{ platform: "linkedin", username: "satya-nadella" }]);
+    expect(socialAccountsFromClient({ linkedinHandle: "https://www.linkedin.com/company/karos-labs/" }, undefined)).toEqual([
+      { platform: "linkedin", username: "https://www.linkedin.com/company/karos-labs/" },
+    ]);
   });
 });
 

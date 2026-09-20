@@ -4,6 +4,7 @@ import {
   type PageStatus,
   type RawHtmlPage,
   type RawPage,
+  type RedditFeedOptions,
   type RobotsInfo,
   type ScrapeOptions,
   type ScrapedRecord,
@@ -32,14 +33,32 @@ const DEFAULT_BASE_URL = "https://api.scrappycoco.ai/api/v1";
  */
 const EXECUTE_PATH = "/scrapers/execute";
 
-/** Which capability answers each social platform's account-history question. */
-const HISTORY_CAPABILITY: Record<SocialPlatform, { capability: string; inputKey: string }> = {
+/** Which capability answers each social platform's account-history question. LinkedIn is handled separately — see `linkedinHistoryTarget`. */
+const HISTORY_CAPABILITY: Record<Exclude<SocialPlatform, "linkedin">, { capability: string; inputKey: string }> = {
   x: { capability: "account_posts", inputKey: "username" },
   instagram: { capability: "account_posts", inputKey: "username" },
   tiktok: { capability: "account_posts", inputKey: "username" },
   // Reddit has no "account posts"; the equivalent is a user's activity feed.
   reddit: { capability: "user_activity", inputKey: "username" },
 };
+
+/**
+ * LinkedIn's history capabilities key off a profile URL, not a bare handle,
+ * and a person's history (`account_posts`) and a company page's
+ * (`company_posts`) are different capabilities — so, unlike every other
+ * platform in `HISTORY_CAPABILITY`, this cannot be one static table entry.
+ *
+ * A bare slug (no scheme) is assumed to name a PERSON profile. A caller whose
+ * own account is a company page must configure the full `.../company/<slug>`
+ * URL — there is no way to tell a person slug from a company slug apart
+ * without one.
+ */
+function linkedinHistoryTarget(handle: string): { capability: string; url: string } {
+  const trimmed = handle.trim();
+  const url = /^https?:\/\//i.test(trimmed) ? trimmed : `https://www.linkedin.com/in/${trimmed.replace(/^@+/, "").replace(/^\/+|\/+$/g, "")}/`;
+  const capability = /\/company\//i.test(url) ? "company_posts" : "account_posts";
+  return { capability, url };
+}
 
 interface ExecuteResponse {
   status?: unknown;
@@ -142,7 +161,8 @@ export interface ScrappyCocoOptions {
  * Every capability returns the same normalised record shape
  * (`{url, title, text, published_at, author, engagement, outputs, metadata}`),
  * which is what makes one mapping function serve web search, page extraction
- * and five social platforms alike.
+ * and five social platforms alike (a sixth, LinkedIn, keys off a profile URL
+ * instead of a bare handle — see `linkedinHistoryTarget`).
  *
  * ## Billing is per call, and that shapes the interface
  *
@@ -242,21 +262,34 @@ export function createScrappyCocoScraper(options: ScrappyCocoOptions): ScraperPr
     },
 
     async socialHistory(request: SocialHistoryRequest): Promise<ScrapedRecord[]> {
-      const mapping = HISTORY_CAPABILITY[request.platform];
       const limit = request.limit ?? 12;
+      const timeoutMs = request.timeoutMs ?? defaultTimeoutMs;
+      if (request.platform === "linkedin") {
+        const { capability, url } = linkedinHistoryTarget(request.username);
+        return execute("linkedin", capability, { url }, limit, timeoutMs);
+      }
+      const mapping = HISTORY_CAPABILITY[request.platform];
       // A leading @ is how humans write handles and how every provider rejects them.
       const username = request.username.replace(/^@+/, "");
-      return execute(
-        request.platform,
-        mapping.capability,
-        { [mapping.inputKey]: username },
-        limit,
-        request.timeoutMs ?? defaultTimeoutMs,
-      );
+      return execute(request.platform, mapping.capability, { [mapping.inputKey]: username }, limit, timeoutMs);
     },
 
     async searchSocial(platform: SocialPlatform, query: string, opts: ScrapeOptions = {}): Promise<ScrapedRecord[]> {
       return execute(platform, "search_posts", { query }, opts.limit ?? 6, opts.timeoutMs ?? defaultTimeoutMs);
+    },
+
+    async fetchSubredditFeed(subreddit: string, opts: RedditFeedOptions = {}): Promise<ScrapedRecord[]> {
+      return execute(
+        "reddit",
+        "subreddit_feed",
+        { subreddit, ...(opts.sort ? { sort: opts.sort } : {}), ...(opts.time ? { time: opts.time } : {}) },
+        opts.limit ?? 25,
+        opts.timeoutMs ?? defaultTimeoutMs,
+      );
+    },
+
+    async fetchPostComments(postUrl: string, opts: ScrapeOptions = {}): Promise<ScrapedRecord[]> {
+      return execute("reddit", "post_comments", { post: postUrl }, opts.limit ?? 12, opts.timeoutMs ?? defaultTimeoutMs);
     },
 
     async fetchRaw(url: string, opts: ScrapeOptions = {}): Promise<RawPage | undefined> {
