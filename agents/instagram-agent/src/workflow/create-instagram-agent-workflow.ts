@@ -1297,6 +1297,39 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      * client-supplied frame is never added, so it can never be compared.
      */
     const generatedBriefs = new Map<string, string>();
+    /**
+     * Every frame `image.generate` produced this RUN, carried across attempts.
+     *
+     * ## The run this exists because of
+     *
+     * prep `pubsub-21909275109642063` (thepitchbydeel, 2026-09-20) generated
+     * eight images — its entire per-run ceiling — and shipped two pictures.
+     * The floor check told the story one attempt at a time:
+     *
+     *     attempt 1: generated 2, pictureSlides 2
+     *     attempt 2: generated 5, pictureSlides 2
+     *     attempt 3: generated 8, pictureSlides 2
+     *
+     * It was not the vet refusing them. At attempt 2 the floor vet ACCEPTED
+     * slide 2's generated frame — `claimMatch 4`, rights and watermark clear,
+     * *"Candidate was generated specifically to fulfill this slide's brief"* —
+     * and slide 2 shipped without a picture. No downgrade step recorded it,
+     * because none had run.
+     *
+     * `attemptPool` and `selections` are both declared INSIDE the attempt
+     * loop, and the pool is rebuilt from the client's uploads, the library and
+     * a fresh harvest. A frame generated on attempt 2 is in none of those, so
+     * attempt 3 could not re-select it however good it was. The run threw away
+     * what it had just bought — while `generatedSoFar` kept counting it, so
+     * the ceiling was spent on frames no post could use.
+     *
+     * A generated frame belongs to the RUN, not to the attempt that happened
+     * to buy it. Carried here, it re-enters the pool and is RE-VETTED against
+     * the new draft — which is the right treatment, because the copy really
+     * did change and a picture chosen for the old slide 2 has to earn the new
+     * one. What it must not have to do is be bought again.
+     */
+    const carriedGeneratedFrames: ImageCandidate[] = [];
 
     // ── 02b: the client's own voice/profile context — best-effort, never blocking ──
     //
@@ -7940,7 +7973,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // and before 05b's harvesters. It is absent on a client-media-only
           // run for the reason `05y` states: `mediaSource: "client"` is "only
           // media I upload for THIS job", and `05y` returns nothing there.
-          : [...tier0Pool.candidates, ...(clientMediaOnly ? [] : libraryRead.candidates)];
+          : [...tier0Pool.candidates, ...(clientMediaOnly ? [] : libraryRead.candidates), ...carriedGeneratedFrames];
       // Why the pool is empty, in the sourcing layer's own words. Without it
       // the hold below could only say "no candidate qualified", which reads as
       // an editorial verdict on the topic and sent whoever debugged prep run
@@ -8820,6 +8853,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               const slot = /(?:^|\/)n(\d+)-/.exec(cand.path)?.[1];
               const brief = slot === undefined ? undefined : batch.gaps.find((g) => g.n === Number(slot))?.prompt;
               if (brief !== undefined) generatedBriefs.set(cand.path, brief);
+              if (!carriedGeneratedFrames.some((c) => c.path === cand.path)) carriedGeneratedFrames.push(cand);
             }
             spend(rev(`06d-generate-images-attempt-${attempt}`), undefined, tierPool.length * STEP_COST_ESTIMATES_USD.generatedImage);
           } else {
@@ -9463,6 +9497,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               const slot = /(?:^|\/)n(\d+)-/.exec(cand.path)?.[1];
               const brief = slot === undefined ? undefined : floorGaps.find((g) => g.n === Number(slot))?.prompt;
               if (brief !== undefined) generatedBriefs.set(cand.path, brief);
+              if (!carriedGeneratedFrames.some((c) => c.path === cand.path)) carriedGeneratedFrames.push(cand);
             }
             spend(rev(`06d2-generate-floor-images-attempt-${attempt}`), undefined, floorPool.length * STEP_COST_ESTIMATES_USD.generatedImage);
             if (floorPool.length > 0) {
