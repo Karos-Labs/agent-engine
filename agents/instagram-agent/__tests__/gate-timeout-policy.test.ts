@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CLEAN_GATE_TIMEOUT,
+  COMPLIANCE_GATE_TIMEOUT,
   FLAGGED_GATE_TIMEOUT,
   gateTimeoutFor,
   type GateVerdict,
@@ -18,8 +19,16 @@ import {
  * policy like this quietly becomes a rubber stamp again:
  *
  *   * a CLEAN post is untouched — an hour, then it ships, exactly as before;
- *   * every shape `verdictLine` already prints a complaint about now WAITS,
- *     and holds rather than publishing when nobody came.
+ *   * every shape `verdictLine` already prints a complaint about now WAITS.
+ *
+ * ── AND "WAITS" MEANS SIX HOURS, THEN SHIPS. ──
+ *
+ * The first cut held a flagged post instead, and the owner reversed it on
+ * 2026-09-20: *"after a few hours there should be automatic approval, even
+ * though you removed it, because it is important that this does not go in the
+ * bin."* A hold does not protect a post, it discards one — prod had three runs
+ * parked at a gate since 2026-08-27 — so the flag buys a reviewer TIME, not a
+ * veto. Only a regulated-compliance finding still holds.
  */
 
 function verdictWith(over: Partial<GateVerdict> = {}): GateVerdict {
@@ -54,7 +63,9 @@ describe("gateTimeoutFor: which posts are allowed to ship while nobody is lookin
       clean,
     );
     expect(policy.duration).toBe(FLAGGED_GATE_TIMEOUT);
-    expect(policy.onTimeout).toBe("hold");
+    // Six hours, and then it SHIPS. The owner's ruling: a held post is a
+    // thrown-away post, and the run's whole spend with it.
+    expect(policy.onTimeout).toBe("auto_approve");
     expect(policy.flags).toEqual(["visual QA failed 1 rule"]);
   });
 
@@ -62,13 +73,13 @@ describe("gateTimeoutFor: which posts are allowed to ship while nobody is lookin
     // `pass: undefined` is the judge never running. Reading it as a pass is
     // the guard-that-cannot-fail shape this repo keeps finding.
     const policy = gateTimeoutFor(verdictWith({ visualQa: { findings: [] } }), clean);
-    expect(policy.onTimeout).toBe("hold");
+    expect(policy.duration).toBe(FLAGGED_GATE_TIMEOUT);
     expect(policy.flags[0]).toContain("never ran");
   });
 
   it("holds a post the judge called not publishable, even when every rule passed", () => {
     const policy = gateTimeoutFor(verdictWith({ visualQa: { pass: true, publishable: false, findings: [] } }), clean);
-    expect(policy.onTimeout).toBe("hold");
+    expect(policy.duration).toBe(FLAGGED_GATE_TIMEOUT);
     expect(policy.flags).toContain("the judge called this post not publishable");
   });
 
@@ -77,13 +88,13 @@ describe("gateTimeoutFor: which posts are allowed to ship while nobody is lookin
       verdictWith({ degradeMarkers: [{ slide: 3, from: "interior plate that asked for a photograph", to: "bare type plate", reason: "waived" }] }),
       clean,
     );
-    expect(policy.onTimeout).toBe("hold");
+    expect(policy.duration).toBe(FLAGGED_GATE_TIMEOUT);
     expect(policy.flags[0]).toBe("slide 3 degraded to bare type");
   });
 
   it("holds a post short of the pictures it asked for", () => {
     const policy = gateTimeoutFor(verdictWith({ imagery: { wanted: 4, shipped: 2, generated: 0, shortfall: [], provenance: [] } }), clean);
-    expect(policy.onTimeout).toBe("hold");
+    expect(policy.duration).toBe(FLAGGED_GATE_TIMEOUT);
     expect(policy.flags).toContain("2 of 4 wanted pictures shipped");
   });
 
@@ -108,7 +119,7 @@ describe("gateTimeoutFor: which posts are allowed to ship while nobody is lookin
       { packaging: { status: "failed" as const, hashtags: 0, altTexts: 0, firstComment: false } },
       { stepFailures: [{ step: "08c-package-post", status: "budget_exceeded" as never, why: "", usdBurned: 0 }] },
     ]) {
-      expect(gateTimeoutFor(verdictWith(over), clean).onTimeout).toBe("hold");
+      expect(gateTimeoutFor(verdictWith(over), clean).duration).toBe(FLAGGED_GATE_TIMEOUT);
     }
   });
 
@@ -140,13 +151,35 @@ describe("gateTimeoutFor: which posts are allowed to ship while nobody is lookin
   });
 
   it("keeps the regulated-compliance case exactly where RFC-19 §5.5 put it", () => {
+    // The ONLY remaining hold. A regulated-compliance finding is not a quality
+    // flag, and the owner's "do not bin it" ruling was about quality flags.
     const policy = gateTimeoutFor(verdictWith(), { regulatedComplianceFinding: true });
-    expect(policy).toMatchObject({ duration: "24h", onTimeout: "hold" });
+    expect(policy).toMatchObject({ duration: COMPLIANCE_GATE_TIMEOUT, onTimeout: "hold" });
     expect(policy.flags).toEqual(["regulated-compliance finding"]);
   });
 
   it("puts the compliance finding FIRST, so a flagged regulated post still reads as a compliance hold", () => {
     const policy = gateTimeoutFor(verdictWith({ packaging: { status: "failed", hashtags: 0, altTexts: 0, firstComment: false } }), { regulatedComplianceFinding: true });
     expect(policy.reason).toContain("regulated-compliance");
+  });
+
+  it("never holds a post for a QUALITY flag, whatever the combination", () => {
+    // The owner's ruling as one assertion over the whole flag space: quality
+    // marks change how long a reviewer has, never whether the post survives.
+    const combos: Array<Partial<GateVerdict>> = [
+      { visualQa: { pass: false, findings: [] } },
+      { visualQa: { findings: [] } },
+      { visualQa: { pass: true, publishable: false, findings: [] } },
+      { degradeMarkers: [{ slide: 2, from: "a", to: "b", reason: "c" }] },
+      { packaging: { status: "failed", hashtags: 0, altTexts: 0, firstComment: false } },
+      { stepFailures: [{ step: "08c", status: "budget_exceeded" as never, why: "", usdBurned: 0 }] },
+      { imagery: { wanted: 4, shipped: 0, generated: 0, shortfall: [], provenance: [] } },
+    ];
+    for (const over of combos) {
+      const policy = gateTimeoutFor(verdictWith(over), clean);
+      expect(policy.onTimeout, JSON.stringify(over)).toBe("auto_approve");
+      expect(policy.duration).toBe(FLAGGED_GATE_TIMEOUT);
+      expect(policy.flags.length).toBeGreaterThan(0);
+    }
   });
 });

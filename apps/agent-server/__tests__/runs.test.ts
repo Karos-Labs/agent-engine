@@ -263,6 +263,46 @@ describe("POST /api/v1/runs/:runId/resume — edits.style (IGSTYLE-1)", () => {
     expect(res.status).toBe(404);
   });
 
+  // ── RFC-22 §3.2: the reviewer's 1-to-5 stars ──
+  //
+  // The route's re-map into `GateResponseSchema` is an ALLOWLIST, and its own
+  // comment says so: a field this schema accepts but the re-map does not
+  // spread is silently dropped. That makes a missing spread invisible — the
+  // portal sends a rating, gets a 200, and the label never exists. These
+  // assert both halves of the wire.
+  it.each([0, 6, 2.5, -1])("400s a resume whose rating is not a whole 1-to-5 (%s)", async (bad) => {
+    const res = await request(app)
+      .post("/api/v1/runs/does-not-matter/resume")
+      .send({ gateId: "09a-batch-review-r0", resolution: { decision: "approve", actor: "jane@karoslabs.com", rating: bad } });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid request body");
+  });
+
+  it.each([1, 3, 5])("accepts a rating of %s", async (good) => {
+    const res = await request(app)
+      .post("/api/v1/runs/does-not-matter/resume")
+      .send({ gateId: "09a-batch-review-r0", resolution: { decision: "approve", actor: "jane@karoslabs.com", rating: good } });
+    // 404 ("no run found"), not 400 — the body cleared validation.
+    expect(res.status).toBe(404);
+  });
+
+  it("carries a rating through a real gate resume, and accepts a run with none", async () => {
+    for (const resolution of [
+      { decision: "approve" as const, actor: "jane@karoslabs.com", rating: 4 },
+      // The normal case: nobody rated. Optional has to STAY optional, or the
+      // label stops meaning "a person's opinion".
+      { decision: "approve" as const, actor: "jane@karoslabs.com" },
+    ]) {
+      const { startRes, body: started } = await startAndRead(app, { clientSlug: "acme", productId: "x-agent", runKind: "recurring", inputParams: {} });
+      expect(startRes.status).toBe(202);
+      const resumeRes = await request(app)
+        .post(`/api/v1/runs/${started.runId}/resume`)
+        .send({ gateId: "15-batch-review-r0", resolution });
+      expect(resumeRes.status).toBe(200);
+      expect(resumeRes.body.status).toBe("completed");
+    }
+  }, 60_000);
+
   it("carries edits.style through a real gate resume on approve, unmangled end to end", async () => {
     const { startRes, body: started } = await startAndRead(app, { clientSlug: "acme", productId: "x-agent", runKind: "recurring", inputParams: {} });
     expect(startRes.status).toBe(202);

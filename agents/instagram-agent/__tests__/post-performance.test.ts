@@ -383,3 +383,38 @@ describe("arrow bullets, the device that stopped being one", () => {
     expect(read.records[1]?.usedArrowBullets).toBeUndefined();
   });
 });
+
+describe("ownerRating: the one field in this record a human wrote", () => {
+  it("round-trips a rating a reviewer actually gave", () => {
+    const beliefs = {
+      instagramPostPerformance: {
+        records: [{ runId: "r", arm: "carousel-edu", publishedAt: new Date().toISOString(), slideCount: 7, ownerRating: 4 }],
+      },
+    };
+    expect(readPerformanceStore(beliefs).records[0]?.ownerRating).toBe(4);
+  });
+
+  it("drops anything that is not a whole 1-to-5, because a calibration that averages a bug measures the bug", () => {
+    for (const bad of [0, 6, 2.5, -1, "5", null, Number.NaN]) {
+      const beliefs = {
+        instagramPostPerformance: {
+          records: [{ runId: "r", arm: "carousel-edu", publishedAt: new Date().toISOString(), slideCount: 7, ownerRating: bad }],
+        },
+      };
+      const read = readPerformanceStore(beliefs);
+      // The RECORD survives — a bad rating is not a reason to lose a post —
+      // and only the rating is dropped.
+      expect(read.records).toHaveLength(1);
+      expect(read.records[0]?.ownerRating, `ownerRating: ${String(bad)}`).toBeUndefined();
+    }
+  });
+
+  it("is absent, not defaulted, when nobody rated — the whole point of an optional label", () => {
+    const beliefs = {
+      instagramPostPerformance: { records: [{ runId: "r", arm: "carousel-edu", publishedAt: new Date().toISOString(), slideCount: 7 }] },
+    };
+    const record = readPerformanceStore(beliefs).records[0]!;
+    expect(record.ownerRating).toBeUndefined();
+    expect("ownerRating" in record).toBe(false);
+  });
+});

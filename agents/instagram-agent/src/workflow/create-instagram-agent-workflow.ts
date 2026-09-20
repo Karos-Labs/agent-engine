@@ -13865,6 +13865,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 // self-report about one's own tics is the one label in this
                 // record that would be worth less than reading it.
                 usedArrowBullets: usesArrowBullets(review.output.copy.caption),
+                // RFC-22 section 3.2 -- the reviewer's own stars, when they
+                // gave any. The only human judgement in this record, and the
+                // one the visual judge is calibrated against.
+                ...(review.response.rating !== undefined ? { ownerRating: review.response.rating } : {}),
                 imageSource: slidesData.slides.some((slide) => slide.images?.["hero"] !== undefined) ? "present" : "none",
               }),
               [CUSTOM_ARCHETYPE_BELIEF_KEY]: customArchetypeHistory,
