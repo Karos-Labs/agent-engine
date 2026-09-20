@@ -71,6 +71,7 @@ import { normalizeBannedDashes } from "@agent-engine/tool-common";
 import { TikTokCommentaryAgent } from "../agent/tiktok-commentary-agent.js";
 import { TikTokMomentAgent } from "../agent/tiktok-moment-agent.js";
 import { TikTokScriptAgent } from "../agent/tiktok-script-agent.js";
+import { TikTokSourceFitAgent } from "../agent/tiktok-source-fit-agent.js";
 import { TikTokTopicScoutAgent } from "../agent/tiktok-topic-scout-agent.js";
 import { bestLegalWindow, boundsFromTranscript, sentenceBoundedWords, type TranscriptWordLike } from "./clip-bounds.js";
 import { checkDraftLanguage, isJudgeableLanguage, languageRedraftDirective, resolveTargetLanguage, type ResolvedTargetLanguage } from "./target-language.js";
@@ -96,6 +97,8 @@ import {
   modeForVariant,
   type TikTokVariant,
   MAX_RUN_COST_USD,
+  MIN_SOURCE_FIT,
+  SourceFitSchema,
   TARGET_RUN_SPEND_USD,
   VOICE_AND_QA_RESERVE_USD,
   type BudgetRung,
@@ -901,6 +904,28 @@ function plainSourceNames(config: TikTokClipConfig): string[] {
  * a render rather than a second run's worth of footage.
  */
 /**
+ * The extensions `media.ingestAssets` can actually fetch.
+ *
+ * It does a plain HTTP GET and writes the bytes, so an `https://` asset has to
+ * BE the media. A YouTube watch page fetched that way writes an HTML document
+ * with an `.mp4` name, and the failure surfaces three steps later inside
+ * `video.transcribe` as an unreadable file.
+ */
+const DIRECT_MEDIA_EXTENSION = /\.(mp4|webm|mov|m4v|mkv)(\?|#|$)/i;
+
+/**
+ * Whether this URI is something to fetch, or a PAGE to resolve first.
+ *
+ * `gs://` is always ours and always a file. An `https://` URI is a file only
+ * when it says so: anything else is a page a person pasted, and it goes to
+ * yt-dlp instead (RFC-25 phase 4).
+ */
+export function isDirectMediaUri(uri: string): boolean {
+  if (/^gs:\/\//i.test(uri)) return true;
+  return DIRECT_MEDIA_EXTENSION.test(uri);
+}
+
+/**
  * Downloads an attached source video and returns an absolute path to it.
  *
  * Absolute, not repo-relative: the video tools resolve a path against the
@@ -1403,8 +1428,51 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       // its `uri` is a `gs://` object and `video.transcribe` does a plain
       // readFile on whatever it is handed.
       if (attached) {
-        const sourcePath = await ingestSourceVideo(attached, options, tools, wf.runId, ctx);
-        return { ...base, sourcePath, sourceTier: "user-asset", sourceContext: { ...(attached.label ? { label: attached.label } : {}), url: attached.uri } };
+        // A PAGE rather than a file (RFC-25 phase 4). `media.ingestAssets`
+        // does a plain GET, so a watch URL used to be written to disk as an
+        // HTML document with an `.mp4` name and failed three steps later
+        // inside `video.transcribe`. yt-dlp resolves it instead.
+        if (!isDirectMediaUri(attached.uri)) {
+          const harvest = tools["media.harvestVideo"];
+          if (harvest === undefined || options.repoRoot === undefined) {
+            tierOutcomes.push(`user-asset: "${attached.uri}" is a page rather than a media file, and this deployment cannot resolve one`);
+          } else {
+            const outcome = await harvest.execute({ repoRoot: options.repoRoot, runId: wf.runId, query: claim.topic, sourceUrl: attached.uri }, { ctx });
+            if (outcome.status === "success") {
+              const result = outcome.result as { path: string; sourceUrl: string; title?: string; channel?: string };
+              return {
+                ...base,
+                sourcePath: path.resolve(options.repoRoot, result.path),
+                sourceTier: "user-asset",
+                sourceContext: {
+                  url: result.sourceUrl,
+                  ...(result.title ? { title: result.title } : {}),
+                  ...(result.channel ? { channel: result.channel } : {}),
+                  ...(attached.label ? { label: attached.label } : {}),
+                  discovery: "pasted",
+                },
+              };
+            }
+            // The link did not resolve. With `mediaSource: "client"` that is
+            // the end of it — 01a already refused anything else, and finding
+            // a DIFFERENT video for someone who said "only my media" would be
+            // answering a request with something else. Otherwise the cascade
+            // carries on below and the reviewer is told what happened to the
+            // link, which is a worse answer than they asked for and a better
+            // one than nothing.
+            const why = `${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}`;
+            if (runDirection.mediaSource === "client") {
+              throw new WorkflowBlockedIntake(
+                `the link attached to this run could not be resolved into a video (${why}), and this run is set to client-provided media only — ` +
+                  "paste a different link, upload the file itself, or let the agent find footage",
+              );
+            }
+            tierOutcomes.push(`user-asset: the link attached to this run ("${attached.uri}") could not be resolved into a video: ${why}`);
+          }
+        } else {
+          const sourcePath = await ingestSourceVideo(attached, options, tools, wf.runId, ctx);
+          return { ...base, sourcePath, sourceTier: "user-asset", sourceContext: { ...(attached.label ? { label: attached.label } : {}), url: attached.uri } };
+        }
       }
       if (explicitSourcePath !== undefined) {
         return { ...base, sourcePath: explicitSourcePath, sourceTier: "user-asset" };
@@ -1474,6 +1542,12 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             const result = outcome.result as { path: string; sourceUrl: string; title?: string; channel?: string };
             return {
               ...base,
+              // Every tier that already failed, carried forward by the tier
+              // that served. Until now only the stock tier passed these on, so
+              // a pasted link that did not resolve vanished the moment the
+              // harvest answered — and the reviewer saw a clean clip with no
+              // sign that they had asked for a different video.
+              ...(tierOutcomes.length > 0 ? { sourceNotes: [...tierOutcomes] } : {}),
               sourcePath: path.resolve(options.repoRoot, result.path),
               sourceTier: "web-harvest",
               sourceContext: {
@@ -1514,6 +1588,45 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         await tools["topics.release"]?.execute({ reservationKey: claim.reservationKey }, { ctx }).catch(() => undefined);
       }
       throw new WorkflowHeld(`no source footage from any tier — ${tierOutcomes.join("; ")}`);
+    });
+
+    /**
+     * ── 01g: is this recording worth clipping, for THIS client? (RFC-25 §3) ──
+     *
+     * Before `02-transcribe`, deliberately. Transcribing a two-hour podcast is
+     * the most expensive step in the run, and a check placed after it can only
+     * tell a reviewer the source was wrong once the run has already paid to
+     * find out. Title and channel are enough for the failures this exists for
+     * — a clip farm names itself, a competitor's show names itself.
+     *
+     * Only for HARVESTED footage. An attached upload and a pasted link are the
+     * client's own choice, and second-guessing a decision somebody already
+     * made is not what this is for.
+     *
+     * It MARKS and never blocks: a `content_fail` or an outage leaves the run
+     * exactly as it was, and a low score reaches the human at 11-clip-review
+     * with the model's own sentence beside it.
+     */
+    const sourceFit = await wf.step.code("01g-source-fit", async (): Promise<{ skipped: true; note: string } | { skipped: false; score: number; reason: string; concerns: string[] }> => {
+      if (intake.sourceTier !== "web-harvest") return { skipped: true, note: `not a harvested source (${intake.sourceTier})` };
+      const agent = new TikTokSourceFitAgent({ router: options.router, tools, promptStore: options.promptStore });
+      const exec = await wf.step.agent("01g-source-fit-judge", agent, {
+        sourceTitle: intake.sourceContext?.title ?? "(the search returned no title)",
+        sourceChannel: intake.sourceContext?.channel ?? "(the search returned no channel)",
+        ...(intake.sourceContext?.url !== undefined ? { sourceUrl: intake.sourceContext.url } : {}),
+        discovery: intake.sourceContext?.discovery ?? "allowlist",
+        ...(intake.sourceContext?.harvestQuery !== undefined ? { harvestQuery: intake.sourceContext.harvestQuery } : {}),
+        topic: intake.topic,
+        clientProfile: profile,
+        ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
+      });
+      if (exec.status === "content_fail") return { skipped: true, note: "the source-fit judge returned nothing schema-valid; the reviewer judges the source unaided" };
+      if (exec.status !== "completed") return { skipped: true, note: `the source-fit judge resolved to "${exec.status}"; the reviewer judges the source unaided` };
+      const verdict = SourceFitSchema.parse(exec.finalOutput);
+      if (verdict.score < MIN_SOURCE_FIT || verdict.concerns.length > 0) {
+        console.warn(`01g-source-fit: scored ${verdict.score}/10 — ${verdict.reason}${verdict.concerns.length > 0 ? ` (${verdict.concerns.join("; ")})` : ""}`);
+      }
+      return { skipped: false, score: verdict.score, reason: verdict.reason, concerns: verdict.concerns };
     });
 
     // `let`: on `auto`, a client's footage with no speech in it turns a
@@ -2263,6 +2376,12 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
               // What the footage ACTUALLY is, so the credit names it rather
               // than a plausible episode.
               ...(intake.sourceContext ? { sourceContext: intake.sourceContext } : {}),
+              // What the fit judge made of the recording (RFC-25 phase 5). Its
+              // `reason` often names the connection between this clip and the
+              // client's business faster than the transcript does, which is
+              // the one thing v6 requires the caption to carry. Never quoted
+              // and never shown to a viewer.
+              ...(sourceFit.skipped ? {} : { sourceFit: { score: sourceFit.score, reason: sourceFit.reason, ...(sourceFit.concerns.length > 0 ? { concerns: sourceFit.concerns } : {}) } }),
               ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
               ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
               ...(dedupeAvoid !== undefined ? { dedupeAvoid } : {}),
@@ -3797,6 +3916,10 @@ ${credit}`,
           clipPath: draft.renderedPath,
           durationSeconds: draft.durationSeconds,
           sourceTier: intake.sourceTier,
+          // What the judge made of the recording itself, whatever it scored.
+          // "We looked at this show and it is the right kind of show" is worth
+          // as much to a reviewer as the objection would be.
+          ...(sourceFit.skipped ? {} : { sourceFit: { score: sourceFit.score, reason: sourceFit.reason, ...(sourceFit.concerns.length > 0 ? { concerns: sourceFit.concerns } : {}) } }),
           // How the footage was found. An `open` discovery means nobody had
           // cleared this show before the search: the clip is still
           // `licenseConfidence: unknown` and this gate is where that is
@@ -3931,6 +4054,33 @@ ${credit}`,
      * last round attempted — so the ledger describes the clip that shipped.
      */
     const contentRepairs: ContentRepair[] = [...(review.output.repairs ?? [])];
+    if (!sourceFit.skipped && (sourceFit.score < MIN_SOURCE_FIT || sourceFit.concerns.length > 0)) {
+      // A poor source is not a repair in the sense of something fixed — the
+      // clip is what it is. It is `unresolved` because the run noticed a
+      // problem it could not do anything about, which is exactly the class of
+      // thing the ledger exists to carry to a person.
+      contentRepairs.push({
+        check: "source-fit",
+        action: "unresolved",
+        detail:
+          `the source-fit judge scored this recording ${sourceFit.score}/10 for this client: ${sourceFit.reason}` +
+          (sourceFit.concerns.length > 0 ? ` — concerns: ${sourceFit.concerns.join("; ")}` : ""),
+      });
+    }
+
+    // A person pasted a link, it did not resolve, and the run found footage
+    // another way rather than stopping. They asked for a specific video and
+    // got a different one, which is the single most important thing on this
+    // deliverable — read off `sourceNotes` rather than a captured variable,
+    // because the tier step is checkpointed and a replay never re-runs it.
+    const pastedLinkFailure = intake.sourceNotes?.find((note) => note.includes("could not be resolved into a video"));
+    if (pastedLinkFailure !== undefined) {
+      contentRepairs.push({
+        check: "pasted-link",
+        action: "substituted",
+        detail: `${pastedLinkFailure.replace(/^user-asset: /, "")} — the clip you are looking at came from somewhere else`,
+      });
+    }
     if (intake.sourceContext?.discovery === "open") {
       // Not a repair — nothing was adapted around and nothing degraded. But
       // this run clipped a show nobody had cleared, on the owner's standing

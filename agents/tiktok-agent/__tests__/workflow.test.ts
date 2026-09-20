@@ -128,8 +128,8 @@ interface StubOptions {
   failingGateEvidence?: string[];
   reserveFails?: boolean;
   forbiddenTopics?: string[];
-  /** Register `media.harvestVideo` answering success (Tier 2b serves). */
-  harvestServes?: boolean;
+  /** Register `media.harvestVideo`: `true` serves, `false` finds nothing, `"resolve-fails"` serves a SEARCH but cannot resolve a pasted page. */
+  harvestServes?: boolean | "resolve-fails";
   /** Register `video.findStockClip` answering success (Tier 3, the original short over stock footage, serves). `false` registers it answering not_available. */
   stockServes?: boolean;
   /** 1-based beat the stock library refuses to serve, whatever query it is asked — the "one dark beat" case, as opposed to a library that is down entirely. */
@@ -247,6 +247,12 @@ function stubTools(opts: StubOptions = {}): Harness {
       "media.harvestVideo",
       (args) => {
         harvestArgs.push(args as unknown as Record<string, unknown>);
+        // A pasted page and a search are different calls on one tool, and a
+        // deployment can do one and not the other — yt-dlp resolving a dead
+        // or private URL is the ordinary case.
+        if ((args as { sourceUrl?: string }).sourceUrl !== undefined && opts.harvestServes === "resolve-fails") {
+          return { status: "content_fail" as const, reason: "the video is private or removed" };
+        }
         return opts.harvestServes
           ? ok({
               path: ".media-cache/run/harvested-clip.mp4",
@@ -1270,5 +1276,165 @@ describe("audit leftovers", () => {
     const h = stubTools({ withVisualQa: true, stockServes: true, harvestServes: false });
     await run(h, "run-tt-no-moment-for-shorts", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], os.tmpdir());
     expect((h.qaArgs[0]!["expectations"] as Record<string, unknown>)["clipText"]).toBeUndefined();
+  }, 20_000);
+});
+
+/**
+ * A pasted link (RFC-25 phase 4).
+ *
+ * `media.ingestAssets` does a plain HTTP GET, so an `https://` asset has to BE
+ * the media. A YouTube watch page fetched that way wrote an HTML document with
+ * an `.mp4` name and failed three steps later inside `video.transcribe` — so a
+ * watch URL has never been something a client could hand this pipeline.
+ */
+describe("a pasted link", () => {
+  const LINK = "https://www.youtube.com/watch?v=abc123";
+
+  it("resolves a watch page through the harvester instead of fetching it as a file", async () => {
+    const h = stubTools({ harvestServes: true });
+    const result = await run(h, "run-tt-paste", { sourcePath: undefined, mediaAssets: [{ uri: LINK, role: "source" }] }, [GOOD_MOMENT, GOOD_COMMENTARY], os.tmpdir());
+
+    expect(result.status).toBe("completed");
+    // Resolved, not searched: the tool was handed the URL and no query posture.
+    const harvest = h.harvestArgs[0]!;
+    expect(harvest["sourceUrl"]).toBe(LINK);
+    expect(h.calls).not.toContain("media.ingestAssets");
+    expect(h.deliverables[0]).toMatchObject({ sourceTier: "user-asset" });
+  }, 20_000);
+
+  it("still fetches a DIRECT media file the old way", async () => {
+    // The distinction is what the URI says it IS. A `.mp4` is the media and
+    // goes through the ingester; anything else is a page. `media.ingestAssets`
+    // is not in the default harness, so it is registered here — without it the
+    // assertion would pass on a run that failed for an unrelated reason.
+    const h = stubTools({ harvestServes: true });
+    const ingested: string[] = [];
+    (h.tools as unknown as Record<string, unknown>)["media.ingestAssets"] = {
+      name: "media.ingestAssets",
+      description: "Pulls media a person attached directly to this run.",
+      version: "1.0.0",
+      inputSchema: { safeParse: (v: unknown) => ({ success: true as const, data: v }) },
+      async execute(args: unknown) {
+        h.calls.push("media.ingestAssets");
+        ingested.push((args as { assets: Array<{ uri: string }> }).assets[0]!.uri);
+        return { status: "success" as const, result: { candidates: [{ path: ".media-cache/run/direct.mp4" }], unmet: [] } };
+      },
+    };
+    const result = await run(h, "run-tt-paste-direct", { sourcePath: undefined, mediaAssets: [{ uri: "https://cdn.example.com/ep12.mp4", role: "source" }] }, [GOOD_MOMENT, GOOD_COMMENTARY], os.tmpdir());
+
+    expect(result.status).toBe("completed");
+    expect(ingested).toEqual(["https://cdn.example.com/ep12.mp4"]);
+    expect(h.harvestArgs).toHaveLength(0);
+  }, 20_000);
+
+  it("carries on down the cascade when the link is dead, and says the clip came from somewhere else", async () => {
+    // The standing rule: a run always hands the client something. They asked
+    // for a specific video and got a different one, which is the single most
+    // important thing on this deliverable — so it is on it.
+    const h = stubTools({ harvestServes: "resolve-fails", stockServes: true });
+    const result = await run(h, "run-tt-paste-dead", { sourcePath: undefined, mediaAssets: [{ uri: LINK, role: "source" }] }, [GOOD_MOMENT, GOOD_COMMENTARY], os.tmpdir());
+
+    expect(result.status).toBe("completed");
+    const repairs = h.deliverables[0]!["contentRepairs"] as Array<{ check: string; action: string; detail: string }>;
+    const failed = repairs.find((r) => r.check === "pasted-link");
+    expect(failed?.action).toBe("substituted");
+    expect(failed?.detail).toContain(LINK);
+    expect(failed?.detail).toContain("came from somewhere else");
+  }, 20_000);
+
+  it("refuses outright when the link is dead AND the run is client-media-only", async () => {
+    // `mediaSource: "client"` is someone saying "only my media". Finding a
+    // DIFFERENT video for them would be answering the request with something
+    // else, which is the one thing this agent has never been willing to do.
+    const h = stubTools({ harvestServes: "resolve-fails", stockServes: true });
+    const result = await run(
+      h,
+      "run-tt-paste-dead-clientonly",
+      { sourcePath: undefined, mediaSource: "client", mediaAssets: [{ uri: LINK, role: "source" }] },
+      [GOOD_MOMENT, GOOD_COMMENTARY],
+      os.tmpdir(),
+    );
+
+    expect(result.status).toBe("blocked_intake");
+    if (result.status !== "blocked_intake") throw new Error("unreachable");
+    expect(result.reason).toContain("client-provided media only");
+    expect(h.calls).not.toContain("video.findStockClip");
+  }, 20_000);
+});
+
+/**
+ * The source-fit judge (RFC-25 phase 3).
+ *
+ * Open discovery searches all of YouTube, and all of YouTube contains clip
+ * farms, re-uploads and a competitor's own show. Nothing else in the pipeline
+ * is positioned to notice: the moment picker answers "which forty seconds" and
+ * the visual QA judges a finished render.
+ *
+ * It runs BEFORE `02-transcribe` on purpose — transcribing a two-hour podcast
+ * is the most expensive step in the run, and a check placed after it can only
+ * tell a reviewer the source was wrong once the run has paid to find out.
+ */
+describe("source fit", () => {
+  const GOOD_FIT = { score: 9, reason: "A long-form business podcast with a named guest, squarely on the run's subject.", concerns: [] };
+  const BAD_FIT = {
+    score: 2,
+    reason: "A channel that only re-posts other people's podcast clips; there is no original conversation here.",
+    concerns: ["clip farm: the channel's whole output is other people's material"],
+  };
+
+  it("flags a poor source on the deliverable, and still ships the clip", async () => {
+    // Marks, never blocks. The person at 11-clip-review is the one who can
+    // tell "a competitor, do not touch" from "a competitor, and that is
+    // exactly why the take lands".
+    const h = stubTools({ config: {}, harvestServes: true, stockServes: true });
+    const result = await run(h, "run-tt-fit-bad", { sourcePath: undefined }, [BAD_FIT, GOOD_MOMENT, GOOD_COMMENTARY], os.tmpdir());
+
+    expect(result.status).toBe("completed");
+    const repairs = h.deliverables[0]!["contentRepairs"] as Array<{ check: string; action: string; detail: string }>;
+    const fit = repairs.find((r) => r.check === "source-fit");
+    expect(fit?.action).toBe("unresolved");
+    expect(fit?.detail).toContain("2/10");
+    expect(fit?.detail).toContain("clip farm");
+  }, 20_000);
+
+  it("says nothing about a source it judged fine", async () => {
+    const h = stubTools({ config: {}, harvestServes: true, stockServes: true });
+    await run(h, "run-tt-fit-good", { sourcePath: undefined }, [GOOD_FIT, GOOD_MOMENT, GOOD_COMMENTARY], os.tmpdir());
+
+    const repairs = (h.deliverables[0]!["contentRepairs"] as Array<{ check: string }> | undefined) ?? [];
+    expect(repairs.map((r) => r.check)).not.toContain("source-fit");
+  }, 20_000);
+
+  it("flags a source with a CONCERN even when the score is high", async () => {
+    // A competitor's show can score 9 for relevance and still be the thing a
+    // reviewer most needs to be told about.
+    const competitor = { score: 9, reason: "Exactly the right subject and format.", concerns: ["this is a direct competitor's own show"] };
+    const h = stubTools({ config: {}, harvestServes: true, stockServes: true });
+    await run(h, "run-tt-fit-concern", { sourcePath: undefined }, [competitor, GOOD_MOMENT, GOOD_COMMENTARY], os.tmpdir());
+
+    const repairs = h.deliverables[0]!["contentRepairs"] as Array<{ check: string; detail: string }>;
+    expect(repairs.find((r) => r.check === "source-fit")?.detail).toContain("direct competitor");
+  }, 20_000);
+
+  it("leaves the run exactly as it was when the judge cannot answer", async () => {
+    // No SourceFit candidate in the router at all, which is how every harvest
+    // test in this file ran before the judge existed. A judge that is down
+    // must not cost the clip — the always-deliver rule reaches this step too.
+    const h = stubTools({ config: {}, harvestServes: true, stockServes: true });
+    const result = await run(h, "run-tt-fit-down", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], os.tmpdir());
+
+    expect(result.status).toBe("completed");
+    const repairs = (h.deliverables[0]!["contentRepairs"] as Array<{ check: string }> | undefined) ?? [];
+    expect(repairs.map((r) => r.check)).not.toContain("source-fit");
+  }, 20_000);
+
+  it("never second-guesses footage the client chose themselves", async () => {
+    // An attached upload is somebody's own decision. Scoring it would be this
+    // agent telling a client their own recording is a poor source.
+    const h = stubTools();
+    await run(h, "run-tt-fit-attached", {}, [BAD_FIT, GOOD_MOMENT, GOOD_COMMENTARY]);
+
+    const repairs = (h.deliverables[0]!["contentRepairs"] as Array<{ check: string }> | undefined) ?? [];
+    expect(repairs.map((r) => r.check)).not.toContain("source-fit");
   }, 20_000);
 });

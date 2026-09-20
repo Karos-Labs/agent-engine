@@ -173,6 +173,51 @@ export function createYtDlpHarvestProvider(options: YtDlpHarvestProviderOptions 
 
   return {
     name: "yt-dlp",
+    /**
+     * One page, no search (RFC-25 phase 4).
+     *
+     * `--dump-single-json` on a watch URL returns that video's metadata, which
+     * is how the duration bounds still apply to a page somebody chose by hand:
+     * a three-hour stream is a download the run cannot afford however it was
+     * picked, and finding that out before the download is the whole point of
+     * asking first.
+     */
+    async resolveUrl(sourceUrl, q): Promise<VideoHarvestFind> {
+      const probe = await runner(ytDlpBin, [sourceUrl, "--dump-single-json", "--no-warnings", "--skip-download", ...cookieArgs]);
+      if (probe.exitCode !== 0) {
+        throw new Error(`yt-dlp could not read ${sourceUrl}: exited ${probe.exitCode} (${tail(probe.stderr || probe.stdout, 300) || "no output"})`);
+      }
+      let meta: YtDlpFlatEntry;
+      try {
+        meta = JSON.parse(probe.stdout) as YtDlpFlatEntry;
+      } catch {
+        throw new Error(`yt-dlp's metadata for ${sourceUrl} was not JSON`);
+      }
+      const duration = typeof meta.duration === "number" ? meta.duration : undefined;
+      // A page that resolves to nothing clippable is a CONTENT outcome, not a
+      // broken tool: the paste worked, the video is just not one this pipeline
+      // can use, and the caller needs to tell those two apart.
+      if (duration === undefined) {
+        return { candidate: null, reason: `${sourceUrl} reports no duration — it may be a live stream or a playlist rather than an episode` };
+      }
+      if (duration < q.minDurationSeconds || duration > q.maxDurationSeconds) {
+        return {
+          candidate: null,
+          reason: `${sourceUrl} is ${Math.round(duration)}s, outside the ${q.minDurationSeconds}-${q.maxDurationSeconds}s a clip can be cut from`,
+        };
+      }
+      const channel = meta.channel ?? meta.uploader;
+      return {
+        candidate: {
+          sourceUrl,
+          ...(meta.title !== undefined ? { title: meta.title } : {}),
+          ...(channel !== undefined ? { channel } : {}),
+          durationSeconds: duration,
+          download: (destDirAbs) => downloadInto(sourceUrl, destDirAbs, q.maxBytes),
+        },
+      };
+    },
+
     async findVideo(q: VideoHarvestQuery): Promise<VideoHarvestFind> {
       if (q.discovery === "allowlist" && q.allowedSources.length === 0) {
         return {

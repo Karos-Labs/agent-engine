@@ -11,7 +11,11 @@ import { MEDIA_CACHE_PREFIX } from "./find-images.js";
 // search the open web for a podcast to clip, instead of refusing when the
 // client's sourcePool names no shows. Defaults to `"allowlist"`, so no
 // existing caller changes behaviour.
-const TOOL_VERSION = "1.2.0";
+// 1.3.0 (2026-09-20, RFC-25 phase 4): `sourceUrl` resolves ONE page a person
+// pasted, with no search at all. `media.ingestAssets` fetches an https:// URI
+// as a direct file, so a watch page has never been something a client could
+// hand this pipeline.
+const TOOL_VERSION = "1.3.0";
 
 /**
  * `media.harvestVideo` — Tier 2b of the clip cascade: contextual footage
@@ -54,7 +58,14 @@ const TOOL_VERSION = "1.2.0";
 export const HarvestVideoInputSchema = z.object({
   repoRoot: z.string().min(1).describe("Bounds root. The written clip path is relative to this and provably inside it."),
   runId: z.string().min(1).describe("Namespaces the cache directory, exactly as media.findImages does."),
-  query: z.string().min(1).max(400).describe("What to look for — the run's topic/angle."),
+  query: z.string().min(1).max(400).describe("What to look for — the run's topic/angle. Ignored when `sourceUrl` is given."),
+  sourceUrl: z
+    .string()
+    .url()
+    .optional()
+    .describe(
+      "A page a person pasted (a YouTube watch URL, a podcast episode page). Given this, the tool resolves and downloads THAT video and never searches: `query`, `allowedSources` and `discovery` are all ignored. The duration bounds still apply, because a three-hour stream is a download the run cannot afford whoever chose it.",
+    ),
   allowedSources: z
     .array(z.string().min(1))
     .default([])
@@ -100,7 +111,7 @@ export interface HarvestVideoResult {
   /** Which backend answered (`VideoHarvestProvider.name`). */
   provider: string;
   /** How this video was found. On the reviewer's payload because "we searched the open web for this" is a fact about the clip, not an implementation detail. */
-  discovery: "allowlist" | "open";
+  discovery: "allowlist" | "open" | "pasted";
 }
 
 /** Everything a provider needs to search within the client's rights scope and size cap. */
@@ -132,6 +143,14 @@ export type VideoHarvestFind = { candidate: VideoHarvestCandidate } | { candidat
 export interface VideoHarvestProvider {
   readonly name: string;
   findVideo(q: VideoHarvestQuery): Promise<VideoHarvestFind>;
+  /**
+   * Resolve ONE page into a downloadable candidate — no search (RFC-25 phase 4).
+   *
+   * Optional on the seam: a provider that cannot do this is not broken, it
+   * simply has no way to turn a page into a video, and the tool reports that
+   * rather than pretending the paste failed for a content reason.
+   */
+  resolveUrl?(sourceUrl: string, q: Pick<VideoHarvestQuery, "maxBytes" | "minDurationSeconds" | "maxDurationSeconds">): Promise<VideoHarvestFind>;
 }
 
 const VIDEO_MIME_EXTENSION: Record<string, string> = {
@@ -168,16 +187,27 @@ export function createHarvestVideo(options: { provider?: VideoHarvestProvider | 
 
       let found: VideoHarvestFind;
       try {
-        found = await provider.findVideo({
+        if (input.sourceUrl !== undefined) {
+          if (provider.resolveUrl === undefined) {
+            return notAvailable(`media.harvestVideo: provider "${provider.name}" cannot resolve a pasted page into a video`);
+          }
+          found = await provider.resolveUrl(input.sourceUrl, {
+            maxBytes: input.maxBytes,
+            minDurationSeconds: input.minDurationSeconds,
+            maxDurationSeconds: input.maxDurationSeconds,
+          });
+        } else {
+          found = await provider.findVideo({
           query: input.query,
           allowedSources: input.allowedSources,
           discovery: input.discovery,
           maxBytes: input.maxBytes,
           minDurationSeconds: input.minDurationSeconds,
-          maxDurationSeconds: input.maxDurationSeconds,
-        });
+            maxDurationSeconds: input.maxDurationSeconds,
+          });
+        }
       } catch (error) {
-        return toolingError(`media.harvestVideo: provider "${provider.name}" failed to search — ${(error as Error).message}`);
+        return toolingError(`media.harvestVideo: provider "${provider.name}" failed to ${input.sourceUrl !== undefined ? "resolve the pasted page" : "search"} — ${(error as Error).message}`);
       }
       if (found.candidate === null) {
         return contentFail(`media.harvestVideo: ${found.reason}`);
@@ -241,7 +271,7 @@ export function createHarvestVideo(options: { provider?: VideoHarvestProvider | 
         ...(candidate.channel !== undefined ? { channel: candidate.channel } : {}),
         ...(candidate.durationSeconds !== undefined ? { durationSeconds: candidate.durationSeconds } : {}),
         provider: provider.name,
-        discovery: input.discovery,
+        discovery: input.sourceUrl !== undefined ? "pasted" : input.discovery,
       });
     },
   });

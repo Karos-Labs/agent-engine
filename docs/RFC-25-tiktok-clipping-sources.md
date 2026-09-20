@@ -1,6 +1,6 @@
 # RFC-25 — TikTok clipping: where the footage comes from
 
-Status: **owner-approved 2026-09-20**, implementation in progress.
+Status: **owner-approved 2026-09-20**. Phases 1-5 implemented; awaiting the prep runs §3 asks for.
 
 The first RFC for the TikTok family. Everything before it was written down in the
 2026-09-18 audit and in commit messages; the decision below needed a document because
@@ -77,11 +77,26 @@ deterministically from the client's industry and positioning, the claimed topic,
 the angle the scout grounded it in. A separate step so it is inspectable in the trace
 and testable without a model.
 
-### Phase 3 — the fit gate (`02a-source-fit`)
+### Phase 3 — the fit gate (`01g-source-fit`)
 
-A model reads the candidate's title, channel, description and the first words of its
-transcript against the client's profile and the run's topic, and returns
-`{ relevant, score, reason, concerns[] }`.
+A model reads the candidate's title and channel against the client's profile and the
+run's topic, and returns `{ score, reason, concerns[] }`.
+
+**It runs on metadata, BEFORE the transcript, and that is the whole placement.** The
+plan said "and the first words of its transcript"; building it showed why that is
+wrong. Transcribing a two-hour podcast is the most expensive step in the run, so a
+check placed after it can only tell a reviewer the source was wrong once the run has
+already paid to find out. Title and channel are enough for the failures this exists
+for — a clip farm names itself, a competitor's show names itself — and catching them
+here costs a cent instead of a transcription.
+
+What it therefore cannot judge is whether the interesting moment is in this episode at
+all. That is the moment picker's job and then the watchability floor's, and the prompt
+says so rather than inviting a guess.
+
+It runs only for HARVESTED footage. An attached upload and a pasted link are the
+client's own choice, and scoring those would be this agent telling a client their own
+recording is a poor source.
 
 **It marks; it never blocks.** A low score becomes a `ContentRepair` and a gate-payload
 field, under the standing always-deliver rule (RFC-19, generalised to this family on
@@ -90,10 +105,22 @@ a clip farm. Roughly $0.01 a run.
 
 ### Phase 4 — paste a link
 
-`media.ingestAssets` fetches an `https://` asset as a **direct file**, so a YouTube
-watch page fails today. `media.harvestVideo` grows a `resolveUrl` mode — one URL, no
-search — and Tier 1 of the cascade tries: direct file → yt-dlp resolve →
-`blocked_intake` naming which it was.
+`media.ingestAssets` fetches an `https://` asset as a **direct file** — it does a plain
+GET and writes the bytes — so a watch page was written to disk as an HTML document with
+an `.mp4` name and failed three steps later inside `video.transcribe`.
+`media.harvestVideo` grows a `resolveUrl` mode (one URL, no search) and Tier 1 routes
+on what the URI says it IS.
+
+**A dead link does not end the run, except when the client said it should.** Under
+`mediaSource: "client"` the answer is `blocked_intake`: somebody said "only my media",
+and finding a different video for them would be answering the request with something
+else. Otherwise the cascade carries on and the deliverable says plainly that the clip
+came from somewhere other than the link they pasted — a worse answer than they asked
+for, and a better one than nothing.
+
+That also exposed a gap: `sourceNotes` had only ever been set on the stock tier, so a
+failed earlier tier vanished the moment a later one answered. Every tier carries them
+forward now.
 
 ### Phase 5 — the caption earns the clip
 
@@ -110,9 +137,12 @@ pretending to be a gate.
 
 1. **Search quality, not rights.** Searching all of YouTube for a marketing topic
    returns clip farms, re-uploads and conference B-roll. The fit gate is the mitigation
-   and the query builder is the lever. **Three to five real prep runs after Phase 2,
-   before Phase 3 is built**, because no amount of unit testing will tell us whether the
-   query builder is good enough.
+   and the query builder is the lever. **Three to five real prep runs**, because no
+   amount of unit testing will tell us whether the query builder is good enough — what
+   to read off them is the built query, the channel and title that came back, the fit
+   score and whether the clip relates to the client at all. (The plan was to run these
+   between phases 2 and 3; the owner asked for all five phases first, so they gate the
+   tuning rather than the building.)
 2. **yt-dlp against YouTube is an arms race.** Bot checks and rate limiting are a known
    operational failure. It is invisible today because the harvest tier almost never
    runs; under open discovery it runs on every clipping run with no attached footage.
