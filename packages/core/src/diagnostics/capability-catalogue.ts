@@ -316,7 +316,7 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     whenAbsent:
       "Without META_SYSTEM_USER_TOKEN, every meta.* tool reports not_available with zero network calls — no agent step can read a client's Instagram profile, media or insights on Karos Labs' shared Business Manager grant, and meta.publishInstagramPost cannot run regardless of META_PUBLISH_ENABLED. With the token but without META_PUBLISH_ENABLED, reads work but the publish tool stays inert — a deliberate second gate, since this credential can post live to a client's account, not just read it.",
     rationale:
-      "packages/tools/karos-meta/README.md — generated in Meta Business Settings -> System Users, once the app's Advanced Access is approved. Not yet wired in either cloudbuild file as of this row (2026-09-17), so this capability reports DISABLED in both environments until that deploy step lands; per Albert (2026-09), META_PUBLISH_ENABLED is not to be flipped on without checking with him first.",
+      "packages/tools/karos-meta/README.md — generated in Meta Business Settings -> System Users, once the app's Advanced Access is approved. META_SYSTEM_USER_TOKEN is wired via --set-secrets in both cloudbuild.yaml (prep) and cloudbuild.promote.yaml (prod) as of 2026-09-20 — the secret and the runtime SA's secretmanager.secretAccessor grant already existed in both projects since 2026-09-17 (AU55), so this row moves from DISABLED to ENABLED (reads only) once that deploy lands. META_PUBLISH_ENABLED stays deliberately unwired in both files; per Albert (2026-09), it is not to be flipped on without checking with him first.",
     shortfall: "no Instagram Graph API access",
   },
 
