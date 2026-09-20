@@ -70,23 +70,61 @@ export interface GapPartition<T extends ImageGapLike> {
 }
 
 /**
- * How many more generations this run has GUARANTEED, given what it has already
- * made.
+ * How many more generations this run has GUARANTEED, given how many GENERATED
+ * frames it is actually HOLDING.
  *
- * The guarantee is per RUN and not per attempt or per tier: a run that already
- * generated two images on attempt 1 owes nothing further on attempt 2, and the
- * whole of attempt 2's slate is honestly optional. That is what makes the floor
- * a floor rather than a per-attempt multiplier — three attempts x two
- * guaranteed images would be six guaranteed generations, $0.234, on a run whose
- * plan was already in trouble.
+ * The guarantee is per RUN and not per attempt or per tier: a run already
+ * carrying two surviving generated frames owes one more, not another three, so the floor
+ * is a floor rather than a per-attempt multiplier — three attempts x three
+ * guaranteed images would be nine guaranteed generations on a run whose plan was
+ * already in trouble.
  *
- * Garbage in `generatedSoFar` reads as ZERO generated, which is the direction
- * that keeps the pictures: a NaN must never be allowed to satisfy the floor.
+ * ## Why this counts FRAMES THAT SURVIVED and not FRAMES BOUGHT (2026-09-20)
+ *
+ * It took `generatedSoFar` — the workflow's gross counter, incremented from
+ * `tierPool.length` the moment `image.generate` returns, before any vet sees a
+ * frame. Two prep carousels shipped at 0 and 1 picture against this floor of 3
+ * on 2026-09-20 (karoslabs `pubsub-21902648165262839`, thepitchbydeel
+ * `pubsub-21903994794164204`) and the trace is the same in both: three frames
+ * bought on attempt 1, the copy loop then rewrote the slides on attempts 2 and
+ * 3, and the vet correctly refused all three — *"lacks the required conversation
+ * interface and the 'sponsored' label"* — because they were drawn to claims that
+ * no longer existed. The counter read 3, the guarantee read PAID, and every
+ * downstream gate went quiet: `partitionGaps` returned an empty `guaranteed`, so
+ * the rescue tiers had nothing to protect from `optionalRevets: false`, and the
+ * floor's own re-entry found `guaranteeLeft === 0` and recorded
+ * `{ action: "unfilled" }` on a post with no pictures in it.
+ *
+ * A frame the vet refused bought nothing. Whatever it cost — and it is still
+ * BILLED, the meter is not rewritten — it did not pay down a guarantee
+ * denominated in frames that reach the reader. The counter has to mean what the
+ * floor means, or the floor measures one thing and binds on another.
+ *
+ * It counts GENERATED frames specifically, not pictures of any provenance. The
+ * first version of this fix counted every surviving picture and was wrong in the
+ * other direction: retrieved stock would have discharged a guarantee that exists
+ * for the two gaps retrieval provably cannot fill (see
+ * `MIN_GENERATED_IMAGES_PER_RUN`'s own docs, and the owner's 2026-09-18 ruling
+ * asking for made conceptual visuals by name). `run-budget-workflow.test.ts`
+ * caught it.
+ *
+ * The bound on the other side is NOT this function's job: a run whose vet
+ * refuses everything must not buy frames forever. The caller passes `ceiling`
+ * (the workflow uses `GENERATED_IMAGES_PER_RUN_CAP`, the widest plan) and
+ * `meter.crossedMax` remains the unconditional loop-breaker above it.
+ *
+ * Garbage in `generatedHeld` reads as ZERO held, which is the direction that
+ * keeps the pictures: a NaN must never be allowed to satisfy the floor.
+ *
+ * @param generatedHeld generated frames this run is currently carrying — frames
+ *                      `image.generate` made that SURVIVED vetting, never the
+ *                      gross count of frames bought.
+ * @param floor         overrides `MIN_GENERATED_IMAGES_PER_RUN`. Tests only.
  */
-export function guaranteedGapCount(generatedSoFar: number, floor: number = MIN_GENERATED_IMAGES_PER_RUN): number {
-  const made = Number.isFinite(generatedSoFar) ? Math.max(0, Math.floor(generatedSoFar)) : 0;
+export function guaranteedGapCount(generatedHeld: number, floor: number = MIN_GENERATED_IMAGES_PER_RUN): number {
+  const held = Number.isFinite(generatedHeld) ? Math.max(0, Math.floor(generatedHeld)) : 0;
   const bound = Number.isFinite(floor) ? Math.max(0, Math.floor(floor)) : 0;
-  return Math.max(0, bound - made);
+  return Math.max(0, bound - held);
 }
 
 /**
@@ -106,22 +144,35 @@ export function guaranteedGapCount(generatedSoFar: number, floor: number = MIN_G
  *    lowest-numbered `text_only` slide first — so if only one guarantee is left
  *    it should land on slide 2 rather than slide 7.
  *
- * Everything past `guaranteedGapCount(generatedSoFar)` is optional, in the same
+ * Everything past `guaranteedGapCount(generatedHeld)` is optional, in the same
  * order, so a caller that can afford some of them takes the best ones first.
  *
  * @param gaps          this tier's gaps, in any order.
- * @param generatedSoFar images this RUN has already generated (the workflow's
- *                       own `generatedSoFar` counter).
+ * @param generatedHeld generated frames this RUN is currently carrying —
+ *                      surviving generated selections, NOT frames bought. See
+ *                      `guaranteedGapCount` for the two carousels that shipped
+ *                      pictureless because this argument was the gross counter.
  * @param options.conceptSlide the slide number carrying the concept frame, when
  *                       this call is carrying one.
  * @param options.floor  overrides `MIN_GENERATED_IMAGES_PER_RUN`. Tests only —
  *                       the workflow passes nothing, so there is exactly one
  *                       floor in production.
+ * @param options.ceiling the most gaps this call may GUARANTEE, whatever the
+ *                       floor says — the run's remaining frame allowance.
+ *
+ *                       Since 2026-09-20 the guarantee RE-ARMS: a frame the vet
+ *                       refused no longer pays it down, so a run whose vet
+ *                       refuses everything would otherwise buy a fresh
+ *                       guarantee's worth on every attempt. It did: the cap
+ *                       test asked `image.generate` for ELEVEN frames against a
+ *                       per-run ceiling of 8, because `keep` takes the whole
+ *                       `guaranteed` slice before the plan's budget is applied.
+ *                       The re-arming is the fix; this is what bounds it.
  */
 export function partitionGaps<T extends ImageGapLike>(
   gaps: readonly T[],
-  generatedSoFar: number,
-  options: { conceptSlide?: number; floor?: number } = {},
+  generatedHeld: number,
+  options: { conceptSlide?: number; floor?: number; ceiling?: number } = {},
 ): GapPartition<T> {
   const ordered = [...gaps].sort((a, b) => {
     // The concept first, whichever slide it sits on. `undefined` never matches
@@ -132,6 +183,7 @@ export function partitionGaps<T extends ImageGapLike>(
     }
     return a.n - b.n;
   });
-  const guaranteedCount = Math.min(ordered.length, guaranteedGapCount(generatedSoFar, options.floor));
+  const ceiling = options.ceiling === undefined || !Number.isFinite(options.ceiling) ? Number.POSITIVE_INFINITY : Math.max(0, Math.floor(options.ceiling));
+  const guaranteedCount = Math.min(ordered.length, guaranteedGapCount(generatedHeld, options.floor), ceiling);
   return { guaranteed: ordered.slice(0, guaranteedCount), optional: ordered.slice(guaranteedCount) };
 }

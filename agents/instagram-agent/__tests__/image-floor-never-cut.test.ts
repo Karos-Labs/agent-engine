@@ -98,7 +98,7 @@ describe("partitionGaps — the guarantee the three generation gates may not ski
     expect(partitionGaps([], 0).guaranteed).toEqual([]);
   });
 
-  it("counts the guarantee per RUN, so a run that already made its images owes nothing further", () => {
+  it("counts the guarantee per RUN, so a run that is already HOLDING its pictures owes nothing further", () => {
     // The floor is a floor on the POST, not a multiplier on the attempts. Three
     // attempts x two guaranteed images would be six guaranteed generations
     // ($0.234) on a run whose plan was already in trouble.
@@ -109,11 +109,82 @@ describe("partitionGaps — the guarantee the three generation gates may not ski
     const spent = partitionGaps([gap(2), gap(3)], MIN_GENERATED_IMAGES_PER_RUN);
     expect(spent.guaranteed).toEqual([]);
     expect(spent.optional).toHaveLength(2);
-    // Garbage reads as ZERO generated, which is the direction that keeps the
+    // Garbage reads as ZERO held, which is the direction that keeps the
     // pictures: a NaN must never be allowed to satisfy the floor.
     expect(guaranteedGapCount(Number.NaN)).toBe(MIN_GENERATED_IMAGES_PER_RUN);
     expect(guaranteedGapCount(-4)).toBe(MIN_GENERATED_IMAGES_PER_RUN);
     expect(guaranteedGapCount(1.9)).toBe(MIN_GENERATED_IMAGES_PER_RUN - 1);
+  });
+
+  /**
+   * ── THE ARGUMENT THIS FILE USED TO MAKE FOR THE DEFECT. ──
+   *
+   * The case above is unchanged in every line except the word the number
+   * MEANS, and that word is the whole bug. Until 2026-09-20 the argument was
+   * "a run that already MADE its images owes nothing further", where "made"
+   * was `generatedSoFar` — frames handed back by `image.generate`, counted
+   * before any vet looked at one. So this file asserted, as correct behaviour,
+   * that three refused frames discharge the picture floor.
+   *
+   * Two prep carousels shipped on that assertion (karoslabs
+   * `pubsub-21902648165262839` at 0 pictures, thepitchbydeel
+   * `pubsub-21903994794164204` at 1, both against a floor of 3): three frames
+   * bought on attempt 1, the copy loop rewrote the slides on attempts 2-3, the
+   * vet correctly refused frames drawn to claims that no longer existed, and
+   * every gate downstream read the guarantee as paid.
+   *
+   * The regression below is written against the RUN, not the function: it is
+   * the shape of those two runs, and it fails on the old semantics.
+   */
+  it("re-arms the guarantee when the vet refused the frames the run bought — the 2026-09-20 pictureless carousels", () => {
+    // Attempt 1 bought the full guarantee. The vet then refused all three,
+    // because the copy loop had rewritten the claims underneath them, so the
+    // run is HOLDING no generated frame.
+    const framesBought = MIN_GENERATED_IMAGES_PER_RUN;
+    const generatedHeld = 0;
+
+    // The old counter. This is the exact call the workflow used to make, and
+    // it is why `partitionGaps` handed the rescue tiers an empty guarantee for
+    // `optionalRevets: false` to drop.
+    expect(guaranteedGapCount(framesBought)).toBe(0);
+
+    // The counter the guarantee is actually denominated in. A run holding no
+    // generated frame owes the whole guarantee, whatever it has already spent.
+    expect(guaranteedGapCount(generatedHeld)).toBe(MIN_GENERATED_IMAGES_PER_RUN);
+
+    // And the gates therefore have something to protect: the rescue tiers'
+    // `skipOptional` keeps `guaranteed` whatever the plan said, so a run under
+    // the floor cannot have its last picture taken by an optional-spend rung.
+    const { guaranteed, optional } = partitionGaps([gap(1), gap(6)], generatedHeld);
+    expect(guaranteed.map((g) => g.n)).toEqual([1, 6]);
+    expect(optional).toEqual([]);
+
+    // The second carousel's shape: one generated frame survived, so the run
+    // owes two more and not three.
+    expect(guaranteedGapCount(1)).toBe(MIN_GENERATED_IMAGES_PER_RUN - 1);
+  });
+
+  /**
+   * ── AND THE OTHER DIRECTION, WHICH THE FIRST FIX GOT WRONG. ──
+   *
+   * The first version of the 2026-09-20 fix counted every surviving PICTURE,
+   * of any provenance. That reads well until you notice what it does to a run
+   * whose retrieval ladder worked: three stock photographs would discharge a
+   * guarantee whose own constant exists for *"the two gaps retrieval provably
+   * cannot"* fill — the drawn concept frame, and a named entity with no
+   * licensable photograph — and which the owner's 2026-09-18 ruling 3 asks for
+   * by name (*"some AI generation of a flow of what we do"*).
+   *
+   * `run-budget-workflow.test.ts` failed on it, which is the only reason this
+   * case exists. Retrieved pictures are not generated frames, and the
+   * guarantee is denominated in the latter.
+   */
+  it("retrieved pictures do NOT discharge the generation guarantee — only generated frames do", () => {
+    // A run holding three retrieved stock photographs and no generated frame
+    // still owes its whole generation guarantee.
+    expect(guaranteedGapCount(0)).toBe(MIN_GENERATED_IMAGES_PER_RUN);
+    const { guaranteed } = partitionGaps([gap(2), gap(3), gap(4), gap(7)], 0);
+    expect(guaranteed).toHaveLength(MIN_GENERATED_IMAGES_PER_RUN);
   });
 
   /**

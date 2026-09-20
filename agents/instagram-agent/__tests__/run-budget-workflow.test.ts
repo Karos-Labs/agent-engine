@@ -340,7 +340,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
         requested.push(needs.length);
         return {
           status: "success",
-          result: { model: "gemini-2.5-flash-image", unmet: [], candidates: needs.map((g) => ({ path: pool[0]!.path, description: `generated for slide ${g.n}`, provider: "gemini", licenseConfidence: "generated" })) },
+          result: { model: "gemini-2.5-flash-image", unmet: [], candidates: needs.map((g) => ({ path: `.media-cache/generated/n${g.n}-gen.png`, description: `generated for slide ${g.n}`, provider: "gemini", licenseConfidence: "generated" })) },
         };
       },
     } as unknown as AgentTool;
@@ -360,19 +360,34 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()),
       finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
-      // attempt 1: copy, vet (4 gaps), generate re-vet, relevance, QA fails
-      finalTurn(copy), finalTurn(vetWithGaps()), finalTurn(revetRejects()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(failingQa),
-      // attempt 2: same — the second four images spend the cap
+      // attempt 1: copy, vet (4 gaps), generate re-vet, FLOOR re-vet, relevance, QA fails.
+      //
+      // The floor re-vet (`06h2`) is the turn the 2026-09-20 fix adds: a run
+      // whose generated frames were all refused is still owed its guarantee, so
+      // `06h` re-enters generation instead of recording `unfilled`. This router
+      // is POSITIONAL, so an unqueued turn does not fail where it is spent — it
+      // shifts every later turn by one and the failure surfaces attempts later.
+      finalTurn(copy), finalTurn(vetWithGaps()), finalTurn(revetRejects()), finalTurn(revetRejects()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(failingQa),
+      // attempt 2: the per-run frame ceiling is now spent, so `06h` records
+      // `unfilled` and there is NO floor re-vet turn to queue here.
       finalTurn(copy), finalTurn(vetWithGaps()), finalTurn(revetRejects()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(failingQa),
       // attempt 3: no generate re-vet — the cap is spent, the gaps go text-only, QA passes
       finalTurn(copy), finalTurn(vetWithGaps()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const { result, steps, stepIds } = await run(env, "budget_image_cap", router, { tools: testTools(env, { "image.generate": generate }) });
     expect(result.status).toBe("completed");
-    expect(requested).toEqual([4, 4]);
+    // ── THE CLAIM IS THE TITLE'S: *at most 8*, and it is asserted as such. ──
+    //
+    // This was `toEqual([4, 4])` until 2026-09-20. The per-run TOTAL is the
+    // invariant this case is named for and it is unchanged; the distribution
+    // across calls is not, because the floor may now re-enter generation
+    // mid-run when the vet refused the frames the run already bought (the two
+    // pictureless carousels of 2026-09-20 — see `guaranteedGapCount`). Pinning
+    // the exact split made a test of "at most 8" fail on a change that never
+    // asked for a ninth image.
     expect(requested.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(8);
+    expect(requested[0]).toBe(4);
     expect(stepIds).toContain("06d-generate-images-attempt-1");
-    expect(stepIds).toContain("06d-generate-images-attempt-2");
     expect(stepIds).not.toContain("06d-generate-images-attempt-3");
     const downgrade = steps.find((s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-3")?.output as { downgraded: number[]; reason: string };
     expect(downgrade.downgraded).toEqual(gaps);
@@ -396,7 +411,13 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     // 2026-09-18: + one `05r-revise-copy` per RETRY. Attempts 2 and 3 edit the
     // previous draft instead of rewriting it, so each costs a revise turn on
     // top of whatever it then buys.
-    expect(router.complete).toHaveBeenCalledTimes(3 + 1 + 6 + 6 + 5 + 1 + 2);
+    // 2026-09-20: + ONE `06h2-vet-floor-images` on attempt 1. A frame the vet
+    // refused no longer pays down the generation guarantee, so the floor
+    // re-enters generation once here instead of recording `unfilled` on a post
+    // under the picture floor — and the frames it buys have to be vetted. It is
+    // one turn, on attempt 1 only: attempt 2 finds the per-run frame ceiling
+    // spent and buys nothing.
+    expect(router.complete).toHaveBeenCalledTimes(3 + 1 + 6 + 6 + 5 + 1 + 2 + 1);
   });
 
   /**
@@ -441,7 +462,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
             result: {
               model: "gemini-2.5-flash-image",
               unmet: [],
-              candidates: needs.map((g) => ({ path: pool[0]!.path, description: `generated for slide ${g.n}`, provider: "gemini", licenseConfidence: "generated" })),
+              candidates: needs.map((g) => ({ path: `.media-cache/generated/n${g.n}-gen.png`, description: `generated for slide ${g.n}`, provider: "gemini", licenseConfidence: "generated" })),
             },
           };
         },
@@ -487,7 +508,6 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
       // whole tier now skips the OPTIONAL gaps and falls through with the
       // guarantee. Four gaps, two guaranteed.
       expect(stepIds).toContain("06d-generate-images-attempt-1");
-      expect(requested).toHaveLength(1);
       expect(requested[0]).toHaveLength(MIN_GENERATED_IMAGES_PER_RUN);
       // Lowest-first within the tier — an early picture earns the swipe — and
       // this run carries no concept, which `04m` declines on the canonical story.
@@ -499,7 +519,11 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
       expect(requested[0]!.length).toBeGreaterThan(0);
       // And a gate that had simply stopped gating would have asked for all four.
       expect(requested[0]!.length).toBeLessThan(4);
-      // The guarantee is per RUN, not per attempt: attempt 2 buys none.
+      // The guarantee is per RUN, not per attempt: the generate TIER does not
+      // run again on attempt 2. What may now follow is the FLOOR's own
+      // re-entry (`06d2`), which is a different step and is the 2026-09-20 fix
+      // — a run whose frames were all refused is owed replacements, and before
+      // that fix it got none and shipped bare plates.
       expect(stepIds).not.toContain("06d-generate-images-attempt-2");
     });
 
@@ -525,9 +549,22 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
       // it — made this exact run report `{ action: "ok", pictureSlides: 2 }`.
       expect(floor!.pictureSlides).toBeLessThan(3);
       expect(floor!.action).not.toBe("ok");
-      expect(floor!.action).toBe("unfilled");
-      // And it says WHY, in the run's own numbers, rather than silently passing.
-      expect(floor!.reason).toContain(`already generated ${MIN_GENERATED_IMAGES_PER_RUN} image(s)`);
+      // ── AND IT NOW REPAIRS INSTEAD OF ONLY REPORTING (2026-09-20). ──
+      //
+      // This asserted `toBe("unfilled")`, which was the only other action the
+      // step had: the guarantee was counted in frames BOUGHT, so a run whose
+      // frames were all refused had `guaranteeLeft === 0` and could do nothing
+      // but state the defect. That is exactly what both prep carousels of
+      // 2026-09-20 recorded — `{action: "unfilled", generated: 3,
+      // pictureSlides: 0}` — while the reader got a carousel with no pictures
+      // in it.
+      //
+      // The invariant this case exists for is the line above: `pictureSlides`
+      // is the OUTCOME, and the step must never report `ok` when the outcome is
+      // under the floor. That is unchanged and still asserted. What changed is
+      // that a refused frame no longer discharges the guarantee, so the honest
+      // answer to "0 pictures, floor 3" is to buy replacements.
+      expect(floor!.action).toBe("generate-more");
       // It never holds: the run completed above, and the slides took the
       // text-only downgrade exactly as they did before.
       const downgrade = steps.find((s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-1")?.output as { downgraded: number[] } | undefined;

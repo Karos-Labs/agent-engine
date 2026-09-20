@@ -78,8 +78,34 @@ import { FULL_BLEED_IMAGE_LAYOUTS, HERO_IMAGE_LAYOUTS } from "./slides-data.js";
 const SCENE_IS_AN_ARGUMENT =
   /\b(typographic|typography|no photograph|no photo\b|no image|text[- ]only|not photographable|editorial slide|checklist|no picture)\b/i;
 
+/**
+ * Scenes that are a SENTINEL for "there is no scene", not a description of one.
+ *
+ * `visualNeed.source` already says `"none"`, and a writer filling the sibling
+ * `scene` field on the same object reaches for the same word. It is not a brief;
+ * it is the absence of one, spelled.
+ *
+ * ## The $0.067 frame this exists to stop (karoslabs, 2026-09-20)
+ *
+ * `sceneDescribesAPicture("none")` was `true` — the string is non-empty and
+ * `SCENE_IS_AN_ARGUMENT` does not list it — so `planImageBackfill` chose the
+ * "the writer's own words are the brief" branch and emitted
+ * `{ n: 2, prompt: "none", backfilled: true }`. The floor paid for a frame drawn
+ * to the brief *"none"*, and `06h2` then graded it against a subject of
+ * *"none"*: *"The slide asked for a subject of 'none' and the candidate was
+ * generated to exactly that brief."* Every layer behaved correctly on an input
+ * that never meant anything.
+ *
+ * The list is deliberately tiny and exact. It is not a general "is this string
+ * meaningful" heuristic — those are the checks that fail on the one input that
+ * matters. These are the literal sentinels a writer types INSTEAD of a scene,
+ * matched whole; anything with real words in it goes to the writer's branch as
+ * before.
+ */
+const SCENE_IS_A_SENTINEL = /^\s*(none|n\/?a|null|nil|undefined|no|-+|—+|\.*)\s*$/i;
+
 export function sceneDescribesAPicture(scene: string): boolean {
-  return scene.trim().length > 0 && !SCENE_IS_AN_ARGUMENT.test(scene);
+  return scene.trim().length > 0 && !SCENE_IS_A_SENTINEL.test(scene) && !SCENE_IS_AN_ARGUMENT.test(scene);
 }
 
 /**
