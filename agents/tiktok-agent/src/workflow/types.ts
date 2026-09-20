@@ -291,8 +291,24 @@ export interface TikTokIntake {
   sourcePath?: string;
   /** Which tier the footage came from. A `generated` source has no transcript — the spoken-moment steps are skipped for it. */
   sourceTier: ClipSourceTier;
-  /** Where harvested/attached footage came from — the honest basis for the caption's source credit. */
-  sourceContext?: { title?: string; channel?: string; url?: string; label?: string };
+  /**
+   * Where harvested/attached footage came from — the honest basis for the
+   * caption's source credit, and since RFC-25 also the basis for judging it.
+   *
+   * `discovery`/`harvestQuery` are set only by the web-harvest tier. "We
+   * searched the open web for this, with these words" is a fact about the
+   * clip rather than an implementation detail: it is what tells a reviewer
+   * whether they are looking at a show the client holds rights to or at the
+   * best thing a search turned up.
+   */
+  sourceContext?: {
+    title?: string;
+    channel?: string;
+    url?: string;
+    label?: string;
+    discovery?: "allowlist" | "open" | "pasted";
+    harvestQuery?: string;
+  };
   /**
    * What every tier ABOVE the one that served said (2026-09-10). Present on a
    * `stock` intake: the client's own footage was not used, and the reviewer
@@ -437,6 +453,48 @@ export const ShortScriptSchema = z.object({
   language: z.string().min(2).max(16),
 });
 export type ShortScript = z.infer<typeof ShortScriptSchema>;
+
+/**
+ * Whether the recording this run is about to clip is worth clipping FOR THIS
+ * CLIENT (RFC-25 phase 3).
+ *
+ * Open discovery searches all of YouTube, and all of YouTube contains clip
+ * farms, re-uploads, conference B-roll and a competitor's own show. Nothing
+ * else in this pipeline is positioned to notice any of that: the moment picker
+ * reads a transcript and answers "which 40 seconds", the visual QA watches a
+ * finished render, and neither is asked "should we have been in this recording
+ * at all".
+ *
+ * It MARKS and never blocks. A low score is a `ContentRepair` and a field on
+ * the gate payload, under the standing always-deliver rule — the human at
+ * `11-clip-review` is the one who can tell "a competitor, do not touch" from
+ * "a competitor, and that is exactly why the take lands".
+ */
+export const SourceFitSchema = z.object({
+  /** 0-10. Under `MIN_SOURCE_FIT` the clip reaches the reviewer flagged. */
+  score: z.number().min(0).max(10),
+  /** One line a reviewer reads: what this recording is, and why it does or does not serve this client. */
+  reason: z.string().min(1).max(400),
+  /**
+   * Named problems, each one short. Empty is the normal answer.
+   *
+   * Separate from `reason` because these are the things a person may want to
+   * act on rather than read past: a competitor's show, a re-upload, a channel
+   * that only posts clips of other people's podcasts.
+   */
+  concerns: z.array(z.string().min(1).max(200)).max(5).default([]),
+});
+export type SourceFit = z.infer<typeof SourceFitSchema>;
+
+/**
+ * Below this, the recording is a poor match and the reviewer is told so.
+ *
+ * 5, matching `WEAK_BEAT_RELEVANCE` in the visual QA, and for the same reason:
+ * the two scores are read by the same person on the same screen, and two
+ * different meanings of "5 out of 10" on one gate payload is a worse problem
+ * than either bar being slightly off.
+ */
+export const MIN_SOURCE_FIT = 5;
 
 /** The caption/about pair every finished clip carries, whatever its format. `sourceCredit` exists only for a clip of someone else's words. */
 export interface ClipCopy {

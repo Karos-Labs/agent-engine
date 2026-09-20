@@ -7,7 +7,15 @@ import { MEDIA_CACHE_PREFIX } from "./find-images.js";
 // 1.1.0: the provider seam grew a `download` branch and the input grew a
 // rights scope (`allowedSources`) and duration bounds; the first real
 // backend (`createYtDlpHarvestProvider`) sits behind `VIDEO_HARVEST_PROVIDER`.
-const TOOL_VERSION = "1.1.0";
+// 1.2.0 (2026-09-20, RFC-25): `discovery: "open"` lets the clipping agent
+// search the open web for a podcast to clip, instead of refusing when the
+// client's sourcePool names no shows. Defaults to `"allowlist"`, so no
+// existing caller changes behaviour.
+// 1.3.0 (2026-09-20, RFC-25 phase 4): `sourceUrl` resolves ONE page a person
+// pasted, with no search at all. `media.ingestAssets` fetches an https:// URI
+// as a direct file, so a watch page has never been something a client could
+// hand this pipeline.
+const TOOL_VERSION = "1.3.0";
 
 /**
  * `media.harvestVideo` — Tier 2b of the clip cascade: contextual footage
@@ -21,28 +29,54 @@ const TOOL_VERSION = "1.1.0";
  * cascade moves to Tier 3 — which is exactly what "zero-held between tiers"
  * means. The tests inject a fake provider through the same option.
  *
- * ## Rights are an INPUT, not a hope
+ * ## Rights are an INPUT, and since RFC-25 the input has two settings
  *
- * A harvested clip is `licenseConfidence: "unknown"` by the scrape tier's
- * own standard — copyright stays with the original poster. What makes a
- * commentary clip publishable anyway is that the client holds clipping rights
- * to specific shows (their `tiktokClips.sourcePool`), so those show names
- * travel in as `allowedSources` and a provider MUST confine its results to
- * them. With none, a provider refuses rather than searching the open web.
- * The clip pipeline's caption already requires an explicit source credit
- * (checked in code, not asked of the model) and the human gate sees the
- * source; `sourceUrl`/`channel` are carried through so both keep working.
+ * A harvested clip is `licenseConfidence: "unknown"` whichever way it was
+ * found — copyright stays with the original poster, and nothing here asserts
+ * a right the system does not have.
+ *
+ * `discovery: "allowlist"` (the default, and the original behaviour) is the
+ * stronger posture: the client holds clipping rights to specific shows (their
+ * `tiktokClips.sourcePool`), those names travel in as `allowedSources`, and a
+ * provider MUST confine its results to them. With none it refuses rather than
+ * searching the open web.
+ *
+ * `discovery: "open"` searches anyway, and it exists because the owner
+ * weighed the exposure on 2026-09-20 and chose reach — see
+ * `docs/RFC-25-tiktok-clipping-sources.md`, which is there precisely so this
+ * does not read as a regression of the paragraph above. It is a REVERSIBLE
+ * decision: a client with a `sourcePool` still takes the allowlist path, and
+ * setting one restores the old behaviour for that client with no code change.
+ *
+ * What did not change, and is the protection that was always doing the work:
+ * every clip reaches a human at `11-clip-review` before anything is
+ * published, the caption must carry an explicit source credit (checked in
+ * code, not asked of the model), and `sourceUrl`/`channel`/`discovery` are
+ * carried through so the reviewer sees exactly how this footage was found.
  */
 
 export const HarvestVideoInputSchema = z.object({
   repoRoot: z.string().min(1).describe("Bounds root. The written clip path is relative to this and provably inside it."),
   runId: z.string().min(1).describe("Namespaces the cache directory, exactly as media.findImages does."),
-  query: z.string().min(1).max(400).describe("What to look for — the run's topic/angle."),
+  query: z.string().min(1).max(400).describe("What to look for — the run's topic/angle. Ignored when `sourceUrl` is given."),
+  sourceUrl: z
+    .string()
+    .url()
+    .optional()
+    .describe(
+      "A page a person pasted (a YouTube watch URL, a podcast episode page). Given this, the tool resolves and downloads THAT video and never searches: `query`, `allowedSources` and `discovery` are all ignored. The duration bounds still apply, because a three-hour stream is a download the run cannot afford whoever chose it.",
+    ),
   allowedSources: z
     .array(z.string().min(1))
     .default([])
     .describe(
-      "Show/channel names the client holds clipping rights to (their `tiktokClips.sourcePool`). A provider MUST restrict results to these; with none, the provider refuses rather than searching the open web.",
+      "Show/channel names the client holds clipping rights to (their `tiktokClips.sourcePool`). Under `discovery: \"allowlist\"` a provider MUST restrict results to these; with none it refuses. Ignored under `discovery: \"open\"`.",
+    ),
+  discovery: z
+    .enum(["allowlist", "open"])
+    .default("allowlist")
+    .describe(
+      "How to find a video. `allowlist` (default) searches only within `allowedSources` and refuses when there are none — the stronger rights posture. `open` searches the whole provider for the query, for a client with no sourcePool of their own (RFC-25, owner ruling 2026-09-20). Either way the clip is `licenseConfidence: \"unknown\"` and a human approves it before anything ships.",
     ),
   maxBytes: z
     .number()
@@ -76,12 +110,16 @@ export interface HarvestVideoResult {
   durationSeconds?: number;
   /** Which backend answered (`VideoHarvestProvider.name`). */
   provider: string;
+  /** How this video was found. On the reviewer's payload because "we searched the open web for this" is a fact about the clip, not an implementation detail. */
+  discovery: "allowlist" | "open" | "pasted";
 }
 
 /** Everything a provider needs to search within the client's rights scope and size cap. */
 export interface VideoHarvestQuery {
   query: string;
   allowedSources: readonly string[];
+  /** `allowlist` confines results to `allowedSources` and refuses with none; `open` searches everything. See the module comment. */
+  discovery: "allowlist" | "open";
   maxBytes: number;
   minDurationSeconds: number;
   maxDurationSeconds: number;
@@ -105,6 +143,14 @@ export type VideoHarvestFind = { candidate: VideoHarvestCandidate } | { candidat
 export interface VideoHarvestProvider {
   readonly name: string;
   findVideo(q: VideoHarvestQuery): Promise<VideoHarvestFind>;
+  /**
+   * Resolve ONE page into a downloadable candidate — no search (RFC-25 phase 4).
+   *
+   * Optional on the seam: a provider that cannot do this is not broken, it
+   * simply has no way to turn a page into a video, and the tool reports that
+   * rather than pretending the paste failed for a content reason.
+   */
+  resolveUrl?(sourceUrl: string, q: Pick<VideoHarvestQuery, "maxBytes" | "minDurationSeconds" | "maxDurationSeconds">): Promise<VideoHarvestFind>;
 }
 
 const VIDEO_MIME_EXTENSION: Record<string, string> = {
@@ -141,15 +187,27 @@ export function createHarvestVideo(options: { provider?: VideoHarvestProvider | 
 
       let found: VideoHarvestFind;
       try {
-        found = await provider.findVideo({
+        if (input.sourceUrl !== undefined) {
+          if (provider.resolveUrl === undefined) {
+            return notAvailable(`media.harvestVideo: provider "${provider.name}" cannot resolve a pasted page into a video`);
+          }
+          found = await provider.resolveUrl(input.sourceUrl, {
+            maxBytes: input.maxBytes,
+            minDurationSeconds: input.minDurationSeconds,
+            maxDurationSeconds: input.maxDurationSeconds,
+          });
+        } else {
+          found = await provider.findVideo({
           query: input.query,
           allowedSources: input.allowedSources,
+          discovery: input.discovery,
           maxBytes: input.maxBytes,
           minDurationSeconds: input.minDurationSeconds,
-          maxDurationSeconds: input.maxDurationSeconds,
-        });
+            maxDurationSeconds: input.maxDurationSeconds,
+          });
+        }
       } catch (error) {
-        return toolingError(`media.harvestVideo: provider "${provider.name}" failed to search — ${(error as Error).message}`);
+        return toolingError(`media.harvestVideo: provider "${provider.name}" failed to ${input.sourceUrl !== undefined ? "resolve the pasted page" : "search"} — ${(error as Error).message}`);
       }
       if (found.candidate === null) {
         return contentFail(`media.harvestVideo: ${found.reason}`);
@@ -213,6 +271,7 @@ export function createHarvestVideo(options: { provider?: VideoHarvestProvider | 
         ...(candidate.channel !== undefined ? { channel: candidate.channel } : {}),
         ...(candidate.durationSeconds !== undefined ? { durationSeconds: candidate.durationSeconds } : {}),
         provider: provider.name,
+        discovery: input.sourceUrl !== undefined ? "pasted" : input.discovery,
       });
     },
   });

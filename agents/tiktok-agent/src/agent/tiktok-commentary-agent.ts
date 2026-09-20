@@ -36,7 +36,7 @@ export class TikTokCommentaryAgent extends BaseAgent<Commentary> {
     // rejects (dashes, exclamation marks, the cliche bank) and drops every em
     // dash from its own text, for the same reason tiktok-script@2 did. v3
     // stays frozen.
-    skillRef: "tiktok-commentary@5",
+    skillRef: "tiktok-commentary@6",
     // The lint 07-compliance runs on the caption and about, run first on the
     // model's own output so a tell is a revision here, not a held run there.
     selfCritique: {

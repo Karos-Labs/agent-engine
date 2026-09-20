@@ -15,12 +15,19 @@ import {
 /**
  * `media.harvestVideo` on its first real backend.
  *
- * The load-bearing tests here are the two refusals: an empty `allowedSources`
- * runs NOTHING (asserted by the absence of a runner call, not by an empty
- * result — a provider that searched the open web and then discarded the hits
- * would also return empty), and a hit from a channel the client cannot clip
- * is dropped even when it is the best topical match. Those two are what make
- * "rights-restricted" a property of the code rather than of the prompt.
+ * The load-bearing tests here are the two refusals under the ALLOWLIST
+ * posture: an empty `allowedSources` runs NOTHING (asserted by the absence of
+ * a runner call, not by an empty result — a provider that searched the open
+ * web and then discarded the hits would also return empty), and a hit from a
+ * channel the client cannot clip is dropped even when it is the best topical
+ * match. Those two are what make "rights-restricted" a property of the code
+ * rather than of the prompt.
+ *
+ * Since RFC-25 there is a second posture, `discovery: "open"`, and the tests
+ * for it are the mirror image: it MUST run a search with no source in it, and
+ * it must NOT apply the channel filter. Keeping both sets in one file is
+ * deliberate — the risk with two postures is that a later change quietly
+ * gives one the other's behaviour.
  */
 
 const CTX = { ctx: {} as never };
@@ -90,10 +97,10 @@ const LENNY_HIT = entry({
 });
 
 describe("createYtDlpHarvestProvider — search", () => {
-  it("refuses with no allowed sources WITHOUT running anything — never the open web", async () => {
+  it("refuses with no allowed sources WITHOUT running anything — an allowlist search never reaches the open web", async () => {
     const { runner, calls } = fakeRunner({});
     const provider = createYtDlpHarvestProvider({ runner });
-    const found = await provider.findVideo({ query: "x", allowedSources: [], maxBytes: 1, minDurationSeconds: 90, maxDurationSeconds: 10_800 });
+    const found = await provider.findVideo({ query: "x", allowedSources: [], discovery: "allowlist", maxBytes: 1, minDurationSeconds: 90, maxDurationSeconds: 10_800 });
     expect(found.candidate).toBeNull();
     expect((found as { reason: string }).reason).toMatch(/no allowed sources/);
     expect(calls).toHaveLength(0);
@@ -278,5 +285,113 @@ describe("createKarosMediaTools wiring", () => {
     expect(outcome.status).toBe("content_fail");
     expect((outcome as { reason: string }).reason).toContain("fake says no");
     expect(asked).toBe(1);
+  });
+});
+
+/**
+ * `discovery: "open"` — RFC-25, owner ruling 2026-09-20.
+ *
+ * The mirror of the allowlist tests above. The property under test is that
+ * the two postures do not leak into each other: open must search with no
+ * source in the query and must not apply the channel filter, and everything
+ * that is about the VIDEO rather than its source (duration bounds, a
+ * fetchable address, topical scoring) must still apply to both.
+ */
+describe("createYtDlpHarvestProvider — open discovery (RFC-25)", () => {
+  /** A runner that answers any `ytsearch`, since an open query carries no source name to key on. */
+  function openRunner(entries: YtDlpFlatEntry[]) {
+    const calls: string[][] = [];
+    const runner: ProcessRunnerLike = async (command, args) => {
+      calls.push([command, ...args]);
+      return { stdout: searchJson(entries), stderr: "", exitCode: 0 };
+    };
+    return { runner, calls };
+  }
+
+  it("searches with NO source in the query, and takes a hit from any channel", async () => {
+    // The allowlist path would have dropped this: the channel is nobody's
+    // sourcePool. That is the whole difference between the two postures.
+    const { runner, calls } = openRunner([
+      entry({ id: "open1", title: "AI agents replacing junior developers", uploader: "Some Other Show", channel: "Some Other Show", duration: 2400 }),
+    ]);
+    const provider = createYtDlpHarvestProvider({ runner });
+    const found = await provider.findVideo({
+      query: "ai agents junior developers podcast",
+      allowedSources: [],
+      discovery: "open",
+      maxBytes: 1,
+      minDurationSeconds: 90,
+      maxDurationSeconds: 10_800,
+    });
+
+    expect(found.candidate?.channel).toBe("Some Other Show");
+    expect(calls).toHaveLength(1);
+    // One search, and the query is the caller's words with no show name spliced in.
+    expect(calls[0]![1]).toMatch(/^ytsearch\d+:ai agents junior developers podcast$/);
+  });
+
+  it("still applies every bound that is about the video rather than its source", async () => {
+    // A Short and a multi-hour stream are wrong whoever uploaded them, and
+    // an entry with no duration cannot be proven not to be a Short.
+    const { runner } = openRunner([
+      entry({ id: "short", title: "ai agents", uploader: "A", channel: "A", duration: 45 }),
+      entry({ id: "stream", title: "ai agents", uploader: "B", channel: "B", duration: 20_000 }),
+      entry({ id: "nodur", title: "ai agents", uploader: "C", channel: "C" }),
+    ]);
+    const provider = createYtDlpHarvestProvider({ runner });
+    const found = await provider.findVideo({
+      query: "ai agents",
+      allowedSources: [],
+      discovery: "open",
+      maxBytes: 1,
+      minDurationSeconds: 90,
+      maxDurationSeconds: 10_800,
+    });
+    expect(found.candidate).toBeNull();
+    expect((found as { reason: string }).reason).toMatch(/open search found no video/);
+  });
+
+  it("prefers the hit that matches the query, not merely the newest", async () => {
+    const { runner } = openRunner([
+      entry({ id: "recent", title: "a completely unrelated conversation", uploader: "A", channel: "A", duration: 3000, upload_date: "20260901" }),
+      entry({ id: "onTopic", title: "ai agents and junior developers", uploader: "B", channel: "B", duration: 3000, upload_date: "20240101" }),
+    ]);
+    const provider = createYtDlpHarvestProvider({ runner });
+    const found = await provider.findVideo({
+      query: "ai agents junior developers",
+      allowedSources: [],
+      discovery: "open",
+      maxBytes: 1,
+      minDurationSeconds: 90,
+      maxDurationSeconds: 10_800,
+    });
+    expect(found.candidate?.sourceUrl).toContain("onTopic");
+  });
+
+  it("ignores allowedSources entirely when open, rather than quietly narrowing", async () => {
+    // A caller that passed both must get the posture it asked for. Silently
+    // honouring the pool here would make `open` mean two different things.
+    const { runner, calls } = openRunner([entry({ id: "x", title: "ai agents", uploader: "Nobody", channel: "Nobody", duration: 3000 })]);
+    const provider = createYtDlpHarvestProvider({ runner });
+    const found = await provider.findVideo({
+      query: "ai agents",
+      allowedSources: ["Lenny's Podcast"],
+      discovery: "open",
+      maxBytes: 1,
+      minDurationSeconds: 90,
+      maxDurationSeconds: 10_800,
+    });
+    expect(found.candidate?.channel).toBe("Nobody");
+    expect(calls[0]![1]).not.toContain("Lenny");
+  });
+
+  it("treats a broken open search as a TOOLING failure, never as nothing to clip", async () => {
+    // A search that never ran is not an editorial outcome, and the cascade
+    // must not read it as one — the same rule the allowlist path follows.
+    const runner: ProcessRunnerLike = async () => ({ stdout: "", stderr: "Sign in to confirm you are not a bot", exitCode: 1 });
+    const provider = createYtDlpHarvestProvider({ runner });
+    await expect(
+      provider.findVideo({ query: "x", allowedSources: [], discovery: "open", maxBytes: 1, minDurationSeconds: 90, maxDurationSeconds: 10_800 }),
+    ).rejects.toThrow(/open search exited 1/);
   });
 });
