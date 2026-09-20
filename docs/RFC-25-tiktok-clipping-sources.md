@@ -37,11 +37,27 @@ changed is who decides: the owner has weighed the exposure and chosen reach.
 ### What the decision does NOT change
 
 - **Every clip still reaches a human before anything is published.** `11-clip-review`
-  is untouched, and the gate now carries the source URL, the channel and the licence
-  confidence explicitly. That gate is the real protection, and it was always the real
+  is untouched. That gate is the real protection, and it was always the real
   protection — the allowlist was a second line, not the first.
-- **`licenseConfidence` stays `"unknown"`.** Nothing here asserts a right the system
-  does not have. The field travels to the reviewer rather than being quietly dropped.
+- **`licenseConfidence` stays `"unknown"`** for anything nobody cleared. Nothing here
+  asserts a right the system does not have.
+
+  > **Corrected 2026-09-20, same day.** This section originally read "the gate now
+  > carries the source URL, the channel and the licence confidence explicitly". It did
+  > not. The gate payload carried the source TIER and nothing else, so `web-harvest`
+  > read identically whether the show was one the client clears every week or one an
+  > open search had turned up ninety seconds earlier — and a gate this document calls
+  > "the real protection" cannot protect against a risk it does not display. The
+  > provenance did reach the *deliverable*, but only as prose inside a
+  > `source-discovery` content repair and only on the `open` path.
+  >
+  > Now true: `11-clip-review` and the deliverable both carry `sourceUrl`,
+  > `sourceChannel`, `sourceTitle` and a `licenseConfidence` computed by
+  > `clipLicenseConfidence(tier, discovery)` — `client-provided` for the client's own
+  > file or library, `client-cleared` for a show on their `sourcePool`,
+  > `stock-licensed` for library footage, and `unknown` for an open search **or a
+  > pasted link**. A pasted link is `unknown` because choosing a recording is not the
+  > same as holding a right to republish part of it.
 - **The caption still has to credit the source**, checked in code, not asked of the
   model (`07-compliance`, and since 2026-09-18 the credit is appended rather than held
   on).

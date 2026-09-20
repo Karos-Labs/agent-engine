@@ -182,6 +182,51 @@ export const DEFAULT_CLIP_CONFIG: TikTokClipConfig = TikTokClipConfigSchema.pars
 export type ClipSourceTier = "user-asset" | "owned-footage" | "web-harvest" | "stock" | "generated";
 
 /**
+ * How much this run knows about the right to publish the footage it clipped.
+ *
+ * Not a legal opinion and not a permission — a statement of PROVENANCE, in the
+ * four shapes provenance actually comes in here, so the person at
+ * `11-clip-review` is deciding with the same facts the cascade had.
+ */
+export type ClipLicenseConfidence =
+  /** The client handed this file over themselves, or it came out of their own library. */
+  | "client-provided"
+  /** Somebody else's recording, from a show the client named on their `sourcePool` as one they clip. */
+  | "client-cleared"
+  /** A stock library clip, licensed by the provider for this use. */
+  | "stock-licensed"
+  /** Somebody else's recording that nobody cleared: an open search, or a page pasted into the run. */
+  | "unknown";
+
+/**
+ * Provenance from the two facts that determine it: which tier served, and how
+ * that tier found the footage.
+ *
+ * RFC-25 §1 says the human gate "was always the real protection" for a clip of
+ * someone else's podcast — and a gate is only a protection if the thing being
+ * protected against is visible at it. Shipped 2026-09-20, the gate carried the
+ * source TIER and nothing else, so `web-harvest` read the same whether the
+ * show was one the client clears every week or one a search turned up ninety
+ * seconds earlier. Those are not the same decision.
+ *
+ * A pasted link is `unknown` on purpose, and it is the one row that might
+ * surprise: the client chose it, so it is their decision, but choosing a
+ * recording is not the same as holding a right to republish forty seconds of
+ * it — and the person approving the clip is better served by being told which
+ * of the two they have.
+ */
+export function clipLicenseConfidence(
+  tier: ClipSourceTier,
+  discovery: "allowlist" | "open" | "pasted" | undefined,
+): ClipLicenseConfidence {
+  if (tier === "stock" || tier === "generated") return "stock-licensed";
+  if (tier === "owned-footage") return "client-provided";
+  if (tier === "user-asset") return discovery === "pasted" ? "unknown" : "client-provided";
+  // web-harvest: cleared only when the client's own source list put it there.
+  return discovery === "allowlist" ? "client-cleared" : "unknown";
+}
+
+/**
  * The HARD ceiling: no short costs more than this, all in. Enforced three
  * ways — the dispatcher's `WorkflowBudget` (checked by `step.code`/
  * `step.agent` before every step), the workflow's own estimate before the
