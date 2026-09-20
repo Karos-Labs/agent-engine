@@ -90,6 +90,40 @@ describe("ScrappyCocoScraper — request contract", () => {
     await scraper(fetchImpl).socialHistory({ platform: "instagram", username: "@@someone" });
     expect((calls[0]!.body["input"] as Record<string, string>)["username"]).toBe("someone");
   });
+
+  it("routes linkedin history by URL, not username: a bare slug becomes a person profile", async () => {
+    const { fetchImpl, calls } = mockTransport(() => ({ status: "completed", records: [] }));
+    await scraper(fetchImpl).socialHistory({ platform: "linkedin", username: "satya-nadella" });
+    expect(calls[0]!.body).toMatchObject({ source: "linkedin", capability: "account_posts", input: { url: "https://www.linkedin.com/in/satya-nadella/" } });
+  });
+
+  it("routes a linkedin company URL to company_posts, and a person URL to account_posts, unchanged", async () => {
+    const { fetchImpl, calls } = mockTransport(() => ({ status: "completed", records: [] }));
+    const s = scraper(fetchImpl);
+    await s.socialHistory({ platform: "linkedin", username: "https://www.linkedin.com/company/karos-labs/" });
+    await s.socialHistory({ platform: "linkedin", username: "https://www.linkedin.com/in/someone/" });
+
+    expect(calls[0]!.body).toMatchObject({ capability: "company_posts", input: { url: "https://www.linkedin.com/company/karos-labs/" } });
+    expect(calls[1]!.body).toMatchObject({ capability: "account_posts", input: { url: "https://www.linkedin.com/in/someone/" } });
+  });
+
+  it("routes linkedin keyword search like every other platform's search_posts", async () => {
+    const { fetchImpl, calls } = mockTransport(() => ({ status: "completed", records: [] }));
+    await scraper(fetchImpl).searchSocial("linkedin", "return to office");
+    expect(calls[0]!.body).toMatchObject({ source: "linkedin", capability: "search_posts", input: { query: "return to office" } });
+  });
+
+  it("reads a reddit subreddit feed through the dedicated capability, with sort/limit passed through", async () => {
+    const { fetchImpl, calls } = mockTransport(() => ({ status: "completed", records: [] }));
+    await scraper(fetchImpl).fetchSubredditFeed!("smallbusiness", { sort: "top", time: "week", limit: 10 });
+    expect(calls[0]!.body).toMatchObject({ source: "reddit", capability: "subreddit_feed", input: { subreddit: "smallbusiness", sort: "top", time: "week" }, limit: 10 });
+  });
+
+  it("reads a reddit post's comments through the dedicated capability", async () => {
+    const { fetchImpl, calls } = mockTransport(() => ({ status: "completed", records: [] }));
+    await scraper(fetchImpl).fetchPostComments!("https://www.reddit.com/r/smallbusiness/comments/abc123/", { limit: 5 });
+    expect(calls[0]!.body).toMatchObject({ source: "reddit", capability: "post_comments", input: { post: "https://www.reddit.com/r/smallbusiness/comments/abc123/" }, limit: 5 });
+  });
 });
 
 describe("ScrappyCocoScraper — record mapping", () => {

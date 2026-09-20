@@ -27,6 +27,9 @@ import {
   type ResearchVisualPatterns,
 } from "./payload.js";
 
+// 1.4.0: `socialAccounts.platform` accepts "linkedin" (ScrappyCoco added
+// linkedin.account_posts/company_posts) — a call a 1.3.0 caller could not have
+// made before now validates.
 // 1.3.0 (RFC-13 §J): per-call breadth and depth — `maxResults` up to 16,
 // `contentChars` (was the hard-wired `DEFAULT_CONTENT_CHARS`) and
 // `includeDomains` — plus a size-aware cache, so a deep pull is never served
@@ -34,9 +37,9 @@ import {
 // 1.2.0 (SCRUM-321/AU37): additive `includeVisualPatterns` read path on the
 // account-history half of the payload.
 // 1.1.1 (SCRUM-296/AU11): removed the redundant re-parse of already-validated input.
-const TOOL_VERSION = "1.3.0";
+const TOOL_VERSION = "1.4.0";
 
-const SOCIAL_PLATFORMS = ["x", "instagram", "reddit", "tiktok"] as const;
+const SOCIAL_PLATFORMS = ["x", "instagram", "reddit", "tiktok", "linkedin"] as const;
 
 export const PullInputSchema = z.object({
   // job/query have no existing TSDoc to transcribe (SCRUM-293 flag) — synthesized from latestRunForQuery's usage.

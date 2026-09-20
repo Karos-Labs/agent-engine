@@ -776,8 +776,9 @@ function signalValue(post: StudioReferencePost, signal: EngagementSignal): numbe
  * ## Why `normalisedScore` is optional and `signalsAbsent` is not
  *
  * `research.socialHistory` returns `engagement { likes?, comments?, views? }`
- * and only for x/instagram/reddit/tiktok. Whole accounts come back with no
- * numeric field at all. A shape that required a score would force this
+ * and only when the underlying platform's capability reports one. Whole
+ * accounts come back with no numeric field at all. A shape that required a
+ * score would force this
  * function to invent one; a shape that requires the ABSENCE list forces it to
  * say what it did not have. With no numeric field anywhere the rows carry no
  * score and the notes say the ranking is qualitative — which is a usable

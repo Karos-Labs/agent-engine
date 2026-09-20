@@ -6,9 +6,13 @@ import { latestRunForQuery, writeRunRecord, type RunRecord } from "./runs.js";
 
 // 1.0.0 — new (2026-09): the client's own recent posts, on their own, for
 // cross-channel anti-repetition.
-const TOOL_VERSION = "1.0.0";
+// 1.1.0 — linkedin joins the four platforms this can read (ScrappyCoco added
+// linkedin.account_posts/company_posts): the accepted platform enum widens,
+// so a 1.0.0 cell rejecting linkedin was answering a genuinely narrower
+// contract, not a bug.
+const TOOL_VERSION = "1.1.0";
 
-const SOCIAL_PLATFORMS = ["x", "instagram", "reddit", "tiktok"] as const;
+const SOCIAL_PLATFORMS = ["x", "instagram", "reddit", "tiktok", "linkedin"] as const;
 
 /** How far back per account. A month of a busy account is well inside this; the point is "what did they say lately", not an archive. */
 const POSTS_PER_ACCOUNT = 12;
@@ -20,7 +24,12 @@ export const SocialHistoryInputSchema = z.object({
     .array(
       z.object({
         platform: z.enum(SOCIAL_PLATFORMS).describe("Which social platform this account is on."),
-        username: z.string().min(1).describe("The account's handle, with or without a leading @."),
+        username: z
+          .string()
+          .min(1)
+          .describe(
+            "The account's handle, with or without a leading @. For linkedin, a full linkedin.com/in/... or /company/... URL, or a bare slug (assumed a person profile).",
+          ),
       }),
     )
     .min(1)
@@ -88,7 +97,7 @@ export function createSocialHistory(store: WorkspaceStoreLike, scraper?: Scraper
   return defineTool<SocialHistoryInput, SocialHistoryResult>({
     name: "research.socialHistory",
     description:
-      "The client's own recent posts on their own social accounts (x, instagram, reddit, tiktok), as excerpts for cross-channel anti-repetition. Cached per account set inside `window` so agents running the same afternoon share one scrape. Reports not_available when no scraper is configured; a single unreadable account is a named problem, never a failure.",
+      "The client's own recent posts on their own social accounts (x, instagram, reddit, tiktok, linkedin), as excerpts for cross-channel anti-repetition. Cached per account set inside `window` so agents running the same afternoon share one scrape. Reports not_available when no scraper is configured; a single unreadable account is a named problem, never a failure.",
     version: TOOL_VERSION,
     inputSchema: SocialHistoryInputSchema,
     async execute(rawInput, { ctx }) {

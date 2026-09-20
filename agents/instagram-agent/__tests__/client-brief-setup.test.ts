@@ -479,11 +479,32 @@ describe("InstagramBriefAgent / instagram-brief@1", () => {
 
   it("a malformed answer is a content_fail at the agent, never a half-valid brief", async () => {
     const promptStore = makePromptStore();
-    // A LinkedIn reference account: a row nothing in this engine could read,
-    // which the schema refuses rather than letting it look useful.
-    const router = fakeRouterSequence([finalTurn(briefAgentOutput({ referenceAccounts: [{ platform: "linkedin", handle: "acme", why: "peers" }] as never }))]);
+    // A YouTube reference account. The invariant this pins is not "linkedin is
+    // rejected" — it is that `referenceAccounts.platform` admits ONLY the
+    // platforms `research.socialHistory` can actually read, so a row nothing
+    // can act on never reaches a brief looking useful.
+    //
+    // It used to say `linkedin`, and this change to the scraper seam is
+    // exactly what made that assertion wrong: the engine reads LinkedIn now,
+    // so the schema accepts it, and the test was pinning the absence of the
+    // capability rather than the rule. YouTube is the example `brief.ts`'s own
+    // field note already gives, and it stays unreadable here.
+    const router = fakeRouterSequence([finalTurn(briefAgentOutput({ referenceAccounts: [{ platform: "youtube", handle: "acme", why: "peers" }] as never }))]);
     const result = await new InstagramBriefAgent({ router, tools: {}, promptStore }).run(ctx, { channel: "instagram" });
     expect(result.status).toBe("content_fail");
+  });
+
+  it("accepts a LinkedIn reference account, now that the engine can read one", async () => {
+    // The other half, and the reason the case above had to be restated rather
+    // than deleted: widening a schema needs a test that the widening took, or
+    // the only coverage of `linkedin` here is a case asserting it is refused.
+    const promptStore = makePromptStore();
+    const router = fakeRouterSequence([
+      finalTurn(briefAgentOutput({ referenceAccounts: [{ platform: "linkedin", handle: "acme", why: "peers" }] })),
+    ]);
+    const result = await new InstagramBriefAgent({ router, tools: {}, promptStore }).run(ctx, { channel: "instagram" });
+    expect(result.status).toBe("completed");
+    expect(result.finalOutput!.referenceAccounts?.[0]?.platform).toBe("linkedin");
   });
 
   it("the output schema omits exactly the five fields the engine stamps, and nothing else", () => {

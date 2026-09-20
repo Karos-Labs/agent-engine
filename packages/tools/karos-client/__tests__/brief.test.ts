@@ -271,10 +271,18 @@ describe("ClientBriefSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects a referenceAccounts platform research.socialHistory cannot read (linkedin)", () => {
+  it("accepts a linkedin referenceAccounts platform now that research.socialHistory can read it", () => {
     const result = ClientBriefSchema.safeParse({
       ...validBrief(),
       referenceAccounts: [{ platform: "linkedin", handle: "someone", why: "peers" }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("still rejects a referenceAccounts platform research.socialHistory cannot read (youtube)", () => {
+    const result = ClientBriefSchema.safeParse({
+      ...validBrief(),
+      referenceAccounts: [{ platform: "youtube", handle: "someone", why: "peers" }],
     });
     expect(result.success).toBe(false);
   });

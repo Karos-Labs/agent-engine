@@ -3,7 +3,12 @@ import { defineTool, fetchWithRetry, success, toolingError, DEFAULT_RETRY_POLICY
 import type { AgentTool, AgentToolRegistry } from "@agent-engine/core";
 import type { ScrapedRecord, ScraperProvider } from "@agent-engine/tool-karos-scraper";
 
-const TOOL_VERSION = "1.0.0";
+// 1.1.0: the scraper fallback prefers a dedicated subreddit-feed/post-comments
+// route when the configured provider has one, instead of always approximating
+// with searchSocial/extractUrl — a fallback-path result can now differ from a
+// 1.0.0 call against the same inputs (e.g. `fetchThread`'s scraper path can
+// now carry real comments instead of always reporting none).
+const TOOL_VERSION = "1.1.0";
 
 /**
  * Live Reddit thread discovery and thread reading — the "expensive skill"
@@ -30,10 +35,15 @@ const TOOL_VERSION = "1.0.0";
  * every fetch below goes through `fetchWithRetry` (honours `Retry-After`) and
  * subreddits are read one at a time with a pause between them.
  *
- * When Reddit refuses anyway, the configured `ScraperProvider` (ScrappyCoco's
- * `reddit.search_posts` / `web.extract_content`) is the paid fallback. When
- * neither answers, the tool says so per subreddit in `scanned`, so a run that
- * finds nothing can tell "nothing worth replying to" from "could not look".
+ * When Reddit refuses anyway, the configured `ScraperProvider` is the paid
+ * fallback: `fetchSubredditFeed`/`fetchPostComments` when the provider has
+ * ScrappyCoco's dedicated `reddit.subreddit_feed` / `reddit.post_comments`
+ * routes (added 2026-09), or `searchSocial`/`extractUrl` for a provider that
+ * does not — the older path approximated a subreddit read with a
+ * `subreddit:x` search-query convention, and could not read comments at all.
+ * When neither answers, the tool says so per subreddit in `scanned`, so a run
+ * that finds nothing can tell "nothing worth replying to" from "could not
+ * look".
  *
  * ## Nothing here fabricates a thread
  *
@@ -368,11 +378,19 @@ export function createRedditThreadTools(options: RedditThreadToolsOptions = {}):
         }
 
         // The paid fallback, only when Reddit itself would not answer (never
-        // for a community Reddit says does not exist).
+        // for a community Reddit says does not exist). Prefers a dedicated
+        // subreddit-feed capability when the provider has one — it reads the
+        // community directly rather than approximating it with a
+        // `subreddit:x` search-query convention no vendor ever confirmed.
         if (entries === undefined && !scan.notFound && scraper !== undefined) {
           try {
-            const query = input.keywords.length > 0 ? `${input.keywords.slice(0, 4).join(" ")} subreddit:${subreddit}` : `subreddit:${subreddit}`;
-            const records = await scraper.searchSocial("reddit", query, { limit: 15 });
+            const records = scraper.fetchSubredditFeed
+              ? await scraper.fetchSubredditFeed(subreddit, { sort: "new", limit: 25 })
+              : await scraper.searchSocial(
+                  "reddit",
+                  input.keywords.length > 0 ? `${input.keywords.slice(0, 4).join(" ")} subreddit:${subreddit}` : `subreddit:${subreddit}`,
+                  { limit: 15 },
+                );
             entries = records
               .map((r) => candidateFromScraped(r, input.keywords))
               .filter((c): c is RedditThreadCandidate => c !== undefined && c.subreddit.toLowerCase() === subreddit);
@@ -460,6 +478,27 @@ export function createRedditThreadTools(options: RedditThreadToolsOptions = {}):
         try {
           const record = await scraper.extractUrl(canonical);
           if (record && (record.text || record.title)) {
+            // fetchPostComments is a dedicated route (ScrappyCoco's
+            // reddit.post_comments); when the provider does not have one, the
+            // page extraction above is all there is, and the note says so.
+            let comments: RedditThreadComment[] = [];
+            let commentsNote = `${feedError}; read the page through ${scraper.name} instead, which does not separate out the existing replies`;
+            if (scraper.fetchPostComments) {
+              try {
+                const commentRecords = await scraper.fetchPostComments(canonical, { limit: input.maxComments });
+                comments = commentRecords
+                  .filter((c) => (c.text ?? "").trim().length > 0)
+                  .slice(0, input.maxComments)
+                  .map((c) => ({
+                    ...(c.author ? { author: c.author.replace(/^\/?u\//i, "") } : {}),
+                    body: (c.text ?? "").trim().slice(0, COMMENT_CHARS),
+                    ...(c.publishedAt ? { postedAt: c.publishedAt } : {}),
+                  }));
+                commentsNote = `${feedError}; read through ${scraper.name} instead`;
+              } catch (error) {
+                commentsNote = `${feedError}; read the page through ${scraper.name} instead, and its comments read also failed: ${(error as Error).message}`;
+              }
+            }
             return success<FetchThreadResult>({
               url: canonical,
               title: (record.title ?? canonical).trim(),
@@ -467,9 +506,9 @@ export function createRedditThreadTools(options: RedditThreadToolsOptions = {}):
               ...(record.author ? { author: record.author.replace(/^\/?u\//i, "") } : {}),
               ...(record.publishedAt ? { postedAt: record.publishedAt } : {}),
               body: (record.text ?? "").trim().slice(0, POST_BODY_CHARS),
-              comments: [],
+              comments,
               source: "scraper",
-              note: `${feedError}; read the page through ${scraper.name} instead, which does not separate out the existing replies`,
+              note: commentsNote,
             });
           }
         } catch (error) {
