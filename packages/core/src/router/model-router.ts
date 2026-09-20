@@ -10,6 +10,8 @@ import { OutputLimitExceededError } from "./adapters/structured-output.js";
 export interface RouterCompleteOptions {
   system?: string;
   maxTokens?: number;
+  /** A ceiling on billed internal reasoning. See `CompletionRequest.thinkingBudget`. */
+  thinkingBudget?: number;
 }
 
 /**
@@ -101,6 +103,7 @@ export class DefaultModelRouter implements ModelRouter {
       model: policy.model,
       ...(opts?.system !== undefined ? { system: opts.system } : {}),
       ...(opts?.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+      ...(opts?.thinkingBudget !== undefined ? { thinkingBudget: opts.thinkingBudget } : {}),
     };
 
     // One span (and one metric point) per attempt (AU42/SCRUM-326) — a

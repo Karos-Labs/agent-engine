@@ -67,6 +67,36 @@ export class InstagramImageVettingAgent extends BaseAgent<ImageVettingOutput> {
     // long exposure. Retargetable per deployment
     // (`MODEL_STEP_INSTAGRAM_IMAGE_VET_VENDOR/_MODEL`) and per run in Studio.
     modelPolicy: resolveModelPolicy("instagram-image-vet", { policy: "pinned", model: "gemini-3.1-pro-preview", vendor: "gemini" }),
+    /**
+     * ── THE 98% THAT WAS NOT THE ANSWER. ──
+     *
+     * Measured on `pubsub-21905062348134898` (thepitchbydeel, 2026-09-20),
+     * where this step billed 9,757, 24,895 and 42,873 output tokens across
+     * three attempts. The third call's ANSWER was four selections and 3,232
+     * characters of JSON: about 800 tokens. The rest was reasoning, which
+     * Gemini bills at the output rate and which `gemini-adapter` folds into
+     * `outputTokens` precisely so it shows up here.
+     *
+     * Image vetting across the whole run came to roughly $1.30 of a $2.17
+     * run against a $1.00 target, and the owner asked why.
+     *
+     * The intuitive answer was the candidate pool, and it is wrong: the input
+     * was already cached, at 2,201 and 2,370 UNCACHED tokens on attempts 2
+     * and 3. Re-sending every scored candidate costs almost nothing. The
+     * money was the model thinking, unbounded, about a four-line answer.
+     *
+     * 6,000 is chosen against that measurement rather than from taste: it is
+     * comfortably more than the ~800 tokens the answer needs and more than
+     * the ~2,400 of reasoning the FIRST attempt got by with, and it refuses
+     * the 42,000-token third. A vet that genuinely needs more room now
+     * truncates visibly (`OutputLimitExceededError`, which `BaseAgent` can
+     * re-ask past) instead of quietly costing half a dollar.
+     *
+     * It does NOT change the model. Downgrading the judge that decides which
+     * pictures ship, in the same week its judgement was the defect, would
+     * trade a cost problem for the quality problem we just fixed.
+     */
+    thinkingBudget: 6_000,
     // Pinned to "2": v1 judged every clause of `visualNeed` as an equal hard
     // gate, so a candidate genuinely on-subject was rejected outright over a
     // single decorative mismatch (shot outdoors instead of the requested

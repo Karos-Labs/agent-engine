@@ -632,6 +632,10 @@ export abstract class BaseAgent<TOutput> {
     const opts: RouterCompleteOptions = {
       system: this.buildSystemPromptWithContract(systemPrompt),
       ...(declaredMaxTokens !== undefined ? { maxTokens: declaredMaxTokens } : {}),
+      // NOT raised with the ceiling above. When `BaseAgent` re-asks with more
+      // room it is because the ANSWER was truncated; giving the model more
+      // room to think as well would re-spend exactly what this bounds.
+      ...(this.config.thinkingBudget !== undefined ? { thinkingBudget: this.config.thinkingBudget } : {}),
     };
 
     const startedAt = this.clock();

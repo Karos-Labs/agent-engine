@@ -80,6 +80,16 @@ export interface AgentStepConfig<TOutput> {
   maxSteps?: number;
   /** Output-token ceiling for one model turn; omit for the adapter default. See `AgentStepConfigSchema`. */
   maxTokens?: number;
+  /**
+   * A ceiling on the model's internal reasoning, for models that bill it as
+   * output. See `CompletionRequest.thinkingBudget` for the measurement that
+   * introduced it: a vetting step whose answer was ~800 tokens billed 42,873.
+   *
+   * Separate from `maxTokens` on purpose -- on Gemini thoughts count against
+   * the output ceiling too, so one number cannot express "think this much AND
+   * answer this much".
+   */
+  thinkingBudget?: number;
   /** Bounded repair budget for malformed model turns. Default 1, `0` to fail on the first. See `AgentStepConfigSchema`. */
   maxMalformedTurns?: number;
   modelPolicy: ModelPolicy;

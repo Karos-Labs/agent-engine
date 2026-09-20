@@ -383,7 +383,7 @@ import {
 import { gradePictureSet, heroScrimCssBlock, imageTreatmentCssBlock, resolveGenerationStyle, type GenerationStyle } from "./style-lock.js";
 import { literalIllustrationOf, planImageBackfill, registerFor, resolveRescuedSelection } from "./image-density.js";
 import { describeRepairs, repairMechanicalTells } from "./mechanical-repair.js";
-import { entitiesInDraft, entityPictureBrief } from "./draft-entities.js";
+import { entitiesInCards, entitiesInDraft, entityPictureBrief } from "./draft-entities.js";
 import { addressableFields, applyCopyEdits, describeRevision, type CopyRevision } from "./copy-revision.js";
 
 /** One slide the picture floor wants filled, and whether it is a slide that ASKED and failed or one that never asked. */
@@ -7459,7 +7459,23 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // a company. It steers which sourcing tier is tried first and nothing
       // else, and `planEntitySourcing` treats an unknown-licence result the
       // same for both unless the subject is a private individual.
-      const draftEntities = entitiesInDraft(copy, [ctx.clientSlug, ...(brief.offers ?? []).map((o) => o.name)].filter((n): n is string => typeof n === "string"));
+      const ownNames = [ctx.clientSlug, ...(brief.offers ?? []).map((o) => o.name)].filter((n): n is string => typeof n === "string");
+      // ── THE NAMES THE EXTRACTOR DROPPED. ──
+      //
+      // `04b3` is a model step whose failure mode is silent: a short list is
+      // exactly what a correct answer looks like. On 2026-09-20 it returned
+      // one entity for thepitchbydeel while `IBM` sat in nine of the run's
+      // fact cards, and the owner asked the obvious question. `entitiesInCards`
+      // is the deterministic second opinion -- frequency-floored, so a place
+      // named once does not become something to go photograph -- and anything
+      // it recovers joins the draft's own names on the same path, with the
+      // same brief and the same sourcing tiers.
+      const recoveredFromCards = entitiesInCards(promptFacts, postEntityNames, ownNames);
+      const namedInDraft = entitiesInDraft(copy, ownNames);
+      const draftEntities = [
+        ...namedInDraft,
+        ...recoveredFromCards.filter((c) => !namedInDraft.some((d) => d.name.toLowerCase() === c.name.toLowerCase())),
+      ];
       const attemptEntities: RecognisedEntity[] = [
         ...postEntities,
         ...draftEntities
@@ -7477,14 +7493,32 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           })),
       ];
       const attemptEntityNames = attemptEntities.map((e) => e.name);
+      /** Entities already briefed on an earlier slide of this same post. See the spread rule below. */
+      const entityTakenBySlide = new Set<string>();
       if (draftEntities.length > 0) {
         copy = {
           ...copy,
           slides: copy.slides.map((slide) => {
             const need = normaliseVisualNeed(slide);
             if (need.source === "none" || need.subject.entityRef !== undefined) return slide;
-            const named = draftEntities.find((d) => d.slides.includes(slide.n));
+            // ── ONE SUBJECT PER SLIDE, NOT ONE SUBJECT PER POST. ──
+            //
+            // `.find()` took the strongest entity every time, so a post with
+            // one entity briefed it on every picture slide and a post with
+            // three briefed the same one on all three. thepitchbydeel's four
+            // picture slides all asked for `nybl`, and four frames drawn to
+            // one subject come back looking like each other -- which the
+            // owner read as the same image appearing twice.
+            //
+            // So a slide prefers an entity NO OTHER SLIDE HAS TAKEN, and only
+            // falls back to a shared one when the post genuinely has fewer
+            // subjects than picture slides. `namesOnSlide` keeps the original
+            // rule intact: a slide still only gets an entity it actually
+            // names.
+            const namesOnSlide = draftEntities.filter((d) => d.slides.includes(slide.n));
+            const named = namesOnSlide.find((d) => !entityTakenBySlide.has(d.name.toLowerCase())) ?? namesOnSlide[0];
             if (named === undefined) return slide;
+            entityTakenBySlide.add(named.name.toLowerCase());
             return {
               ...slide,
               visualNeed: {

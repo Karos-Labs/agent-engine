@@ -7,6 +7,33 @@ export interface CompletionRequest<TOutput> {
   model: string;
   system?: string;
   maxTokens?: number;
+  /**
+   * A ceiling on the model's INTERNAL REASONING, in tokens, for models that
+   * bill it as output.
+   *
+   * ## The run that made this necessary
+   *
+   * `06-vet-images` on `pubsub-21905062348134898` (2026-09-20) billed 9,757,
+   * 24,895 and 42,873 output tokens across three attempts, on a job whose
+   * ANSWER was four selections and 3,232 characters of JSON -- about 800
+   * tokens. Roughly 98% of the third call was reasoning. The vetting alone
+   * came to $1.30 of a $2.17 run against a $1.00 target.
+   *
+   * The input was already cached (2,201 and 2,370 UNCACHED tokens on attempts
+   * 2 and 3), so the intuitive fix -- stop re-sending candidates the vet has
+   * already scored -- would have saved almost nothing. The pool was never the
+   * cost.
+   *
+   * Only adapters whose provider exposes such a control read it; the rest
+   * ignore it, which is why it is optional rather than a required field with
+   * a sentinel. `gemini-adapter` maps it to `thinkingConfig.thinkingBudget`.
+   *
+   * It is NOT `maxTokens`. On Gemini thoughts count against `maxOutputTokens`
+   * as well, so a shared ceiling forces a choice between room to think and
+   * room to answer -- which is how `04b-research-extract-facts` truncated on
+   * geektime with only 3,059 visible tokens returned. Two ceilings, two jobs.
+   */
+  thinkingBudget?: number;
 }
 
 /**
