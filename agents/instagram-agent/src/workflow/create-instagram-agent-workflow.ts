@@ -259,6 +259,7 @@ import {
   type SkeletonHistory,
   type SkeletonVarietyVerdict,
 } from "./skeleton-memory.js";
+import { diversifySceneBriefs, findNearDuplicateFrames } from "./scene-diversity.js";
 import {
   PERFORMANCE_BELIEF_KEY,
   arrowBulletSteer,
@@ -1285,6 +1286,17 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      * found stock instead" (not owed a generation on that account).
      */
     const generatedPaths = new Set<string>();
+    /**
+     * The brief each GENERATED frame was drawn to, keyed by its path.
+     *
+     * The variety check at `06f3` needs to compare what two frames were ASKED
+     * for, and the frame itself carries only a hash of its brief
+     * (`ImageProvenance.briefHash`), which can prove two frames came from the
+     * identical string and can say nothing about two that came from
+     * near-identical ones — which is the actual defect. A sourced or
+     * client-supplied frame is never added, so it can never be compared.
+     */
+    const generatedBriefs = new Map<string, string>();
 
     // ── 02b: the client's own voice/profile context — best-effort, never blocking ──
     //
@@ -8803,7 +8815,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           let tierPool = (sourced.result as { candidates: ImageCandidate[] }).candidates;
           if (tier.id === "generate") {
             generatedSoFar += tierPool.length;
-            for (const cand of tierPool) generatedPaths.add(cand.path);
+            for (const cand of tierPool) {
+              generatedPaths.add(cand.path);
+              const slot = /(?:^|\/)n(\d+)-/.exec(cand.path)?.[1];
+              const brief = slot === undefined ? undefined : batch.gaps.find((g) => g.n === Number(slot))?.prompt;
+              if (brief !== undefined) generatedBriefs.set(cand.path, brief);
+            }
             spend(rev(`06d-generate-images-attempt-${attempt}`), undefined, tierPool.length * STEP_COST_ESTIMATES_USD.generatedImage);
           } else {
             spend(rev(`06b-scrape-images-attempt-${attempt}`), undefined, batch.gaps.length * STEP_COST_ESTIMATES_USD.scraperExecution);
@@ -9243,6 +9260,43 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // It NEVER holds. When generation is unavailable, refused, or already at
       // the cap it records `{ action: "unfilled", reason }` and the run carries
       // on into the downgrade ladder exactly as before.
+      // ── DID TWO GENERATED FRAMES COME OUT THE SAME ANYWAY? ──
+      //
+      // Reported, and NOTHING is removed. The steering at `06d` is where
+      // variety is actually bought, before the quota is spent; this is the
+      // check that says whether it worked, on the frames that shipped.
+      //
+      // It deliberately has no power to drop a frame. Every image this client
+      // has lost lately turned into a text plate at `07a`, and the owner has
+      // been reading those — a slide holding a similar picture is a better
+      // post than a slide holding a wall of text, so a near-duplicate that
+      // survives to here KEEPS its slide. Only GENERATED frames are compared:
+      // a client's upload or a photograph of a named entity is a specific
+      // thing somebody chose, and two of those resembling each other is not
+      // this code's business.
+      await wf.step.code(rev(`06f3-generated-frame-variety-attempt-${attempt}`), async () => {
+        const duplicates = findNearDuplicateFrames(
+          selections
+            .filter((sel) => sel.imagePath !== null)
+            .map((sel) => {
+              const brief = generatedBriefs.get(sel.imagePath!);
+              return { n: sel.n, ...(brief !== undefined ? { generatedBrief: brief } : {}) };
+            }),
+        );
+        if (duplicates.length > 0) {
+          const note = duplicates
+            .map((d) => `slide ${d.n} and slide ${d.matches} were drawn to near-identical briefs (${d.similarity}) — both kept`)
+            .join("; ");
+          console.warn(`06f3-generated-frame-variety: ${note}`);
+          try {
+            await tools["ledger.appendEvent"]?.execute({ runId: wf.runId, eventId: `${wf.runId}__frame-variety-${attempt}`, level: "info", message: note }, { ctx });
+          } catch {
+            /* the ledger is a record, never a gate */
+          }
+        }
+        return { duplicates };
+      });
+
       const floorCheck = await wf.step.code(rev(`06h-imagery-floor-check-attempt-${attempt}`), () => {
         const withPictureNs = new Set(selections.filter((sel) => sel.imagePath !== null && !isUnfillable(sel)).map((sel) => sel.n));
         const withPicture = withPictureNs.size;
@@ -9341,7 +9395,37 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           register: registerFor(ctx.runId),
           ...(drawnSubjects.length > 0 ? { subjects: drawnSubjects } : {}),
         }).map((candidate) => ({ n: candidate.n, prompt: candidate.prompt, backfilled: true }));
-        const gaps = [...fromFailed, ...backfilled];
+        // ── STEER THE BRIEFS APART BEFORE PAYING FOR THEM (2026-09-20) ──
+        //
+        // thepitchbydeel's two shipped pictures were both "a founder at a desk
+        // reviewing a pitch deck on a laptop", because the briefs that bought
+        // them were. Nothing downstream could have caught it: the frames were
+        // honest renderings of what they were asked for, and the duplicate
+        // check compares file paths.
+        //
+        // Here rather than after generation for two reasons. It is the only
+        // point where the fix costs nothing — a brief is free to change and a
+        // frame is not — and this client's other image problem is a 429 on the
+        // image quota, so a design that spends generation twice to get variety
+        // would be paid for out of the budget that is already running out.
+        //
+        // The briefs of frames this run has already ACCEPTED are part of the
+        // comparison, not just the batch: a second attempt must not re-ask for
+        // the picture attempt one already got.
+        const diversified = diversifySceneBriefs([...fromFailed, ...backfilled], {
+          alreadyChosenBriefs: selections
+            .filter((sel) => sel.imagePath !== null)
+            .map((sel) => sel.reason)
+            .filter((reason): reason is string => typeof reason === "string" && reason.length > 0),
+          seed: wf.runId,
+        });
+        const gaps = diversified.scenes;
+        if (diversified.variations.length > 0) {
+          const note = diversified.variations
+            .map((v) => `slide ${v.n} asked for the same picture as ${v.tooCloseTo} (${v.similarity}), so its brief was steered`)
+            .join("; ");
+          console.warn(`06d-generate-images: ${note}`);
+        }
         const blocked = clientMediaOnly
           ? "this run is client-media only, so there is no generation tier to re-enter"
           : meter.crossedMax
@@ -9374,7 +9458,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           if (floorSourced.status === "success") {
             const floorPool = (floorSourced.result as { candidates: ImageCandidate[] }).candidates;
             generatedSoFar += floorPool.length;
-            for (const cand of floorPool) generatedPaths.add(cand.path);
+            for (const cand of floorPool) {
+              generatedPaths.add(cand.path);
+              const slot = /(?:^|\/)n(\d+)-/.exec(cand.path)?.[1];
+              const brief = slot === undefined ? undefined : floorGaps.find((g) => g.n === Number(slot))?.prompt;
+              if (brief !== undefined) generatedBriefs.set(cand.path, brief);
+            }
             spend(rev(`06d2-generate-floor-images-attempt-${attempt}`), undefined, floorPool.length * STEP_COST_ESTIMATES_USD.generatedImage);
             if (floorPool.length > 0) {
               const floorVet = await wf.step.agent(rev(`06h2-vet-floor-images-attempt-${attempt}`), imageAgent, {
