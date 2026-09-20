@@ -3,6 +3,7 @@ import { createPerplexityAdapter } from "../src/capture-adapters/perplexity.js";
 import { createClaudeAdapter } from "../src/capture-adapters/claude.js";
 import { createGeminiAdapter, createGeminiVertexAdapter } from "../src/capture-adapters/gemini.js";
 import { createOpenAiAnswerEngineAdapter } from "../src/capture-adapters/openai-answer-engine.js";
+import { createScrappyCocoAnswerEngineAdapter } from "../src/capture-adapters/scrappycoco-answer-engine.js";
 
 const REQUEST = {
   promptId: "prompt_01",
@@ -327,5 +328,67 @@ describe("T-A3/SCRUM-237: real per-engine capture adapters, mocked at the HTTP b
     const adapter = createOpenAiAnswerEngineAdapter({ apiKey: "sk-test", fetchImpl: fetchImpl as unknown as typeof fetch });
 
     await expect(adapter({ ...REQUEST, engine: "chatgpt" })).rejects.toThrow(/returned 400.*web_search unsupported/);
+  });
+
+  // Response fixtures below are trimmed from real `POST /scrapers/execute`
+  // responses for `web.ask_chatgpt`/`web.ask_google_ai_mode`, captured live
+  // against the account on 2026-09-20 (see `scrappycoco-answer-engine.ts`'s
+  // header) — this is what the account actually returns, not an invented
+  // shape.
+  it("Copilot via ScrappyCoco: posts the right capability, and parses record.text + outputs.citations[].url", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      expect(String(url)).toBe("https://api.scrappycoco.ai/api/v1/scrapers/execute");
+      expect((init?.headers as Record<string, string>)["X-API-Key"]).toBe("scrappy-test");
+      const body = JSON.parse(String(init?.body)) as { source: string; capability: string; input: { query: string } };
+      expect(body).toMatchObject({ source: "web", capability: "ask_copilot", input: { query: REQUEST.promptText } });
+      return jsonResponse({
+        status: "completed",
+        records: [
+          {
+            text: "Acme Corp shows up in several recommendations.",
+            outputs: { citations: [{ position: 1, label: "Acme reviews", url: "https://acme.example/reviews" }] },
+          },
+        ],
+      });
+    });
+    const adapter = createScrappyCocoAnswerEngineAdapter({ apiKey: "scrappy-test", capability: "ask_copilot", fetchImpl: fetchImpl as unknown as typeof fetch });
+    const result = await adapter({ ...REQUEST, engine: "copilot" });
+
+    expect(result.captureTier).toBe("MEASURED_grounded");
+    expect(result.brandMentioned).toBe(true);
+    expect(result.brandCited).toBe(true);
+    expect(result.citations).toEqual([{ domain: "acme.example", ordinal: 1 }]);
+  });
+
+  it("Google AI Mode via ScrappyCoco: an ungrounded answer (no citations) is MEASURED, not MEASURED_grounded", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ status: "completed", records: [{ text: "I don't have enough information.", outputs: {} }] }));
+    const adapter = createScrappyCocoAnswerEngineAdapter({ apiKey: "scrappy-test", capability: "ask_google_ai_mode", fetchImpl: fetchImpl as unknown as typeof fetch });
+    const result = await adapter({ ...REQUEST, engine: "aimode" });
+
+    expect(result.captureTier).toBe("MEASURED");
+    expect(result.brandCited).toBe(false);
+  });
+
+  it("an empty records array is a real 'nothing to say' capture, not a throw", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ status: "completed", records: [] }));
+    const adapter = createScrappyCocoAnswerEngineAdapter({ apiKey: "scrappy-test", capability: "ask_chatgpt", fetchImpl: fetchImpl as unknown as typeof fetch });
+    const result = await adapter({ ...REQUEST, engine: "chatgpt" });
+
+    expect(result.captureTier).toBe("MEASURED");
+    expect(result.brandMentioned).toBe(false);
+  });
+
+  it("a real HTTP failure throws and names the cause", async () => {
+    const fetchImpl = vi.fn(async () => new Response('{"detail":"invalid api key"}', { status: 401 }));
+    const adapter = createScrappyCocoAnswerEngineAdapter({ apiKey: "scrappy-test", capability: "ask_chatgpt", fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await expect(adapter({ ...REQUEST, engine: "chatgpt" })).rejects.toThrow(/returned 401.*invalid api key/);
+  });
+
+  it("a 200 carrying a terminal non-success status is still a failure, not an empty answer", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ status: "failed", records: [] }));
+    const adapter = createScrappyCocoAnswerEngineAdapter({ apiKey: "scrappy-test", capability: "ask_chatgpt", fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    await expect(adapter({ ...REQUEST, engine: "chatgpt" })).rejects.toThrow(/finished as "failed"/);
   });
 });

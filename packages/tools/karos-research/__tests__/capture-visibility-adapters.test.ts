@@ -261,23 +261,47 @@ describe("createDefaultCaptureAdapters: env-derived wiring (T-A3/SCRUM-237)", ()
   });
 
   it("wires every routable engine when each credential is present", () => {
-    // Four, not five. `copilot` has no first-party API and no working vendor
-    // route, so nothing wires it — see the ChatGPT block in capture-adapters.
+    // Six, not seven: `google_aio` has no working ScrappyCoco route (the
+    // documented web.search_web include.aioverview pair is rejected by the
+    // live schema) and stays unwired — see the capture-adapters comment.
     const adapters = createDefaultCaptureAdapters({
-      env: { PERPLEXITY_API_KEY: "p", ANTHROPIC_API_KEY: "a", GEMINI_API_KEY: "g", OPENAI_API_KEY: "o" },
+      env: { PERPLEXITY_API_KEY: "p", ANTHROPIC_API_KEY: "a", GEMINI_API_KEY: "g", OPENAI_API_KEY: "o", SCRAPPYCOCO_API_KEY: "sc-1" },
     });
-    expect(Object.keys(adapters).sort()).toEqual(["chatgpt", "claude", "gemini", "perplexity"]);
+    expect(Object.keys(adapters).sort()).toEqual(["aimode", "chatgpt", "claude", "copilot", "gemini", "perplexity"]);
   });
 
-  it("never wires ScrappyCoco for an answer engine, whatever the env says", () => {
-    // The route it used did not exist: ScrappyCoco's live /scrapers catalogue
-    // lists 52 web/social/filings capabilities and no `chatgpt`/`copilot`
+  it("wires copilot and aimode via ScrappyCoco once it has a real route, verified 2026-09-20", () => {
+    // The OLD route did not exist: ScrappyCoco's live /scrapers catalogue used
+    // to list 52 web/social/filings capabilities with no `chatgpt`/`copilot`
     // source, so every capture slot for those two threw and the workflow's
     // `completedOutputs` dropped them — the engines silently vanished from the
-    // report rather than reporting UNAVAILABLE. The key stays in the
-    // environment for `research.pull`'s scraper, which is a real capability.
+    // report rather than reporting UNAVAILABLE. The account has since gained
+    // real `web.ask_chatgpt`/`web.ask_copilot`/`web.ask_google_ai_mode`
+    // capabilities (see `scrappycoco-answer-engine.ts`'s header) — copilot and
+    // aimode wire from this key alone; chatgpt still defaults to OpenAI unless
+    // AI_VISIBILITY_CHATGPT_SOURCE says otherwise (the next test).
     const adapters = createDefaultCaptureAdapters({ env: { SCRAPPYCOCO_API_KEY: "sc-1" } });
-    expect(Object.keys(adapters)).toEqual([]);
+    expect(Object.keys(adapters).sort()).toEqual(["aimode", "copilot"]);
+  });
+
+  it("AI_VISIBILITY_CHATGPT_SOURCE=scrappycoco switches chatgpt to ScrappyCoco's route instead of OpenAI's", async () => {
+    const calls: string[] = [];
+    const adapters = createDefaultCaptureAdapters({
+      env: { SCRAPPYCOCO_API_KEY: "sc-1", OPENAI_API_KEY: "sk-1", AI_VISIBILITY_CHATGPT_SOURCE: "scrappycoco" },
+      fetchImpl: stubFetch(calls),
+    });
+    await adapters.chatgpt!({ promptId: "p1", promptText: "who?", engine: "chatgpt" as const, clientDomains: ["x.com"], competitorRoster: [] });
+    expect(calls[0]).toContain("api.scrappycoco.ai");
+  });
+
+  it("an unset or unrecognised AI_VISIBILITY_CHATGPT_SOURCE keeps the OpenAI default, even with a ScrappyCoco key present", async () => {
+    const calls: string[] = [];
+    const adapters = createDefaultCaptureAdapters({
+      env: { SCRAPPYCOCO_API_KEY: "sc-1", OPENAI_API_KEY: "sk-1" },
+      fetchImpl: stubFetch(calls),
+    });
+    await adapters.chatgpt!({ promptId: "p1", promptText: "who?", engine: "chatgpt" as const, clientDomains: ["x.com"], competitorRoster: [] });
+    expect(calls[0]).toContain("api.openai.com");
   });
 
   it("falls back to the Vertex route for Gemini when there is no GEMINI_API_KEY", () => {

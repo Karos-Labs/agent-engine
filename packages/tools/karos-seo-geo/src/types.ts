@@ -59,7 +59,7 @@ export const SEO_GEO_VISIBILITY_ENGINE_SPECS: Readonly<Record<SeoGeoVisibilityEn
     label: "ChatGPT",
     captured: true,
     note:
-      "OpenAI Responses API with the server-side `web_search` tool — `capture-adapters/openai-answer-engine.ts`. This is the API, not the ChatGPT product: retrieval, ranking and citations differ from what a person sees in the UI, and a client comparing the two will find differences. It replaced a ScrappyCoco route that never worked — that vendor's live catalogue has no answer-engine capability at all.",
+      "OpenAI Responses API with the server-side `web_search` tool by default — `capture-adapters/openai-answer-engine.ts`. This is the API, not the ChatGPT product: retrieval, ranking and citations differ from what a person sees in the UI, and a client comparing the two will find differences. Can be switched to ScrappyCoco's `web.ask_chatgpt` (`AI_VISIBILITY_CHATGPT_SOURCE=scrappycoco`, added 2026-09-20 alongside the `copilot`/`aimode` routes below) for side-by-side comparison before deciding which source to keep long-term — carries the identical API-not-product caveat.",
   },
   perplexity: { label: "Perplexity", captured: true, note: "First-party Sonar, native citations — `capture-adapters/perplexity.ts`." },
   gemini: { label: "Google Gemini", captured: true, note: "Grounding-with-Google-Search, labelled MEASURED_grounded — `capture-adapters/gemini.ts`." },
@@ -71,21 +71,21 @@ export const SEO_GEO_VISIBILITY_ENGINE_SPECS: Readonly<Record<SeoGeoVisibilityEn
   },
   copilot: {
     label: "Microsoft Copilot",
-    captured: false,
+    captured: true,
     note:
-      "Accepted but NOT captured, by product decision on 2026-09-05: Copilot has no consumer API and no vendor route this account will be given (the ScrappyCoco capability it once named does not exist on the account — 52 capabilities, all web/social/filings scraping, no answer engine — and the owner has said no other route will be added). Until then it was kept in the fan-out so its column showed as an honest UNAVAILABLE rather than vanishing; the owner's call is that a column that can never be measured is noise in the coverage denominator, not honesty. Dropping it from the fan-out changes `engineListHash` — deliberately, logged as engine-list drift by `04-freeze-prompt-set` on every client's next recurring run. It stays in the accepted vocabulary so historical cells and frozen records still parse. Flip `captured` back and add an adapter if a route ever appears.",
+      "Was accepted but NOT captured, by product decision on 2026-09-05: the ScrappyCoco capability the adapter once named did not exist on the account (52 capabilities, all web/social/filings scraping, no answer engine), and no other route existed. That account has since gained a real `web.ask_copilot` capability, verified live 2026-09-20 — `capture-adapters/scrappycoco-answer-engine.ts`. Flipped back to captured per this row's own standing instruction (\"flip `captured` back and add an adapter if a route ever appears\"); see the 2026-09-20 addendum in docs/decisions/SCRUM-396-visibility-engine-list.md. Changes `engineListHash` again, deliberately, logged as engine-list drift by `04-freeze-prompt-set` on every client's next recurring run.",
   },
   aimode: {
     label: "Google AI Mode",
-    captured: false,
+    captured: true,
     note:
-      "Added by SCRUM-396 and accepted on read, but NOT in the fan-out: this build has no AI-Mode adapter. Fanning out to an adapter-less engine would write a column of honest-but-empty UNAVAILABLE cells every run, which lowers the coverage percentage a client feels while measuring nothing. It joins the fan-out when an adapter lands — flip `captured` and add the adapter, no schema change.",
+      "Added by SCRUM-396 and accepted on read; was out of the fan-out for want of an adapter. ScrappyCoco's `web.ask_google_ai_mode` is a real, verified capability (2026-09-20) — `capture-adapters/scrappycoco-answer-engine.ts`. Flipped to captured per this row's own standing instruction (\"it joins the fan-out when an adapter lands\"); see the 2026-09-20 addendum in docs/decisions/SCRUM-396-visibility-engine-list.md.",
   },
   google_aio: {
     label: "Google AI Overview",
     captured: false,
     note:
-      "Same as `aimode`: accepted on read, no adapter in this build, so out of the fan-out. Distinct from `gemini` on purpose — per the Ahrefs 540K-pair study the two Google surfaces agree ~86% of the time but cite the same URLs only 13.7% of the time, so neither substitutes for the other.",
+      "Still out of the fan-out, but no longer merely 'no adapter yet': verified 2026-09-20 that ScrappyCoco has no working route for it. The capability's own description claims `web.search_web` takes a `provider`/`include.aioverview` pair for this, but the account's live input schema rejects both with a 422 (`additionalProperties: false`) — the documented route does not actually exist, the same failure shape the old chatgpt/copilot route had. Distinct from `gemini`/`aimode` on purpose — per the Ahrefs 540K-pair study the Google surfaces agree ~86% of the time but cite the same URLs only 13.7% of the time, so neither substitutes for this one. Joins the fan-out if ScrappyCoco ever ships a working route, or another vendor's does.",
   },
 });
 
@@ -98,12 +98,16 @@ export const SEO_GEO_VISIBILITY_ENGINE_SPECS: Readonly<Record<SeoGeoVisibilityEn
  * (so widening it breaks no persisted data and needs no read-compat path), and
  * this narrow list is what a run measures.
  *
- * Because SCRUM-396 only *widened* the accepted list and left the captured set
- * untouched, this array is byte-identical to the five-engine constant it
- * replaces — so `engineListHash` does not change and no prior run's frozen
- * record is invalidated. There is no version bump to make here. The moment this
- * list does change, `04-freeze-prompt-set` logs an engine-list drift decision
- * on recurring runs, exactly as it already does for the prompt set.
+ * This has changed twice since SCRUM-396 ratified the seven-engine accepted
+ * list (which itself left the then-five-engine captured set untouched, so
+ * `engineListHash` did not move on 2026-09-02): Copilot dropped out on
+ * 2026-09-05 (no working route), then Copilot and AI Mode both rejoined on
+ * 2026-09-20 once `capture-adapters/scrappycoco-answer-engine.ts` gave them
+ * real routes — six engines now (`google_aio` is still out; see its own spec
+ * note for why). Each change moved `engineListHash`, deliberately: every prior
+ * run's frozen record stays valid under the hash it was captured with, and
+ * `04-freeze-prompt-set` logs the move as engine-list drift on each affected
+ * client's next recurring run, exactly as it already does for the prompt set.
  */
 export const SEO_GEO_CAPTURE_ENGINES: readonly SeoGeoVisibilityEngine[] = Object.freeze(
   SEO_GEO_VISIBILITY_ENGINES.filter((engine) => SEO_GEO_VISIBILITY_ENGINE_SPECS[engine].captured),

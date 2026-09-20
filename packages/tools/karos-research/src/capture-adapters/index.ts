@@ -4,12 +4,14 @@ import { createPerplexityAdapter } from "./perplexity.js";
 import { createClaudeAdapter } from "./claude.js";
 import { createGeminiAdapter, createGeminiVertexAdapter } from "./gemini.js";
 import { createOpenAiAnswerEngineAdapter } from "./openai-answer-engine.js";
+import { createScrappyCocoAnswerEngineAdapter } from "./scrappycoco-answer-engine.js";
 
 export * from "./analyze-answer.js";
 export * from "./perplexity.js";
 export * from "./claude.js";
 export * from "./gemini.js";
 export * from "./openai-answer-engine.js";
+export * from "./scrappycoco-answer-engine.js";
 
 export interface CreateDefaultCaptureAdaptersOptions {
   env?: Record<string, string | undefined>;
@@ -38,9 +40,12 @@ export interface CreateDefaultCaptureAdaptersOptions {
  * `PERPLEXITY_API_KEY` and `OPENAI_API_KEY` are this map's own (see
  * `.env.example` and the `CAPABILITY_CATALOGUE` entries).
  *
- * `SCRAPPYCOCO_API_KEY` is no longer read here. It still backs
- * `research.pull`'s scraper; it never backed answer-engine capture, because
- * ScrappyCoco has no answer-engine capability — see the ChatGPT block below.
+ * `SCRAPPYCOCO_API_KEY` backs `copilot` and `aimode` here as of 2026-09-20
+ * (verified live capabilities — see `scrappycoco-answer-engine.ts`'s header
+ * for what changed and why it did not work before), in addition to its
+ * existing job backing `research.pull`'s scraper. It can also back `chatgpt`
+ * instead of OpenAI's route, but only when asked — see the ChatGPT block
+ * below.
  *
  * ## What "absent" costs, and why it is still right
  *
@@ -91,22 +96,45 @@ export function createDefaultCaptureAdapters(options: CreateDefaultCaptureAdapte
     });
   }
 
-  // ChatGPT via OpenAI's own Responses API + `web_search`.
+  // ChatGPT: OpenAI's own Responses API + `web_search` by default.
   //
-  // This REPLACES the ScrappyCoco answer-engine route, which never worked and
-  // could not: that adapter posted `capability: "answer_query"` against a
-  // vendor whose live `/scrapers` catalogue has no such capability and no
-  // `chatgpt`/`copilot` source at all (52 capabilities, all web/social/filings
-  // scraping). Its own comment recorded the route as unverified. `copilot` has
-  // no first-party equivalent, so it stays unwired and reports the honest
-  // `no_adapter_wired` rather than failing every slot.
+  // ScrappyCoco's `web.ask_chatgpt` route USED to be unusable — it posted
+  // `capability: "answer_query"` against a vendor whose live `/scrapers`
+  // catalogue had no such capability at all. That has changed: verified
+  // live on 2026-09-20, `web.ask_chatgpt` is a real, working capability (see
+  // `scrappycoco-answer-engine.ts`'s header). `AI_VISIBILITY_CHATGPT_SOURCE`
+  // lets a caller switch to it explicitly — meant for running both sources
+  // for a while and comparing the persisted cells before picking one, not as
+  // a silent fallback. Unset (or any other value) keeps today's default.
   const openAiKey = env["OPENAI_API_KEY"]?.trim();
-  if (openAiKey) adapters.chatgpt = createOpenAiAnswerEngineAdapter({ apiKey: openAiKey, ...(fetchImpl ? { fetchImpl } : {}) });
+  const scrappyCocoKey = env["SCRAPPYCOCO_API_KEY"]?.trim();
+  const chatgptSource = env["AI_VISIBILITY_CHATGPT_SOURCE"]?.trim().toLowerCase();
+  if (chatgptSource === "scrappycoco" && scrappyCocoKey) {
+    adapters.chatgpt = createScrappyCocoAnswerEngineAdapter({ apiKey: scrappyCocoKey, capability: "ask_chatgpt", ...(fetchImpl ? { fetchImpl } : {}) });
+  } else if (openAiKey) {
+    adapters.chatgpt = createOpenAiAnswerEngineAdapter({ apiKey: openAiKey, ...(fetchImpl ? { fetchImpl } : {}) });
+  }
 
-  // SerpApi's `google_ai_overview` capability is deliberately OFF, not built
-  // (the source ticket's own instruction) — no adapter, no env var, no
-  // catalogue row for it. Gemini's own Grounding-with-Google-Search adapter
-  // above is this environment's real signal for Google's AI-Overview
+  // Copilot: ScrappyCoco's `web.ask_copilot` — verified live on 2026-09-20.
+  // Copilot has never had a working route in this build before now; it is a
+  // pure addition, not a replacement of anything.
+  if (scrappyCocoKey) adapters.copilot = createScrappyCocoAnswerEngineAdapter({ apiKey: scrappyCocoKey, capability: "ask_copilot", ...(fetchImpl ? { fetchImpl } : {}) });
+
+  // Google AI Mode: ScrappyCoco's `web.ask_google_ai_mode` — verified live on
+  // 2026-09-20, a real answer plus citations. A DIFFERENT Google product from
+  // the AI-Overview SERP feature (`google_aio`, still unwired — see below).
+  if (scrappyCocoKey) adapters.aimode = createScrappyCocoAnswerEngineAdapter({ apiKey: scrappyCocoKey, capability: "ask_google_ai_mode", ...(fetchImpl ? { fetchImpl } : {}) });
+
+  // `google_aio` (Google's AI-Overview SERP feature) stays unwired. Its own
+  // capability's description text claims `web.search_web` takes a
+  // `provider`/`include.aioverview` pair to surface it, but the account's live
+  // input schema rejects both with a 422 ("Extra inputs are not permitted"),
+  // verified 2026-09-20 — the documented route does not actually exist, the
+  // same way the old ChatGPT/Copilot route did not. SerpApi's own
+  // `google_ai_overview` capability is separately, deliberately OFF (the
+  // source ticket's own instruction) — no adapter, no env var, no catalogue
+  // row for it either. Gemini's own Grounding-with-Google-Search adapter
+  // above remains this environment's real signal for Google's AI-Overview
   // equivalent (see `gemini.ts`'s `aioAbsent` doc comment).
 
   return adapters;
