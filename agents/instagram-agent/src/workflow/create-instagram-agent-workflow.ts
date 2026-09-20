@@ -264,6 +264,7 @@ import {
 import { countComparedEntities, selectSeries, seriesDirectedSlides, seriesDirective, seriesLibraryFor, SERIES_DIRECTIVE_SLIDES } from "./editorial-series.js";
 import {
   buildGateVerdict,
+  gateTimeoutFor,
   draftDigestFor,
   type GateAttemptRecord,
   type GateDegradeMarker,
@@ -12700,6 +12701,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 : {}),
           },
         });
+        // Read once, put on the payload AND used as the policy, so a reviewer
+        // can never be looking at a different reason from the one that set the
+        // clock.
+        const gateTimeout = gateTimeoutFor(verdict, {
+          regulatedComplianceFinding: hasBlockingFinding(draft.selfCheck?.checks ?? []),
+        });
         return {
         kind: "batch_review",
         payload: {
@@ -12708,6 +12715,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // the pixels.
           verdictLine: verdict.summary,
           verdict,
+          // RFC-22 section 3.4 -- WHY this post waits as long as it does, and
+          // what happens when the clock runs out. Directly under `verdictLine`
+          // because it is the other half of the same sentence: the verdict
+          // says what is wrong, this says what the system will do about it if
+          // no human arrives.
+          gateTimeout,
           runId: wf.runId,
           postId: runClaim.postId,
           topic: topicClaim.topic,
@@ -12959,9 +12972,20 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // hold reads "a regulated-compliance finding went unreviewed for 24h" — the gate doing its job,
         // with a human given a day AND a rendered post to look at. Categorically different from today's
         // hold, where nobody ever sees anything.
-        timeout: hasBlockingFinding(draft.selfCheck?.checks ?? [])
-          ? { duration: "24h", onTimeout: "hold" }
-          : { duration: "1h", onTimeout: "auto_approve" },
+        //
+        // ── RFC-22 SECTION 3.4: AND NOW EVERY FLAGGED POST WAITS, NOT ONLY
+        //    THE REGULATED ONE. ──
+        //
+        // The paragraph above was right about one shape and left every other
+        // shape on `1h`/`auto_approve`, which is how the TikTok audit of
+        // 2026-09-09 found two posts approved by timeout at QA 3/10: nobody
+        // overruled the gate, nobody was ever asked. `gateTimeoutFor` reads
+        // the verdict this same function just built -- no new call, no new
+        // threshold, nothing it judges for itself -- and holds a post that
+        // carries any mark `verdictLine` already prints.
+        //
+        // A clean post is untouched: an hour, then it ships.
+        timeout: { duration: gateTimeout.duration, onTimeout: gateTimeout.onTimeout },
         };
       },
       onDecision: async ({ revision, response, templateFeedback }) => {

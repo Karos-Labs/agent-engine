@@ -564,3 +564,144 @@ export function gateVerdictLine(verdict: GateVerdict): string {
 
   return segments.join(SEGMENT_JOIN);
 }
+
+
+// ---------------------------------------------------------------------------
+// RFC-22 section 3.4 -- the timeout policy, keyed to the verdict
+// ---------------------------------------------------------------------------
+
+/**
+ * How long the human gate waits, and what it does when nobody came.
+ *
+ * `reason` and `flags` exist so the policy can be PUT ON THE PAYLOAD. A gate
+ * that quietly waits a day instead of an hour, with nothing saying why, is the
+ * same class of defect as one that quietly approves.
+ */
+export interface GateTimeoutPolicy {
+  duration: string;
+  onTimeout: "hold" | "auto_approve" | "escalate";
+  /** One sentence for the reviewer, naming what made this post wait. */
+  reason: string;
+  /** The individual marks against the post, empty when it is clean. */
+  flags: string[];
+}
+
+/** What a clean post gets: an hour, then it ships. Unchanged from every run before RFC-22. */
+export const CLEAN_GATE_TIMEOUT = "1h";
+/** What a flagged post gets: a working day for a person to look, and then a HOLD rather than a publish. */
+export const FLAGGED_GATE_TIMEOUT = "24h";
+
+/**
+ * ---- A GATE THAT APPROVES ON TIMEOUT IS A DELAY, NOT A GATE. ----
+ *
+ * Every Instagram post except one shape has shipped on `{ duration: "1h",
+ * onTimeout: "auto_approve" }`, and the TikTok audit of 2026-09-09 recorded
+ * what that buys: **two posts approved by timeout at QA 3/10**. Nobody looked
+ * at them. The gate was not overruled, it was never consulted.
+ *
+ * RFC-22 section 3.4 asks for the cheap half of the fix, and this is it: *"the
+ * timeout policy differs by verdict -- a post the judge passed may
+ * auto-approve; a post it flagged waits for a person"*. The expensive half
+ * (`POST /api/v1/maintenance/sweep-gate-timeouts` on a Cloud Scheduler per
+ * environment) is an owner action and is recorded as such.
+ *
+ * ## What counts as flagged, and why each one is on the list
+ *
+ * Every limb is a fact the run already computed and already prints in
+ * `verdictLine`. Nothing here is a new judgement, a new call, or a new
+ * threshold -- which matters, because a policy that invents its own opinion of
+ * a post would be a second judge nobody calibrated.
+ *
+ * - **The judge failed it, could not run, or called it unpublishable.** The
+ *   2026-09-09 case exactly.
+ * - **A slide DEGRADED.** A plate that asked for a photograph and shipped as
+ *   bare type. The waiver stands and is never a hold (RFC-19) -- but shipping
+ *   it while nobody watches is not what the waiver was for.
+ * - **Packaging failed.** No hashtags or no alt text: a post that is not
+ *   whole.
+ * - **A step failed.** The run paid for something and did not get it.
+ * - **Pictures short of what the post asked for.** The owner's loudest
+ *   complaint of 2026-09-18, and the one a reader sees first.
+ *
+ * ## What is deliberately NOT on the list
+ *
+ * **Spend over the target.** Money is the owner's business and a run that cost
+ * more than planned is not a worse post; `budgets-adapt-never-hold` and the
+ * quality-before-cost ruling both point the other way, and making an expensive
+ * post wait would quietly turn the budget into a quality gate.
+ *
+ * **A missing logo.** It was on this list for one revision and
+ * `brand-compliance-gate` caught it: `brandAsset.present` is false when the
+ * CLIENT'S BRAND KIT carries no `logoUrl`, which is a configuration fact and
+ * not a fact about this post. Holding on it would park every post that client
+ * ever runs, and no decision the reviewer can make on the carousel in front of
+ * them would clear it. The limb belongs where it already is -- printed in
+ * `verdictLine` as `NO LOGO`, where a human reads it and goes and fixes the
+ * brand record.
+ *
+ * The rule the miss teaches, stated because it is the one to apply to the next
+ * limb somebody adds here: **a hold must name something a reviewer can act on
+ * about THIS post.** Everything else is a report.
+ *
+ * **Anything the floor already refused.** Those never reach a gate.
+ *
+ * ## It cannot kill a run
+ *
+ * `hold` parks a run that has ALREADY produced and delivered its carousel to
+ * the gate, with the render and the verdict in front of whoever opens it. That
+ * is the state `awaiting-gate-is-the-safe-state` describes, and it is
+ * categorically different from a `WorkflowHeld` with no deliverable, which
+ * RFC-19 abolished and this must not walk back.
+ */
+export function gateTimeoutFor(
+  verdict: GateVerdict,
+  opts: { regulatedComplianceFinding: boolean },
+): GateTimeoutPolicy {
+  if (opts.regulatedComplianceFinding) {
+    return {
+      duration: FLAGGED_GATE_TIMEOUT,
+      onTimeout: "hold",
+      reason:
+        "a regulated-compliance finding is on this post, so it waits a full day for a person and then HOLDS rather than publishing unreviewed",
+      flags: ["regulated-compliance finding"],
+    };
+  }
+
+  const flags: string[] = [];
+  const qa = verdict.visualQa;
+  if (qa.pass === undefined) flags.push("visual QA never ran, so nothing has judged this post at all");
+  else if (qa.pass === false) {
+    const failing = qa.findings.filter((f) => !f.passed).length;
+    flags.push(`visual QA failed ${failing === 1 ? "1 rule" : `${failing} rules`}`);
+  }
+  if (qa.publishable === false) flags.push("the judge called this post not publishable");
+  if (verdict.degradeMarkers.length > 0) {
+    const slides = verdict.degradeMarkers.map((m) => m.slide).join(", ");
+    flags.push(`${verdict.degradeMarkers.length === 1 ? "slide" : "slides"} ${slides} degraded to bare type`);
+  }
+  if (verdict.packaging.status === "failed") flags.push("packaging failed, so the post is not whole");
+  if (verdict.stepFailures.length > 0) {
+    flags.push(`${verdict.stepFailures.length === 1 ? "1 step" : `${verdict.stepFailures.length} steps`} failed`);
+  }
+  if (verdict.imagery.shipped < verdict.imagery.wanted) {
+    flags.push(`${verdict.imagery.shipped} of ${verdict.imagery.wanted} wanted pictures shipped`);
+  }
+
+  if (flags.length === 0) {
+    return {
+      duration: CLEAN_GATE_TIMEOUT,
+      onTimeout: "auto_approve",
+      reason: "nothing is flagged on this post, so it ships after an hour if nobody objects",
+      flags: [],
+    };
+  }
+  return {
+    duration: FLAGGED_GATE_TIMEOUT,
+    onTimeout: "hold",
+    reason:
+      `this post waits for a person because ${flags.join("; ")}. ` +
+      `After ${FLAGGED_GATE_TIMEOUT} with no decision it HOLDS rather than publishing: a gate that approves on timeout is a delay, not a gate`,
+    flags,
+  };
+}
+
