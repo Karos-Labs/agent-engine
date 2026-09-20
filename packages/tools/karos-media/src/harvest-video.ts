@@ -7,7 +7,11 @@ import { MEDIA_CACHE_PREFIX } from "./find-images.js";
 // 1.1.0: the provider seam grew a `download` branch and the input grew a
 // rights scope (`allowedSources`) and duration bounds; the first real
 // backend (`createYtDlpHarvestProvider`) sits behind `VIDEO_HARVEST_PROVIDER`.
-const TOOL_VERSION = "1.1.0";
+// 1.2.0 (2026-09-20, RFC-25): `discovery: "open"` lets the clipping agent
+// search the open web for a podcast to clip, instead of refusing when the
+// client's sourcePool names no shows. Defaults to `"allowlist"`, so no
+// existing caller changes behaviour.
+const TOOL_VERSION = "1.2.0";
 
 /**
  * `media.harvestVideo` — Tier 2b of the clip cascade: contextual footage
@@ -21,17 +25,30 @@ const TOOL_VERSION = "1.1.0";
  * cascade moves to Tier 3 — which is exactly what "zero-held between tiers"
  * means. The tests inject a fake provider through the same option.
  *
- * ## Rights are an INPUT, not a hope
+ * ## Rights are an INPUT, and since RFC-25 the input has two settings
  *
- * A harvested clip is `licenseConfidence: "unknown"` by the scrape tier's
- * own standard — copyright stays with the original poster. What makes a
- * commentary clip publishable anyway is that the client holds clipping rights
- * to specific shows (their `tiktokClips.sourcePool`), so those show names
- * travel in as `allowedSources` and a provider MUST confine its results to
- * them. With none, a provider refuses rather than searching the open web.
- * The clip pipeline's caption already requires an explicit source credit
- * (checked in code, not asked of the model) and the human gate sees the
- * source; `sourceUrl`/`channel` are carried through so both keep working.
+ * A harvested clip is `licenseConfidence: "unknown"` whichever way it was
+ * found — copyright stays with the original poster, and nothing here asserts
+ * a right the system does not have.
+ *
+ * `discovery: "allowlist"` (the default, and the original behaviour) is the
+ * stronger posture: the client holds clipping rights to specific shows (their
+ * `tiktokClips.sourcePool`), those names travel in as `allowedSources`, and a
+ * provider MUST confine its results to them. With none it refuses rather than
+ * searching the open web.
+ *
+ * `discovery: "open"` searches anyway, and it exists because the owner
+ * weighed the exposure on 2026-09-20 and chose reach — see
+ * `docs/RFC-25-tiktok-clipping-sources.md`, which is there precisely so this
+ * does not read as a regression of the paragraph above. It is a REVERSIBLE
+ * decision: a client with a `sourcePool` still takes the allowlist path, and
+ * setting one restores the old behaviour for that client with no code change.
+ *
+ * What did not change, and is the protection that was always doing the work:
+ * every clip reaches a human at `11-clip-review` before anything is
+ * published, the caption must carry an explicit source credit (checked in
+ * code, not asked of the model), and `sourceUrl`/`channel`/`discovery` are
+ * carried through so the reviewer sees exactly how this footage was found.
  */
 
 export const HarvestVideoInputSchema = z.object({
@@ -42,7 +59,13 @@ export const HarvestVideoInputSchema = z.object({
     .array(z.string().min(1))
     .default([])
     .describe(
-      "Show/channel names the client holds clipping rights to (their `tiktokClips.sourcePool`). A provider MUST restrict results to these; with none, the provider refuses rather than searching the open web.",
+      "Show/channel names the client holds clipping rights to (their `tiktokClips.sourcePool`). Under `discovery: \"allowlist\"` a provider MUST restrict results to these; with none it refuses. Ignored under `discovery: \"open\"`.",
+    ),
+  discovery: z
+    .enum(["allowlist", "open"])
+    .default("allowlist")
+    .describe(
+      "How to find a video. `allowlist` (default) searches only within `allowedSources` and refuses when there are none — the stronger rights posture. `open` searches the whole provider for the query, for a client with no sourcePool of their own (RFC-25, owner ruling 2026-09-20). Either way the clip is `licenseConfidence: \"unknown\"` and a human approves it before anything ships.",
     ),
   maxBytes: z
     .number()
@@ -76,12 +99,16 @@ export interface HarvestVideoResult {
   durationSeconds?: number;
   /** Which backend answered (`VideoHarvestProvider.name`). */
   provider: string;
+  /** How this video was found. On the reviewer's payload because "we searched the open web for this" is a fact about the clip, not an implementation detail. */
+  discovery: "allowlist" | "open";
 }
 
 /** Everything a provider needs to search within the client's rights scope and size cap. */
 export interface VideoHarvestQuery {
   query: string;
   allowedSources: readonly string[];
+  /** `allowlist` confines results to `allowedSources` and refuses with none; `open` searches everything. See the module comment. */
+  discovery: "allowlist" | "open";
   maxBytes: number;
   minDurationSeconds: number;
   maxDurationSeconds: number;
@@ -144,6 +171,7 @@ export function createHarvestVideo(options: { provider?: VideoHarvestProvider | 
         found = await provider.findVideo({
           query: input.query,
           allowedSources: input.allowedSources,
+          discovery: input.discovery,
           maxBytes: input.maxBytes,
           minDurationSeconds: input.minDurationSeconds,
           maxDurationSeconds: input.maxDurationSeconds,
@@ -213,6 +241,7 @@ export function createHarvestVideo(options: { provider?: VideoHarvestProvider | 
         ...(candidate.channel !== undefined ? { channel: candidate.channel } : {}),
         ...(candidate.durationSeconds !== undefined ? { durationSeconds: candidate.durationSeconds } : {}),
         provider: provider.name,
+        discovery: input.discovery,
       });
     },
   });

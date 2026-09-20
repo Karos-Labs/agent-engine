@@ -152,6 +152,8 @@ interface Harness {
   calls: string[];
   /** Every `video.visualQaGate` payload, for asserting what the model was actually asked. */
   qaArgs: Array<Record<string, unknown>>;
+  /** Every `media.harvestVideo` payload, for asserting which search posture a run took. */
+  harvestArgs: Array<Record<string, unknown>>;
   /** Every `ledger.writeDeliverable` payload, for asserting what shipped. */
   deliverables: Array<Record<string, unknown>>;
 }
@@ -160,6 +162,7 @@ function stubTools(opts: StubOptions = {}): Harness {
   const calls: string[] = [];
   const deliverables: Array<Record<string, unknown>> = [];
   const qaArgs: Array<Record<string, unknown>> = [];
+  const harvestArgs: Array<Record<string, unknown>> = [];
   const ok = (result: unknown) => ({ status: "success" as const, result });
   /**
    * A gate's verdict on the text it was actually handed.
@@ -242,10 +245,17 @@ function stubTools(opts: StubOptions = {}): Harness {
   if (opts.harvestServes !== undefined) {
     tools["media.harvestVideo"] = tool(
       "media.harvestVideo",
-      () =>
-        opts.harvestServes
-          ? ok({ path: ".media-cache/run/harvested-clip.mp4", sourceUrl: "https://example.com/talk" })
-          : { status: "content_fail" as const, reason: "nothing usable found" },
+      (args) => {
+        harvestArgs.push(args as unknown as Record<string, unknown>);
+        return opts.harvestServes
+          ? ok({
+              path: ".media-cache/run/harvested-clip.mp4",
+              sourceUrl: "https://example.com/talk",
+              title: "The margin call nobody saw coming",
+              channel: "Some Business Podcast",
+            })
+          : { status: "content_fail" as const, reason: "nothing usable found" };
+      },
       HarvestVideoInputSchema,
     );
   }
@@ -302,7 +312,7 @@ function stubTools(opts: StubOptions = {}): Harness {
       UploadDeliverableInputSchema,
     );
   }
-  return { tools: tools as unknown as AgentToolRegistry, calls, qaArgs, deliverables };
+  return { tools: tools as unknown as AgentToolRegistry, calls, qaArgs, harvestArgs, deliverables };
 }
 
 async function run(harness: Harness, runId: string, input: Record<string, unknown> = {}, candidates: unknown[] = [GOOD_MOMENT, GOOD_COMMENTARY], repoRoot?: string) {
@@ -375,15 +385,52 @@ describe("tiktok-agent clip pipeline", () => {
     expect(h.calls).not.toContain("video.cutClip");
   });
 
-  it("never clips anyone else's footage for a client with no sourcePool: the harvest tier is not even allowed to search", async () => {
-    // Which shows a client may draw on is a rights decision someone makes;
-    // without one the cascade skips the harvest and goes to an original short.
+  it("searches the OPEN web for a client with no sourcePool, and tells the reviewer it did (RFC-25)", async () => {
+    // This test asserted the opposite until 2026-09-20: a client with no
+    // sourcePool got no search at all, because which shows they may draw on
+    // was a rights decision nobody had made. The owner weighed that exposure
+    // and chose reach — see docs/RFC-25-tiktok-clipping-sources.md. What did
+    // NOT change is that a person approves the clip before anything ships,
+    // and that the reviewer is told how the footage was found.
     const h = stubTools({ config: {}, harvestServes: true, stockServes: true });
-    const result = await run(h, "run-tt-nopool", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], os.tmpdir());
+    const result = await run(h, "run-tt-nopool", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], os.tmpdir());
 
     expect(result.status).toBe("completed");
-    expect(h.calls).not.toContain("media.harvestVideo");
-    expect(h.deliverables[0]).toMatchObject({ sourceTier: "stock", format: "original-short" });
+    expect(h.calls).toContain("media.harvestVideo");
+    const harvest = h.harvestArgs[0]!;
+    expect(harvest["discovery"]).toBe("open");
+    expect(harvest["allowedSources"]).toEqual([]);
+    // The catalog row is a poor query for a video search; the builder anchors it.
+    expect(harvest["query"]).toContain("podcast");
+
+    // It is a real commentary clip off harvested footage, not an original short.
+    expect(h.deliverables[0]).toMatchObject({ sourceTier: "web-harvest", format: "commentary-clip" });
+    // …and the provenance rides on the deliverable, which outlives the gate.
+    const repairs = h.deliverables[0]!["contentRepairs"] as Array<{ check: string; detail: string }>;
+    const provenance = repairs.find((r) => r.check === "source-discovery");
+    expect(provenance?.detail).toContain("open search");
+    expect(provenance?.detail).toContain("Some Business Podcast");
+    expect(provenance?.detail).toContain("licenseConfidence: unknown");
+  }, 20_000);
+
+  it("keeps the ALLOWLIST posture for a client who named the shows they may clip", async () => {
+    // Setting a sourcePool is how a client opts back out of open discovery,
+    // with no code change — RFC-25 §4. A client who has told us which shows
+    // they may clip has made a statement about rights, and an open search
+    // would quietly widen it.
+    const h = stubTools({ harvestServes: true, stockServes: true });
+    const result = await run(h, "run-tt-withpool", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], os.tmpdir());
+
+    expect(result.status).toBe("completed");
+    const harvest = h.harvestArgs[0]!;
+    expect(harvest["discovery"]).toBe("allowlist");
+    expect(harvest["allowedSources"]).toEqual(["The Show"]);
+    // Inside an allowlist search the show name does the narrowing, so the raw
+    // topic is the better query and the anchor would only starve it.
+    expect(harvest["query"]).not.toContain("podcast");
+    // No provenance note: nothing here needs explaining to a reviewer.
+    const repairs = (h.deliverables[0]!["contentRepairs"] as Array<{ check: string }> | undefined) ?? [];
+    expect(repairs.map((r) => r.check)).not.toContain("source-discovery");
   }, 20_000);
 
   it("with footage in hand, an empty catalog is a missing hint, not a missing subject: the topic is named from the recording", async () => {

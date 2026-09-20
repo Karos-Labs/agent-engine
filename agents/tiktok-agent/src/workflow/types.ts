@@ -291,8 +291,24 @@ export interface TikTokIntake {
   sourcePath?: string;
   /** Which tier the footage came from. A `generated` source has no transcript — the spoken-moment steps are skipped for it. */
   sourceTier: ClipSourceTier;
-  /** Where harvested/attached footage came from — the honest basis for the caption's source credit. */
-  sourceContext?: { title?: string; channel?: string; url?: string; label?: string };
+  /**
+   * Where harvested/attached footage came from — the honest basis for the
+   * caption's source credit, and since RFC-25 also the basis for judging it.
+   *
+   * `discovery`/`harvestQuery` are set only by the web-harvest tier. "We
+   * searched the open web for this, with these words" is a fact about the
+   * clip rather than an implementation detail: it is what tells a reviewer
+   * whether they are looking at a show the client holds rights to or at the
+   * best thing a search turned up.
+   */
+  sourceContext?: {
+    title?: string;
+    channel?: string;
+    url?: string;
+    label?: string;
+    discovery?: "allowlist" | "open";
+    harvestQuery?: string;
+  };
   /**
    * What every tier ABOVE the one that served said (2026-09-10). Present on a
    * `stock` intake: the client's own footage was not used, and the reviewer

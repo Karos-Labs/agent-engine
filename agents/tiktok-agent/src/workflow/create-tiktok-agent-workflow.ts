@@ -85,6 +85,7 @@ import {
   windowsOverlap,
 } from "./shape-memory.js";
 import { scoreMoment } from "./moment-floor.js";
+import { buildHarvestQuery } from "./harvest-query.js";
 import { alignScriptToTimings, beatHoldsFromTimings, buildPhraseCues, buildPhraseGroups, cuesToSrt, scriptWords } from "./captions.js";
 import {
   CLIP_DURATION_MAX_SECONDS,
@@ -1428,28 +1429,67 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           tierOutcomes.push("owned-footage: sourcePool holds no gs://https:// footage URIs");
         }
 
-        // Tier 2b — a web harvest by topic, RESTRICTED to the shows the client
-        // holds rights to. A pool that names no shows means this tier has
-        // nothing it is allowed to search, and says so rather than searching
-        // the open web.
+        // Tier 2b — a web harvest by topic.
+        //
+        // TWO POSTURES since RFC-25 (owner ruling, 2026-09-20). A client with
+        // a `sourcePool` gets the original, stronger one: the search is
+        // confined to shows they hold clipping rights to. A client with an
+        // EMPTY pool used to get a refusal here, and now gets an open search
+        // of the whole provider instead — the owner weighed the exposure and
+        // chose reach, and `docs/RFC-25-tiktok-clipping-sources.md` records
+        // what was chosen over what.
+        //
+        // The posture is decided by the client's own data rather than by a run
+        // input, deliberately: a client who has told us which shows they may
+        // clip has made a statement about rights, and an open search would
+        // quietly widen it. Setting a `sourcePool` is therefore how a client
+        // opts back OUT, with no code change.
         const harvest = tools["media.harvestVideo"];
         const allowedSources = plainSourceNames(config);
+        const discovery = allowedSources.length > 0 ? "allowlist" : "open";
         if (harvest === undefined || options.repoRoot === undefined) {
           tierOutcomes.push("web-harvest: not wired in this deployment");
-        } else if (allowedSources.length === 0) {
-          tierOutcomes.push("web-harvest: sourcePool names no shows this client may clip, so there is nothing this tier is allowed to search");
         } else {
-          const outcome = await harvest.execute({ repoRoot: options.repoRoot, runId: wf.runId, query: claim.topic, allowedSources }, { ctx });
+          // The catalog row is a good SUBJECT for a short and a poor QUERY for
+          // a video search — see `buildHarvestQuery`. Its own step, so a prep
+          // run that comes back with a bad clip shows the query that found it
+          // in the trace rather than leaving it to be reconstructed.
+          const harvestQuery = await wf.step.code("01f-build-harvest-query", () =>
+            discovery === "open"
+              ? buildHarvestQuery({
+                  topic: claim.topic,
+                  ...(profile.industry !== undefined ? { industry: profile.industry } : {}),
+                  ...(claim.discovered !== undefined ? { discovered: claim.discovered } : {}),
+                })
+              : // Inside an allowlist search the show name does the narrowing,
+                // so the topic only has to pick an episode out of one feed and
+                // the raw row is the better query.
+                claim.topic,
+          );
+          const outcome = await harvest.execute(
+            { repoRoot: options.repoRoot, runId: wf.runId, query: harvestQuery, allowedSources, discovery },
+            { ctx },
+          );
           if (outcome.status === "success") {
             const result = outcome.result as { path: string; sourceUrl: string; title?: string; channel?: string };
             return {
               ...base,
               sourcePath: path.resolve(options.repoRoot, result.path),
               sourceTier: "web-harvest",
-              sourceContext: { url: result.sourceUrl, ...(result.title ? { title: result.title } : {}), ...(result.channel ? { channel: result.channel } : {}) },
+              sourceContext: {
+                url: result.sourceUrl,
+                ...(result.title ? { title: result.title } : {}),
+                ...(result.channel ? { channel: result.channel } : {}),
+                // How this footage was found, carried to the reviewer. "We
+                // searched the open web for this" is a fact about the clip,
+                // not an implementation detail, and it is the one thing a
+                // person approving it most needs to know.
+                discovery,
+                harvestQuery,
+              },
             };
           }
-          tierOutcomes.push(`web-harvest: ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}`);
+          tierOutcomes.push(`web-harvest (${discovery}, "${harvestQuery}"): ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}`);
         }
       }
 
@@ -3757,6 +3797,15 @@ ${credit}`,
           clipPath: draft.renderedPath,
           durationSeconds: draft.durationSeconds,
           sourceTier: intake.sourceTier,
+          // How the footage was found. An `open` discovery means nobody had
+          // cleared this show before the search: the clip is still
+          // `licenseConfidence: unknown` and this gate is where that is
+          // decided (RFC-25). Shown always, not only when it is `open`, so
+          // "this came from a show the client holds rights to" is equally
+          // visible.
+          ...(intake.sourceContext?.discovery !== undefined
+            ? { discovery: intake.sourceContext.discovery, ...(intake.sourceContext.harvestQuery !== undefined ? { harvestQuery: intake.sourceContext.harvestQuery } : {}) }
+            : {}),
           // Why the footage is stock and not the client's own: what each
           // higher tier said. Absent when a higher tier served.
           ...(intake.sourceNotes !== undefined && intake.sourceNotes.length > 0 ? { sourceNotes: intake.sourceNotes } : {}),
@@ -3882,6 +3931,21 @@ ${credit}`,
      * last round attempted — so the ledger describes the clip that shipped.
      */
     const contentRepairs: ContentRepair[] = [...(review.output.repairs ?? [])];
+    if (intake.sourceContext?.discovery === "open") {
+      // Not a repair — nothing was adapted around and nothing degraded. But
+      // this run clipped a show nobody had cleared, on the owner's standing
+      // ruling, and the deliverable is what outlives the gate: six months
+      // from now "where did this footage come from" has to be answerable
+      // from the record rather than from a step checkpoint.
+      contentRepairs.push({
+        check: "source-discovery",
+        action: "substituted",
+        detail:
+          `this client's sourcePool names no shows, so the footage was found by an open search for "${intake.sourceContext.harvestQuery ?? topic}" ` +
+          `(${intake.sourceContext.channel ?? "channel unknown"}${intake.sourceContext.url !== undefined ? `, ${intake.sourceContext.url}` : ""}) — ` +
+          "RFC-25; the clip is licenseConfidence: unknown and was approved by a person before anything shipped",
+      });
+    }
     if (momentFallback !== undefined) {
       contentRepairs.push({ check: "moment-selection", action: "substituted", detail: momentFallback });
     }
