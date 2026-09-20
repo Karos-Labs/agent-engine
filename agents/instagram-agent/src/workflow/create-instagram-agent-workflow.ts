@@ -7713,7 +7713,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // a draft choosing eight photographs — the one-rhythm post the copy prompt
       // warns against. Between 3 and 5 this step is a no-op and returns the copy
       // object by identity.
-      const imagery = enforceImageryBand(copy);
+      // `wf.runId` is the seed, so WHICH slides carry the pictures moves from
+      // post to post instead of landing on 1/2/4/6 every time — the owner's
+      // *"תבניות גנריות בכל הפוסטים נראה AI"*. Still deterministic within a
+      // run, which this step needs: it is pure, it runs before sourcing, and a
+      // resume must rebuild the identical `copy`.
+      const imagery = enforceImageryBand(copy, undefined, undefined, wf.runId);
       if (imagery.promotions.length > 0 || imagery.demotions.length > 0) {
         copy = imagery.copy;
         imageryPromotions = imagery.promotions;

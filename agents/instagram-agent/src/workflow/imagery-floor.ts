@@ -265,6 +265,90 @@ function carriesPicture(layout: InstagramSlideLayout): boolean {
   return FULL_BLEED_IMAGE_LAYOUTS.has(layout);
 }
 
+/** FNV-1a plus murmur3's finalizer. The avalanche is not decoration — see {@link choosePlacements}. */
+function placementHash(input: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  // Raw FNV-1a's HIGH bits barely move between inputs that share a prefix and
+  // differ at the end, and that is the exact shape of a run id:
+  // `pubsub-21904879061334183` vs `pubsub-21896063218741941`. Taking a
+  // fraction off the top of the raw hash put six different seeds inside
+  // 0.41-0.44 and produced the identical placement for all of them — a
+  // "seeded" choice that was not seeded by anything. The finalizer spreads the
+  // entropy down into the low bits, which is where `% length` reads.
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x85ebca6b) >>> 0;
+  hash ^= hash >>> 13;
+  hash = Math.imul(hash, 0xc2b2ae35) >>> 0;
+  hash ^= hash >>> 16;
+  return hash >>> 0;
+}
+
+/**
+ * Which `count` of `candidates` carry a picture this run, seeded.
+ *
+ * ── WHY THIS IS NOT SLIDE ORDER ──
+ *
+ * It was, in both directions: promote lowest-numbered first, demote
+ * highest-numbered first. Perfectly deterministic, and therefore identical on
+ * every post a client has ever published — photographs on 1, 2, 4 and 6, run
+ * after run. The owner, 2026-09-20: *"אני רוצה שמיקומי התמונות ישתנו לפעמים כי
+ * תבניות גנריות בכל הפוסטים נראה AI"*. A reader cannot say why a feed looks
+ * machine-made; a picture in the same four places every time is part of it.
+ *
+ * ── SPREAD BY CONSTRUCTION, NOT BY LUCK ──
+ *
+ * A seeded shuffle would vary the places and cluster them: three photographs
+ * in a row and then five text plates is a worse post than the fixed order it
+ * replaced. So the picks are spaced `length / count` apart and the SEED moves
+ * the starting offset. Every run gets an evenly spread set; different runs get
+ * different ones.
+ *
+ * The entropy requirement is deliberately tiny — one `% length` — because a
+ * scheme that needs a well-distributed float is the one that silently failed
+ * here first (see {@link placementHash}). Rounding can collide when `count`
+ * approaches `length`, so the walk fills forward past anything already taken,
+ * which also makes `count >= length` degrade to "all of them" rather than to a
+ * short list.
+ *
+ * With no seed the answer is the first `count` in slide order — what every
+ * caller that is not a run should get, so a fixture does not move because a
+ * run would have.
+ */
+function choosePlacements(candidates: readonly number[], count: number, seed: string | undefined): Set<number> {
+  if (count <= 0) return new Set();
+  if (count >= candidates.length) return new Set(candidates);
+  if (seed === undefined || seed.length === 0) return new Set(candidates.slice(0, count));
+
+  // Stratified: the list is cut into `count` contiguous bands and the seed
+  // picks one slide INSIDE each band. One per band is what makes the result
+  // spread; a free position inside the band is what makes it vary.
+  //
+  // A single seeded offset with a fixed stride — the first version of this —
+  // is spread too, but it can only ever produce `stride` distinct answers: six
+  // candidates choosing two gave exactly {2,5}, {3,6}, {4,7} and nothing else,
+  // so eight different real run ids produced three different posts. Choosing
+  // within the band turns that into `stride ** count`.
+  const chosen = new Set<number>();
+  const stride = candidates.length / count;
+  for (let j = 0; j < count; j++) {
+    const bandStart = Math.floor(j * stride);
+    const bandEnd = j === count - 1 ? candidates.length : Math.floor((j + 1) * stride);
+    const width = Math.max(1, bandEnd - bandStart);
+    let index = bandStart + (placementHash(`${seed}:${j}`) % width);
+    // Forward-fill past a collision, so the set always reaches `count` even
+    // when a band is one slide wide and its slide is already taken.
+    for (let probe = 0; probe < candidates.length && chosen.has(candidates[index]!); probe++) {
+      index = (index + 1) % candidates.length;
+    }
+    chosen.add(candidates[index]!);
+  }
+  return chosen;
+}
+
 /**
  * The carousel brought inside the imagery band.
  *
@@ -279,6 +363,8 @@ export function enforceImageryBand(
   copy: InstagramCopyOutput,
   floor: number = MIN_PICTURE_SLIDES,
   ceiling: number = MAX_PICTURE_SLIDES,
+  /** Per-RUN seed (the workflow passes `wf.runId`) — see {@link placementOrder}. Omitted keeps strict slide order. */
+  seed?: string,
 ): ImageryBandResult {
   const before = copy.slides.filter((s) => carriesPicture(s.layout ?? "photo")).length;
   // The ceiling in force depends on how long this carousel is — see
@@ -290,13 +376,39 @@ export function enforceImageryBand(
   // ── UNDER THE FLOOR: promote `text_only`, lowest slide number first. ──
   if (before < floor) {
     const promotions: ImageryPromotion[] = [];
+    const candidates = copy.slides.filter((slide) => (slide.layout ?? "photo") === "text_only").map((slide) => slide.n);
+    const chosen = choosePlacements(candidates, Math.max(0, floor - before), seed);
+
+    // ── THE EARLY PICTURE SURVIVES THE SHUFFLE. ──
+    //
+    // The old strict slide order carried a real editorial argument inside it —
+    // an early photograph is what earns the swipe, and a picture on slide 7
+    // does less work than the same picture on slide 2 — and a seeded order
+    // would throw that away roughly one run in four by putting every promotion
+    // in the back half.
+    //
+    // So the seed chooses WHICH slides, and this keeps the one property that
+    // was worth having: the front half of the carousel carries a picture. Only
+    // when the draft did not already put one there, and only by moving the
+    // latest promotion to the earliest candidate — the smallest edit that
+    // makes it true, rather than a re-sort that would collapse back onto
+    // slide order.
+    const frontHalfLast = Math.ceil(copy.slides.length / 2);
+    const hasEarlyPicture = copy.slides.some(
+      (slide) => slide.n <= frontHalfLast && (carriesPicture(slide.layout ?? "photo") || chosen.has(slide.n)),
+    );
+    if (!hasEarlyPicture && chosen.size > 0) {
+      const earliest = candidates.find((n) => n <= frontHalfLast);
+      if (earliest !== undefined) {
+        chosen.delete(Math.max(...chosen));
+        chosen.add(earliest);
+      }
+    }
+
     let carried = before;
     const slides = copy.slides.map((slide) => {
       const layout = slide.layout ?? "photo";
-      // Lowest slide number first, which `map` gives for free: an early
-      // photograph is what earns the swipe, and a picture on slide 7 does less
-      // work than the same picture on slide 2.
-      if (carried >= floor || layout !== "text_only") return slide;
+      if (!chosen.has(slide.n) || layout !== "text_only") return slide;
       carried += 1;
       promotions.push({ slide: slide.n, from: layout, to: "photo" });
       return { ...slide, layout: "photo" as const };
@@ -327,17 +439,26 @@ export function enforceImageryBand(
   // nor a figure device. Demoting it would return to `05` on every attempt.
   if (before > inForce) {
     const demotions: ImageryDemotion[] = [];
+    // The mirror of the promotion side: the seed picks WHICH photographs go,
+    // spread the same way, so the survivors are not always the lowest-numbered
+    // ones. Reversed before choosing, so that with NO seed this still demotes
+    // from the back — byte-identical to the behaviour this branch had before,
+    // which is what the fixtures pin. `cover` is never a candidate: it is
+    // excluded by `!== "photo"`, for the reason this branch's own comment
+    // gives.
+    const demotable = copy.slides.filter((slide) => (slide.layout ?? "photo") === "photo").map((slide) => slide.n);
+    const dropped = choosePlacements([...demotable].reverse(), Math.max(0, before - inForce), seed);
+
     let carried = before;
-    const slides = [...copy.slides].reverse().map((slide) => {
-      if (carried <= inForce || (slide.layout ?? "photo") !== "photo") return slide;
+    const slides = copy.slides.map((slide) => {
+      if (!dropped.has(slide.n) || (slide.layout ?? "photo") !== "photo") return slide;
       carried -= 1;
       demotions.push({ slide: slide.n, from: "photo", to: "text_only" });
       return { ...slide, layout: "text_only" as const };
     });
-    demotions.reverse();
 
     return {
-      copy: demotions.length > 0 ? { ...copy, slides: slides.reverse() } : copy,
+      copy: demotions.length > 0 ? { ...copy, slides } : copy,
       promotions: [],
       demotions,
       before,
