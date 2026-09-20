@@ -234,6 +234,12 @@ export type TemplateFeedback = z.infer<typeof TemplateFeedbackSchema>;
  * Every field here is persisted to client memory by the reviewing workflow,
  * whatever the decision, so the NEXT run can read what a person asked for
  * last time. That is the half of the loop that makes it a loop.
+ *
+ * `rating` (RFC-22 section 3.2) is the one field here that is not addressed to
+ * the next run at all: it is addressed to the CALIBRATION, and its reader is a
+ * test rather than a draft. It rides along because the moment a human is
+ * looking at a finished post and forming an opinion about it is the only
+ * moment that opinion is cheap to collect.
  */
 export const GateResponseSchema = z
   .object({
@@ -248,6 +254,38 @@ export const GateResponseSchema = z
     feedback: z.string().min(1).optional(),
     /** Per-slide notes on the templates that rendered this output. */
     templateFeedback: z.array(TemplateFeedbackSchema).optional(),
+    /**
+     * ── HOW GOOD WAS THIS, 1 TO 5, AND IT IS OPTIONAL ON PURPOSE. ──
+     *
+     * The label the calibration set is built from (RFC-22 section 3.2),
+     * collected from the person who is already looking at the post at the
+     * moment they are already deciding about it.
+     *
+     * The owner chose this shape over the RFC's own: *"I do not want to do
+     * this in the application... before the approval, when they approve a job
+     * after it has finished, we can add a 1-to-5 star measure... It will be an
+     * optional field but it helps us. It can give them one credit if they
+     * filled it in."* RFC-22 had assumed a separate labelling session over a
+     * fixture directory, 60 to 80 posts in one sitting. A label nobody has to
+     * make time for is a label that actually arrives.
+     *
+     * **Optional, and it must stay optional.** A required rating would be
+     * answered by everyone and mean nothing: the reviewer in a hurry picks 3
+     * or picks 5, and the calibration set fills with noise that is
+     * indistinguishable from judgement. An absent rating is a fact (nobody
+     * said) and a present one is a person's opinion. The credit is how the
+     * system asks rather than insists.
+     *
+     * **1 to 5 and integral.** No half stars: the question is which of five
+     * buckets, and a scale with ten positions invites a precision the rater
+     * does not have.
+     *
+     * Meaningful on EVERY decision, not only `approve`. A 1-star `revise` is
+     * the most informative label the set can contain -- it is the exact case
+     * RFC-22 section 3.3 says the judge exists for, a post a human would not
+     * post -- so nothing here restricts it to approvals.
+     */
+    rating: z.number().int().min(1).max(5).optional(),
     /**
      * In-place edits the reviewer made before approving — applied verbatim by
      * the workflow. `caption`/`slides` are meaningful on `approve` only (a
