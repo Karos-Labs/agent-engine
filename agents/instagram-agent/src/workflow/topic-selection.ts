@@ -290,7 +290,16 @@ export function freshnessBonus(publishedAt: string | undefined, now: Date = new 
 export const REFERENCE_ENGAGEMENT_BONUS = 0.25;
 /** The client's own case study or data point is worth 50% more WHEN there is an offer for it to lead to; without one it is just another story. */
 export const OWN_ASSET_WITH_OFFER_BONUS = 1.5;
-/** An evergreen angle is worth 20% less than a dated story — except on a deep-value week, which is exactly what evergreen is for. */
+/**
+ * WITHDRAWN 2026-09-20, kept as a name so the reasoning is findable.
+ *
+ * An evergreen angle used to be worth 20% less than a dated story off a
+ * deep-value week. It is undated by definition, so the freshness ladder was
+ * already scoring it below every fresh story — this took the same fact out a
+ * second time, and the pair came to a handicap that no brand fit could clear.
+ * See `engineBonus`. Nothing reads it; the freshness ladder and the mode bonus
+ * carry the distinction on their own.
+ */
 export const EVERGREEN_OFF_MODE_MULTIPLIER = 0.8;
 
 /** Why each factor moved the score. Checkpointed with the ranking so a reviewer can disagree with a weight rather than with a total. */
@@ -303,6 +312,12 @@ export interface RankComponents {
   /** How much the candidate's age moved it. 1 for an undated one, which is neutral by design. */
   freshness: number;
   engine: TopicEngine;
+  /** 1 unless this client's last few posts came from the same engine — see `TOPIC_ENGINE_ROTATION_HOLD`. */
+  engineRotation: number;
+  /** 1 unless this client has recently shipped this subject — see `SUBJECT_CLUSTER_REPEAT_PENALTY`. */
+  subjectRotation: number;
+  /** The coarse subject bucket this candidate fell in, for the trace and for the delivery record. */
+  subjectCluster?: string;
 }
 
 export interface RankedCandidate {
@@ -342,6 +357,17 @@ export interface RankTopicOptions {
   minBrandFit?: number;
   /** Overridable only for tests, so a freshness assertion is not a function of the day it runs. */
   now?: Date;
+  /**
+   * The topic ENGINES this client's last few posts came from, newest first
+   * (`recentTopicEngines` over its own skeleton history).
+   *
+   * Per client, always — the fleet shares the five engines, never a client's
+   * history. Absent means "no history to rotate against", which is the honest
+   * state of a client's first few posts and costs nothing.
+   */
+  recentTopicEngines?: readonly string[] | undefined;
+  /** The SUBJECT CLUSTERS this client's last few posts shipped, newest first (`recentSubjectClusters`). Per client, for the same reason. */
+  recentSubjectClusters?: readonly string[] | undefined;
 }
 
 /** The strongest measured engagement among the peer posts this candidate cites, in [0,1]; 0 when it cites none. */
@@ -370,14 +396,179 @@ function citedEngagement(candidate: TrendCandidate, signals: TopicSignalsForScou
  * carry — and they are multipliers, not additions, so no engine can rescue a
  * candidate the scout scored as uninteresting.
  */
+/**
+ * How many recent posts hold an ENGINE down.
+ *
+ * Mirrors `SERIES_ROTATION_HOLD`, which has worked for the editorial series
+ * since RFC-21, and for the same reason: the engine that produced the last
+ * couple of subjects is the one a reader has just seen twice.
+ *
+ * Two, not more: this client may only HAVE strong evidence in two engines in a
+ * given week, and a longer hold would start choosing between "repeat the lane"
+ * and "post something the evidence does not support". Two breaks a run of
+ * sameness without ever starving the run — and, like the series hold, it is a
+ * preference: if every engine is held out the pool falls back to all of them.
+ */
+export const TOPIC_ENGINE_ROTATION_HOLD = 2;
+
+/**
+ * How hard a full subject repeat is hit: a candidate whose content words are
+ * exactly a recent post's keeps `1 - this` of its score, and a half-overlap
+ * keeps half the penalty.
+ *
+ * 0.55 is sized off the real gap it has to close. On karoslabs' 2026-09-20 run
+ * the leading niche-news candidate scored 38.81 against 15.74 for the best
+ * evergreen idea — a 2.5x lead that the engine rotation alone only narrows.
+ * A repeat of an already-covered subject has to be able to LOSE that lead, or
+ * the feed keeps publishing the same post; a subject genuinely worth a second
+ * visit still wins on its own fit and interest.
+ */
+export const SUBJECT_REPEAT_STRENGTH = 0.55;
+
+/** How many recent posts' clusters are considered. Beyond this the subject has had time to become new again. */
+export const SUBJECT_CLUSTER_WINDOW = 4;
+
+/** What a candidate keeps when its engine is in the hold window. Sharp enough to move the order, soft enough that a held engine with the week's only real story still wins. */
+export const TOPIC_ENGINE_ROTATION_MULTIPLIER = 0.7;
+
+/**
+ * The words that say nothing about WHICH subject a topic is — either because
+ * every client's topics contain them, or because they are grammar.
+ *
+ * Deliberately generic, never per-client: this module must behave the same
+ * way for every client in the fleet, and a list naming any one client's
+ * vocabulary would be exactly the hard-coding the owner ruled out on
+ * 2026-09-20 ("לכל לקוח ... לפי המסמכים שיש לנו על הלקוח").
+ */
+const CLUSTER_STOPWORDS: ReadonlySet<string> = new Set([
+  "the", "a", "an", "and", "or", "for", "of", "to", "in", "on", "with", "without", "your", "you", "our", "their", "its",
+  "how", "why", "what", "when", "which", "who", "that", "this", "these", "those", "is", "are", "was", "were", "be",
+  "new", "best", "top", "guide", "ways", "things", "need", "know", "about", "from", "into", "than", "then", "more",
+  "most", "can", "will", "just", "now", "why", "vs", "versus",
+]);
+
+/**
+ * The SUBJECT of a topic, as the set of content words that carry it — the
+ * thing two posts share when a reader says "this is the same post again".
+ *
+ * ## Why the existing distance check is not enough
+ *
+ * `candidateDistance` compares word-SHINGLES against the recent posts' own
+ * text. A shingle is an ordered run of words, so it catches a subject
+ * re-posted in the same phrasing and almost nothing else. "Sponsored AI agents
+ * in search" and "AI search visibility" share no shingle at all, score a
+ * distance near 1.0, take no penalty, and are the same post to the person
+ * reading the feed. Three karoslabs posts in a row were that shape.
+ *
+ * ## Why this is an overlap and not a bucket
+ *
+ * The first version of this returned a two-word bucket ("the two longest
+ * content words, alphabetised") and two topics matched only when their buckets
+ * were equal. Replayed against the real candidates of run
+ * `pubsub-21904879061334183` it produced `results+sponsored` for the winner
+ * and `discoverability+visibility` for the post it was repeating, matched
+ * nothing, and changed no score — a rotation that looked implemented and was
+ * inert. Any fixed-width bucket has that failure: it throws away the words
+ * that would have matched.
+ *
+ * The HEADLINE is deliberately not part of it. A headline is this week's
+ * wording of the subject — "arrive in search results", "reshape brand
+ * discoverability" — and those incidental words dilute every comparison
+ * without ever being what two posts have in common. The topic is the noun
+ * phrase that names the subject, and that is what is measured.
+ *
+ * So the subject is the topic's whole content-word set and the comparison is graded.
+ * No taxonomy, no per-client list, nothing to maintain — which is also what
+ * keeps it identical for every client in the fleet, per the owner's rule that
+ * each client's topics come from that client's own material.
+ */
+export function topicSubjectWords(topic: string): string[] {
+  return [
+    ...new Set(
+      topic
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s]/gu, " ")
+        .split(/\s+/)
+        // Two characters, not three: "ai" is the single most load-bearing word
+        // in several clients' subjects and a `length > 2` filter dropped it.
+        .filter((w) => w.length >= 2 && !CLUSTER_STOPWORDS.has(w)),
+    ),
+  ].sort();
+}
+
+/**
+ * The stored form of a post's subject — the content words, sorted, space
+ * joined. Written to the delivery history so the next run can measure against
+ * it; `undefined` when the topic has no content words at all, which is the
+ * honest answer rather than an empty bucket that would match everything.
+ */
+export function topicSubjectCluster(topic: string): string | undefined {
+  const words = topicSubjectWords(topic);
+  return words.length === 0 ? undefined : words.join(" ");
+}
+
+/**
+ * How much of the SMALLER subject the other one contains: 1 when one subject's
+ * words are all in the other, 0 when they share nothing.
+ *
+ * The overlap coefficient, not Jaccard, and measured — Jaccard divides by the
+ * union, so it reads two subjects as unrelated purely because one of them was
+ * described in more words. Replayed against the real karoslabs candidates it
+ * scored the repeat of an AI-search post at 0.18, a x0.91 nudge, which is a
+ * penalty in name only. The same pair on the overlap coefficient is 0.67.
+ */
+function subjectOverlap(a: readonly string[], b: readonly string[]): number {
+  if (a.length === 0 || b.length === 0) return 0;
+  const bSet = new Set(b);
+  const shared = a.filter((w) => bSet.has(w)).length;
+  return shared / Math.min(a.length, b.length);
+}
+
+/**
+ * How much a candidate's subject costs it against this client's recent posts.
+ *
+ * Graded on the best overlap with any recent subject rather than switched on a
+ * bucket match: a candidate that half-repeats last week takes half the
+ * penalty, which is the honest shape of the judgment and has no threshold to
+ * tune wrong. At full overlap a candidate keeps `1 - SUBJECT_REPEAT_STRENGTH`
+ * of its score.
+ *
+ * Returns 1 — no penalty — for a client with no history, which is every
+ * client's first post.
+ */
+export function subjectClusterPenalty(candidate: Pick<TrendCandidate, "topic">, recentClusters: readonly string[]): number {
+  const words = topicSubjectWords(candidate.topic);
+  if (words.length === 0) return 1;
+  let worst = 0;
+  for (const recent of recentClusters.slice(0, SUBJECT_CLUSTER_WINDOW)) {
+    const overlap = subjectOverlap(words, recent.split(" ").filter((w) => w.length > 0));
+    if (overlap > worst) worst = overlap;
+  }
+  return 1 - SUBJECT_REPEAT_STRENGTH * worst;
+}
+
 export function engineBonus(candidate: TrendCandidate, options: Pick<RankTopicOptions, "mode" | "brief" | "signals">): number {
   switch (candidateEngine(candidate)) {
     case "reference-accounts":
       return 1 + REFERENCE_ENGAGEMENT_BONUS * citedEngagement(candidate, options.signals);
     case "own-assets":
       return options.brief.offers.length > 0 ? OWN_ASSET_WITH_OFFER_BONUS : 1;
+    // ── EVERGREEN IS NO LONGER CHARGED TWICE. ──
+    //
+    // It used to return `EVERGREEN_OFF_MODE_MULTIPLIER` (0.8) off a deep-value
+    // week. But an evergreen angle is undated BY DEFINITION, so it already
+    // sits at freshness 1.0 while a dated story gets up to 1.35 — the same
+    // fact, "this is not news", taken out of its score a second time. Together
+    // the two came to a ~36% handicap that no amount of brand fit could clear:
+    // on karoslabs' 2026-09-20 run the top three candidates were all
+    // niche-news, and the best evergreen idea (5 fit, 4 interest) scored 15.74
+    // against a news item's 38.81.
+    //
+    // The freshness ladder is the right place for the distinction and it is
+    // still there, so news still leads on a week when news is strong. What is
+    // gone is the second charge.
     case "evergreen":
-      return options.mode === "deep-value" ? 1 : EVERGREEN_OFF_MODE_MULTIPLIER;
+      return 1;
     case "audience-questions":
     case "niche-news":
     default:
@@ -403,6 +594,11 @@ export function rankTopicCandidates(candidates: readonly TrendCandidate[], optio
   const minFit = options.minBrandFit ?? MIN_BRAND_FIT;
   const dropped: RankedTopics["dropped"] = [];
   const ranked: RankedCandidate[] = [];
+  // The engines this client's last few posts came from, newest first. A
+  // PENALTY and not an exclusion: on a week when the held engine is the only
+  // one with a real story, a repeated lane still beats no post at all — the
+  // same call `pickEditorialSeries` makes when every series is held out.
+  const heldEngines = new Set((options.recentTopicEngines ?? []).slice(0, TOPIC_ENGINE_ROTATION_HOLD));
 
   for (const candidate of candidates) {
     if (candidate.brandFit < minFit) {
@@ -421,9 +617,25 @@ export function rankTopicCandidates(candidates: readonly TrendCandidate[], optio
     // reached the comparator, so this factor is the whole of what "sometimes
     // trendy or about something new" needed.
     const freshness = freshnessBonus(candidate.publishedAt, options.now);
+    // ── THE TWO ROTATION FACTORS (2026-09-20). ──
+    //
+    // Separate columns rather than terms folded into `bonus`, for the reason
+    // `pickEditorialSeries` keeps its cross-client penalty on its own ladder:
+    // `engineBonus` stays the answer to "what is this candidate's origin
+    // worth", which is what a reviewer reads, and a candidate that lost to
+    // rotation should look like a strong candidate that was held back — not
+    // like a weak one.
+    //
+    // Both are per CLIENT, read from that client's own delivery history.
+    // Nothing here knows any client's subjects: the engines are the same five
+    // for everyone, and the subject buckets are derived from the candidate's
+    // own words.
+    const engineRotation = heldEngines.has(candidateEngine(candidate)) ? TOPIC_ENGINE_ROTATION_MULTIPLIER : 1;
+    const subjectRotation = subjectClusterPenalty(candidate, options.recentSubjectClusters ?? []);
+    const cluster = topicSubjectCluster(candidate.topic);
     ranked.push({
       candidate,
-      score: round3(candidate.brandFit * candidate.interest * distance * modeBonus * bonus * freshness),
+      score: round3(candidate.brandFit * candidate.interest * distance * modeBonus * bonus * freshness * engineRotation * subjectRotation),
       components: {
         brandFit: candidate.brandFit,
         interest: candidate.interest,
@@ -432,6 +644,9 @@ export function rankTopicCandidates(candidates: readonly TrendCandidate[], optio
         engineBonus: round3(bonus),
         freshness,
         engine: candidateEngine(candidate),
+        engineRotation,
+        subjectRotation: round3(subjectRotation),
+        ...(cluster !== undefined ? { subjectCluster: cluster } : {}),
       },
     });
   }

@@ -3,6 +3,8 @@ import path from "node:path";
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore, StyleEdit, TemplateFeedback } from "@agent-engine/core";
 import {
+  candidateEngine,
+  enginesMissingFromCandidates,
   // C7, the learning loop (SCRUM-459/460/464/466). Read once at `01b`, before
   // any revision scope; written back once at `10-write-run-state`. See
   // `docs/AGENT-ARCHITECTURE.md` §1 — the order of these six is the standard,
@@ -116,6 +118,7 @@ import {
 } from "./relevance-gate.js";
 import {
   rankTopicCandidates,
+  topicSubjectCluster,
   recentFormatsFromDecisions,
   recentModesFromDecisions,
   resolveTopicClaim,
@@ -243,6 +246,8 @@ import {
   previousSkeleton,
   readSkeletonHistory,
   recentSeriesIds,
+  recentSubjectClusters,
+  recentTopicEngines,
   recentSystemIds,
   recordSkeleton,
   rolesForSlideCount,
@@ -4303,8 +4308,47 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // its `evidenceRefs`. Without it the bonus is a neutral 1.0, never a
         // guess.
         signals: topicSignals.signals,
+        // ── ROTATION, PER CLIENT (2026-09-20) ──
+        //
+        // This client's own last few posts: which ENGINE produced each
+        // subject, and which coarse SUBJECT each one landed in. Both come out
+        // of the same delivery history the series and visual-system rotations
+        // already read, so a client that has published nothing yet rotates
+        // against nothing and is unaffected.
+        //
+        // The engines are the fleet's five; the subject buckets are derived
+        // from each candidate's own words. Nothing here is per-client
+        // configuration, and nothing here knows any client's subjects.
+        recentTopicEngines: recentTopicEngines(skeletonHistory),
+        recentSubjectClusters: recentSubjectClusters(skeletonHistory),
       }),
     );
+
+    // Which engines had material and still offered nothing. Recorded, not
+    // enforced: the fit and interest scores are the scout's to give and a
+    // fabricated candidate would be worse than an absent one. But an engine
+    // that never enters the race cannot be rotated to, so the gap belongs in
+    // the trace rather than nowhere — on karoslabs' 2026-09-20 run it was
+    // `own-assets`, holding eight signals including the case study the owner
+    // had asked for by name.
+    // CHECKPOINTED WHOLE, ledger write included. The write is the one side
+    // effect here, and outside a step it re-executes on every replay — the
+    // same trap `04m2`'s own comment names for the imagery band. Inside, a
+    // resumed run reads the recorded answer and writes nothing twice.
+    await wf.step.code("03f2-engine-coverage", async () => {
+      const missing = enginesMissingFromCandidates(topicSignals.signals, scout?.candidates ?? []);
+      const offered = [...new Set((scout?.candidates ?? []).map((c) => candidateEngine(c)))];
+      if (missing.length > 0) {
+        const note = `topic engines with material but no candidate: ${missing.join(", ")} — those lanes could not compete this run`;
+        console.warn(`03f2-engine-coverage: ${note}`);
+        try {
+          await tools["ledger.appendEvent"]?.execute({ runId: wf.runId, eventId: `${wf.runId}__engine-coverage`, level: "info", message: note }, { ctx });
+        } catch {
+          /* the ledger is a record, never a gate */
+        }
+      }
+      return { missing, offered };
+    });
 
     // ── 03g: the subject, under one precedence order (Phase 0, item E) ──
     //
@@ -14027,6 +14071,28 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // post cannot lead with it again. karoslabs shipped `7.2%` on two
           // covers about different topics because nothing remembered.
           ...(review.output.copy.slides[0]?.device?.kind === "figure" ? { coverFigure: review.output.copy.slides[0].device.value } : {}),
+          // 2026-09-20 — the storage half of the topic rotation, and it is the
+          // half that makes the other half real. Without it `rankTopicCandidates`
+          // reads an empty history every week, holds nothing out, and the
+          // niche-news engine wins every run for the same structural reason it
+          // always did: the owner saw three karoslabs posts in a row about AI
+          // search, and nothing in the system remembered the first two.
+          //
+          // The ENGINE is the claim's own; the CLUSTER is derived from the
+          // claimed subject's words, so it is the same bucket the next run's
+          // candidates will be measured into.
+          // The engine comes off the claim's own candidate. A claim with no
+          // `trend` — a person's request, or a planned catalog row — genuinely
+          // came from no engine, and records none rather than being filed
+          // under a lane it never used.
+          ...(topicClaim.trend !== undefined ? { topicEngine: candidateEngine(topicClaim.trend) } : {}),
+          // The CLUSTER is recorded whatever the source, including a request
+          // or a row: a subject shipped is a subject shipped, and the next
+          // run should see it in the feed's recent history however it got
+          // there.
+          ...(topicSubjectCluster(topicClaim.topic) !== undefined
+            ? { subjectCluster: topicSubjectCluster(topicClaim.topic)! }
+            : {}),
         });
         /**
          * Phase 4 — the belief this run earned. Built here rather than at `04l` so it records what actually

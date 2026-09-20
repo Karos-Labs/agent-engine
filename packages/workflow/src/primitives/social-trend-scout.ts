@@ -298,6 +298,38 @@ export function hasTopicSignalMaterial(signals: TopicSignalsForScout | undefined
   return signals.referencePosts.length + signals.audienceQuestions.length + signals.ownAssets.length + signals.evergreen.length > 0;
 }
 
+/**
+ * The engines that HAD material this run, so a caller can compare them against
+ * the engines that actually produced a candidate.
+ *
+ * The scout is instructed to offer one candidate per engine with material, and
+ * on karoslabs' run `pubsub-21904879061334183` it did not: eight own-asset
+ * signals — including the case study the owner had asked for by name — and no
+ * own-asset candidate, so the lane could not even lose, it simply was not in
+ * the race. Nothing in the trace said so.
+ *
+ * A model instruction cannot be enforced in code without inventing the fit and
+ * interest scores that are the model's to give, and a fabricated candidate is
+ * worse than an absent one. What CAN be done is make the omission visible and
+ * measurable, which is what this is for. `niche-news` is not included: its
+ * material is the research digest, not `signals`.
+ */
+export function enginesWithMaterial(signals: TopicSignalsForScout | undefined): TopicEngine[] {
+  if (signals === undefined) return [];
+  const present: TopicEngine[] = [];
+  if (signals.referencePosts.length > 0) present.push("reference-accounts");
+  if (signals.audienceQuestions.length > 0) present.push("audience-questions");
+  if (signals.ownAssets.length > 0) present.push("own-assets");
+  if (signals.evergreen.length > 0) present.push("evergreen");
+  return present;
+}
+
+/** The engines that had material and still produced no candidate — the gap `enginesWithMaterial` exists to expose. */
+export function enginesMissingFromCandidates(signals: TopicSignalsForScout | undefined, candidates: readonly Pick<TrendCandidate, "engine">[]): TopicEngine[] {
+  const offered = new Set(candidates.map((c) => candidateEngine(c)));
+  return enginesWithMaterial(signals).filter((engine) => !offered.has(engine));
+}
+
 export const TrendCandidateSchema = z.object({
   /** A short subject line, the thing the post is about. */
   topic: z.string().min(1),
@@ -408,7 +440,7 @@ export function buildTrendScoutSystemPrompt(channel: TrendScoutInput["channel"])
     "",
     "Produce 3 to 8 candidates. Every candidate must be grounded in the material you were given — the research documents, or `signals` when you were given them: never invent a trend, a launch, a number or a date, and name what the candidate rests on (`sourceUrls` for a document, `evidenceRefs` for a signal). Never invent — an unsupported claim here becomes a false statement in the client's feed.",
     "",
-    "Candidates may also come from `signals`: what reference accounts posted that landed, questions the audience is asking, the client's own assets, evergreen angles. Tag each candidate's `engine` (niche-news | reference-accounts | audience-questions | own-assets | evergreen) and list its `evidenceRefs` (URLs or doc headings). Offer at least one candidate per engine that has material. `clientBrief` is the authority on who the client is and who they sell to.",
+    "Candidates may also come from `signals`: what reference accounts posted that landed, questions the audience is asking, the client's own assets, evergreen angles. Tag each candidate's `engine` (niche-news | reference-accounts | audience-questions | own-assets | evergreen) and list its `evidenceRefs` (URLs or doc headings). You MUST offer at least one candidate per engine that has material in `signals`, even when this week's news is strong: the news engine has a freshness advantage in the ranking that follows, so an engine you leave out is an engine that cannot win, and a feed that reads as the same post every week is the failure this rule exists to prevent. An own-asset or evergreen candidate you score honestly low is still an offer; silence is not. `clientBrief` is the authority on who the client is and who they sell to.",
     "A candidate that rests on `signals` rather than on a research document keeps `sourceUrls` EMPTY and puts what it rests on in `evidenceRefs` instead: a URL in `sourceUrls` is a source the drafting step may cite, and a reference post or a document heading is not one.",
     "`whyNow` is read literally by the writer, so it must be honest about the clock. For `niche-news` (and for `reference-accounts` when the post is about a dated event) it is why THIS WEEK: the date, the launch, the report. For `evergreen`, `own-assets` and `audience-questions` there is no week in it, and you must not invent one: write why this is worth saying now to THIS audience (the question keeps coming up, the offer is running, the asset has never been published) and never a date, never \"this week\", never \"just announced\". A candidate whose only claim to attention is a fabricated recency is worse than no candidate.",
     "",
