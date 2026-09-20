@@ -100,6 +100,23 @@ export interface PostPerformanceRecord {
    * old records can never manufacture a steer out of what it did not record.
    */
   usedArrowBullets?: boolean;
+  /**
+   * The reviewer's 1-to-5 stars on the post, when they gave any.
+   *
+   * RFC-22 section 3.2's golden-set label, in the shape the owner chose on
+   * 2026-09-20: collected at the gate from the person already looking at the
+   * post, optional, and rewarded with a credit rather than required.
+   *
+   * **This is the only field in this record written by a HUMAN**, and that is
+   * what makes it worth more than the rest of them put together. Everything
+   * else here is the run's opinion of its own work; `metrics` will one day be
+   * the platform's. This is a person saying whether they would post it, which
+   * is the question RFC-22 section 3.3 says the judge is calibrated against.
+   *
+   * Absent on nearly every record, by design. See `GateResponseSchema.rating`
+   * for why a required rating would be worth less than no rating at all.
+   */
+  ownerRating?: number;
   slideCount: number;
   /** Where the pictures came from — `generated`, `sourced`, `client`, `mixed`, `none`. Recorded for the same reason the arm is. */
   imageSource?: string;
@@ -398,6 +415,12 @@ export function readPerformanceStore(beliefs: unknown): PerformanceStore {
       ...(typeof r["mediaId"] === "string" ? { mediaId: r["mediaId"] } : {}),
       ...(typeof r["hookPattern"] === "string" ? { hookPattern: r["hookPattern"] } : {}),
       ...(typeof r["usedArrowBullets"] === "boolean" ? { usedArrowBullets: r["usedArrowBullets"] } : {}),
+      // Range-checked on the way IN as well as on the way out: a stored 0 or 9
+      // is not a rating a person gave, and a calibration that averages one is
+      // measuring a bug.
+      ...(typeof r["ownerRating"] === "number" && Number.isInteger(r["ownerRating"]) && r["ownerRating"] >= 1 && r["ownerRating"] <= 5
+        ? { ownerRating: r["ownerRating"] }
+        : {}),
       ...(typeof r["imageSource"] === "string" ? { imageSource: r["imageSource"] } : {}),
       ...(metrics !== null && typeof metrics === "object" ? { metrics: readMetrics(metrics as Record<string, unknown>) } : {}),
     });

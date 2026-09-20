@@ -588,8 +588,34 @@ export interface GateTimeoutPolicy {
 
 /** What a clean post gets: an hour, then it ships. Unchanged from every run before RFC-22. */
 export const CLEAN_GATE_TIMEOUT = "1h";
-/** What a flagged post gets: a working day for a person to look, and then a HOLD rather than a publish. */
-export const FLAGGED_GATE_TIMEOUT = "24h";
+/**
+ * What a flagged post gets: six hours for a person to look, and then it ships
+ * anyway.
+ *
+ * ── THE OWNER'S RULING OF 2026-09-20, WHICH REVERSED MINE. ──
+ *
+ * This shipped for one day as `24h` and `hold`, on the argument that a gate
+ * which approves on timeout is a delay rather than a gate. The owner:
+ * *"after a few hours there should be automatic approval, even though you
+ * removed it, because it is important that this does not go in the bin."*
+ *
+ * He is right about the thing the first cut did not weigh. A `hold` does not
+ * protect a post, it DISCARDS one: nobody returns to a parked run, and prod
+ * had three of them sitting at a gate since 2026-08-27 when this was written.
+ * So `hold` on a flagged post means the run's entire spend produces nothing,
+ * which is the exact failure `agents-always-deliver` exists to prevent.
+ *
+ * What a flag buys is therefore TIME, not a veto: six hours rather than one,
+ * a real window inside a working day, and then the post ships. The reviewer
+ * still gets the verdict, the floor's numbers and the named slides; what they
+ * no longer get is the power to lose the post by not showing up.
+ *
+ * The one exception is below and it stays a `hold`: a regulated-compliance
+ * finding is not a quality flag.
+ */
+export const FLAGGED_GATE_TIMEOUT = "6h";
+/** The regulated-compliance case, which is the only remaining `hold`. RFC-19 §5.5. */
+export const COMPLIANCE_GATE_TIMEOUT = "24h";
 
 /**
  * ---- A GATE THAT APPROVES ON TIMEOUT IS A DELAY, NOT A GATE. ----
@@ -601,9 +627,21 @@ export const FLAGGED_GATE_TIMEOUT = "24h";
  *
  * RFC-22 section 3.4 asks for the cheap half of the fix, and this is it: *"the
  * timeout policy differs by verdict -- a post the judge passed may
- * auto-approve; a post it flagged waits for a person"*. The expensive half
- * (`POST /api/v1/maintenance/sweep-gate-timeouts` on a Cloud Scheduler per
- * environment) is an owner action and is recorded as such.
+ * auto-approve; a post it flagged waits for a person"*.
+ *
+ * **What "waits" means was settled by the owner on 2026-09-20, against the
+ * first cut of this function.** It waits SIX HOURS and then ships. It does not
+ * hold. A hold does not protect a post, it discards one, and the run's whole
+ * spend with it -- see `FLAGGED_GATE_TIMEOUT` for the argument and the three
+ * prod runs that had been parked since August when it was made. The flag buys
+ * a reviewer time, not a veto.
+ *
+ * The other half of the fix (`POST
+ * /api/v1/maintenance/sweep-gate-timeouts` on a Cloud Scheduler per
+ * environment) is now wired in BOTH environments: `agent-engine-gate-sweep`,
+ * every ten minutes, prep since 2026-09-08 and prod since 2026-09-20. Until
+ * prod had one, no timeout of any kind fired there at all, which is why those
+ * three runs sat.
  *
  * ## What counts as flagged, and why each one is on the list
  *
@@ -659,7 +697,7 @@ export function gateTimeoutFor(
 ): GateTimeoutPolicy {
   if (opts.regulatedComplianceFinding) {
     return {
-      duration: FLAGGED_GATE_TIMEOUT,
+      duration: COMPLIANCE_GATE_TIMEOUT,
       onTimeout: "hold",
       reason:
         "a regulated-compliance finding is on this post, so it waits a full day for a person and then HOLDS rather than publishing unreviewed",
@@ -697,10 +735,11 @@ export function gateTimeoutFor(
   }
   return {
     duration: FLAGGED_GATE_TIMEOUT,
-    onTimeout: "hold",
+    onTimeout: "auto_approve",
     reason:
       `this post waits for a person because ${flags.join("; ")}. ` +
-      `After ${FLAGGED_GATE_TIMEOUT} with no decision it HOLDS rather than publishing: a gate that approves on timeout is a delay, not a gate`,
+      `After ${FLAGGED_GATE_TIMEOUT} with no decision it ships anyway: the flag buys a reviewer TIME, not a veto, ` +
+      `because a post nobody came back to is a post thrown away`,
     flags,
   };
 }

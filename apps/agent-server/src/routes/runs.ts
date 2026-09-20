@@ -88,6 +88,16 @@ const ResumeRunRequestSchema = z.object({
     notes: z.string().optional(),
     /** Change request on `revise`, optional guidance on `approve`. */
     feedback: z.string().optional(),
+    /**
+     * The reviewer's 1-to-5 stars (RFC-22 §3.2), optional on every decision.
+     *
+     * Validated HERE as well as by `GateResponseSchema` so a portal sending
+     * `rating: 0` gets a 400 naming the field rather than a silent drop: this
+     * re-map is an allowlist and a dropped label is indistinguishable from a
+     * reviewer who declined to give one, which is the one distinction the
+     * calibration set depends on.
+     */
+    rating: z.number().int().min(1).max(5).optional(),
     /** Per-slide notes on the templates that rendered this output. */
     templateFeedback: z
       .array(
@@ -328,6 +338,9 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
           ? { feedback: resolution.notes }
           : {}),
       ...(resolution.templateFeedback !== undefined ? { templateFeedback: resolution.templateFeedback } : {}),
+      // RFC-22 §3.2's golden-set label. Spread explicitly because of the note
+      // directly below: without this line the field parses and is thrown away.
+      ...(resolution.rating !== undefined ? { rating: resolution.rating } : {}),
       // This re-map is an ALLOWLIST: a field accepted by ResumeRunRequestSchema
       // but not spread here is silently dropped before the engine ever sees it.
       ...(resolution.edits !== undefined ? { edits: resolution.edits } : {}),
