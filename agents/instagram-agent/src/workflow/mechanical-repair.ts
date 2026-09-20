@@ -68,12 +68,31 @@ const ARROW_BULLET_LINE = /^([ \t]*)(?:→|⇒|»|->|=>)[ \t]+(?=\S)/u;
 /**
  * How many arrow-bulleted lines one caption may keep.
  *
- * ONE. A device used once is a device; used four times down a caption it is a
- * template, which is what the owner has now said three times -- most recently
- * on 2026-09-20: *"there are still arrows in the post's text all the time and
- * it is already templated and happens too much."*
+ * ── ZERO, AND THE FIRST CUT OF THIS GOT THE AXIS WRONG. ──
+ *
+ * It was ONE, on the reasoning that a device used once is a device and used
+ * four times is a template. The owner corrected it the same day:
+ *
+ *   *"it is not about how many arrows appear in a single post, it is about
+ *   the fact that literally every post includes arrows. That pattern screams
+ *   AI/bot... Ban or severely suppress them so they aren't a default
+ *   fixture."*
+ *
+ * He is right. One arrow in every post is still a signature in every post,
+ * which is the entire complaint. The tell is the CONSISTENCY across posts,
+ * not the density within one, and a per-caption cap cannot see across posts
+ * at all.
+ *
+ * He offered ban or severe suppression. This is the ban, because it is the
+ * one of the two that is deterministic: a seeded "one run in thirty" would be
+ * rare in the right way and impossible to predict, test or explain, and
+ * "rare" implemented as pseudo-randomness is a behaviour nobody can reason
+ * about at three in the morning.
+ *
+ * This constant stays the single knob. Set it to 1 and the old behaviour
+ * returns; there is no second place to look.
  */
-export const MAX_ARROW_BULLETS_PER_CAPTION = 1;
+export const MAX_ARROW_BULLETS_PER_CAPTION = 0;
 
 export interface MechanicalRepair {
   /** Where it was, precisely enough for a reviewer to look: `"caption"`, `"slide 3 headline"`. */
@@ -136,7 +155,7 @@ function repairSlide(slide: InstagramSlideCopy, out: MechanicalRepair[]): Instag
 }
 
 /**
- * Keep the first arrow bullet, strip the marker from the rest.
+ * Strip the arrow marker from every line that opens on one.
  *
  * ## Why this is a repair and not a rewrite
  *

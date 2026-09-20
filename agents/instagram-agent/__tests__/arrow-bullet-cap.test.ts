@@ -4,18 +4,24 @@ import { usesArrowBullets } from "../src/workflow/post-performance.js";
 import type { InstagramCopyOutput } from "../src/workflow/types.js";
 
 /**
- * ── THE THIRD ATTEMPT AT THE ARROWS, AND THE FIRST DETERMINISTIC ONE. ──
+ * ── ARROWS ARE BANNED, NOT RATIONED. ──
  *
- * The owner, 2026-09-20: *"there are still arrows in the post's text all the
- * time and it is already templated and happens too much."*
- *
- * Attempt one was `instagram-copy@23` §2, which PERMITTED the device and was
- * read as a recommendation. Attempt two was `deviceSteer`, fed by
- * `arrowBulletSteer`, which needs `usedArrowBullets: true` on two of the last
+ * Three prompt-shaped attempts failed before this one, and then a cap failed
+ * too. `instagram-copy@23` §2 PERMITTED the device and was read as a
+ * recommendation. `deviceSteer` needs `usedArrowBullets` on two of the last
  * three posts — a field that shipped the same day, so no record carries it and
  * the steer is structurally silent until three more posts ship.
  *
- * This is the within-post half: it needs no history and works on the next run.
+ * Then this file capped a caption at ONE arrow, and the owner corrected the
+ * axis:
+ *
+ *   *"it is not about how many arrows appear in a single post, it is about the
+ *   fact that literally every post includes arrows. That pattern screams
+ *   AI/bot… Ban or severely suppress them so they aren't a default fixture."*
+ *
+ * One arrow in every post is still a signature in every post. The tell is the
+ * consistency ACROSS posts, which a per-caption cap cannot see at all. So the
+ * constant is zero and the marker comes off every line that opens on one.
  */
 
 function copyWith(caption: string): InstagramCopyOutput {
@@ -25,11 +31,11 @@ function copyWith(caption: string): InstagramCopyOutput {
   } as unknown as InstagramCopyOutput;
 }
 
-describe("one arrow is a device, four is a template", () => {
-  it("keeps the first arrow bullet and strips the marker from the rest, without touching a word", () => {
+describe("arrows are banned, not rationed", () => {
+  it("strips the marker from EVERY arrow line, without touching a word", () => {
     const before = ["The short version.", "", "-> Ship faster", "-> Spend less", "-> Sleep at night"].join("\n");
     const after = repairArrowBullets(before);
-    expect(after).toBe(["The short version.", "", "-> Ship faster", "Spend less", "Sleep at night"].join("\n"));
+    expect(after).toBe(["The short version.", "", "Ship faster", "Spend less", "Sleep at night"].join("\n"));
     // Every word survives. This is a formatting repair, not a rewrite — the
     // bar `mechanical-repair.ts` sets for itself.
     for (const word of ["Ship faster", "Spend less", "Sleep at night", "The short version."]) {
@@ -37,30 +43,27 @@ describe("one arrow is a device, four is a template", () => {
     }
   });
 
-  it("handles every spelling the copy guide permits", () => {
+  it("strips a SINGLE arrow too, because one in every post IS the pattern", () => {
+    const one = ["A real sentence.", "-> and one turn", "then prose again."].join("\n");
+    expect(repairArrowBullets(one)).toBe(["A real sentence.", "and one turn", "then prose again."].join("\n"));
+  });
+
+  it("handles every spelling the copy guide used to permit", () => {
     for (const glyph of ["→", "⇒", "»", "->", "=>"]) {
-      const after = repairArrowBullets([`${glyph} one`, `${glyph} two`, `${glyph} three`].join("\n"));
-      expect(after.split("\n")[0]).toBe(`${glyph} one`);
-      expect(after.split("\n")[1]).toBe("two");
-      expect(after.split("\n")[2]).toBe("three");
+      expect(repairArrowBullets([`${glyph} one`, `${glyph} two`].join("\n")).split("\n")).toEqual(["one", "two"]);
     }
   });
 
-  it("leaves a caption that already uses the device once completely alone", () => {
-    // Once is fine and always was. A repair that fired here would be removing
-    // a device the owner explicitly said is acceptable in moderation.
-    const fine = ["A real sentence.", "-> and one turn", "then prose again."].join("\n");
-    expect(repairArrowBullets(fine)).toBe(fine);
-  });
-
   it("never touches an arrow INSIDE a sentence, which is prose", () => {
+    // The ban is on the marker that opens a line. An arrow used mid-sentence
+    // to mean "and then" is writing, and banning that would be a worse rule
+    // than the tell it fixes.
     const prose = "Revenue fell 4% -> the round was pulled the same week.\nThe mapping is old -> new.";
     expect(repairArrowBullets(prose)).toBe(prose);
   });
 
   it("preserves indentation, so an indented list stays indented", () => {
-    const after = repairArrowBullets(["  -> first", "  -> second"].join("\n"));
-    expect(after).toBe(["  -> first", "  second"].join("\n"));
+    expect(repairArrowBullets(["  -> first", "  -> second"].join("\n"))).toBe(["  first", "  second"].join("\n"));
   });
 
   it("leaves a caption with no arrows byte-identical", () => {
@@ -71,17 +74,17 @@ describe("one arrow is a device, four is a template", () => {
   it("runs inside repairMechanicalTells and is reported separately from the dashes", () => {
     const { copy, repairs } = repairMechanicalTells(copyWith(["-> one", "-> two", "-> three"].join("\n")));
     expect(repairs.map((r) => r.field)).toContain("caption arrow bullets");
-    // And the caption that ships really is capped.
-    const lines = copy.caption.split("\n").filter((l) => /^(?:→|⇒|»|->|=>)\s/u.test(l));
-    expect(lines).toHaveLength(MAX_ARROW_BULLETS_PER_CAPTION);
+    const remaining = copy.caption.split("\n").filter((l) => /^(?:→|⇒|»|->|=>)\s/u.test(l));
+    expect(remaining).toHaveLength(0);
+    // The knob itself, asserted so a future edit to it is a deliberate one.
+    expect(MAX_ARROW_BULLETS_PER_CAPTION).toBe(0);
   });
 
-  it("leaves the cross-run measurement still able to see the surviving device", () => {
-    // `usedArrowBullets` must still record TRUE for a capped caption: the post
-    // did use the device, once. Recording false would quietly starve
-    // `arrowBulletSteer` of the history it needs, and the two halves of this
-    // fix would cancel each other out.
+  it("leaves the cross-run measurement honest: a banned caption records no device", () => {
+    // `usedArrowBullets` must report what SHIPPED. With the ban that is
+    // always false, so `arrowBulletSteer` never fires — correct, because
+    // there is no habit left for it to warn the next post about.
     const { copy } = repairMechanicalTells(copyWith(["-> one", "-> two"].join("\n")));
-    expect(usesArrowBullets(copy.caption)).toBe(true);
+    expect(usesArrowBullets(copy.caption)).toBe(false);
   });
 });

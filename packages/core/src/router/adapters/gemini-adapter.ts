@@ -102,6 +102,12 @@ export class GeminiAdapter implements ModelAdapter {
             responseMimeType: "application/json",
             responseJsonSchema: jsonSchema,
             maxOutputTokens,
+            // Bounds the reasoning this model bills as output. See
+            // `CompletionRequest.thinkingBudget` for the run that made it
+            // necessary: a vet whose answer was 800 tokens billed 42,873.
+            // Absent means unbounded, which is the behaviour every caller had
+            // before this field existed.
+            ...(req.thinkingBudget !== undefined ? { thinkingConfig: { thinkingBudget: req.thinkingBudget } } : {}),
           },
         }),
       this.retryOptions,
