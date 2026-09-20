@@ -98,6 +98,6 @@ describe("06-vet-images: no viable image ships text-only rather than holding (gu
     const downgradeStep = stepRecords.find((s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-1");
     // The slides that asked for a picture: the imagery band demoted 5 and 6
     // before sourcing ran, so they were never candidates for a downgrade.
-    expect((downgradeStep?.output as { downgraded: number[] } | undefined)?.downgraded).toEqual(pictureSlidesOfGoodCopy());
+    expect((downgradeStep?.output as { downgraded: number[] } | undefined)?.downgraded).toEqual(pictureSlidesOfGoodCopy(undefined, "instagram_run_novimg_all"));
   });
 });

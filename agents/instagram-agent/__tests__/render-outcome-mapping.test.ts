@@ -84,7 +84,7 @@ describe("08-render-carousel: the three-way outcome mapping, never confused (RFC
     // imagery band that is four of the six. The gap between this list and `gone`
     // above is the band, which makes the pair of them the one assertion in this
     // file that would go quiet if the band stopped working.
-    expect(downgrade?.downgraded).toEqual(pictureSlidesOfGoodCopy(copy));
+    expect(downgrade?.downgraded).toEqual(pictureSlidesOfGoodCopy(copy, params.runId));
     expect(downgrade?.reason).toMatch(/no longer on disk/i);
     // Delivered, with no image attached to any slide.
     expect(steps.map((s) => s.stepId)).toContain("09b-deliver-and-log");

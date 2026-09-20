@@ -1185,13 +1185,19 @@ export async function setupTestEnvironment(
  * number in nine files and the meaning in none of them. Every caller below
  * asserts the same sentence it always asserted.
  *
+ * `seed` MUST be the test's own `runId`. Since 2026-09-20 the band varies WHICH
+ * slides carry the pictures, seeded per run, so a derivation that omits the
+ * seed answers for a different post than the one the workflow just rendered —
+ * which is the same class of mistake as the hard-coded list this helper exists
+ * to replace, one level further out.
+ *
  * The fixture is deliberately left all-`photo`. It is not a model post - the
  * owner's rule is a MIX - but it is the input that gives the band something to
  * bite on, and a fixture the band cannot touch would make every test built on
  * it blind to the band's existence.
  */
-export function pictureSlidesOfGoodCopy(copy: InstagramCopyOutput = goodCopyOutput()): number[] {
-  return enforceImageryBand(copy)
+export function pictureSlidesOfGoodCopy(copy: InstagramCopyOutput = goodCopyOutput(), seed?: string): number[] {
+  return enforceImageryBand(copy, undefined, undefined, seed)
     .copy.slides.filter((s) => FULL_BLEED_IMAGE_LAYOUTS.has(s.layout ?? "photo"))
     .map((s) => s.n);
 }
@@ -1227,8 +1233,8 @@ export function pictureSlidesOfGoodCopy(copy: InstagramCopyOutput = goodCopyOutp
  * device kind rather than the copy's request for one. Same inputs, same
  * function, same string.
  */
-export function signatureOfGoodCopy(copy: InstagramCopyOutput = goodCopyOutput()): string {
-  const banded = enforceImageryBand(copy).copy;
+export function signatureOfGoodCopy(copy: InstagramCopyOutput = goodCopyOutput(), seed?: string): string {
+  const banded = enforceImageryBand(copy, undefined, undefined, seed).copy;
   const composed = composeBoundedObjects(
     banded,
     SIX_RESEARCH_FACTS.map((f) => ({ claim: f.claim, source: f.source })),

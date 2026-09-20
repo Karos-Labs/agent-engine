@@ -14,7 +14,7 @@ import {
   goodResearchOutput,
   goodTrendScoutOutput,
   goodVisualQaOutput,
-  makePromptStore,
+  makePromptStore, pictureSlidesOfGoodCopy,
   setupTestEnvironment,
   SIX_RESEARCH_FACTS,
   type TestEnvironment,
@@ -513,6 +513,13 @@ describe("RFC-16 Phase 4 — the concept mode's workflow wiring", () => {
     await allowGeneratedImages(env, runId);
 
     const copy = conceptCopy();
+    // The gap slide, DERIVED. It used to be the literal 3, but since
+    // 2026-09-20 the imagery band varies which slides carry pictures, seeded on
+    // the run id — and a slide the band left typographic cannot be "a genuine
+    // gap", because it never asked for a picture. On this run id the picture
+    // slides are 1, 2, 4 and 6, so the literal quietly left the generate tier
+    // carrying only the concept, and the case this test exists for untested.
+    const GAP = pictureSlidesOfGoodCopy(copy, runId).filter((n) => n !== 1).at(-1)!;
     const pool = goodImageCandidatePool();
     const concept = conceptFixture();
 
@@ -565,9 +572,9 @@ describe("RFC-16 Phase 4 — the concept mode's workflow wiring", () => {
         // leaking onto the wrong slide would be invisible without this test.
         vet: {
           selections: copy.slides.map((s) =>
-            s.n === 3
+            s.n === GAP
               ? {
-                  n: 3,
+                  n: GAP,
                   imagePath: null,
                   reason: "no candidate matched this visual need",
                   license: "n/a — no candidate qualified",
@@ -591,7 +598,7 @@ describe("RFC-16 Phase 4 — the concept mode's workflow wiring", () => {
         rescueVet: {
           selections: [
             { n: 1, imagePath: pool[1]!.path, reason: "the metaphor reads", license: "Generated image", rightsUsable: true, watermarkFree: true, claimMatch: 5, claimMatchReason: "the declared anchor is what is in frame" },
-            { n: 3, imagePath: pool[2]!.path, reason: "drawn to the brief", license: "Generated image", rightsUsable: true, watermarkFree: true, claimMatch: 4, claimMatchReason: "shows the claimed subject" },
+            { n: GAP, imagePath: pool[2]!.path, reason: "drawn to the brief", license: "Generated image", rightsUsable: true, watermarkFree: true, claimMatch: 4, claimMatchReason: "shows the claimed subject" },
           ],
         },
         relevance: goodRelevanceVerdict(),
@@ -610,7 +617,7 @@ describe("RFC-16 Phase 4 — the concept mode's workflow wiring", () => {
     const slides = revet!["slides"] as Array<Record<string, unknown>>;
     // The premise: this really is the RESCUE re-vet (only the concept slide
     // and the gap), not step 06's first pass over all six.
-    expect(slides.map((s) => s["n"]).sort()).toEqual([1, 3]);
+    expect(slides.map((s) => s["n"]).sort((a, b) => Number(a) - Number(b))).toEqual([1, GAP]);
 
     // (a) §6.2 — every slide carries the writer's own `why`.
     for (const slide of slides) {
@@ -620,10 +627,10 @@ describe("RFC-16 Phase 4 — the concept mode's workflow wiring", () => {
 
     // (b) §6.1 — the DECLARED metaphor, on the one slide `04n` gave a concept
     // to and on no other. Metaphor tolerance is declared by the pipeline, never
-    // inferred by the vet; a `conceptual` field on slide 3 would loosen the
+    // inferred by the vet; a `conceptual` field on the gap slide would loosen the
     // literalism Phase 0 and Phase 3 bought, on a slide nobody asked to loosen.
     const conceptSlide = slides.find((s) => s["n"] === 1)!;
-    const gapSlide = slides.find((s) => s["n"] === 3)!;
+    const gapSlide = slides.find((s) => s["n"] === GAP)!;
     expect(gapSlide["conceptual"]).toBeUndefined();
     const conceptual = conceptSlide["conceptual"] as Record<string, unknown> | undefined;
     expect(conceptual, "the concept slide reached the re-vet with no `conceptual` block").toBeDefined();

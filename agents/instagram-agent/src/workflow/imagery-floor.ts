@@ -377,7 +377,23 @@ export function enforceImageryBand(
   if (before < floor) {
     const promotions: ImageryPromotion[] = [];
     const candidates = copy.slides.filter((slide) => (slide.layout ?? "photo") === "text_only").map((slide) => slide.n);
-    const chosen = choosePlacements(candidates, Math.max(0, floor - before), seed);
+
+    // ── THE COVER IS NOT PART OF THE LOTTERY. ──
+    //
+    // Slide 1 is the hook, and the pipeline already says so twice: the
+    // demotion branch below refuses to take its picture away, and
+    // `default:cover-carries-device` refuses a cover carrying neither a
+    // photograph nor a figure device. Under strict slide order it was promoted
+    // first for free; under a seeded choice it stopped being promoted at all
+    // on some runs, which is a worse post than the repetition this change
+    // exists to fix. So it takes its picture first when it needs one, and the
+    // seed distributes what is left.
+    const first = copy.slides[0];
+    const coverNeedsPicture = first !== undefined && candidates.includes(first.n);
+    const need = Math.max(0, floor - before);
+    const chosen = coverNeedsPicture && need > 0
+      ? new Set([first.n, ...choosePlacements(candidates.filter((n) => n !== first.n), need - 1, seed)])
+      : choosePlacements(candidates, need, seed);
 
     // ── THE EARLY PICTURE SURVIVES THE SHUFFLE. ──
     //
@@ -446,7 +462,17 @@ export function enforceImageryBand(
     // which is what the fixtures pin. `cover` is never a candidate: it is
     // excluded by `!== "photo"`, for the reason this branch's own comment
     // gives.
-    const demotable = copy.slides.filter((slide) => (slide.layout ?? "photo") === "photo").map((slide) => slide.n);
+    // Slide 1 is never demotable, for the reason this branch's comment above
+    // already gives: it is the hook, and `default:cover-carries-device`
+    // refuses a cover with neither a photograph nor a device. The old
+    // walk-from-the-end reached it only after exhausting everything else, so
+    // in practice it never lost its picture; a stratified choice picks across
+    // the WHOLE list and took it immediately. Excluded by position rather
+    // than by layout name, because a first slide the writer typed as `photo`
+    // is still the cover.
+    const demotable = copy.slides
+      .filter((slide, index) => index > 0 && (slide.layout ?? "photo") === "photo")
+      .map((slide) => slide.n);
     const dropped = choosePlacements([...demotable].reverse(), Math.max(0, before - inForce), seed);
 
     let carried = before;

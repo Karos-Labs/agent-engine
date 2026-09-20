@@ -7,7 +7,7 @@ import { createInstagramAgentWorkflow } from "../src/workflow/create-instagram-a
 import { MIN_GENERATED_IMAGES_PER_RUN, RUN_BUDGET_BELIEF_KEY, type RunBudgetDecision, type RunBudgetSummary, MAX_RUN_SPEND_USD} from "../src/workflow/run-budget.js";
 import { DEFAULT_RENDER_RULES } from "../src/workflow/visual-qa-pre-checks.js";
 import type { InstagramCopyOutput, StyleConfig } from "../src/workflow/types.js";
-import { copyTurnInputs, fakeRenderCarousel, fakeRouterSequence, finalTurn, fixtureHeadline, goodBrandTokens, goodCopyOutput, goodImageCandidatePool, goodImageVettingOutput, goodRelevanceVerdict, goodResearchOutput, goodStyleConfig, goodTrendScoutOutput, goodVisualQaOutput, makePromptStore, qaTurnInputs, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { copyTurnInputs, fakeRenderCarousel, fakeRouterSequence, finalTurn, fixtureHeadline, goodBrandTokens, goodCopyOutput, goodImageCandidatePool, goodImageVettingOutput, goodRelevanceVerdict, goodResearchOutput, goodStyleConfig, goodTrendScoutOutput, goodVisualQaOutput, makePromptStore, pictureSlidesOfGoodCopy, qaTurnInputs, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 import { goodAngleProposal } from "./angle-fixtures.js";
 import { DEFAULT_ENTITIES_TURN, DEFAULT_PACKAGE_TURN, VALUE_TURN_NO_FINDINGS, happyTurns, standardTurns } from "./turns.js";
 
@@ -344,7 +344,12 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
         };
       },
     } as unknown as AgentTool;
-    const gaps = [1, 2, 3, 4];
+    // The slides that ACTUALLY carry a picture on this run, not the literal
+    // [1, 2, 3, 4]. The imagery band varies which ones those are, seeded on the
+    // run id (2026-09-20), and a slide the band left typographic cannot "lose
+    // its picture" — it never asked for one, so a hard-coded list quietly
+    // tested a smaller gap set than the name says.
+    const gaps = pictureSlidesOfGoodCopy(copy, "budget_image_cap");
     const vetWithGaps = () => ({
       selections: copy.slides.map((s) =>
         gaps.includes(s.n)
@@ -445,10 +450,13 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
    */
   describe("the generation guarantee and the floor step, through the real workflow", () => {
     /** Four of the six slides lose their picture at `06`; the generated frames are then refused too. */
-    function imageFixture() {
+    function imageFixture(runId: string) {
       const copy = goodCopyOutput();
       const pool = goodImageCandidatePool();
-      const gaps = [1, 2, 3, 4];
+      // As above: this run's real picture slides, derived, never written down.
+      // Both tests in this describe run the same fixture under different ids,
+      // so it takes the id as an argument.
+      const gaps = pictureSlidesOfGoodCopy(copy, runId);
       /** Every `image.generate` call's need count, in order. */
       const requested: number[][] = [];
       const generate: AgentTool = {
@@ -495,7 +503,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     }
 
     it("a plan that turned optional rescue work off still generates the run's guaranteed images", async () => {
-      const { requested, generate, router } = imageFixture();
+      const { gaps, requested, generate, router } = imageFixture("floor_guarantee");
       const { result, plan, stepIds } = await run(env, "floor_guarantee", router, { tools: testTools(env, { "image.generate": generate }) });
       expect(result.status).toBe("completed");
 
@@ -511,7 +519,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
       expect(requested[0]).toHaveLength(MIN_GENERATED_IMAGES_PER_RUN);
       // Lowest-first within the tier — an early picture earns the swipe — and
       // this run carries no concept, which `04m` declines on the canonical story.
-      expect(requested[0]).toEqual([1, 2, 3, 4].slice(0, MIN_GENERATED_IMAGES_PER_RUN));
+      expect(requested[0]).toEqual(gaps.slice(0, MIN_GENERATED_IMAGES_PER_RUN));
 
       // ── THE TWO CONTROLS, both in-band. ──
       // A pre-phase `continue` produces ZERO generate calls; a partition that
@@ -528,7 +536,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     });
 
     it("`06h` reports the floor on pictures that LANDED, so a run whose generated frames were all refused is not `ok`", async () => {
-      const { requested, generate, router } = imageFixture();
+      const { gaps, requested, generate, router } = imageFixture("floor_outcome");
       const { result, steps } = await run(env, "floor_outcome", router, { tools: testTools(env, { "image.generate": generate }) });
       expect(result.status).toBe("completed");
 
@@ -568,7 +576,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
       // It never holds: the run completed above, and the slides took the
       // text-only downgrade exactly as they did before.
       const downgrade = steps.find((s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-1")?.output as { downgraded: number[] } | undefined;
-      expect(downgrade?.downgraded).toEqual([1, 2, 3, 4]);
+      expect(downgrade?.downgraded).toEqual(gaps);
     });
   });
 });

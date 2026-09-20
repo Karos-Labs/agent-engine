@@ -105,7 +105,7 @@ describe("P0 parity-audit Fix 4: image rights/watermark verification holds the w
     // The last slide that still asks for a picture: a watermark on a slide the
     // imagery band already made typographic is a watermark on nothing, and the
     // literal 5 this used to be became exactly that.
-    const WATERMARKED = pictureSlidesOfGoodCopy().at(-1)!;
+    const WATERMARKED = pictureSlidesOfGoodCopy(undefined, "instagram_run_reuse_rights_watermark").at(-1)!;
     vetting.selections = vetting.selections.map((s) => (s.n === WATERMARKED ? { ...s, watermarkFree: false, claimMatch: 5, claimMatchReason: "shows the claimed subject (instagram-image-vet@3 fixture)" } : s));
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),

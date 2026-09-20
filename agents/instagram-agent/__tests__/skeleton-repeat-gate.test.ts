@@ -101,8 +101,11 @@ function lastWeek(signature: string, runId = "run_last_week"): SkeletonHistory {
  * count untouched, the band with nothing further to do, and exactly one token
  * different from `signatureOfGoodCopy()`.
  */
-function copyWithOneSwap(): InstagramCopyOutput {
-  const copy = enforceImageryBand(goodCopyOutput()).copy;
+function copyWithOneSwap(seed?: string): InstagramCopyOutput {
+  // Seeded with the RUN's id: the band varies which slides carry pictures
+  // (2026-09-20), so a fixture banded without the seed describes a different
+  // post than the one the workflow is about to render.
+  const copy = enforceImageryBand(goodCopyOutput(), undefined, undefined, seed).copy;
   const swap = copy.slides.findIndex((slide) => (slide.layout ?? "photo") === "text_only");
   if (swap < 0) throw new Error("the imagery band demoted nothing, so this fixture cannot make a one-token swap");
   return {
@@ -175,14 +178,14 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
   }, 60000);
 
   it("HARD clause: last week's exact signature fails attempt 1 with ZERO render calls, names both sequences, and the run delivers", async () => {
-    const repeated = signatureOfGoodCopy();
+    const repeated = signatureOfGoodCopy(undefined, "skel_repeat");
     env = await setupTestEnvironment({
       seedTopics: Array.from({ length: 12 }, (_, i) => `skeleton topic ${i + 1}`),
       seedSkeletons: lastWeek(repeated),
     });
     const render = countingRender(env);
     // Attempt 1 repeats last week exactly; attempt 2 moves two positions.
-    const varied = copyWithOneSwap();
+    const varied = copyWithOneSwap("skel_repeat");
     const variedTwice: InstagramCopyOutput = {
       ...varied,
       slides: varied.slides.map((slide, i) =>
@@ -222,10 +225,10 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
   }, 90000);
 
   it("SOFT clause: a 0.17 near-match returns on attempt 1 and only WARNS from attempt 2", async () => {
-    const previous = signatureOfGoodCopy();
+    const previous = signatureOfGoodCopy(undefined, "skel_near");
     // Through the same derivation as `previous`, or the two strings differ by
     // the derivation as well as by the swap and the distance means nothing.
-    const near = signatureOfGoodCopy(copyWithOneSwap());
+    const near = signatureOfGoodCopy(copyWithOneSwap("skel_near"), "skel_near");
     expect(skeletonDistance({ signature: near }, { signature: previous })).toBe(0.17);
     expect(0.17).toBeLessThan(MIN_SKELETON_DISTANCE);
 
@@ -238,8 +241,8 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
     // with a warning. Variety is enforced while it is free, never at the cost
     // of the post.
     const router = fakeRouterSequence([
-      ...happyTurns({ copy: copyWithOneSwap(), qa: undefined }),
-      ...standardTurns({ copy: copyWithOneSwap(), vet: goodImageVettingOutput(), relevance: goodRelevanceVerdict(), qa: goodVisualQaOutput() }),
+      ...happyTurns({ copy: copyWithOneSwap("skel_near"), qa: undefined }),
+      ...standardTurns({ copy: copyWithOneSwap("skel_near"), vet: goodImageVettingOutput(), relevance: goodRelevanceVerdict(), qa: goodVisualQaOutput() }),
     ]);
     const { result, stepIds, steps } = await run(env, "skel_near", router, { ...env.tools, "publish.renderCarousel": render.tool });
 
@@ -258,7 +261,7 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
   }, 90000);
 
   it("THREE identical drafts DELIVER degraded rather than holding: repetition is a design defect, never a fourth hold cause", async () => {
-    const repeated = signatureOfGoodCopy();
+    const repeated = signatureOfGoodCopy(undefined, "skel_stubborn");
     env = await setupTestEnvironment({
       seedTopics: Array.from({ length: 14 }, (_, i) => `skeleton topic ${i + 1}`),
       seedSkeletons: lastWeek(repeated),
@@ -334,21 +337,28 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
     const qaInput = qaTurnInputs(router)[0];
     const warnings = qaInput?.["skeletonWarnings"] as string[] | undefined;
     expect(warnings, `08b received no skeletonWarnings: ${JSON.stringify(Object.keys(qaInput ?? {}))}`).toBeDefined();
-    // TWO, and the arithmetic is worth writing out because both halves of it
-    // are the clause working as designed.
+    // DERIVED, not a literal, and the arithmetic is worth writing out because
+    // every part of it is the clause working as designed.
     //
     // The signature's tokens are `role:archetype`, so of the five adjacent
     // pairs on a six-slide carousel the cover-to-interior and
     // interior-to-closer pairs differ by role and never match: three
     // interior-to-interior pairs are candidates, which is why the token
-    // carries the role at all. Then the imagery band demotes slide 5 of this
-    // all-photo fixture, so the (4, 5) pair is `photo` against `text_only` and
-    // two candidates are left.
+    // carries the role at all. The imagery band then breaks some of those
+    // pairs by demoting a slide, since a `photo` beside a `text_only` is not a
+    // repetition.
     //
-    // Was three. The band did not weaken this clause; it removed one of the
-    // repetitions the clause exists to complain about, which is the clause and
-    // the band agreeing about the same defect from two directions.
-    expect(warnings!.length).toBe(2);
+    // WHICH pairs it breaks is now a property of the run: since 2026-09-20 the
+    // band varies which slides carry the pictures, seeded on the run id. So
+    // the count is computed from THIS run's banded copy rather than written
+    // down — the same "derive, never a literal" rule `signatureOfGoodCopy`
+    // exists for, and for the same reason: a hard-coded 2 would say "two"
+    // where the test means "the interior pairs that still repeat".
+    const banded = enforceImageryBand(goodCopyOutput(), undefined, undefined, "skel_occupancy").copy;
+    const interior = banded.slides.slice(1, -1);
+    const repeatingPairs = interior.filter((slide, i) => i > 0 && (slide.layout ?? "photo") === (interior[i - 1]!.layout ?? "photo")).length;
+    expect(repeatingPairs, "the fixture no longer has a single repeating interior pair, so this test is asserting nothing").toBeGreaterThan(0);
+    expect(warnings!.length).toBe(repeatingPairs);
     expect(warnings![0]).toContain("slides 2 and 3");
     expect(warnings![0]).toContain("54%");
     expect(warnings![0]).toContain("one slide shown twice");
@@ -503,7 +513,7 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
    * one", i.e. exactly the optional work the cheapest path exists to drop.
    */
   it("does NOT buy a redraft for a repeated layout past the run's hard max — it ships with the finding recorded", async () => {
-    const repeated = signatureOfGoodCopy();
+    const repeated = signatureOfGoodCopy(undefined, "skel_cheapest_path");
     env = await setupTestEnvironment({
       seedTopics: Array.from({ length: 12 }, (_, i) => `skeleton topic ${i + 1}`),
       seedSkeletons: lastWeek(repeated),
@@ -565,7 +575,7 @@ describe("07k-skeleton-variety (item P): repetition is refused before a render, 
     const history = readSkeletonHistory(beliefs);
     expect(history.entries).toHaveLength(1);
     expect(history.entries[0]!.runId).toBe("skel_write");
-    expect(history.entries[0]!.signature).toBe(signatureOfGoodCopy());
+    expect(history.entries[0]!.signature).toBe(signatureOfGoodCopy(undefined, "skel_write"));
     // The budget history is a SIBLING key in the same document, not a
     // replacement for it: `updateBeliefs` merges a diff, which is why these
     // are new keys rather than a widened one.
