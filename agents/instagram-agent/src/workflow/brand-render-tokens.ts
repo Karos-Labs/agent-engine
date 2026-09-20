@@ -193,25 +193,113 @@ export const TEXT_CONTRAST_FLOOR = 4.5;
  *     is no signal, not a dark signal).
  * (C) REFUSE — no signal, no override. Accent/fonts/logo/handle still apply.
  */
+/**
+ * The kit's darkest and lightest usable neutral, in whatever shape it ships.
+ *
+ * ── WHY THIS IS NOT A ONE-LINE READ ──
+ *
+ * It was one, and it read `colors.neutralDark` / `colors.neutralLight` only.
+ * No client in prep stores that shape, so it returned `undefined` for every
+ * one of them, and with no ground `buildAccentRing` returns empty: **every
+ * client rendered on the bundled default palette**, which is the defect the
+ * owner reported on 2026-09-20 as *"you took Karos Labs' colours"*. Karos was
+ * not the source; the default simply resembles it.
+ *
+ * Measured on `clients/thepitchbydeel/client/brand.json`, whose kit is
+ * `colors: ["#5938b7", "#201547", "#ffcf25"]` plus a `dominantColors` array
+ * with roles. Both are real shapes; neither was readable.
+ *
+ * This is the same fix the FONTS read in this file was given on 2026-09-15,
+ * and for the same reason its comment states: a read that knows one spelling
+ * of a loosely-shaped kit silently produces nothing and falls back, with no
+ * warning anywhere. So this reads them all, most explicit first:
+ *
+ *   1. `colors.neutralDark` / `colors.neutralLight` -- the original shape,
+ *      still first because a kit that names its neutrals has decided them.
+ *   2. The portal's `brandingGuidelines` spellings at the root
+ *      (`brandNeutralDark` / `brandNeutralLight`), which is what the client
+ *      record carries.
+ *   3. Otherwise DERIVED BY LUMINANCE from every hex the kit legibly ships
+ *      (`colors` as an array, plus `dominantColors[].hex`): the darkest is
+ *      the dark neutral and the lightest is the light one.
+ *
+ * Limb 3 is the one that fires for every real client today, and it is
+ * deliberately last: a derived pair is a guess, and a kit that states its
+ * neutrals should always beat one.
+ *
+ * It returns `undefined` when the kit ships fewer than two distinct hexes, or
+ * when the two ends are too close to be a ground and a text colour. The
+ * caller's own `TEXT_CONTRAST_FLOOR` check still applies on top, so a kit that
+ * passes here can still be refused there -- which is correct: this function
+ * answers "which two neutrals", not "are they legible together".
+ */
+function kitNeutrals(brand: Record<string, unknown>): { neutralDark: string; neutralLight: string } | undefined {
+  const colorsObj = (typeof brand["colors"] === "object" && brand["colors"] !== null && !Array.isArray(brand["colors"])
+    ? brand["colors"]
+    : {}) as Record<string, unknown>;
+
+  const named = (dark: unknown, light: unknown): { neutralDark: string; neutralLight: string } | undefined => {
+    const d = asHex(dark);
+    const l = asHex(light);
+    return d !== undefined && l !== undefined ? { neutralDark: d, neutralLight: l } : undefined;
+  };
+
+  const stated = named(colorsObj["neutralDark"], colorsObj["neutralLight"]) ?? named(brand["brandNeutralDark"], brand["brandNeutralLight"]);
+  if (stated !== undefined) return stated;
+
+  // Every hex the kit legibly ships, from both shapes that carry a list.
+  const pool: string[] = [];
+  const rawColors = brand["colors"];
+  if (Array.isArray(rawColors)) {
+    for (const entry of rawColors) {
+      const hex = asHex(entry);
+      if (hex !== undefined) pool.push(hex);
+    }
+  }
+  const dominant = brand["dominantColors"];
+  if (Array.isArray(dominant)) {
+    for (const entry of dominant) {
+      const hex = asHex((entry as Record<string, unknown> | undefined)?.["hex"]);
+      if (hex !== undefined) pool.push(hex);
+    }
+  }
+  if (pool.length < 2) return undefined;
+
+  let darkest = pool[0]!;
+  let lightest = pool[0]!;
+  for (const hex of pool) {
+    if (relativeLuminance(hex) < relativeLuminance(darkest)) darkest = hex;
+    if (relativeLuminance(hex) > relativeLuminance(lightest)) lightest = hex;
+  }
+  if (darkest.toLowerCase() === lightest.toLowerCase()) return undefined;
+  return { neutralDark: darkest, neutralLight: lightest };
+}
+
 function deriveGroundAndFg(brand: Record<string, unknown>): { ground: string; fg: string } | undefined {
-  const colors = (brand["colors"] ?? {}) as Record<string, unknown>;
-  const neutralDark = asHex(colors["neutralDark"]);
-  const neutralLight = asHex(colors["neutralLight"]);
-  if (neutralDark === undefined || neutralLight === undefined) return undefined;
+  const neutrals = kitNeutrals(brand);
+  if (neutrals === undefined) return undefined;
+  const { neutralDark, neutralLight } = neutrals;
 
   const darkGround = { ground: neutralDark, fg: neutralLight };
   const lightGround = { ground: neutralLight, fg: neutralDark };
 
   const dominant = brand["dominantColors"];
-  if (Array.isArray(dominant)) {
-    const rank1 = dominant
-      .map((c) => c as Record<string, unknown>)
-      .sort((a, b) => Number(a["dominanceRank"] ?? 99) - Number(b["dominanceRank"] ?? 99))
-      .map((c) => asHex(c["hex"]))
-      .find((h) => h !== undefined);
-    if (rank1 !== undefined) {
-      return rgbDistance(rank1, neutralDark) <= rgbDistance(rank1, neutralLight) ? darkGround : lightGround;
-    }
+  const rank1 = Array.isArray(dominant)
+    ? dominant
+        .map((c) => c as Record<string, unknown>)
+        .sort((a, b) => Number(a["dominanceRank"] ?? 99) - Number(b["dominanceRank"] ?? 99))
+        .map((c) => asHex(c["hex"]))
+        .find((h) => h !== undefined)
+    : undefined;
+  // A STATED primary accent is the same kind of signal as a rank-1 dominant
+  // colour and is accepted as one when no ranking is shipped: both answer
+  // "which colour is this brand most itself in", which is what the nearest
+  // neutral is being chosen against. Without this a kit that names its
+  // neutrals and its accent but ranks nothing falls through to (C) and
+  // refuses, having told us everything we needed.
+  const structural = rank1 ?? asHex(brand["primaryAccent"]) ?? asHex((brand["colors"] as Record<string, unknown> | undefined)?.["primaryAccent"]);
+  if (structural !== undefined) {
+    return rgbDistance(structural, neutralDark) <= rgbDistance(structural, neutralLight) ? darkGround : lightGround;
   }
 
   const style = asString(brand["visualStyle"]) ?? "";
@@ -579,7 +667,25 @@ export function deriveBrandRenderTokens(brand: unknown, brandTokens: BrandTokens
     asHex(overrides.accent) ??
     asHex(brandTokens.accentColor) ??
     asHex(b["accent"]) ??
-    asHex((b["colors"] as Record<string, unknown> | undefined)?.["primaryAccent"]);
+    asHex((b["colors"] as Record<string, unknown> | undefined)?.["primaryAccent"]) ??
+    // The SAME one-shape read as the neutrals had, in the anchor. `b.colors`
+    // is an array on every real kit, so the line above is always `undefined`,
+    // and without an anchor `buildAccentRing` has nothing to seed the ring
+    // with -- a brand accent that fails the contrast floor against its own
+    // ground then leaves the ring EMPTY, which is what thepitchbydeel
+    // shipped: purple #5938b7 on a navy ground, dropped, palette `[]`.
+    //
+    // The anchor is taken BEFORE that floor by design (see `buildAccentRing`):
+    // it is the colour the brand IS, and the ring's later members are the
+    // ones that must earn their place against the ground.
+    asHex(b["primaryAccent"]) ??
+    asHex(
+      (Array.isArray(b["dominantColors"]) ? (b["dominantColors"] as Array<Record<string, unknown>>) : [])
+        .slice()
+        .sort((x, y) => Number(x["dominanceRank"] ?? 99) - Number(y["dominanceRank"] ?? 99))
+        .map((c) => c["hex"])
+        .find((h) => asHex(h) !== undefined),
+    );
 
   // ── palette ring: the accent, then whatever else the kit legibly ships ──
   // Deliberately NOT part of `hasAnything` below: the ring is built from the
