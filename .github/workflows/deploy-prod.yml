@@ -25,6 +25,12 @@ on:
 permissions:
   contents: read
   id-token: write
+  # For the failure notice at the end of this file. A promote that fails
+  # notifies nobody by default, and this workflow is manual — so nothing
+  # re-runs it and nothing complains. That is how 2026-09-08's failure went
+  # unnoticed for eleven days while every merge to main kept shipping to prep
+  # and production sat on an image from 2026-09-02.
+  issues: write
 
 jobs:
   promote:
@@ -105,3 +111,88 @@ jobs:
             --config=cloudbuild.promote.yaml \
             --no-source \
             --substitutions=_REGION="${{ vars.PROD_REGION || 'us-central1' }}",_SERVICE_PREFIX="agent-engine-prod",_SERVICE_ACCOUNT="${{ vars.PROD_SERVICE_ACCOUNT }}",_PREP_PROJECT_ID="${{ vars.PREP_PROJECT_ID }}",_PREP_REGION="${{ vars.PREP_REGION || 'us-central1' }}",_SHA="${{ steps.sha.outputs.sha }}",_GOOGLE_CLOUD_PROJECT="${{ vars.PROD_FIRESTORE_PROJECT_ID }}",_FIRESTORE_DATABASE_ID="${{ vars.PROD_FIRESTORE_DATABASE_ID || '(default)' }}",_ANTHROPIC_VERTEX_PROJECT_ID="${{ vars.PROD_PROJECT_ID }}",_ANTHROPIC_API_KEY_SECRET="anthropic-api-key",_PUBSUB_PROJECT_ID="${{ vars.PROD_PROJECT_ID }}",_QUEUE_SUBSCRIPTION_RUN_JOBS="${{ vars.PROD_QUEUE_SUBSCRIPTION }}",_GCS_MEDIA_BUCKET="${{ vars.PROD_GCS_MEDIA_BUCKET }}",_GCS_ARTIFACTS_BUCKET="${{ vars.PROD_GCS_ARTIFACTS_BUCKET }}",_GCS_WORKSPACE_BUCKET="${{ vars.PROD_GCS_WORKSPACE_BUCKET }}"
+
+      # ── A FAILED PROMOTE HAS TO TELL SOMEBODY ──────────────────────────────
+      #
+      # `Deploy to Prep` fires on every push to main; this one is manual by
+      # design, and that design is right — production should not move because
+      # somebody merged. But the two together mean a promote that fails simply
+      # stops happening, silently, and the environments drift apart with no
+      # alarm. Twice now: 2026-09-08 and 2026-09-19, the same step both times.
+      #
+      # Opens (or comments on) an issue rather than posting to a chat: it needs
+      # no secret, so it cannot itself be the thing that is misconfigured, and
+      # the repo's watchers are notified by GitHub. One issue is reused while
+      # it stays open, so a run of bad days is one thread rather than a pile.
+      #
+      # The body says WHERE THE ERROR IS, which is the part that cost the time:
+      # `gcloud builds submit` streams its log from the build, so a failure in
+      # the Cloud Build step leaves GitHub holding nothing but `exit code 1` —
+      # the real message is in the build log in the production project, and
+      # nothing here says so unless it is written down.
+      - name: Say so when the promote fails
+        if: failure()
+        uses: actions/github-script@v7
+        env:
+          PROMOTED_SHA: ${{ steps.sha.outputs.sha }}
+          PROD_PROJECT: ${{ vars.PROD_PROJECT_ID }}
+        with:
+          script: |
+            const marker = '[promote failed]';
+            const sha = (process.env.PROMOTED_SHA || '').slice(0, 8);
+            const project = process.env.PROD_PROJECT || '<PROD_PROJECT_ID>';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}` +
+              `/actions/runs/${context.runId}`;
+
+            const body = [
+              `**Production promote failed** — run [${context.runId}](${runUrl}), commit \`${sha}\`.`,
+              '',
+              'Production is still serving whatever it served before this run. Prep is unaffected.',
+              '',
+              '### Where the error actually is',
+              '',
+              'If the failing step is **Copy image & deploy via Cloud Build**, GitHub has nothing',
+              'but `exit code 1` — the message is in the Cloud Build log in the production project:',
+              '',
+              '```bash',
+              `BUILD=$(gcloud builds list --project=${project} \\`,
+              "  --filter='status=FAILURE' --sort-by=~createTime --limit=1 \\",
+              "  --format='value(id)')",
+              `gcloud builds describe "$BUILD" --project=${project} --format='value(serviceAccount)'`,
+              `gcloud builds log "$BUILD" --project=${project} | tail -40`,
+              '```',
+              '',
+              'Two causes have bitten before, both named in `cloudbuild.promote.yaml`\'s own header:',
+              'a `--set-secrets` entry naming a secret that does not exist in the production',
+              'project (which fails the deploy outright), and the cross-project Artifact Registry',
+              'read grant — check it against a real build\'s `serviceAccount`, not the one you',
+              'expect.',
+              '',
+              `<sub>${marker} opened automatically by \`deploy-prod.yml\`.</sub>`,
+            ].join('\n');
+
+            const open = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100,
+            });
+            const existing = open.data.find((i) => i.title.startsWith(marker));
+
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+              });
+              core.notice(`Commented on #${existing.number} — production promote is still failing.`);
+            } else {
+              const created = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `${marker} production is not receiving new agent-engine builds`,
+                body,
+              });
+              core.notice(`Opened #${created.data.number} — production promote failed.`);
+            }
