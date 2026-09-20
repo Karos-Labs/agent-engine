@@ -175,3 +175,81 @@ export function entityPictureBrief(entity: DraftEntity): string {
     `A recognisable picture of ${entity.name} itself, not a generic scene about the category it is in.`
   );
 }
+
+
+/**
+ * How many COUNTED mentions across the fact cards before this file will say
+ * the extractor should have seen a name.
+ *
+ * TWO, and the number was calibrated rather than chosen: three was tried
+ * first and it dropped `IBM`, the exact name this exists to recover.
+ *
+ * The reason is `latinNamesIn`'s sentence-initial skip, which is right for its
+ * own job and quietly halves a count here. Of IBM's mentions in
+ * `pubsub-21905062348134898`'s cards, one opens its sentence (*"IBM will
+ * co-sell the platform..."*) and is not counted at all. A name prominent
+ * enough to be a subject can honestly present as two.
+ *
+ * The real discriminator is the SECOND condition at the call site -- the name
+ * must appear in at least two DIFFERENT cards. A place mentioned once
+ * ("Paris", "Dubai") fails both; a name repeated three times inside a single
+ * card is that card's phrasing and fails the card count. Together they
+ * separate a subject from scenery without a stoplist of world geography.
+ *
+ * A floor rather than a ranking on purpose: this is a backstop for an obvious
+ * miss, not a second extractor competing with the model's judgement.
+ */
+export const CARD_ENTITY_MENTION_FLOOR = 2;
+
+/**
+ * Names the FACT CARDS repeat that the entity extractor did not return.
+ *
+ * `04b3-extract-entities` is a model step and its failure mode is silent: a
+ * short list is exactly what a correct answer looks like, so nothing
+ * downstream could distinguish "this post has one subject" from "I found one
+ * subject". On 2026-09-20 that cost thepitchbydeel's carousel every picture
+ * it might have had of IBM, and made all four of its picture slides ask for
+ * the same subject.
+ *
+ * `known` is what the model returned; anything matching it, case-insensitively,
+ * is not reported. `exclude` is the client's own names, for the reason
+ * `entitiesInDraft` gives: a client's own logo on their own post is a
+ * different feature.
+ *
+ * Returns `DraftEntity` so the caller can treat a recovered name exactly like
+ * one found in the draft -- same brief, same sourcing tiers, no second path.
+ * `slides` is empty because a card belongs to no slide: the caller assigns it.
+ */
+export function entitiesInCards(
+  cards: ReadonlyArray<{ claim?: string | undefined }>,
+  known: readonly string[] = [],
+  exclude: readonly string[] = [],
+): DraftEntity[] {
+  const blocked = new Set([...known, ...exclude].map((n) => n.trim().toLowerCase()).filter((n) => n.length > 0));
+  const counts = new Map<string, { name: string; mentions: number; cards: number }>();
+
+  for (const card of cards) {
+    const claim = typeof card.claim === "string" ? card.claim : "";
+    if (claim === "") continue;
+    const seenInThisCard = new Set<string>();
+    for (const name of latinNamesIn(claim)) {
+      const key = name.toLowerCase();
+      if (blocked.has(key)) continue;
+      const row = counts.get(key) ?? { name, mentions: 0, cards: 0 };
+      row.mentions += 1;
+      if (!seenInThisCard.has(key)) {
+        row.cards += 1;
+        seenInThisCard.add(key);
+      }
+      counts.set(key, row);
+    }
+  }
+
+  return [...counts.values()]
+    .filter((row) => row.mentions >= CARD_ENTITY_MENTION_FLOOR)
+    // A name the cards repeat across SEVERAL of them is a subject; one
+    // repeated inside a single card is usually that card's own phrasing.
+    .filter((row) => row.cards >= 2)
+    .sort((a, b) => b.mentions - a.mentions || a.name.localeCompare(b.name))
+    .map((row) => ({ name: row.name, slides: [], mentions: row.mentions, inHeadline: false }));
+}
