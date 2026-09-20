@@ -2276,7 +2276,24 @@ export async function validateStudioTemplate(
   if (draft.ground === "image" && !used.imageSlots.includes("hero")) {
     failures.push(fail(3, `the declared ground is "image" but the markup never reads {{image:hero}} — a photographic ground with no picture in it is the grey screen this studio exists to prevent`));
   }
-  const safety = deps.assertSafeMarkup(draft.bodyHtml, draft.css, declared, {
+  // ── THE STANDING FURNITURE IS LEGAL HERE TOO. ──
+  //
+  // `declared` alone is what this used to pass, and it made gate 3 contradict
+  // both gate 2 and the studio's own prompt. `buildDesignerInput` hands the
+  // designer `standingFurniture: [...STANDING_FURNITURE_SLOTS]` — `brandHandle`,
+  // `slideIndex`, `seriesBadge`, `dir`, `accentColor` and the rest — as fields
+  // its document receives whatever it declares, gate 2 skips them by that same
+  // set, and then gate 3 refused every template that took the offer.
+  //
+  // It cost `karoslabs` its entire template set. The 2026-09-18 setup
+  // (`pubsub-21896063218741941`) authored six templates and lost SIX to this,
+  // five of them on `{{brandHandle}}` and one on `{{slideIndex}}`. A studio
+  // that refuses everything is recorded as `empty` — a judgement about the
+  // client rather than a fault — which bought a 30-day cooldown, so every
+  // karoslabs post since has rendered on the shared bundled archetypes. That
+  // is the owner's *"the templates repeat, previous posts have exactly the
+  // same templates"*, and underneath it was one argument list.
+  const safety = deps.assertSafeMarkup(draft.bodyHtml, draft.css, [...declared, ...STANDING_FURNITURE_SLOTS], {
     ...(allowImageSlots.length > 0 ? { allowImageSlots } : {}),
     ...(allowHtmlSlots.length > 0 ? { allowHtmlSlots } : {}),
   });

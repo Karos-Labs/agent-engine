@@ -200,9 +200,12 @@ const HAPPY_PATH_STEP_IDS = [
   "04p-resolve-visual-system",
   "05-write-copy-attempt-1",
   "06-vet-images-attempt-1",
-  // Zero-held guarantee: confirms every selected image is still on disk, so a
-  // file lost since vetting degrades that slide instead of failing the render.
-  "06f-verify-images-on-disk-attempt-1",
+  // The chosen bytes, copied off this instance's in-RAM media cache and into
+  // the media bucket, so a resume onto a fresh instance can get them back
+  // (2026-09-20). The on-disk verification that USES them is deliberately not
+  // a step: a checkpointed guard replays its verdict instead of looking at
+  // the disk, which is how a post shipped with no pictures at all.
+  "06e2-stage-images-durably-attempt-1",
   // ONE PICTURE, ONE SLIDE. Every slide is vetted independently against one
   // shared pool, so the best picture in it wins every slide it is offered to,
   // and `usedImagesSet` only ever stopped a repeat ACROSS runs. This clears a
