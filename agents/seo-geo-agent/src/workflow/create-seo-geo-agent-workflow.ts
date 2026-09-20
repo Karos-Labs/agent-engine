@@ -854,10 +854,16 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         }
         return (outcome.result as { cell: Parameters<typeof toSeoGeoCell>[0] }).cell;
       },
-      // T-A3/SCRUM-237: two of the captured engines (chatgpt/copilot) route
-      // through ScrappyCoco's CLI-driven browser-automation capability, which is
-      // the one least able to tolerate a large concurrent burst — the source
-      // ticket's own "concurrency 3" instruction. Applied to the WHOLE capture
+      // T-A3/SCRUM-237: originally written because chatgpt/copilot were meant
+      // to route through a ScrappyCoco CLI-driven browser-automation
+      // capability, which the source ticket said was the one least able to
+      // tolerate a large concurrent burst ("concurrency 3"). That specific
+      // route never worked (see `capture-adapters/index.ts`'s history), but
+      // the concern is real again as of 2026-09-20: `copilot`/`aimode` (and
+      // optionally `chatgpt`, via AI_VISIBILITY_CHATGPT_SOURCE) now route
+      // through ScrappyCoco's real `/scrapers/execute` endpoint, so the same
+      // ceiling is kept rather than re-verified from scratch. Applied to the
+      // WHOLE capture
       // fanout (every captured engine's jobs are interleaved in
       // `captureJobs`) rather than only the ScrappyCoco-routed jobs, for
       // simplicity: a lower shared ceiling costs a real run some wall-clock

@@ -186,3 +186,43 @@ Every client's next recurring run logs this as engine-list drift via
 `04-freeze-prompt-set`, exactly the mechanism this document said would fire
 "the moment this list does change". Reverse by flipping `captured` back and
 wiring an adapter; nothing else needs to move.
+
+## 2026-09-20 addendum — Copilot rejoins, and AI Mode joins for the first time
+
+**What happened.** ScrappyCoco's account gained three real, verified answer-
+engine capabilities: `web.ask_chatgpt`, `web.ask_copilot`,
+`web.ask_google_ai_mode` — each confirmed live (not assumed from the vendor's
+own description text, which has been wrong before) to return a real answer
+plus real citations. This is exactly the "wiring an adapter" condition the
+2026-09-05 addendum named as Copilot's reversal trigger, and exactly the "an
+adapter lands" condition `aimode`'s spec named for joining the fan-out for the
+first time. Both `captured` flags are flipped in `types.ts` accordingly; see
+`capture-adapters/scrappycoco-answer-engine.ts` for the adapter and the full
+verification detail (including the exact 422 that rules out `google_aio`,
+below).
+
+**`google_aio` (Google's AI-Overview SERP feature) still does NOT join.** Its
+own capability's description claims `web.search_web` takes a
+`provider`/`include.aioverview` pair to surface it; the account's live input
+schema rejects both with a 422 (`additionalProperties: false`). This is
+verified, not assumed — probed directly against the live account on
+2026-09-20. `google_aio` stays accepted-but-uncaptured until a working route
+exists somewhere (ScrappyCoco or otherwise).
+
+**ChatGPT gets a second, comparable source, not a replacement.** OpenAI's
+Responses API stays the default; `AI_VISIBILITY_CHATGPT_SOURCE=scrappycoco`
+switches a deployment to ScrappyCoco's `web.ask_chatgpt` instead, meant for
+running both for a while and comparing the persisted cells before deciding
+which one to keep. `SEO_GEO_VISIBILITY_ENGINE_SPECS.chatgpt.captured` stays
+`true` throughout either way — the source changes, not whether the column is
+in the fan-out.
+
+**What changes.** `engineListHash` moves from
+`d0c4b2518a6626cf1e17dc75594da7294e12b5c845b1fc0eb4b31917e283e755` (four
+engines) to `6e7db9fa6e1d9d4e8f127ce284ef6573af9d2943f5667bb6bdf56554cf01ba99`
+(six: `chatgpt, perplexity, gemini, claude, copilot, aimode`). Every client's
+next recurring run logs this as engine-list drift via `04-freeze-prompt-set`,
+same mechanism as the 2026-09-05 move. Two more (prompt × engine) cells are
+now billed per capture cycle per client — real cost, not just infrastructure;
+factor it into the per-run cost figure the same way every other capture
+credential already is.

@@ -58,14 +58,18 @@ describe("SCRUM-396: the visibility-engine list has one source", () => {
     }
   });
 
-  it("leaves the two adapter-less engines out of the capture fan-out", () => {
-    // Accepted so a cell can be stored the moment an adapter exists; not
-    // captured, because fanning out to an engine with no adapter writes a
-    // column of UNAVAILABLE cells that measures nothing and drags down the
-    // coverage percentage a client feels.
-    expect(SEO_GEO_CAPTURE_ENGINES).not.toContain("aimode");
+  it("joined the fan-out once a real adapter landed (aimode), but not google_aio, which has no working route", () => {
+    // `aimode` and `copilot` were both accepted-but-not-captured until
+    // ScrappyCoco's `web.ask_google_ai_mode`/`web.ask_copilot` gave them real
+    // routes (2026-09-20) — flipping `captured` is each spec's own documented
+    // reversal condition, not a fresh decision. `google_aio` stays out: its
+    // documented ScrappyCoco route is verified NOT to work (a 422 rejection
+    // from the live schema), which is a stronger claim than "no adapter yet".
+    expect(SEO_GEO_CAPTURE_ENGINES).toContain("aimode");
+    expect(SEO_GEO_CAPTURE_ENGINES).toContain("copilot");
     expect(SEO_GEO_CAPTURE_ENGINES).not.toContain("google_aio");
-    expect(SEO_GEO_VISIBILITY_ENGINE_SPECS.aimode.captured).toBe(false);
+    expect(SEO_GEO_VISIBILITY_ENGINE_SPECS.aimode.captured).toBe(true);
+    expect(SEO_GEO_VISIBILITY_ENGINE_SPECS.copilot.captured).toBe(true);
     expect(SEO_GEO_VISIBILITY_ENGINE_SPECS.google_aio.captured).toBe(false);
   });
 

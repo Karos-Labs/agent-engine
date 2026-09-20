@@ -39,21 +39,25 @@ describe("SCRUM-396: engineListHash", () => {
    * measured), not the accepted list (what a cell may claim), and SCRUM-396 only
    * widened the latter.
    *
-   * The literal below is the value agent-engine has been minting since T-A3 —
-   * `sha256Hex(["chatgpt","perplexity","gemini","claude","copilot"])`. If this
-   * test fails, the captured engine list changed, and that is a deliberate
-   * reproducibility bump: every prior run's record stops being comparable, so
-   * update the literal only together with a decision record saying why.
+   * The literal below is the value agent-engine mints as of 2026-09-20 —
+   * `sha256Hex(["chatgpt","perplexity","gemini","claude","copilot","aimode"])`.
+   * If this test fails, the captured engine list changed, and that is a
+   * deliberate reproducibility bump: every prior run's record stops being
+   * comparable, so update the literal only together with a decision record
+   * saying why.
    */
-  // Four engines since 2026-09-05, when Copilot left the fan-out by product
-  // decision (SCRUM-396 decision record, "2026-09-05 addendum"). Until then this
-  // was T-A3's five-engine value, 98881508eb5591f3f6b6d8db29bd12496f6e733c66512780e6d85ea3144b88dd,
-  // which every frozen record written before that date carries;
-  // `04-freeze-prompt-set` logs the difference as engine-list drift on each
+  // Six engines since 2026-09-20, when Copilot and AI Mode rejoined the
+  // fan-out on real ScrappyCoco routes (SCRUM-396 decision record, "2026-09-20
+  // addendum"). Between 2026-09-05 and then it was four
+  // (d0c4b2518a6626cf1e17dc75594da7294e12b5c845b1fc0eb4b31917e283e755, "2026-09-05
+  // addendum" — Copilot's removal), and before that T-A3's five-engine value
+  // (98881508eb5591f3f6b6d8db29bd12496f6e733c66512780e6d85ea3144b88dd). Each
+  // frozen record carries the hash live at the moment it was written;
+  // `04-freeze-prompt-set` logs every difference as engine-list drift on each
   // client's next recurring run.
-  const FROZEN_HASH = "d0c4b2518a6626cf1e17dc75594da7294e12b5c845b1fc0eb4b31917e283e755";
+  const FROZEN_HASH = "6e7db9fa6e1d9d4e8f127ce284ef6573af9d2943f5667bb6bdf56554cf01ba99";
 
-  it("hashes the four captured engines — Copilot's 2026-09-05 removal is the only change since T-A3", () => {
+  it("hashes the six captured engines — Copilot and AI Mode's 2026-09-20 real routes are the only change since 2026-09-05", () => {
     expect(sha256Hex(SEO_GEO_CAPTURE_ENGINES)).toBe(FROZEN_HASH);
   });
 
@@ -128,7 +132,8 @@ describe("SCRUM-396: engineListHash", () => {
       const enginesSeen = [...new Set((assembled?.cells ?? []).map((cell) => cell.engine))].sort();
       expect(enginesSeen.length).toBeGreaterThan(0);
       expect(enginesSeen).toEqual([...SEO_GEO_CAPTURE_ENGINES].sort());
-      expect(enginesSeen).not.toContain("aimode");
+      expect(enginesSeen).toContain("copilot");
+      expect(enginesSeen).toContain("aimode");
       expect(enginesSeen).not.toContain("google_aio");
 
       const report = steps.find((step) => step.stepId === "17-assemble-report")?.output as

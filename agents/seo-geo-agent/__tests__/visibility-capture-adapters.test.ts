@@ -87,19 +87,14 @@ describe("T-A3/SCRUM-237: a real per-engine adapter's aioAbsent flag survives to
       expect(cell.aioAbsent).toBeUndefined();
     }
 
-    // The other 2 captured engines (chatgpt/claude) had no adapter configured
-    // — `setupTestEnvironment`'s default `null` still applies to them — so
-    // they're honestly UNAVAILABLE, distinct from both of the above.
-    //
-    // Copilot is absent here on purpose, and the assertion below pins that it
-    // is absent EVERYWHERE, not merely non-UNAVAILABLE: since 2026-09-05 it is
-    // accepted but not captured (SCRUM-396 decision record, "2026-09-05
-    // addendum"), so the fan-out never produces a Copilot cell of any tier.
-    // Before that date it was kept in the fan-out precisely so it would show
-    // as UNAVAILABLE rather than vanish — the owner's later call was that a
-    // column that can never be measured is noise in the coverage denominator.
+    // The other 4 captured engines (chatgpt/claude/copilot/aimode) had no
+    // adapter configured — `setupTestEnvironment`'s default `null` still
+    // applies to them — so they're honestly UNAVAILABLE, distinct from both
+    // of the above. `google_aio` produces no cell at all: it stays out of the
+    // fan-out (no working route — see `types.ts`'s spec note), the same
+    // shape Copilot had between the 2026-09-05 and 2026-09-20 addenda.
     const unavailableEngines = new Set(visibilityCapture.cells.filter((c) => c.captureTier === "UNAVAILABLE").map((c) => c.engine));
-    expect([...unavailableEngines].sort()).toEqual(["chatgpt", "claude"]);
-    expect(visibilityCapture.cells.some((c) => c.engine === "copilot")).toBe(false);
+    expect([...unavailableEngines].sort()).toEqual(["aimode", "chatgpt", "claude", "copilot"]);
+    expect(visibilityCapture.cells.some((c) => c.engine === "google_aio")).toBe(false);
   });
 });
