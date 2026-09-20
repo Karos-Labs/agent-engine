@@ -1,6 +1,8 @@
 # RFC-25 — TikTok clipping: where the footage comes from
 
-Status: **owner-approved 2026-09-20**. Phases 1-5 implemented; awaiting the prep runs §3 asks for.
+Status: **owner-approved 2026-09-20**. Phases 1-5 implemented. The first prep run
+(`pubsub-21912059758236775`) found two defects, both fixed: §1's allowlist ladder and §5's
+hold. §3's remaining prep runs are still outstanding.
 
 The first RFC for the TikTok family. Everything before it was written down in the
 2026-09-18 audit and in commit messages; the decision below needed a document because
@@ -61,8 +63,9 @@ changed is who decides: the owner has weighed the exposure and chosen reach.
 - **The caption still has to credit the source**, checked in code, not asked of the
   model (`07-compliance`, and since 2026-09-18 the credit is appended rather than held
   on).
-- **A client who HAS a `sourcePool` still gets the allowlist path.** Open search is the
-  behaviour when there is no pool, not a replacement for one.
+- **A client who HAS a `sourcePool` gets the allowlist path FIRST.** Their list is a
+  statement about rights and it is where the search starts. It is not a veto on ever
+  searching further: see the correction below.
 
 ### One thing this fixes on the way
 
@@ -70,6 +73,21 @@ changed is who decides: the owner has weighed the exposure and chosen reach.
 channel, so the harvest tier has correctly refused every run since 2026-09-11 and
 looked broken while doing it. With open discovery that client gets a real search
 instead of a refusal.
+
+> **Corrected 2026-09-20, after the first real prep run.** The paragraph above was
+> written as a promise and shipped as a lie. `discovery` was chosen **once** —
+> `allowedSources.length > 0 ? "allowlist" : "open"` — so a client *with* a pool never
+> reached the open branch at all, and `karoslabs`, the one client this section names as
+> the case it fixes, was the one case still broken. Prep run
+> `pubsub-21912059758236775` held with *"web-harvest (allowlist, …): content_fail (The
+> Karos Labs Podcast: 0 result(s))"*.
+>
+> Tier 2b now runs a **ladder**: the pool first, and an open search after it comes back
+> empty. A pool that answers still ends the tier on one call, so nothing costs more than
+> it did. What changed is the reading of an exhausted pool — treating it as "this client
+> would rather have nothing" turns a configuration convenience into a veto nobody cast.
+> A client who does want the narrow posture enforced has `mediaSource: "client"`, which
+> `01a` refuses outright with nothing attached.
 
 ---
 
@@ -172,6 +190,35 @@ pretending to be a gate.
 
 ## 4. What would make this reversible
 
-`discovery` defaults to `"allowlist"`. Setting a client's `sourcePool` restores the old
-behaviour for that client with no code change, and flipping the workflow's default
-restores it for everyone.
+`discovery` defaults to `"allowlist"` in the tool, so every other caller is unchanged.
+Inside the clipping workflow the ladder is the behaviour: a client's `sourcePool` decides
+what is tried FIRST, not whether an open search may happen at all. The switch that turns
+open discovery off for a client is `mediaSource: "client"` (refused at `01a` with nothing
+attached); the switch that turns it off for everyone is the `postures` array in Tier 2b.
+
+---
+
+## 5. A clipping run never ends with nothing (2026-09-20)
+
+The same prep run exposed a second, older defect, unrelated to discovery.
+
+`mode: "commentary"` forbids the stock tier — a commentary clip is a clip of somebody's
+words, and an original short over stock footage is a different product. With every
+clippable tier dry the workflow threw `WorkflowHeld`, and the comment above the throw
+called that hold *"honest"*.
+
+It was honest and it was still wrong. The owner's standing ruling (2026-09-17) is that no agent ends a run with no deliverable — *"fall back,
+redact, warn, or annotate on the output, but always deliver a result"* — and it names this
+shape directly: a domain-level dead end is widen-and-annotate, not one of the three
+carve-outs (nobody to write for, a human rejected it, a genuine tooling failure). A held
+clipping run bills a client an error message in place of the work.
+
+So the mode yields, **loudly**. The run makes an original short and says so in
+`contentRepairs` (`check: "clip-mode"`, `action: "unresolved"` — nothing was repaired, a
+different product was delivered) and on the gate payload as `modeSubstitution`. The
+reviewer decides whether that was the right call for this topic; what they are never shown
+is an `original-short` deliverable with no sign that a clip was what was asked for.
+
+One hold remains at the end of the cascade, and it is the carve-out: a deployment with no
+`video.findStockClip` or no repoRoot cannot make anything at all, which is a fact about
+the deployment rather than about this client's topic.

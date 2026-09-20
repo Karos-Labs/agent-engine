@@ -1515,56 +1515,94 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         // opts back OUT, with no code change.
         const harvest = tools["media.harvestVideo"];
         const allowedSources = plainSourceNames(config);
-        const discovery = allowedSources.length > 0 ? "allowlist" : "open";
+        /**
+         * TWO ATTEMPTS, not one posture.
+         *
+         * RFC-25 §1 said this in so many words — *"`karoslabs`' own
+         * `sourcePool` names 'The Karos Labs Podcast', which has no YouTube
+         * channel, so the harvest tier has correctly refused every run since
+         * 2026-09-11 and looked broken while doing it. With open discovery
+         * that client gets a real search instead of a refusal."* — and the
+         * code did not do it. `discovery` was chosen ONCE from whether the
+         * pool was empty, so a client WITH a pool never reached the open
+         * branch at all, and the one case the RFC named as fixed was the one
+         * case still broken. Confirmed by prep run pubsub-21912059758236775
+         * (2026-09-20), which held with "The Karos Labs Podcast: 0 result(s)".
+         *
+         * A pool is a statement about rights, so it still goes FIRST and an
+         * answer from it ends the tier. What a pool is not is a statement
+         * that the client would rather have nothing than an open search —
+         * that reading turns a configuration convenience into a veto nobody
+         * cast. A client who does want the narrow posture enforced says so
+         * with `mediaSource: "client"`, which 01a already refuses outright.
+         */
+        const postures: Array<"allowlist" | "open"> = allowedSources.length > 0 ? ["allowlist", "open"] : ["open"];
         if (harvest === undefined || options.repoRoot === undefined) {
           tierOutcomes.push("web-harvest: not wired in this deployment");
         } else {
-          // The catalog row is a good SUBJECT for a short and a poor QUERY for
-          // a video search — see `buildHarvestQuery`. Its own step, so a prep
-          // run that comes back with a bad clip shows the query that found it
-          // in the trace rather than leaving it to be reconstructed.
-          const harvestQuery = await wf.step.code("01f-build-harvest-query", () =>
-            discovery === "open"
-              ? buildHarvestQuery({
-                  topic: claim.topic,
-                  ...(profile.industry !== undefined ? { industry: profile.industry } : {}),
-                  ...(claim.discovered !== undefined ? { discovered: claim.discovered } : {}),
-                })
-              : // Inside an allowlist search the show name does the narrowing,
-                // so the topic only has to pick an episode out of one feed and
-                // the raw row is the better query.
-                claim.topic,
-          );
-          const outcome = await harvest.execute(
-            { repoRoot: options.repoRoot, runId: wf.runId, query: harvestQuery, allowedSources, discovery },
-            { ctx },
-          );
-          if (outcome.status === "success") {
-            const result = outcome.result as { path: string; sourceUrl: string; title?: string; channel?: string };
-            return {
-              ...base,
-              // Every tier that already failed, carried forward by the tier
-              // that served. Until now only the stock tier passed these on, so
-              // a pasted link that did not resolve vanished the moment the
-              // harvest answered — and the reviewer saw a clean clip with no
-              // sign that they had asked for a different video.
-              ...(tierOutcomes.length > 0 ? { sourceNotes: [...tierOutcomes] } : {}),
-              sourcePath: path.resolve(options.repoRoot, result.path),
-              sourceTier: "web-harvest",
-              sourceContext: {
-                url: result.sourceUrl,
-                ...(result.title ? { title: result.title } : {}),
-                ...(result.channel ? { channel: result.channel } : {}),
-                // How this footage was found, carried to the reviewer. "We
-                // searched the open web for this" is a fact about the clip,
-                // not an implementation detail, and it is the one thing a
-                // person approving it most needs to know.
+          for (const discovery of postures) {
+            // The catalog row is a good SUBJECT for a short and a poor QUERY
+            // for a video search — see `buildHarvestQuery`. Its own step, so a
+            // prep run that comes back with a bad clip shows the query that
+            // found it in the trace rather than leaving it to be
+            // reconstructed. The id carries the posture because both legs can
+            // run in one cascade and a shared id would overwrite the first.
+            const harvestQuery = await wf.step.code(`01f-build-harvest-query-${discovery}`, () =>
+              discovery === "open"
+                ? buildHarvestQuery({
+                    topic: claim.topic,
+                    ...(profile.industry !== undefined ? { industry: profile.industry } : {}),
+                    ...(claim.discovered !== undefined ? { discovered: claim.discovered } : {}),
+                  })
+                : // Inside an allowlist search the show name does the narrowing,
+                  // so the topic only has to pick an episode out of one feed and
+                  // the raw row is the better query.
+                  claim.topic,
+            );
+            const outcome = await harvest.execute(
+              {
+                repoRoot: options.repoRoot,
+                runId: wf.runId,
+                query: harvestQuery,
+                // Empty on the open leg. The tool documents `allowedSources`
+                // as ignored under `discovery: "open"` and the provider returns
+                // before reading it, but sending a rights list into a search
+                // that does not honour it is a line that will eventually be
+                // read as one that does.
+                allowedSources: discovery === "allowlist" ? allowedSources : [],
                 discovery,
-                harvestQuery,
               },
-            };
+              { ctx },
+            );
+            if (outcome.status === "success") {
+              const result = outcome.result as { path: string; sourceUrl: string; title?: string; channel?: string };
+              return {
+                ...base,
+                // Every tier that already failed, carried forward by the tier
+                // that served. Until now only the stock tier passed these on, so
+                // a pasted link that did not resolve vanished the moment the
+                // harvest answered — and the reviewer saw a clean clip with no
+                // sign that they had asked for a different video. A failed
+                // allowlist leg lands here too, which is how a reviewer learns
+                // the client's own source list came up empty.
+                ...(tierOutcomes.length > 0 ? { sourceNotes: [...tierOutcomes] } : {}),
+                sourcePath: path.resolve(options.repoRoot, result.path),
+                sourceTier: "web-harvest",
+                sourceContext: {
+                  url: result.sourceUrl,
+                  ...(result.title ? { title: result.title } : {}),
+                  ...(result.channel ? { channel: result.channel } : {}),
+                  // How this footage was found, carried to the reviewer. "We
+                  // searched the open web for this" is a fact about the clip,
+                  // not an implementation detail, and it is the one thing a
+                  // person approving it most needs to know.
+                  discovery,
+                  harvestQuery,
+                },
+              };
+            }
+            tierOutcomes.push(`web-harvest (${discovery}, "${harvestQuery}"): ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}`);
           }
-          tierOutcomes.push(`web-harvest (${discovery}, "${harvestQuery}"): ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}`);
         }
       }
 
@@ -1573,18 +1611,53 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       // demand, and the one `mode: "commentary"` forbids. Nothing is fetched
       // HERE: the plates are found per beat once the script exists, because a
       // plate is a scene from a script, not a picture of a topic.
-      if (config.mode === "commentary") {
-        tierOutcomes.push("stock: disabled — mode is \"commentary\"");
-      } else if (tools["video.findStockClip"] === undefined || options.repoRoot === undefined) {
+      if (tools["video.findStockClip"] === undefined || options.repoRoot === undefined) {
         tierOutcomes.push(`stock: not wired in this deployment (${options.repoRoot === undefined ? "no repoRoot configured" : "video.findStockClip is not registered — set PEXELS_API_KEY"})`);
-      } else {
+      } else if (config.mode !== "commentary") {
         // The notes travel with the intake: the reviewer sees why this is
         // stock and not the client's own footage, beside the play button.
         return { ...base, sourceTier: "stock", sourceNotes: tierOutcomes };
+      } else {
+        /**
+         * COMMENTARY MODE WITH NOTHING TO COMMENT ON.
+         *
+         * `mode: "commentary"` forbidding stock is a real product rule: a
+         * commentary clip is a clip of somebody's words, and an original
+         * short over stock footage is a different thing. It used to end the
+         * run here, and the comment beneath called the hold "honest".
+         *
+         * It was honest and it was still wrong. The owner's standing ruling
+         * (2026-09-17) is that an agent never ends a run with no deliverable
+         * — "fall back, redact, warn, or annotate on the output, but always
+         * deliver a result" — and names this exact shape: no candidate topic
+         * → widen and deliver annotated. A held clipping run bills a client
+         * an error message in place of the work, and "we could not find a
+         * podcast about your topic" is a domain-level problem, not one of the
+         * three carve-outs (nobody to write for, a human rejected it, a
+         * genuine tooling failure).
+         *
+         * So the mode yields to the rule, LOUDLY. This is a substitution the
+         * reviewer is told about in `contentRepairs` and at the gate, not a
+         * quiet re-interpretation of what they asked for: a worse answer than
+         * they wanted, and a better one than nothing. The honest refusal is
+         * still available to anyone who wants it — `mediaSource: "client"`
+         * with no attachment is `blocked_intake` at 01a, which is somebody
+         * actually saying "only my footage, or don't bother".
+         */
+        return {
+          ...base,
+          sourceTier: "stock",
+          sourceNotes: tierOutcomes,
+          modeSubstitution:
+            "this client's clipping agent is set to \"commentary\" — a clip of somebody else's words — and no tier could find a recording to clip, " +
+            "so the run made an original short over stock footage instead of returning nothing",
+        };
       }
 
-      // Every tier dry. A video post has no typographic fallback — this hold
-      // is honest, and its reason names exactly what each tier said.
+      // Every tier dry AND no stock tier to fall back on: the deployment is
+      // missing `video.findStockClip` or a repoRoot, which is a tooling
+      // failure rather than a fact about this client's topic. The one
+      // remaining hold, and it names what each tier said.
       if (claim.reservationKey) {
         await tools["topics.release"]?.execute({ reservationKey: claim.reservationKey }, { ctx }).catch(() => undefined);
       }
@@ -3945,6 +4018,10 @@ ${credit}`,
           // Why the footage is stock and not the client's own: what each
           // higher tier said. Absent when a higher tier served.
           ...(intake.sourceNotes !== undefined && intake.sourceNotes.length > 0 ? { sourceNotes: intake.sourceNotes } : {}),
+          // The client asked for a commentary clip and is being shown an
+          // original short. Nothing else on this payload says so — `format`
+          // reads `original-short` as if that were the plan.
+          ...(intake.modeSubstitution !== undefined ? { modeSubstitution: intake.modeSubstitution } : {}),
           voiceover: draft.voiceover,
           ...(draft.script ? { script: draft.script } : {}),
           revision,
@@ -4079,6 +4156,15 @@ ${credit}`,
           `the source-fit judge scored this recording ${sourceFit.score}/10 for this client: ${sourceFit.reason}` +
           (sourceFit.concerns.length > 0 ? ` — concerns: ${sourceFit.concerns.join("; ")}` : ""),
       });
+    }
+
+    if (intake.modeSubstitution !== undefined) {
+      // The biggest substitution this pipeline can make: the client asked for
+      // a commentary clip and is holding an original short. It is `unresolved`
+      // rather than `substituted` on purpose — the run did not fix anything,
+      // it delivered a different product, and the reviewer is the one who
+      // decides whether that was the right call for this topic.
+      contentRepairs.push({ check: "clip-mode", action: "unresolved", detail: intake.modeSubstitution });
     }
 
     // A person pasted a link, it did not resolve, and the run found footage

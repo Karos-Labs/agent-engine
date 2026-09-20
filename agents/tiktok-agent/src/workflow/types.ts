@@ -355,6 +355,18 @@ export interface TikTokIntake {
     harvestQuery?: string;
   };
   /**
+   * Set when the cascade delivered a DIFFERENT KIND of short than the client's
+   * mode asks for (2026-09-20).
+   *
+   * Today there is one case: `mode: "commentary"` wants a clip of somebody
+   * else's words, no tier found a recording to clip, and the run made an
+   * original short over stock footage rather than holding. That is the standing
+   * always-deliver rule outranking a mode preference, and it is only defensible
+   * because it is said out loud — this field is what makes it a `ContentRepair`
+   * and a gate-payload line instead of a quiet re-interpretation of the request.
+   */
+  modeSubstitution?: string;
+  /**
    * What every tier ABOVE the one that served said (2026-09-10). Present on a
    * `stock` intake: the client's own footage was not used, and the reviewer
    * should see why ("web-harvest: content_fail (no allowed source yielded a

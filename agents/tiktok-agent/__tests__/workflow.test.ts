@@ -128,8 +128,13 @@ interface StubOptions {
   failingGateEvidence?: string[];
   reserveFails?: boolean;
   forbiddenTopics?: string[];
-  /** Register `media.harvestVideo`: `true` serves, `false` finds nothing, `"resolve-fails"` serves a SEARCH but cannot resolve a pasted page. */
-  harvestServes?: boolean | "resolve-fails";
+  /**
+   * Register `media.harvestVideo`: `true` serves, `false` finds nothing,
+   * `"resolve-fails"` serves a SEARCH but cannot resolve a pasted page, and
+   * `"allowlist-dry"` is the karoslabs shape — the client's own source list
+   * yields nothing and an open search of the same query does.
+   */
+  harvestServes?: boolean | "resolve-fails" | "allowlist-dry";
   /** Register `video.findStockClip` answering success (Tier 3, the original short over stock footage, serves). `false` registers it answering not_available. */
   stockServes?: boolean;
   /** 1-based beat the stock library refuses to serve, whatever query it is asked — the "one dark beat" case, as opposed to a library that is down entirely. */
@@ -252,6 +257,12 @@ function stubTools(opts: StubOptions = {}): Harness {
         // or private URL is the ordinary case.
         if ((args as { sourceUrl?: string }).sourceUrl !== undefined && opts.harvestServes === "resolve-fails") {
           return { status: "content_fail" as const, reason: "the video is private or removed" };
+        }
+        // A sourcePool naming a show that does not exist where the harvester
+        // searches. The allowlist leg comes back with nothing and the same
+        // query, searched openly, finds a real podcast.
+        if (opts.harvestServes === "allowlist-dry" && (args as { discovery?: string }).discovery === "allowlist") {
+          return { status: "content_fail" as const, reason: "The Karos Labs Podcast: 0 result(s), 0 from another channel" };
         }
         return opts.harvestServes
           ? ok({
@@ -916,7 +927,19 @@ describe("tiered source cascade", () => {
     expect(stood?.detail).toContain("beat 1");
   }, 20_000);
 
-  it("mode \"commentary\" never generates: with no footage the run holds instead of making an original short", async () => {
+  it("mode \"commentary\" prefers not to generate, and delivers anyway when there is nothing to clip", async () => {
+    // REVERSED 2026-09-20. This test used to assert the run HELD here, and
+    // the workflow comment beneath the throw called that hold "honest". It
+    // was honest and it was still wrong: the owner's standing ruling
+    // (2026-09-17) is that an agent never ends a run with no deliverable, and
+    // it names this shape explicitly — a domain-level dead end is "fall back
+    // and annotate", not one of the three carve-outs. A held clipping run
+    // bills a client an error message in place of the work.
+    //
+    // The mode still means something. It is tried first, it is only
+    // abandoned once every clippable tier is dry, and the substitution is
+    // announced (see the `clip-mode` repair below). What it is no longer is
+    // a reason to ship nothing.
     const h = stubTools({
       config: { tiktokClips: { mode: "commentary", sourcePool: ["The Show"], guestWatchlist: [], narrowing: [] } },
       harvestServes: false,
@@ -924,11 +947,10 @@ describe("tiered source cascade", () => {
     });
     const result = await run(h, "run-tt-commentary-only", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], REPO_ROOT);
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toContain("stock: disabled");
-    expect(h.calls).not.toContain("video.findStockClip");
-  });
+    expect(result.status).toBe("completed");
+    expect(h.deliverables[0]).toMatchObject({ sourceTier: "stock", format: "original-short" });
+    expect(h.calls).toContain("video.findStockClip");
+  }, 20_000);
 
   it("mode \"original\" never touches anyone else's footage: no harvest, straight to a scripted short", async () => {
     const h = stubTools({
@@ -1445,5 +1467,110 @@ describe("source fit", () => {
 
     const repairs = (h.deliverables[0]!["contentRepairs"] as Array<{ check: string }> | undefined) ?? [];
     expect(repairs.map((r) => r.check)).not.toContain("source-fit");
+  }, 20_000);
+});
+
+
+/**
+ * The two ways a clipping run used to end with nothing.
+ *
+ * Both were found by the owner's first real prep run of the RFC-25 work
+ * (`pubsub-21912059758236775`, 2026-09-20, client `karoslabs`), which held
+ * with:
+ *
+ *     no source footage from any tier — user-asset: no media attached;
+ *     owned-footage: sourcePool holds no gs://https:// footage URIs;
+ *     web-harvest (allowlist, "..."): content_fail (The Karos Labs Podcast:
+ *     0 result(s)); stock: disabled — mode is "commentary"
+ */
+describe("a clipping run that finds nothing", () => {
+  // Same as the tiered-cascade block above: the plate work writes real
+  // files, so it needs a real directory rather than a synthetic root.
+  const REPO_ROOT = os.tmpdir();
+  const POOLED_COMMENTARY = { tiktokClips: { mode: "commentary", sourcePool: ["The Show"], guestWatchlist: [], narrowing: [] } };
+
+  it("falls through from an empty allowlist to an open search", async () => {
+    // RFC-25 §1 promised exactly this and the code did not do it: `discovery`
+    // was chosen ONCE from whether the pool was empty, so a client WITH a
+    // pool never reached the open branch — and the client the RFC named as
+    // the case this fixes was the one case still broken.
+    const h = stubTools({ harvestServes: "allowlist-dry", stockServes: true });
+    const result = await run(h, "run-tt-allowlist-dry", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], os.tmpdir());
+
+    expect(result.status).toBe("completed");
+    // Two calls, in this order. The pool is a statement about rights, so it
+    // is still tried FIRST; it is not a statement that the client would
+    // rather have nothing.
+    expect(h.harvestArgs).toHaveLength(2);
+    expect(h.harvestArgs[0]!["discovery"]).toBe("allowlist");
+    expect(h.harvestArgs[0]!["allowedSources"]).toEqual(["The Show"]);
+    expect(h.harvestArgs[1]!["discovery"]).toBe("open");
+    // The rights list is not sent into a search that does not honour it.
+    expect(h.harvestArgs[1]!["allowedSources"]).toEqual([]);
+    // …and the open leg gets the BUILT query, not the raw catalog row.
+    expect(h.harvestArgs[1]!["query"]).toContain("podcast");
+
+    expect(h.deliverables[0]).toMatchObject({ sourceTier: "web-harvest", licenseConfidence: "unknown" });
+  }, 20_000);
+
+  it("tells the reviewer the client's own source list came up empty", async () => {
+    // The failed allowlist leg has to survive the tier that answered. A
+    // reviewer looking at a clip from a show nobody cleared needs to know
+    // the client's own list was tried and found nothing, or the open search
+    // reads as the agent ignoring their configuration.
+    const h = stubTools({ harvestServes: "allowlist-dry", stockServes: true });
+    await run(h, "run-tt-allowlist-dry-notes", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], os.tmpdir());
+
+    const notes = h.deliverables[0]!["sourceContext"] !== undefined ? (h.deliverables[0]!["sourceNotes"] as string[] | undefined) : undefined;
+    expect(notes?.some((n) => n.includes("allowlist") && n.includes("0 result(s)"))).toBe(true);
+  }, 20_000);
+
+  it("keeps ONE call when the allowlist answers — the fallback is a fallback", async () => {
+    // The cost guard. A pool that works must not also pay for an open search.
+    const h = stubTools({ harvestServes: true, stockServes: true });
+    await run(h, "run-tt-allowlist-ok", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], os.tmpdir());
+    expect(h.harvestArgs).toHaveLength(1);
+    expect(h.harvestArgs[0]!["discovery"]).toBe("allowlist");
+  }, 20_000);
+
+  it("ships an original short rather than holding when commentary mode has nothing to clip", async () => {
+    // The owner's standing rule (2026-09-17): an agent never ends a run with
+    // no deliverable. `mode: "commentary"` forbidding stock is a real product
+    // rule, and it yields to that one — a held run bills the client an error
+    // message in place of work.
+    const h = stubTools({ config: POOLED_COMMENTARY, harvestServes: false, stockServes: true });
+    const result = await run(h, "run-tt-commentary-dry", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], REPO_ROOT);
+
+    expect(result.status).toBe("completed");
+    expect(h.deliverables[0]).toMatchObject({ sourceTier: "stock" });
+  }, 20_000);
+
+  it("says out loud that the client asked for a clip and is holding a different product", async () => {
+    // The substitution is only defensible because it is announced. Without
+    // this the deliverable reads `format: original-short` as if that had
+    // been the plan all along.
+    const h = stubTools({ config: POOLED_COMMENTARY, harvestServes: false, stockServes: true });
+    await run(h, "run-tt-commentary-dry-said", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], REPO_ROOT);
+
+    const repairs = h.deliverables[0]!["contentRepairs"] as Array<{ check: string; action: string; detail: string }>;
+    const swap = repairs.find((r) => r.check === "clip-mode");
+    expect(swap?.action).toBe("unresolved");
+    expect(swap?.detail).toContain("commentary");
+    expect(swap?.detail).toContain("original short");
+  }, 20_000);
+
+  it("still holds when there is no stock tier either — that one IS a tooling failure", async () => {
+    // The remaining hold, and the reason it is allowed to remain: a
+    // deployment with no `video.findStockClip` cannot make anything at all,
+    // which is a fact about the deployment rather than about this client's
+    // topic. `stockServes: false` registers the tool answering not_available.
+    const h = stubTools({ config: POOLED_COMMENTARY, harvestServes: false });
+    const result = await run(h, "run-tt-nothing-at-all", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], REPO_ROOT);
+
+    expect(result.status).toBe("held");
+    if (result.status !== "held") throw new Error("unreachable");
+    expect(result.reason).toContain("no source footage from any tier");
+    // And the reservation is handed back, so the topic is not burned.
+    expect(h.calls).toContain("topics.release");
   }, 20_000);
 });
