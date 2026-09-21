@@ -1202,6 +1202,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     interface TopicClaim {
       topic: string;
       topicSource: TopicSource;
+      /** Set with `topicSource: "widened"`: why this run is on a subject nobody reserved. */
+      topicNote?: string;
       reservationKey?: string;
       discovered?: TopicCandidate;
     }
@@ -1231,12 +1233,20 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
      * Every shortfall is a recorded note, and an empty result is an honest
      * outcome the caller turns into a hold — never a fabricated candidate.
      */
-    const discoverTopics = async (): Promise<{ candidates: TopicCandidate[]; seeded: number; notes: string[] }> => {
+    const discoverTopics = async (): Promise<{
+      candidates: TopicCandidate[];
+      seeded: number;
+      notes: string[];
+      /** Proposed, then dropped only for being too close to something already said. The widen's second rung takes from here. */
+      repeats: TopicCandidate[];
+      /** The lane's row count, which is what the research lens and the content pillar both rotate on. */
+      rotation: number;
+    }> => {
       return wf.step.code("01c-discover-topics", async () => {
         const notes: string[] = [];
         const topUp = tools["topics.topUp"];
         if (topUp === undefined) {
-          return { candidates: [], seeded: 0, notes: ["topics.topUp is not registered; discovered topics would have nowhere to land"] };
+          return { candidates: [], seeded: 0, notes: ["topics.topUp is not registered; discovered topics would have nowhere to land"], repeats: [], rotation: 0 };
         }
 
         // What the lane already holds — made, waiting, or proposed before —
@@ -1293,7 +1303,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
 
         if (researchDocuments.length === 0 && clientIntelContext === undefined) {
           notes.push("no research documents and no client intel — nothing honest to discover topics from");
-          return { candidates: [], seeded: 0, notes };
+          return { candidates: [], seeded: 0, notes, repeats: [], rotation };
         }
 
         const scout = new TikTokTopicScoutAgent({ router: options.router, tools, promptStore: options.promptStore });
@@ -1309,12 +1319,20 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           researchLens,
           mode: config.mode,
         });
-        if (exec.status === "content_fail") {
-          notes.push("the topic scout did not clear its own output validation");
-          return { candidates: [], seeded: 0, notes };
-        }
         if (exec.status !== "completed") {
-          throw new WorkflowToolingFailure(`topic discovery resolved to "${exec.status}"`);
+          // A scout that failed its own schema and a scout that was DOWN now
+          // land in the same place: "discovery proposed nothing". The second
+          // used to throw `WorkflowToolingFailure`, which killed a run that
+          // could still have fallen to the client's own content pillar — the
+          // always-deliver rule's tooling carve-out is for when nothing can
+          // be produced, and here something can. The reason rides in the
+          // notes and reaches the reviewer through the `topic-source` repair.
+          notes.push(
+            exec.status === "content_fail"
+              ? "the topic scout did not clear its own output validation"
+              : `the topic scout resolved to "${exec.status}", so nothing was discovered this run`,
+          );
+          return { candidates: [], seeded: 0, notes, repeats: [], rotation };
         }
         const proposed = TopicScoutOutputSchema.parse(exec.finalOutput);
 
@@ -1323,6 +1341,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         const knownUrls = new Set(researchDocuments.map((d) => d.url));
         const excluded = new Set(config.narrowing.map(normalizeTopic));
         const candidates: TopicCandidate[] = [];
+        /** Proposed, and dropped only for being too close to something already said — in the scout's own order. */
+        const repeats: TopicCandidate[] = [];
         let droppedAsRepeats = 0;
         let droppedAsCatalogRepeats = 0;
         for (const raw of proposed.candidates) {
@@ -1333,6 +1353,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           // caught — against the lane AND against what this run already kept.
           if ([...alreadyInCatalog, ...candidates.map((c) => c.topic)].some((existing) => nearDuplicateTopic(candidate.topic, existing))) {
             droppedAsCatalogRepeats += 1;
+            repeats.push(candidate);
             continue;
           }
           // Two reads of "is this a repeat": the fleet's calibrated Jaccard
@@ -1342,6 +1363,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           const verdict = evaluateDedupe(candidateText, outputHistory);
           if (verdict.status === "similar" || repeatsPublished(candidateText, outputHistory)) {
             droppedAsRepeats += 1;
+            repeats.push(candidate);
             continue;
           }
           candidates.push(candidate);
@@ -1351,17 +1373,22 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         notes.push(`research lens: ${researchLens}`);
         if (candidates.length === 0) {
           notes.push("every proposed candidate was excluded or a repeat");
-          return { candidates: [], seeded: 0, notes };
+          // The repeats are kept rather than discarded. They are a poor
+          // answer — repetition across runs is the tell this dedupe exists to
+          // remove — but "the freshest thing we could find, and here is what
+          // it repeats" is a better answer than no deliverable, and the human
+          // gate is where it gets refused. See `01-claim-topic`'s widen.
+          return { candidates: [], seeded: 0, notes, repeats, rotation };
         }
 
         const seeded = await topUp.execute({ topics: candidates.map((c) => c.topic), lane: CLIP_LANE }, { ctx });
         if (seeded.status !== "success") {
           notes.push(`seeding the lane with discovered topics failed: ${seeded.status}`);
-          return { candidates, seeded: 0, notes };
+          return { candidates, seeded: 0, notes, repeats, rotation };
         }
         const { added } = seeded.result as { added: number; catalogSize: number };
         notes.push(`${added} discovered topic(s) landed in the ${CLIP_LANE} lane (${proposed.rationale})`);
-        return { candidates, seeded: added, notes };
+        return { candidates, seeded: added, notes, repeats, rotation };
       });
     };
 
@@ -1409,11 +1436,78 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         }
       }
 
-      // The legacy loop's rule stands for the case nothing can fill: a run
-      // with no candidate "logs that fact and exits cleanly. It never lowers
-      // the bar to ship something."
+      /**
+       * ── NOTHING WAS RESERVED. Widen, rather than end with no deliverable ──
+       *
+       * This threw `WorkflowHeld`, quoting the legacy loop: *"a run with no
+       * candidate logs that fact and exits cleanly. It never lowers the bar
+       * to ship something."* That rule was superseded on 2026-09-17, and the
+       * owner's ruling names THIS case in as many words — "no candidate topic
+       * → widen and deliver annotated". The prose outlived the rule that made
+       * it true, which is the third time in this file in two days.
+       *
+       * Three rungs, weakest excuse first. Every one of them is announced as
+       * a `topic-source` repair, because a widened subject that arrives
+       * looking like a chosen one is worse than the hold was.
+       */
+
+      // Rung 1 — discovery produced clean candidates and only the CATALOG
+      // failed. The subject is exactly as good as the one that would have
+      // been reserved; what is missing is bookkeeping, and bookkeeping is not
+      // worth a client's run.
+      const unreserved = discovery.candidates[0];
+      if (unreserved !== undefined) {
+        return {
+          topic: unreserved.topic,
+          topicSource: "widened",
+          discovered: unreserved,
+          topicNote: `the ${CLIP_LANE} lane could not reserve a topic, so this run went ahead on a freshly discovered subject without a catalog reservation — ${discovery.notes.join("; ")}`,
+        };
+      }
+
+      // Rung 2 — everything discovery proposed was dropped for being too
+      // close to something the client already said. A poor answer: repetition
+      // across runs is the tell the dedupe exists to remove. Still a better
+      // one than nothing, and the repeat is named so the reviewer can refuse
+      // it at the gate on the facts rather than on a hunch.
+      const freshest = discovery.repeats[0];
+      if (freshest !== undefined) {
+        return {
+          topic: freshest.topic,
+          topicSource: "widened",
+          discovered: freshest,
+          topicNote:
+            `every subject discovery proposed was too close to something this client recently published; this run went ahead on the freshest of them anyway ` +
+            `rather than returning nothing — check it against the recent posts before approving (${discovery.notes.join("; ")})`,
+        };
+      }
+
+      // Rung 3 — discovery proposed nothing at all, so there is no subject to
+      // widen TO. A content pillar is the client's own declared answer to
+      // "what should we be talking about", which makes it a real subject
+      // rather than an invented one.
+      // The rotation discovery already computed (the lane's row count), so
+      // two runs in a row falling to this rung do not both land on pillar 0
+      // and this costs no second catalog read.
+      const pillars = intakeConfig.contentPillars;
+      const pillar = pillars.length > 0 ? pillars[discovery.rotation % pillars.length] : undefined;
+      if (pillar !== undefined) {
+        return {
+          topic: pillar,
+          topicSource: "widened",
+          topicNote:
+            `the catalog lane is empty and discovery could not propose anything, so this run fell back to one of the client's own content pillars ` +
+            `("${pillar}") rather than returning nothing — ${discovery.notes.join("; ")}`,
+        };
+      }
+
+      // Nothing left. Not a domain dead end but an empty client: no catalog,
+      // no footage, no research, no intel and no content pillars means this
+      // run knows nothing about them to be about. That is the always-deliver
+      // rule's "nobody to write for" carve-out, and the hold says what to add.
       throw new WorkflowHeld(
-        `no ${CLIP_LANE} candidate to make: the catalog lane is empty, no footage was attached, and discovery could not seed it — ${discovery.notes.join("; ")}`,
+        `no ${CLIP_LANE} candidate to make and nothing to widen to: the catalog lane is empty, no footage was attached, discovery could not propose a subject, ` +
+          `and the client declares no content pillars — add a content pillar, a topic, or footage. (${discovery.notes.join("; ")})`,
       );
     });
 
@@ -4195,6 +4289,11 @@ ${credit}`,
       });
     }
 
+    if (claim.topicNote !== undefined) {
+      // `unresolved`, like the other two: nothing was repaired, the run
+      // settled for something. Which rung it settled on is in the detail.
+      contentRepairs.push({ check: "topic-source", action: "unresolved", detail: claim.topicNote });
+    }
     if (modeSubstitution !== undefined) {
       // The biggest substitution this pipeline can make: the client asked for
       // a commentary clip and is holding an original short. It is `unresolved`
