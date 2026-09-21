@@ -322,7 +322,16 @@ export const VISUAL_QA_ESTIMATE_USD = 0.01;
  * recording and the topic is whatever the moment step finds in it — the one
  * case where the catalog is advisory rather than authoritative.
  */
-export type TopicSource = "requested" | "reserved" | "discovered" | "footage";
+/**
+ * How this run got its subject.
+ *
+ * `widened` (2026-09-21) is the always-deliver path: the catalog lane was
+ * empty, no footage was attached, and discovery could not produce a clean,
+ * reservable candidate — so the run took the best thing it had rather than
+ * ending with no deliverable. It is always accompanied by a `topic-source`
+ * `ContentRepair` naming exactly what was settled for.
+ */
+export type TopicSource = "requested" | "reserved" | "discovered" | "footage" | "widened";
 
 /** What the run resolved before any model was asked anything. */
 export interface TikTokIntake {
@@ -330,6 +339,8 @@ export interface TikTokIntake {
   /** The subject this run is producing on. Provisional for `topicSource: "footage"` until the moment step names it. */
   topic: string;
   topicSource: TopicSource;
+  /** Why this run is on a subject nobody reserved — set with `topicSource: "widened"`, and carried to the reviewer as a `topic-source` repair. */
+  topicNote?: string;
   /** Set when the topic came from the catalog, so the reservation can be committed or released. */
   reservationKey?: string;
   /** The media file to clip. Absent only for `sourceTier: "stock"`, whose footage is found per beat AFTER the script exists. */

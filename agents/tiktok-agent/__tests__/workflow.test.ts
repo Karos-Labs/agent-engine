@@ -127,6 +127,14 @@ interface StubOptions {
    */
   failingGateEvidence?: string[];
   reserveFails?: boolean;
+  /**
+   * Register the three tools `01c-discover-topics` needs before it can
+   * propose anything (`topics.topUp`, `topics.list`, `research.pull`).
+   *
+   * Without them discovery returns at its first line, which is what every
+   * older test in this file relies on — so it is opt-in.
+   */
+  discoveryTools?: boolean;
   forbiddenTopics?: string[];
   /**
    * Register `media.harvestVideo`: `true` serves, `false` finds nothing,
@@ -217,6 +225,19 @@ function stubTools(opts: StubOptions = {}): Harness {
         : ok({ reservationKey: "res-1", topics: ["The Show ep. 12 — the margin call moment"] }),
     ),
     "topics.commit": tool("topics.commit", () => ok({ committed: true })),
+    ...(opts.discoveryTools
+      ? {
+          "topics.topUp": tool("topics.topUp", (args) => ok({ added: (args as { topics: string[] }).topics.length, catalogSize: 4 })),
+          "topics.list": tool("topics.list", () => ok({ rows: [] })),
+          // `01c` skips research entirely without an industry ("no honest
+          // research query to run"), and then returns before the scout for
+          // want of anything to discover FROM.
+          "client.getProfile": tool("client.getProfile", () => ok({ name: "Acme", industry: "B2B SaaS marketing", description: "Acme sells a CMO platform." })),
+          "research.pull": tool("research.pull", () =>
+            ok({ result: { documents: [{ title: "CFOs are cutting AI budgets", url: "https://example.com/cfo", description: "Three surveys this week." }] } }),
+          ),
+        }
+      : {}),
     "topics.release": tool("topics.release", () => ok({ released: true })),
     "video.transcribe": tool("video.transcribe", () => ok({ words: opts.transcriptWords ?? transcriptWords() }), TranscribeInputSchema),
     "video.cutClip": tool("video.cutClip", (args) => ok({ outputPath: (args as { outputPath: string }).outputPath, durationSeconds: 40 }), CutClipInputSchema),
@@ -494,16 +515,25 @@ describe("tiktok-agent clip pipeline", () => {
     expect(h.calls).not.toContain("research.pull");
   });
 
-  it("holds rather than lowering the bar when the catalog has no candidate, no footage was given, and discovery has nothing to work from", async () => {
-    // The legacy rule: a run with no candidate "logs that fact and exits
-    // cleanly. It never lowers the bar to ship something." No research tool,
-    // no intel, no profile: discovery cannot honestly propose anything.
+  it("holds only when there is nothing left to widen to, and says what to add", async () => {
+    // REVERSED 2026-09-21. This asserted the hold whenever the lane was
+    // empty, quoting the legacy loop: "a run with no candidate logs that fact
+    // and exits cleanly. It never lowers the bar to ship something." The
+    // 2026-09-17 ruling supersedes that and names this case — "no candidate
+    // topic → widen and deliver annotated".
+    //
+    // The hold that REMAINS is the carve-out: no catalog, no footage, no
+    // research, no intel and no content pillars means the run knows nothing
+    // about this client to be about. That is "nobody to write for", and the
+    // reason now names the thing a person can add.
     const h = stubTools({ reserveFails: true, harvestServes: true });
     const result = await run(h, "run-tt-nocandidate", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], os.tmpdir());
 
     expect(result.status).toBe("held");
     if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toContain("discovery could not seed it");
+    expect(result.reason).toContain("nothing to widen to");
+    expect(result.reason).toContain("add a content pillar");
+    // Still refused before spending anything: no search, no cut.
     expect(h.calls).not.toContain("media.harvestVideo");
     expect(h.calls).not.toContain("video.cutClip");
   });
@@ -1652,5 +1682,131 @@ describe("the clipping variant", () => {
     const repairs = h.deliverables[0]!["contentRepairs"] as Array<{ check: string; detail: string }>;
     const swap = repairs.find((r) => r.check === "clip-mode");
     expect(swap?.detail).toContain("no speech");
+  }, 20_000);
+});
+
+
+/**
+ * WHEN NOTHING WAS RESERVED (the always-deliver widen, 2026-09-21).
+ *
+ * `01-claim-topic` used to throw `WorkflowHeld` here, quoting a rule the
+ * owner's 2026-09-17 ruling had already superseded — "no candidate topic →
+ * widen and deliver annotated" names this exact case. Three rungs, weakest
+ * excuse first, each announced as a `topic-source` repair: a widened subject
+ * that arrives looking like a chosen one is worse than the hold was.
+ */
+describe("widening the topic rather than holding", () => {
+  /**
+   * `TopicScoutOutputSchema` requires between DISCOVERY_CANDIDATE_MIN (6) and
+   * 10 candidates — a shorter list is not a thin week, it is a scout that did
+   * not do the job, and `smartFakeRouter` rightly refuses to parse one.
+   */
+  const SUBJECTS = [
+    "Finance teams stopped believing the AI efficiency story",
+    "Why your best channel is the one nobody reports on",
+    "The pipeline review that should be a document",
+    "Brand spend survives the quarter it cannot prove",
+    "Attribution is a story your CFO already disbelieves",
+    "The agency retainer nobody renegotiated",
+  ];
+  const SCOUT_CANDIDATES = SUBJECTS.map((topic, i) => ({
+    topic,
+    angle: `What ${topic.toLowerCase()} actually costs a marketing team`,
+    hook: `Nobody warned you about this: ${topic.toLowerCase()}`,
+    format: "commentary-clip" as const,
+    whyNow: `Three CFO surveys landed this week (${i})`,
+    evidenceUrls: ["https://example.com/cfo"],
+    voiceoverRecommended: false,
+  }));
+  const SCOUT = { rationale: "one fresh angle off this week's CFO surveys", candidates: SCOUT_CANDIDATES };
+  /** The same six, already published — so every one of them is dropped as a repeat. */
+  const ALL_PUBLISHED = SCOUT_CANDIDATES.map((c, i) => ({ runId: `run-old-${i}`, excerpt: `${c.topic}\n${c.angle}\n${c.hook}` }));
+
+  it("rung 1: runs on a discovered subject when only the CATALOG could not reserve it", async () => {
+    // The subject is exactly as good as the one that would have been
+    // reserved; what is missing is bookkeeping, and bookkeeping is not worth
+    // a client's run.
+    const h = stubTools({ reserveFails: true, discoveryTools: true, harvestServes: true, stockServes: true });
+    const result = await run(h, "run-tt-widen-unreserved", { sourcePath: undefined }, [SCOUT, GOOD_MOMENT, GOOD_COMMENTARY], os.tmpdir());
+
+    expect(result.status).toBe("completed");
+    expect(h.deliverables[0]).toMatchObject({ topic: SCOUT_CANDIDATES[0]!.topic, topicSource: "widened" });
+    const repairs = h.deliverables[0]!["contentRepairs"] as Array<{ check: string; detail: string }>;
+    expect(repairs.find((r) => r.check === "topic-source")?.detail).toContain("without a catalog reservation");
+  }, 20_000);
+
+  it("rung 2: takes the freshest REPEAT when every proposal was too close to recent output, and names it as one", async () => {
+    // A poor answer — repetition across runs is the tell the dedupe exists to
+    // remove — and still a better one than nothing, because the human gate is
+    // where it gets refused. What makes that defensible is the annotation: a
+    // reviewer told "this repeats what you published" can act on it.
+    const h = stubTools({
+      reserveFails: true,
+      discoveryTools: true,
+      harvestServes: true,
+      stockServes: true,
+      outputHistory: ALL_PUBLISHED,
+    });
+    const result = await run(h, "run-tt-widen-repeat", { sourcePath: undefined }, [SCOUT, GOOD_MOMENT, GOOD_COMMENTARY], os.tmpdir());
+
+    expect(result.status).toBe("completed");
+    expect(h.deliverables[0]).toMatchObject({ topicSource: "widened" });
+    const repairs = h.deliverables[0]!["contentRepairs"] as Array<{ check: string; detail: string }>;
+    const note = repairs.find((r) => r.check === "topic-source")?.detail;
+    expect(note).toContain("too close to something this client recently published");
+    expect(note).toContain("check it against the recent posts before approving");
+  }, 20_000);
+
+  it("rung 3: falls back to one of the client's OWN content pillars when discovery proposed nothing", async () => {
+    // Not an invented subject: a content pillar is the client's own declared
+    // answer to "what should we be talking about".
+    const h = stubTools({
+      reserveFails: true,
+      harvestServes: true,
+      stockServes: true,
+      config: { tiktokClips: { sourcePool: ["The Show"], guestWatchlist: [], narrowing: [] }, contentPillars: ["how founders pick their first hire"] },
+    });
+    const result = await run(h, "run-tt-widen-pillar", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], os.tmpdir());
+
+    expect(result.status).toBe("completed");
+    expect(h.deliverables[0]).toMatchObject({ topic: "how founders pick their first hire", topicSource: "widened" });
+    const repairs = h.deliverables[0]!["contentRepairs"] as Array<{ check: string; detail: string }>;
+    expect(repairs.find((r) => r.check === "topic-source")?.detail).toContain("content pillars");
+  }, 20_000);
+
+  it("a scout that is DOWN costs the discovery, not the run", async () => {
+    // It used to throw `WorkflowToolingFailure` and kill the run. The
+    // always-deliver rule's tooling carve-out is for when nothing can be
+    // produced; here the client's own content pillar still can be, so a
+    // scout outage degrades to "discovery proposed nothing" and the ladder
+    // takes it from there.
+    //
+    // The router is given NO scout-shaped candidate, so `01d-topic-scout`
+    // cannot complete — the same shape as the model being unavailable.
+    const h = stubTools({
+      reserveFails: true,
+      discoveryTools: true,
+      harvestServes: true,
+      stockServes: true,
+      config: { tiktokClips: { sourcePool: ["The Show"], guestWatchlist: [], narrowing: [] }, contentPillars: ["how founders pick their first hire"] },
+    });
+    const result = await run(h, "run-tt-scout-down", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], os.tmpdir());
+
+    expect(result.status).toBe("completed");
+    expect(h.deliverables[0]).toMatchObject({ topic: "how founders pick their first hire", topicSource: "widened" });
+    const repairs = h.deliverables[0]!["contentRepairs"] as Array<{ check: string; detail: string }>;
+    expect(repairs.find((r) => r.check === "topic-source")?.detail).toContain("topic scout");
+  }, 20_000);
+
+  it("says nothing about the topic on a run that reserved one normally", async () => {
+    // Absent, never empty. A marker attached unconditionally is the "silently
+    // shipping a degraded run" failure in reverse — shouting at every clean
+    // run until nobody reads it.
+    const h = stubTools();
+    await run(h, "run-tt-topic-clean");
+
+    const repairs = (h.deliverables[0]!["contentRepairs"] as Array<{ check: string }> | undefined) ?? [];
+    expect(repairs.map((r) => r.check)).not.toContain("topic-source");
+    expect(h.deliverables[0]).toMatchObject({ topicSource: "reserved" });
   }, 20_000);
 });

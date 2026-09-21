@@ -124,11 +124,13 @@ interface Harness {
   tools: AgentToolRegistry;
   calls: string[];
   researchArgs: Array<Record<string, unknown>>;
+  deliverables: Array<Record<string, unknown>>;
 }
 
 function buildTools(store: WorkspaceStore, opts: { research?: "serves" | "not_available" | "unregistered"; profile?: Record<string, unknown> | null; published?: string[] } = {}): Harness {
   const calls: string[] = [];
   const researchArgs: Array<Record<string, unknown>> = [];
+  const deliverables: Array<Record<string, unknown>> = [];
   const ok = (result: unknown) => ({ status: "success" as const, result });
   const pass = { verdict: "pass" as const, evidence: [], toolVersion: "1.0.0" };
   const tool = (name: string, run: (args: never) => unknown) => ({
@@ -162,7 +164,10 @@ function buildTools(store: WorkspaceStore, opts: { research?: "serves" | "not_av
     "gate.brandCompliance": tool("gate.brandCompliance", () => ok(pass)),
     "gate.noPlaceholder": tool("gate.noPlaceholder", () => ok(pass)),
     "gate.leakCheck": tool("gate.leakCheck", () => ok(pass)),
-    "ledger.writeDeliverable": tool("ledger.writeDeliverable", () => ok({ id: "deliv-1", created: true })),
+    "ledger.writeDeliverable": tool("ledger.writeDeliverable", (args) => {
+      deliverables.push((args as { deliverable: Record<string, unknown> }).deliverable);
+      return ok({ id: "deliv-1", created: true });
+    }),
     "memory.appendDecision": tool("memory.appendDecision", () => ok({ id: "dec-1" })),
   };
   if ((opts.research ?? "serves") !== "unregistered") {
@@ -173,7 +178,7 @@ function buildTools(store: WorkspaceStore, opts: { research?: "serves" | "not_av
         : ok({ runId: "r1", query: (args as { query: string }).query, fromCache: false, ageMs: 0, result: { provider: "test", query: "", fetchedAt: "", documents: RESEARCH_DOCS } });
     });
   }
-  return { tools: tools as unknown as AgentToolRegistry, calls, researchArgs };
+  return { tools: tools as unknown as AgentToolRegistry, calls, researchArgs, deliverables };
 }
 
 async function runWorkflow(h: Harness, runId: string, candidates: unknown[] = [SCOUT_OUTPUT, GOOD_SCRIPT]) {
@@ -274,7 +279,16 @@ describe("01c-discover-topics: an empty lane with no footage and no direction is
     expect(rows.filter((r) => r.status === "available")).toHaveLength(10);
   }, 30_000);
 
-  it("holds honestly when rediscovery brings nothing new and the lane cannot clear its floor", async () => {
+  it("ships the freshest repeat, named as one, when rediscovery brings nothing new", async () => {
+    // REVERSED 2026-09-21: this asserted a hold. The 2026-09-17 ruling names
+    // this case — "no candidate topic → widen and deliver annotated" — and
+    // the widen's second rung is exactly it: every proposal was a repeat, so
+    // the run takes the freshest and SAYS SO.
+    //
+    // What makes that defensible rather than lazy is the annotation. A
+    // reviewer told "this is too close to what you published" can refuse it
+    // at the gate on the facts; a run that held told them nothing and billed
+    // them for it.
     env = await setupEnv();
     const h = buildTools(env.store);
 
@@ -286,36 +300,48 @@ describe("01c-discover-topics: an empty lane with no footage and no direction is
 
     expect(first.status).toBe("completed");
     expect(second.status).toBe("completed");
-    expect(third.status).toBe("held");
-    if (third.status !== "held") throw new Error("unreachable");
-    expect(third.reason).toContain("discovery could not seed it");
+    expect(third.status).toBe("completed");
+    const repairs = h.deliverables[h.deliverables.length - 1]!["contentRepairs"] as Array<{ check: string; detail: string }>;
+    expect(repairs.find((r) => r.check === "topic-source")?.detail).toContain("too close to something this client recently published");
   }, 30_000);
 
-  it("holds honestly when research is unavailable and the client has no intel to fall back on — nothing is invented", async () => {
+  it("falls back to the client's OWN content pillar when research is unavailable — still nothing invented", async () => {
+    // REVERSED 2026-09-21, and the "nothing is invented" half is untouched:
+    // a content pillar is the client's own declared answer to "what should we
+    // be talking about", which is a real subject rather than one the run made
+    // up. The catalog is STILL not written to — a widened topic is not a
+    // discovery, and seeding the lane from one would launder a fallback into
+    // a proposal.
     env = await setupEnv();
     const h = buildTools(env.store, { research: "not_available" });
 
     const result = await runWorkflow(h, "run-tt-discover-dry");
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toContain("discovery could not seed it");
-    expect(result.reason).toContain("research for discovery was unusable");
-    // The scout never ran, and the lane is still empty.
-    expect(h.calls).not.toContain("video.findStockClip");
+    expect(result.status).toBe("completed");
+    const deliverable = h.deliverables[h.deliverables.length - 1]!;
+    expect(deliverable["topicSource"]).toBe("widened");
+    expect(["fundraising", "hiring"]).toContain(deliverable["topic"]);
+    const repairs = deliverable["contentRepairs"] as Array<{ check: string; detail: string }>;
+    expect(repairs.find((r) => r.check === "topic-source")?.detail).toContain("research for discovery was unusable");
     const catalog = await env.store.readJson<unknown[]>("acme", ["topics", "catalog"]);
     expect(catalog ?? []).toHaveLength(0);
-  });
+  }, 30_000);
 
-  it("holds when the profile declares no industry — there is no honest research query to run", async () => {
+  it("runs no research query at all when the profile declares no industry, and widens instead of holding", async () => {
+    // The load-bearing half is unchanged and is the second assertion: with no
+    // industry there is no honest query, so NONE is sent. What changed is
+    // what happens next — the run reaches the client's own content pillar
+    // rather than ending with nothing.
     env = await setupEnv();
     const h = buildTools(env.store, { profile: null });
 
     const result = await runWorkflow(h, "run-tt-discover-noindustry");
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toContain("no industry");
+    expect(result.status).toBe("completed");
     expect(h.researchArgs).toHaveLength(0);
-  });
+    const deliverable = h.deliverables[h.deliverables.length - 1]!;
+    expect(deliverable["topicSource"]).toBe("widened");
+    const repairs = deliverable["contentRepairs"] as Array<{ check: string; detail: string }>;
+    expect(repairs.find((r) => r.check === "topic-source")?.detail).toContain("no industry");
+  }, 30_000);
 });

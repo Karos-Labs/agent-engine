@@ -262,3 +262,34 @@ short announced the same way.
 One hold remains at the end of the cascade, and it is the carve-out: a deployment with no
 `video.findStockClip` or no repoRoot cannot make anything at all, which is a fact about
 the deployment rather than about this client's topic.
+
+### The third hold, and the last one (2026-09-21)
+
+`01-claim-topic` threw `WorkflowHeld` when the catalog lane was empty, no footage was
+attached and discovery could not seed it — quoting the legacy loop's rule verbatim: *"a run
+with no candidate logs that fact and exits cleanly. It never lowers the bar to ship
+something."* That rule was superseded on 2026-09-17, and the ruling that replaced it names
+**this exact case**: *no candidate topic → widen and deliver annotated*. Third time in this
+file in two days that prose outlived the rule which made it true.
+
+A ladder now, weakest excuse first, each rung announced as a `topic-source` repair:
+
+1. **Discovery produced clean candidates and only the CATALOG could not reserve one.** The
+   subject is exactly as good as the one that would have been reserved; what is missing is
+   bookkeeping, and bookkeeping is not worth a client's run.
+2. **Everything proposed was too close to something the client recently published.** A poor
+   answer — repetition across runs is the tell the dedupe exists to remove — and still a
+   better one than nothing, *because it is named*: the reviewer is told what it repeats and
+   refuses it at the gate on the facts.
+3. **Discovery proposed nothing at all.** A content pillar is the client's own declared
+   answer to "what should we be talking about", so it is a real subject rather than an
+   invented one. It rotates on the lane's row count, so two runs in a row do not land on the
+   same pillar.
+
+One hold remains, and it is the carve-out: no catalog, no footage, no research, no intel and
+no content pillars means the run knows nothing about this client to be about — "nobody to
+write for". Its reason names what to add.
+
+A scout **outage** also stopped being fatal on the way. It threw `WorkflowToolingFailure`,
+which killed a run that could still have reached rung 3; the tooling carve-out is for when
+nothing can be produced, and there something can.
