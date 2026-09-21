@@ -230,8 +230,17 @@ export function createYtDlpHarvestProvider(options: YtDlpHarvestProviderOptions 
       const perSource: string[] = [];
       const broken: string[] = [];
 
-      /** Scores usable entries the way both postures do, and builds the candidate: nearest on topic first, newest as the tie-break. */
-      const pickBest = (usable: readonly YtDlpFlatEntry[]): VideoHarvestCandidate => {
+      /**
+       * Scores usable entries the way both postures do and returns EVERY one
+       * as a candidate: nearest on topic first, newest as the tie-break.
+       *
+       * It used to return only the winner, so a search that found twelve
+       * clippable podcasts gave up when the best one would not download — and
+       * "would not download" covers private, removed, geo-blocked,
+       * members-only, and YouTube's bot check, none of which say anything
+       * about whether the query found something worth clipping.
+       */
+      const rank = (usable: readonly YtDlpFlatEntry[]): VideoHarvestCandidate[] => {
         const scored = usable
           .map((entry) => {
             const titleTokens = tokens(entry.title ?? "");
@@ -240,16 +249,32 @@ export function createYtDlpHarvestProvider(options: YtDlpHarvestProviderOptions 
             return { entry, overlap, published: publishedAt(entry) };
           })
           .sort((a, b) => b.overlap - a.overlap || b.published - a.published);
-        const best = scored[0]!.entry;
-        const sourceUrl = watchUrl(best)!;
-        const channel = best.channel ?? best.uploader;
-        return {
-          sourceUrl,
-          ...(best.title !== undefined ? { title: best.title } : {}),
-          ...(channel !== undefined ? { channel } : {}),
-          ...(typeof best.duration === "number" ? { durationSeconds: best.duration } : {}),
-          download: (destDirAbs) => downloadInto(sourceUrl, destDirAbs, q.maxBytes),
-        };
+        return scored.map(({ entry }) => {
+          const sourceUrl = watchUrl(entry)!;
+          const channel = entry.channel ?? entry.uploader;
+          return {
+            sourceUrl,
+            ...(entry.title !== undefined ? { title: entry.title } : {}),
+            ...(channel !== undefined ? { channel } : {}),
+            ...(typeof entry.duration === "number" ? { durationSeconds: entry.duration } : {}),
+            download: (destDirAbs: string) => downloadInto(sourceUrl, destDirAbs, q.maxBytes),
+          };
+        });
+      };
+
+      /**
+       * How many failures to absorb before giving up on a search.
+       *
+       * Each retry is another yt-dlp invocation, a few seconds each. Four
+       * attempts covers the scattered causes (this one is private, that one
+       * is geo-blocked) without turning a fully blocked worker into a minute
+       * of pointless retries — a bot check is IP-wide, so when it is THAT,
+       * all four fail and the clip cascade's next tier is the real answer.
+       */
+      const MAX_ATTEMPTS = 4;
+      const find = (usable: readonly YtDlpFlatEntry[]): VideoHarvestFind => {
+        const ranked = rank(usable);
+        return { candidate: ranked[0]!, alternates: ranked.slice(1, MAX_ATTEMPTS) };
       };
 
       /** The checks that are about the VIDEO rather than about its source: a clippable length, and an address to fetch it from. */
@@ -294,7 +319,7 @@ export function createYtDlpHarvestProvider(options: YtDlpHarvestProviderOptions 
             reason: `open search found no video for "${q.query}" inside ${q.minDurationSeconds}-${q.maxDurationSeconds}s (${entries.length} result(s) before filtering)`,
           };
         }
-        return { candidate: pickBest(usable) };
+        return find(usable);
       }
 
       for (const source of q.allowedSources) {
@@ -341,7 +366,7 @@ export function createYtDlpHarvestProvider(options: YtDlpHarvestProviderOptions 
           continue;
         }
 
-        return { candidate: pickBest(usable) };
+        return find(usable);
       }
 
       // Every source answered and none had a usable episode: a real "nothing

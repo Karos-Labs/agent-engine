@@ -182,6 +182,18 @@ pretending to be a gate.
    runs; under open discovery it runs on every clipping run with no attached footage.
    The cascade already treats a provider throw as a tooling failure and moves on, so
    this degrades rather than breaks — but it will be noisy.
+
+   > **Happened on the first open run, 2026-09-21.** `pubsub-21908845348121079`: the search
+   > worked, returned a real podcast, and the DOWNLOAD came back *"Sign in to confirm you're
+   > not a bot"*. The tier reported "nothing to clip" and threw away the other eleven usable
+   > results, because a find carried one candidate and its failure was the search's failure.
+   >
+   > `media.harvestVideo` 1.4.0 takes ALTERNATES: up to four attempts down the same ranking,
+   > covering private, removed, geo-blocked and members-only as well. A bot check is IP-wide,
+   > so when it is *that*, all four fail and the cascade's next tier is still the real answer —
+   > the refusals are all named in the reason so an operator can tell one blocked worker from
+   > four unlucky videos. `YT_DLP_COOKIES_FILE` is the provider's existing hook and is not set
+   > in prep; setting it is the actual fix for a blocked worker.
 3. **A clip of a competitor's podcast, published under a client's account.** The fit
    gate's `concerns[]` is where this is caught, and the human gate is where it is
    stopped.
