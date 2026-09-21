@@ -160,6 +160,46 @@ function urlsIn(value: unknown): string[] {
  * footer actually landed, so nothing about the final persisted deliverable
  * is left unchecked.
  */
+/**
+ * WHAT AN EMAIL IS MISSING BEFORE IT CAN LAWFULLY BE SENT.
+ *
+ * A newsletter is the one deliverable in this fleet that cannot be unsent, and
+ * the two things below are not house style — they are what bulk commercial
+ * email is required to carry: a working opt-out, and a physical postal address
+ * for the sender. CAN-SPAM asks for both; GDPR and PECR ask for the opt-out.
+ *
+ * Until now their absence was SILENT. `composeCompliantDraft` returned the
+ * draft untouched when the client had configured nothing, intake never asked
+ * for them, and `compliance-footer.test.ts` asserted that shipping an edition
+ * with neither was correct "backward compatible" behaviour. So a client who
+ * had not filled those fields in got a finished, gate-approved email with no
+ * unsubscribe link and no address, and nothing anywhere said so.
+ *
+ * This does NOT invent either value. A postal address cannot be guessed and an
+ * unsubscribe URL that does not work is worse than none. What it does is name
+ * the gap, so the run can carry it to a human: the edition is still drafted,
+ * still composed, still delivered to the gate — and the gate becomes a
+ * regulated-compliance one, which waits a full day for a person and then HOLDS
+ * rather than auto-approving. That is the one tier in `textGateTimeout` that
+ * does not ship on a timeout, and an email with no opt-out is exactly what it
+ * is for.
+ *
+ * `requiredDisclaimer` is deliberately NOT here: a disclaimer is a client's own
+ * legal preference, not a statutory requirement on the medium.
+ */
+export function missingEmailComplianceFields(brand: Record<string, unknown>): string[] {
+  const missing: string[] = [];
+  const unsubscribeUrl = brand["unsubscribeUrl"];
+  const companyAddress = brand["companyAddress"];
+  if (typeof unsubscribeUrl !== "string" || unsubscribeUrl.trim().length === 0) {
+    missing.push("no unsubscribe URL is configured for this client, so the edition carries no opt-out");
+  }
+  if (typeof companyAddress !== "string" || companyAddress.trim().length === 0) {
+    missing.push("no postal address is configured for this client, so the edition carries no sender address");
+  }
+  return missing;
+}
+
 function composeCompliantDraft(draft: NewsletterPostOutput, brand: Record<string, unknown>): NewsletterPostOutput {
   const footerDisclaimer = brand["requiredDisclaimer"] as string | undefined;
   const companyAddress = brand["companyAddress"] as string | undefined;
@@ -999,7 +1039,17 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
         // Read ONCE and used both as the policy and as the payload block, so the
         // clock a reviewer is racing and the sentence explaining it can never
         // disagree.
-        const gateTimeout = textGateTimeout({ repairs: repairsByRevision.get(revision) });
+        //
+        // AN EDITION WITH NO OPT-OUT IS A COMPLIANCE FINDING, not a style note.
+        // `missingEmailComplianceFields` names what bulk commercial email is
+        // required to carry and this client has not configured; when anything
+        // is missing the gate waits a full day and then HOLDS instead of
+        // shipping, because an email cannot be unsent.
+        const complianceGap = missingEmailComplianceFields(clientContext.brand);
+        const gateTimeout = textGateTimeout({
+          repairs: repairsByRevision.get(revision),
+          ...(complianceGap.length > 0 ? { regulatedComplianceFinding: true } : {}),
+        });
         return {
         kind: "batch_review",
         payload: {
@@ -1008,6 +1058,9 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
           theme,
           preview: draft.text,
           revision,
+          // Named on the payload, not only implied by the longer clock: the
+          // reviewer is the only one who can go and fill these in.
+          ...(complianceGap.length > 0 ? { emailComplianceGap: complianceGap } : {}),
           subjectLine: draft.subjectLine,
           previewText: draft.previewText,
           planThesis: plan.thesis,

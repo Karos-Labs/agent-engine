@@ -214,7 +214,7 @@ describe("compliance footer + banned promise/hype-language remediation (RFC-02 Â
     expect(persisted.deliverable.text).toContain(unsubscribeUrl);
   });
 
-  it("a client with no compliance footer configured at all gets a deliverable with no footer fields and an unmodified text (backward compatible)", async () => {
+  it("a client with no compliance footer configured gets an edition with no footer fields, and the gap is NOT silent", async () => {
     // setupTestEnvironment's default brand has forbiddenTerms only -- no requiredDisclaimer,
     // companyAddress, or unsubscribeUrl.
     const promptStore = makePromptStore();
@@ -238,5 +238,92 @@ describe("compliance footer + banned promise/hype-language remediation (RFC-02 Â
     expect(persisted.deliverable.companyAddress).toBeUndefined();
     expect(persisted.deliverable.unsubscribeUrl).toBeUndefined();
     expect(persisted.deliverable.text).toBe(draft.text);
+  });
+});
+
+/**
+ * AN EMAIL WITH NO OPT-OUT IS A COMPLIANCE FINDING, NOT A STYLE NOTE.
+ *
+ * `composeCompliantDraft` returned the draft untouched when a client had
+ * configured nothing, intake never asked for the fields, and the test above
+ * asserted that shipping an edition with neither an unsubscribe link nor a
+ * postal address was correct "backward compatible" behaviour. So the gap was
+ * real, legal, and completely silent.
+ *
+ * These run WITHOUT `autoApprove`, because that option skips the gate
+ * entirely â€” which is exactly why every existing test in this file passed
+ * while the policy underneath it was wrong. The gate record is read from the
+ * durable store, so what is asserted is the clock the run actually registered.
+ */
+describe("the gate an edition gets depends on whether it can lawfully be sent", () => {
+  let env: TestEnvironment;
+
+  beforeEach(async () => {
+    env = await setupTestEnvironment();
+  });
+
+  afterEach(async () => {
+    await env.cleanup();
+  });
+
+  async function gateFor(runId: string) {
+    const promptStore = makePromptStore();
+    const intro = "Here's what actually worked for engineering teams this week.";
+    const router = editionRouter([finalTurn(draftWithIntro(intro))]);
+    const workflowFn = createNewsletterAgentWorkflow({ tools: env.tools, promptStore, router });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const result = await engine.run(workflowFn, { ...baseParams, runId });
+    // The edition is DRAFTED and delivered to a human either way. Nothing here
+    // withholds work â€” the question is only what happens if nobody comes.
+    expect(result.status).toBe("awaiting_gate");
+    // `runReviewCycle` suffixes the gate id with its revision round, so a
+    // revise cycle gets its own gate rather than overwriting the first.
+    return durableStore.getGate(`${runId}__16-batch-review-r0`);
+  }
+
+  it("HOLDS instead of shipping when the client has no unsubscribe URL and no postal address", async () => {
+    // setupTestEnvironment's default brand carries forbiddenTerms only.
+    const gate = await gateFor("newsletter_gate_no_compliance");
+
+    expect(gate?.timeout?.onTimeout).toBe("hold");
+    expect(gate?.timeout?.duration).toBe("24h");
+
+    const payload = gate?.payload as { emailComplianceGap?: string[] };
+    expect(payload.emailComplianceGap).toHaveLength(2);
+    expect(payload.emailComplianceGap?.join(" ")).toContain("unsubscribe");
+    expect(payload.emailComplianceGap?.join(" ")).toContain("postal address");
+  });
+
+  it("still holds when only ONE of the two is missing", async () => {
+    await env.store.writeJson("acme", ["client", "brand"], {
+      forbiddenTerms: ["guaranteed"],
+      unsubscribeUrl: "https://acme.example.com/unsubscribe?id=abc123",
+      // no companyAddress
+    });
+
+    const gate = await gateFor("newsletter_gate_half_compliance");
+
+    expect(gate?.timeout?.onTimeout).toBe("hold");
+    const payload = gate?.payload as { emailComplianceGap?: string[] };
+    expect(payload.emailComplianceGap).toHaveLength(1);
+    expect(payload.emailComplianceGap?.[0]).toContain("postal address");
+  });
+
+  it("ships on the ordinary clock once both are configured", async () => {
+    // The control. If this ever starts holding, the finding has widened into
+    // something that would park every edition this product ever drafts.
+    await env.store.writeJson("acme", ["client", "brand"], {
+      forbiddenTerms: ["guaranteed"],
+      companyAddress: "123 Market St, Suite 400, San Francisco, CA 94105",
+      unsubscribeUrl: "https://acme.example.com/unsubscribe?id=abc123",
+    });
+
+    const gate = await gateFor("newsletter_gate_compliant");
+
+    expect(gate?.timeout?.onTimeout).toBe("auto_approve");
+    expect(gate?.timeout?.duration).toBe("1h");
+    expect(gate?.payload).not.toHaveProperty("emailComplianceGap");
   });
 });
