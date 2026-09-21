@@ -15,7 +15,13 @@ import { MEDIA_CACHE_PREFIX } from "./find-images.js";
 // pasted, with no search at all. `media.ingestAssets` fetches an https:// URI
 // as a direct file, so a watch page has never been something a client could
 // hand this pipeline.
-const TOOL_VERSION = "1.3.0";
+// 1.4.0 (2026-09-21): a find may carry ALTERNATES, and a candidate that will
+// not download no longer ends the search. A search that returned twelve
+// usable podcasts used to give up when the best one was private, removed,
+// geo-blocked, or behind YouTube's "confirm you're not a bot" check — the
+// last of which hit the very first open-discovery run in prep
+// (pubsub-21908845348121079).
+const TOOL_VERSION = "1.4.0";
 
 /**
  * `media.harvestVideo` — Tier 2b of the clip cascade: contextual footage
@@ -136,8 +142,17 @@ export interface VideoHarvestCandidate {
   download?: (destDirAbs: string) => Promise<{ path: string }>;
 }
 
-/** `candidate: null` is an honest "nothing to clip" and becomes `content_fail`; a provider that BROKE should throw instead, and becomes `tooling_error`. */
-export type VideoHarvestFind = { candidate: VideoHarvestCandidate } | { candidate: null; reason: string };
+/**
+ * `candidate: null` is an honest "nothing to clip" and becomes `content_fail`;
+ * a provider that BROKE should throw instead, and becomes `tooling_error`.
+ *
+ * `alternates` are the next-best candidates in the same ranking, tried in
+ * order when an earlier one will not download. Optional, so a provider that
+ * does not supply them behaves exactly as before.
+ */
+export type VideoHarvestFind =
+  | { candidate: VideoHarvestCandidate; alternates?: readonly VideoHarvestCandidate[] }
+  | { candidate: null; reason: string };
 
 /** The seam a backend implements. `createYtDlpHarvestProvider` is the in-repo one; tests inject fakes. */
 export interface VideoHarvestProvider {
@@ -212,9 +227,23 @@ export function createHarvestVideo(options: { provider?: VideoHarvestProvider | 
       if (found.candidate === null) {
         return contentFail(`media.harvestVideo: ${found.reason}`);
       }
-      const candidate = found.candidate;
       await fs.mkdir(absDir, { recursive: true });
 
+      /**
+       * Every candidate the search ranked, best first.
+       *
+       * A search is cheap and a download is where things actually go wrong:
+       * private, removed, geo-blocked, members-only, DRM'd, or — as on the
+       * first open-discovery run in prep — YouTube asking the worker to
+       * "confirm you're not a bot". None of those are facts about whether the
+       * query found anything clippable, and treating the best result's
+       * failure as the whole search's failure threw away the other eleven.
+       */
+      const ranked: readonly VideoHarvestCandidate[] = [found.candidate, ...(found.alternates ?? [])];
+      const refusals: string[] = [];
+
+      /** One candidate, downloaded and verified. `null` means "try the next one"; a thrown error is the tool breaking. */
+      const attempt = async (candidate: VideoHarvestCandidate): Promise<string | null> => {
       let fileName: string;
       if (candidate.download !== undefined) {
         // The provider writes the file (yt-dlp merges streams itself). The
@@ -224,55 +253,88 @@ export function createHarvestVideo(options: { provider?: VideoHarvestProvider | 
         try {
           written = path.resolve((await candidate.download(absDir)).path);
         } catch (error) {
-          return contentFail(`media.harvestVideo: the candidate at ${candidate.sourceUrl} did not download — ${(error as Error).message}`);
+          refusals.push(`${candidate.sourceUrl} did not download — ${(error as Error).message}`);
+          return null;
         }
         if (path.dirname(written) !== absDir) {
-          return toolingError(`media.harvestVideo: provider "${provider.name}" wrote outside the run cache dir (${written})`);
+          // A provider bug, not a bad candidate: every other candidate from
+          // the same provider would write to the same wrong place, so this
+          // ends the search rather than moving on.
+          throw new Error(`provider "${provider.name}" wrote outside the run cache dir (${written})`);
         }
         const extension = path.extname(written).toLowerCase();
         if (!ACCEPTED_EXTENSIONS.has(extension)) {
-          return contentFail(`media.harvestVideo: refused extension "${extension}" from ${candidate.sourceUrl} — refused, never guessed`);
+          await fs.rm(written, { force: true });
+          refusals.push(`${candidate.sourceUrl}: refused extension "${extension}" — refused, never guessed`);
+          return null;
         }
         let size: number;
         try {
           size = (await fs.stat(written)).size;
         } catch {
-          return contentFail(`media.harvestVideo: the candidate at ${candidate.sourceUrl} reported a download but no file exists at ${written}`);
+          refusals.push(`${candidate.sourceUrl} reported a download but no file exists at ${written}`);
+          return null;
         }
         if (size === 0 || size > input.maxBytes) {
           await fs.rm(written, { force: true });
-          return contentFail(`media.harvestVideo: candidate is ${size} bytes (cap ${input.maxBytes})`);
+          refusals.push(`${candidate.sourceUrl} is ${size} bytes (cap ${input.maxBytes})`);
+          return null;
         }
         fileName = path.basename(written);
       } else if (candidate.mediaUrl !== undefined) {
         const response = await fetchImpl(candidate.mediaUrl);
         if (!response.ok) {
-          return contentFail(`media.harvestVideo: the candidate at ${candidate.sourceUrl} did not download (${response.status})`);
+          refusals.push(`${candidate.sourceUrl} did not download (${response.status})`);
+          return null;
         }
         const mime = (response.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
         const extension = VIDEO_MIME_EXTENSION[mime];
         if (extension === undefined) {
-          return contentFail(`media.harvestVideo: refused content type "${mime}" — refused, never guessed`);
+          refusals.push(`${candidate.sourceUrl}: refused content type "${mime}" — refused, never guessed`);
+          return null;
         }
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (bytes.byteLength === 0 || bytes.byteLength > input.maxBytes) {
-          return contentFail(`media.harvestVideo: candidate is ${bytes.byteLength} bytes (cap ${input.maxBytes})`);
+          refusals.push(`${candidate.sourceUrl} is ${bytes.byteLength} bytes (cap ${input.maxBytes})`);
+          return null;
         }
         fileName = `harvested-clip${extension}`;
         await fs.writeFile(path.join(absDir, fileName), bytes);
       } else {
-        return toolingError(`media.harvestVideo: provider "${provider.name}" returned a candidate with neither mediaUrl nor download`);
+        // A provider bug rather than a bad candidate: it cannot be retried
+        // around, and every other candidate from the same provider would be
+        // built the same way. This one still ends the search.
+        throw new Error(`provider "${provider.name}" returned a candidate with neither mediaUrl nor download`);
+      }
+        return fileName;
+      };
+
+      for (const candidate of ranked) {
+        let fileName: string | null;
+        try {
+          fileName = await attempt(candidate);
+        } catch (error) {
+          return toolingError(`media.harvestVideo: ${(error as Error).message}`);
+        }
+        if (fileName === null) continue;
+        return success<HarvestVideoResult>({
+          path: `${relDir}/${fileName}`,
+          sourceUrl: candidate.sourceUrl,
+          ...(candidate.title !== undefined ? { title: candidate.title } : {}),
+          ...(candidate.channel !== undefined ? { channel: candidate.channel } : {}),
+          ...(candidate.durationSeconds !== undefined ? { durationSeconds: candidate.durationSeconds } : {}),
+          provider: provider.name,
+          discovery: input.sourceUrl !== undefined ? "pasted" : input.discovery,
+        });
       }
 
-      return success<HarvestVideoResult>({
-        path: `${relDir}/${fileName}`,
-        sourceUrl: candidate.sourceUrl,
-        ...(candidate.title !== undefined ? { title: candidate.title } : {}),
-        ...(candidate.channel !== undefined ? { channel: candidate.channel } : {}),
-        ...(candidate.durationSeconds !== undefined ? { durationSeconds: candidate.durationSeconds } : {}),
-        provider: provider.name,
-        discovery: input.sourceUrl !== undefined ? "pasted" : input.discovery,
-      });
+      // Everything the search ranked refused to download. Named in full: one
+      // line reading "confirm you're not a bot" four times is the signature of
+      // a blocked worker, and is a different operational problem from four
+      // different reasons.
+      return contentFail(
+        `media.harvestVideo: none of the ${ranked.length} candidate(s) could be downloaded — ${refusals.join("; ")}`,
+      );
     },
   });
 }

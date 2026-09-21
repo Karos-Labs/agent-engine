@@ -395,3 +395,126 @@ describe("createYtDlpHarvestProvider — open discovery (RFC-25)", () => {
     ).rejects.toThrow(/open search exited 1/);
   });
 });
+
+
+/**
+ * A CANDIDATE THAT WILL NOT DOWNLOAD IS NOT AN EMPTY SEARCH.
+ *
+ * Prep run `pubsub-21908845348121079` (2026-09-21) searched openly, found a
+ * podcast, and reported "nothing to clip" because YouTube answered the
+ * download with *"Sign in to confirm you're not a bot"*. Eleven other usable
+ * results from the same search were discarded unexamined.
+ *
+ * `private`, `removed`, geo-blocked, members-only and the bot check all land
+ * in the same branch, and none of them says anything about whether the query
+ * found something worth clipping.
+ */
+describe("media.harvestVideo — a candidate that will not download", () => {
+  const OPEN = { query: "ai agents podcast", allowedSources: [], discovery: "open" as const, minDurationSeconds: 90, maxDurationSeconds: 10_800 };
+
+  /**
+   * A runner whose search returns `entries`, and whose DOWNLOAD fails for any
+   * URL in `blocked` and succeeds for anything else.
+   */
+  function pickyRunner(entries: YtDlpFlatEntry[], blocked: readonly string[]) {
+    const downloaded: string[] = [];
+    const runner: ProcessRunnerLike = async (_command, args) => {
+      const first = args[0] ?? "";
+      if (first.startsWith("ytsearch")) return { stdout: searchJson(entries), stderr: "", exitCode: 0 };
+      downloaded.push(first);
+      if (blocked.some((b) => first.includes(b))) {
+        return { stdout: "", stderr: `ERROR: [youtube] ${first}: Sign in to confirm you’re not a bot.`, exitCode: 1 };
+      }
+      const template = args[args.indexOf("-o") + 1]!;
+      await fs.writeFile(template.replace("%(ext)s", "mp4"), Buffer.from("fake-mp4-bytes"));
+      return { stdout: "", stderr: "", exitCode: 0 };
+    };
+    return { runner, downloaded };
+  }
+
+  const THREE = [
+    entry({ id: "best", title: "ai agents podcast deep dive", uploader: "Show One", channel: "Show One", duration: 3000, upload_date: "20260901" }),
+    entry({ id: "second", title: "ai agents podcast", uploader: "Show Two", channel: "Show Two", duration: 2400, upload_date: "20260801" }),
+    entry({ id: "third", title: "agents", uploader: "Show Three", channel: "Show Three", duration: 2000, upload_date: "20260701" }),
+  ];
+
+  it("moves to the next-best candidate when the best one is blocked", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "harvest-alt-"));
+    const { runner, downloaded } = pickyRunner(THREE, ["best"]);
+    const tool = createHarvestVideo({ provider: createYtDlpHarvestProvider({ runner }) });
+    const outcome = await tool.execute({ ...OPEN, repoRoot: dir, runId: "run-1", maxBytes: 5_000_000 } as never, CTX);
+
+    expect(outcome.status).toBe("success");
+    // It tried the ranked winner FIRST — the retry is a fallback, not a
+    // reshuffle of which video is most on topic.
+    expect(downloaded[0]).toContain("best");
+    expect((outcome as { result: { sourceUrl: string } }).result.sourceUrl).toContain("second");
+  });
+
+  it("does not retry at all when the first candidate downloads", async () => {
+    // The cost guard: one extra yt-dlp invocation per candidate.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "harvest-alt-"));
+    const { runner, downloaded } = pickyRunner(THREE, []);
+    const tool = createHarvestVideo({ provider: createYtDlpHarvestProvider({ runner }) });
+    const outcome = await tool.execute({ ...OPEN, repoRoot: dir, runId: "run-2", maxBytes: 5_000_000 } as never, CTX);
+
+    expect(outcome.status).toBe("success");
+    expect(downloaded).toHaveLength(1);
+  });
+
+  it("gives up after a bounded number of attempts, naming every refusal", async () => {
+    // A blocked worker is IP-wide, so all of them fail — and the cascade's
+    // next tier is the real answer. What matters is that the reason says so
+    // out loud: four lines of "confirm you're not a bot" is a different
+    // operational problem from four different reasons, and a reviewer or an
+    // operator can only tell them apart if both are printed.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "harvest-alt-"));
+    const { runner, downloaded } = pickyRunner(THREE, ["best", "second", "third"]);
+    const tool = createHarvestVideo({ provider: createYtDlpHarvestProvider({ runner }) });
+    const outcome = await tool.execute({ ...OPEN, repoRoot: dir, runId: "run-3", maxBytes: 5_000_000 } as never, CTX);
+
+    expect(outcome.status).toBe("content_fail");
+    expect(downloaded).toHaveLength(3);
+    const reason = (outcome as { reason: string }).reason;
+    expect(reason).toContain("none of the 3 candidate(s)");
+    expect(reason).toContain("not a bot");
+    // Still a content_fail, never a tooling error: the SEARCH worked, and the
+    // clip cascade has to read this as "this tier did not serve" so it moves
+    // on to the next one rather than degrading the run.
+  });
+
+  it("caps the attempts rather than walking a whole result page", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "harvest-alt-"));
+    const many = Array.from({ length: 12 }, (_, i) =>
+      entry({ id: `v${i}`, title: `ai agents podcast ${i}`, uploader: `Show ${i}`, channel: `Show ${i}`, duration: 2000 + i }),
+    );
+    const { runner, downloaded } = pickyRunner(many, many.map((_, i) => `v${i}`));
+    const tool = createHarvestVideo({ provider: createYtDlpHarvestProvider({ runner }) });
+    const outcome = await tool.execute({ ...OPEN, repoRoot: dir, runId: "run-4", maxBytes: 5_000_000 } as never, CTX);
+
+    expect(outcome.status).toBe("content_fail");
+    expect(downloaded).toHaveLength(4);
+  });
+
+  it("carries the retry to the allowlist posture too", async () => {
+    // Same failure, same answer. A client's own show having one unavailable
+    // episode is if anything MORE likely than an open search hitting one.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "harvest-alt-"));
+    const { runner, downloaded } = pickyRunner(
+      [
+        entry({ id: "best", title: "ai agents", uploader: "Lenny's Podcast", channel: "Lenny's Podcast", duration: 3000, upload_date: "20260901" }),
+        entry({ id: "second", title: "ai", uploader: "Lenny's Podcast", channel: "Lenny's Podcast", duration: 2400, upload_date: "20260801" }),
+      ],
+      ["best"],
+    );
+    const tool = createHarvestVideo({ provider: createYtDlpHarvestProvider({ runner }) });
+    const outcome = await tool.execute(
+      { query: "ai agents", allowedSources: ["Lenny's Podcast"], discovery: "allowlist", minDurationSeconds: 90, maxDurationSeconds: 10_800, repoRoot: dir, runId: "run-5", maxBytes: 5_000_000 } as never,
+      CTX,
+    );
+
+    expect(outcome.status).toBe("success");
+    expect(downloaded).toHaveLength(2);
+    expect((outcome as { result: { sourceUrl: string } }).result.sourceUrl).toContain("second");
+  });
+});

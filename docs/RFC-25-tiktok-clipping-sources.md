@@ -182,6 +182,18 @@ pretending to be a gate.
    runs; under open discovery it runs on every clipping run with no attached footage.
    The cascade already treats a provider throw as a tooling failure and moves on, so
    this degrades rather than breaks — but it will be noisy.
+
+   > **Happened on the first open run, 2026-09-21.** `pubsub-21908845348121079`: the search
+   > worked, returned a real podcast, and the DOWNLOAD came back *"Sign in to confirm you're
+   > not a bot"*. The tier reported "nothing to clip" and threw away the other eleven usable
+   > results, because a find carried one candidate and its failure was the search's failure.
+   >
+   > `media.harvestVideo` 1.4.0 takes ALTERNATES: up to four attempts down the same ranking,
+   > covering private, removed, geo-blocked and members-only as well. A bot check is IP-wide,
+   > so when it is *that*, all four fail and the cascade's next tier is still the real answer —
+   > the refusals are all named in the reason so an operator can tell one blocked worker from
+   > four unlucky videos. `YT_DLP_COOKIES_FILE` is the provider's existing hook and is not set
+   > in prep; setting it is the actual fix for a blocked worker.
 3. **A clip of a competitor's podcast, published under a client's account.** The fit
    gate's `concerns[]` is where this is caught, and the human gate is where it is
    stopped.
@@ -218,6 +230,34 @@ So the mode yields, **loudly**. The run makes an original short and says so in
 different product was delivered) and on the gate payload as `modeSubstitution`. The
 reviewer decides whether that was the right call for this topic; what they are never shown
 is an `original-short` deliverable with no sign that a clip was what was asked for.
+
+
+### What widening the cascade broke, and the lesson
+
+Making the cascade able to return `sourceTier: "stock"` for a CLIPPING run invalidated an
+invariant nothing had written down: before it, `mode: "commentary"` plus the hold guaranteed
+a clipping run never saw a stock intake. So `format` was pinned straight from the pressed
+product —
+
+```ts
+formatForVariant(variant) ?? (intake.sourceTier === "stock" ? "original-short" : "commentary-clip")
+```
+
+— and for `variant: "clipping"` the left side always won. Prep run
+`pubsub-21908845348121079` reached `08-render` and failed with
+`video.brandFrame: videoPath: undefined`: a stock intake has no source video at all.
+
+`format` now reads the source first. The variant pin still decides everything it should —
+a clipping card answers with a clip whenever there is anything to clip — but a `stock`
+intake is a physical fact, not a preference.
+
+Two things this should have been caught by and was not: every test in
+`agents/tiktok-agent/__tests__/workflow.test.ts` ran `productId: "tiktok-agent"`, so
+`variant` was always `"auto"` and the named variants' pin was never executed by any test;
+and the same reasoning that justified the dry-cascade hold also justified a second hold on
+footage with no speech in it (`variant === "clipping"`, `02-transcribe`), which PR #170 left
+in place. Both are fixed: `run()` takes a variant, and silent footage delivers an original
+short announced the same way.
 
 One hold remains at the end of the cascade, and it is the carve-out: a deployment with no
 `video.findStockClip` or no repoRoot cannot make anything at all, which is a fact about

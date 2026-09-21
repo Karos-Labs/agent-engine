@@ -332,13 +332,33 @@ function stubTools(opts: StubOptions = {}): Harness {
   return { tools: tools as unknown as AgentToolRegistry, calls, qaArgs, harvestArgs, deliverables };
 }
 
-async function run(harness: Harness, runId: string, input: Record<string, unknown> = {}, candidates: unknown[] = [GOOD_MOMENT, GOOD_COMMENTARY], repoRoot?: string) {
+/**
+ * `variant` is the D08 product split: `clipping` and `content-design` are
+ * separate cards that pin what the run produces, and `auto` is the legacy
+ * `tiktok-agent` that decides from whichever sourcing tier answers.
+ *
+ * It was not a parameter here until 2026-09-20, so every test in this file
+ * ran `auto` — and `formatForVariant("auto")` returns undefined, which sent
+ * all of them down the `??` fallback that reads `sourceTier`. The pin that
+ * the two NAMED variants apply was therefore never executed by any test, and
+ * a clipping run whose cascade landed on stock reached `08-render` in prep
+ * with `videoPath: undefined`.
+ */
+async function run(
+  harness: Harness,
+  runId: string,
+  input: Record<string, unknown> = {},
+  candidates: unknown[] = [GOOD_MOMENT, GOOD_COMMENTARY],
+  repoRoot?: string,
+  variant?: "clipping" | "content-design" | "auto",
+) {
   const workflow = createTikTokAgentWorkflow({
     tools: harness.tools,
     promptStore: new FilePromptStore(PROMPTS_ROOT),
     router: smartFakeRouter(candidates),
     autoApprove: true,
     ...(repoRoot !== undefined ? { repoRoot } : {}),
+    ...(variant !== undefined ? { variant } : {}),
   });
   return new WorkflowEngine(new MemoryDurableStepStore()).run(workflow, {
     ...PARAMS,
@@ -1572,5 +1592,65 @@ describe("a clipping run that finds nothing", () => {
     expect(result.reason).toContain("no source footage from any tier");
     // And the reservation is handed back, so the topic is not burned.
     expect(h.calls).toContain("topics.release");
+  }, 20_000);
+});
+
+
+/**
+ * The CLIPPING VARIANT's own paths (D08).
+ *
+ * Every other test in this file runs `variant: "auto"`, because until
+ * 2026-09-20 `run()` could not pass one. `formatForVariant("auto")` returns
+ * undefined, so all of them exercised the `??` fallback and none of them ever
+ * executed the pin the two named variants apply — which is how prep run
+ * `pubsub-21908845348121079` got to `08-render` and failed with
+ * `videoPath: undefined`.
+ */
+describe("the clipping variant", () => {
+  const REPO_ROOT = os.tmpdir();
+  const POOLED_COMMENTARY = { tiktokClips: { mode: "commentary", sourcePool: ["The Show"], guestWatchlist: [], narrowing: [] } };
+
+  it("still produces a commentary clip when there is something to clip", async () => {
+    // The pin doing its job: a clipping card answers with a clip, whatever
+    // the client's own `mode` says.
+    const h = stubTools({ config: { tiktokClips: { mode: "original", sourcePool: ["The Show"], guestWatchlist: [], narrowing: [] } } });
+    const result = await run(h, "run-tt-variant-clip", {}, [GOOD_MOMENT, GOOD_COMMENTARY], undefined, "clipping");
+
+    expect(result.status).toBe("completed");
+    expect(h.deliverables[0]).toMatchObject({ format: "commentary-clip" });
+    expect(h.calls).toContain("video.cutClip");
+  }, 20_000);
+
+  it("makes an original short — not a clip with no file — when the cascade lands on stock", async () => {
+    // THE PREP FAILURE. A `stock` intake has no source video at all: its
+    // plates are found per beat once a script exists. Pinning the format to
+    // the pressed button here does not produce a worse clip, it calls
+    // `video.cutClip`/`video.brandFrame` with an undefined path.
+    const h = stubTools({ config: POOLED_COMMENTARY, harvestServes: false, stockServes: true });
+    const result = await run(h, "run-tt-variant-stock", { sourcePath: undefined }, [GOOD_SCRIPT, GOOD_COMMENTARY], REPO_ROOT, "clipping");
+
+    expect(result.status).toBe("completed");
+    expect(h.deliverables[0]).toMatchObject({ sourceTier: "stock", format: "original-short" });
+    // The composer ran, and the clip cutter never did: there was nothing to cut.
+    expect(h.calls).toContain("video.composeSequence");
+    expect(h.calls).not.toContain("video.cutClip");
+    // …and the reviewer is told they are holding a different product.
+    const repairs = h.deliverables[0]!["contentRepairs"] as Array<{ check: string; detail: string }>;
+    expect(repairs.find((r) => r.check === "clip-mode")?.detail).toContain("commentary");
+  }, 20_000);
+
+  it("writes over silent footage instead of holding on it", async () => {
+    // REVERSED 2026-09-20 with the same reasoning as the dry cascade. This
+    // threw `WorkflowHeld` ("the clipping agent does not write scripts"),
+    // which left the agent answering two identical situations differently:
+    // no footage → delivered, footage with no words → held.
+    const h = stubTools({ transcriptWords: [], stockServes: true });
+    const result = await run(h, "run-tt-variant-silent", {}, [GOOD_SCRIPT, GOOD_COMMENTARY], REPO_ROOT, "clipping");
+
+    expect(result.status).toBe("completed");
+    expect(h.deliverables[0]).toMatchObject({ format: "original-short" });
+    const repairs = h.deliverables[0]!["contentRepairs"] as Array<{ check: string; detail: string }>;
+    const swap = repairs.find((r) => r.check === "clip-mode");
+    expect(swap?.detail).toContain("no speech");
   }, 20_000);
 });
