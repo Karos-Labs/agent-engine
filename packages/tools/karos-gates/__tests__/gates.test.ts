@@ -926,10 +926,12 @@ describe("every gate registers with the expected toolVersion", () => {
     }
   });
 
-  it("pins gate.numbersSourced at the currency-code-aware version", async () => {
-    // Named explicitly so reverting the range fix without reverting the version
-    // — or the reverse — is caught here rather than in telemetry months later.
-    expect(gates["gate.numbersSourced"]!.version).toBe("1.6.0");
+  it("pins gate.numbersSourced at the shekel-aware version", async () => {
+    // Named explicitly so reverting a fix without reverting the version — or
+    // the reverse — is caught here rather than in telemetry months later.
+    // 1.7.0 is the one that knows ₪ at all; before it, a shekel figure matched
+    // no claim pattern and was never checked.
+    expect(gates["gate.numbersSourced"]!.version).toBe("1.7.0");
   });
 });
 

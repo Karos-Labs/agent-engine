@@ -113,3 +113,63 @@ describe("stripRelativeDays", () => {
     }
   });
 });
+
+describe("Hebrew relative-day phrases", () => {
+  /**
+   * A post written for an Israeli client decays at exactly the same rate as an
+   * English one, and this list only knew English — so "אתמול" read as clean
+   * while "yesterday" was caught. Clients writing natively in Hebrew are a
+   * third of the roster.
+   */
+  it("catches the Hebrew word for yesterday", () => {
+    expect(relativeDayIssues("החברה גייסה סבב חדש אתמול.")).toEqual(["אתמול"]);
+  });
+
+  it("catches tomorrow, last night, this morning, this evening and the day before yesterday", () => {
+    for (const [text, word] of [
+      ["ההשקה מחר בבוקר.", "מחר"],
+      ["ההודעה פורסמה אמש.", "אמש"],
+      ["הבוקר יצאה הגרסה החדשה.", "הבוקר"],
+      ["נדבר על זה הערב.", "הערב"],
+      ["זה קרה שלשום.", "שלשום"],
+    ] as const) {
+      expect(relativeDayIssues(text), text).toEqual([word]);
+    }
+  });
+
+  it("matches a stem carrying a Hebrew prefix, reporting the whole word", () => {
+    // "מאתמול" is "since yesterday" and "ומחר" is "and tomorrow" — the same
+    // decay. Hebrew has no ASCII word boundary, so the guard is that no Hebrew
+    // letter sits on either side of the match, plus the closed set of
+    // single-letter prefixes on the front.
+    expect(relativeDayIssues("מאתמול אנחנו רואים עלייה.")).toEqual(["מאתמול"]);
+    expect(relativeDayIssues("היום ומחר יש לנו אירועים.")).toEqual(["ומחר"]);
+  });
+
+  it("does not fire inside a longer Hebrew word that merely contains a stem", () => {
+    // "מחריף" contains "מחר". The lookahead is what stops it, and a rule that
+    // fires on good drafts is a rule somebody turns off.
+    expect(relativeDayIssues("הדוח מחריף את המגמה.")).toEqual([]);
+  });
+
+  it("leaves bare 'today' alone, exactly as the English list does", () => {
+    // "היום" is overwhelmingly "the day" in ordinary prose, and bare "today"
+    // is deliberately not on the English list either. A floor that deleted it
+    // would edit sentences that never carried a date.
+    expect(relativeDayIssues("היום שבו השקנו את המוצר היה ארוך.")).toEqual([]);
+  });
+
+  it("strips a Hebrew phrase and tidies the spacing it leaves behind", () => {
+    const stripped = stripRelativeDays("החברה גייסה סבב חדש אתמול.");
+    expect(stripped).not.toContain("אתמול");
+    // The sentence is still true, just less specific — which is the whole
+    // argument for a mechanical floor here.
+    expect(stripped).toContain("החברה גייסה סבב חדש");
+  });
+
+  it("does not disturb a Hebrew post that carries no relative day", () => {
+    const clean = "השקנו מוצר חדש והקהילה הגיבה יפה.";
+    expect(relativeDayIssues(clean)).toEqual([]);
+    expect(stripRelativeDays(clean)).toBe(clean);
+  });
+});
