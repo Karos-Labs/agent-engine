@@ -225,7 +225,7 @@ import {
 } from "./interest-floor.js";
 import { boundedObjectFor, composeBoundedObjects, type BoundedObjectDecision } from "./bounded-object.js";
 import { checkSlideWordBudget, formatWordBudgetFindings, MAX_WORDS_PER_SLIDE } from "./slide-word-budget.js";
-import { ceilingFor, enforceImageryBand, imageryShortfallsFor, MIN_PICTURE_SLIDES, type ImageryDemotion, type ImageryPromotion, type ImageryShortfall } from "./imagery-floor.js";
+import { ceilingFor, enforceImageryBand, imageryShortfallsFor, MIN_PICTURE_SLIDES, placementMixShortfall, type ImageryDemotion, type ImageryPromotion, type ImageryShortfall } from "./imagery-floor.js";
 // Phase 5.5, spec §2 A1b — the split every optional-spend gate in the generate
 // ladder consults, so the image floor is enforced where it actually binds.
 import { guaranteedGapCount, partitionGaps } from "./image-gap-partition.js";
@@ -9383,7 +9383,17 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // remains the unconditional loop-breaker above it, and
         // `maxSelfCheckAttempts` bounds how many times this point is reached.
         const guaranteeLeft = Math.min(guaranteedGapCount(generatedLanded()), framesAllowance());
-        const want = Math.min(MIN_PICTURE_SLIDES - withPicture, guaranteeLeft);
+        // ── THE FLOOR IS A COUNT; THIS ADDS THE ONE THING IT CANNOT SEE. ──
+        //
+        // `MIN_PICTURE_SLIDES - withPicture` is 0 the moment the post has
+        // enough pictures, whatever they look like — so a carousel whose every
+        // picture is a full-bleed background asks for nothing, and
+        // `planImageBackfill`'s own "a BOUNDED plate before a full-bleed one"
+        // preference never runs. karoslabs' 2026-09-21 post was exactly that:
+        // three pictures, all of them the plate, three picture-capable
+        // interior slides left empty. See `placementMixShortfall`.
+        const mixShortfall = placementMixShortfall(copy, withPictureNs);
+        const want = Math.min(MIN_PICTURE_SLIDES - withPicture + mixShortfall, guaranteeLeft);
 
         // ── THE FLOOR USED TO SEE ONLY THE SLIDES THAT ASKED. ──
         //

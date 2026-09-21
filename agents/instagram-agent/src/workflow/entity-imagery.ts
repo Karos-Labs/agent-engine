@@ -382,6 +382,39 @@ export function planEntitySourcing(input: EntitySourcingInput): EntitySourceStep
     });
   }
 
+  // ── A BRAND'S MARK, BEFORE A STRANGER'S PHOTO OF ITS PRODUCT. ──
+  //
+  // prep `pubsub-21926643455584277` (karoslabs, 2026-09-21) ran this ladder
+  // for Coca-Cola and returned, in order: "Share a Coke with ... James -
+  // Pershore Road, Stirchley", "one of the Share a Coke cans I bought",
+  // "coke", "Coke". Four photographs of a can, from Openverse and Wikimedia,
+  // every one honestly matching the query — which was the bare name.
+  //
+  // The owner: *"אם מדברים על קוקה קולה זה קלאסי לשים את הלוגו שלהם"*, and he
+  // is describing how the trade actually works. A post about a company shows
+  // that company's MARK; a stranger's snapshot of its packaging is what you
+  // reach for when you cannot get the mark.
+  //
+  // The mark was reachable the whole time. Wikimedia carries brand wordmarks,
+  // frequently as `PD-textlogo` — a lettering-only mark is below the
+  // threshold of originality for copyright — and this module's own rights
+  // policy says the rest: showing a logo as the SUBJECT OF COMMENTARY is
+  // nominative use and needs no consent record. Nothing forbade it. Nothing
+  // asked for it.
+  //
+  // Only for the kinds that HAVE a mark. A person does not, an event rarely
+  // does, and a query for "Andrej Karpathy logo" would return noise ranked
+  // above the press photograph the next rung finds.
+  if (entity.kind === "company" || entity.kind === "product" || entity.kind === "work") {
+    push({
+      tier: "commons",
+      query: `${entity.name} logo`,
+      route: "entity",
+      requireTerm: entity.name,
+      why: `${entity.name}'s own mark — what a reader recognises the company BY, and nominative use as the subject of commentary. Ahead of the bare-name search, which returns photographs of products rather than the brand`,
+    });
+  }
+
   push({
     tier: "commons",
     query: entity.name,

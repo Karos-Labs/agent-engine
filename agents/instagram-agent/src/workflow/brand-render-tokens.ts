@@ -275,6 +275,49 @@ function kitNeutrals(brand: Record<string, unknown>): { neutralDark: string; neu
   return { neutralDark: darkest, neutralLight: lightest };
 }
 
+/**
+ * The ground/fg pair the brand record STATES, through `dominantColors[].role`.
+ *
+ * `undefined` when the roles say nothing this kit can act on — no entry naming
+ * a background or a foreground, or one whose hex is neither of the two
+ * neutrals already resolved. Both are ordinary rather than exceptional: many
+ * brand records carry no roles at all, and a background named in some third
+ * colour is a statement that cannot be honoured without inventing the ink to
+ * go on it, which is the guessing this whole ladder exists to avoid.
+ *
+ * Only the LEADING term of the role is read. "Background, text contrast"
+ * opens with the role the colour has; what follows the comma is what it
+ * contrasts against, and a substring match over the whole string would make
+ * that one entry claim to be both.
+ */
+function groundFromStatedRoles(
+  brand: Record<string, unknown>,
+  neutralDark: string,
+  neutralLight: string,
+): { ground: string; fg: string } | undefined {
+  const dominant = brand["dominantColors"];
+  if (!Array.isArray(dominant)) return undefined;
+  for (const entry of dominant) {
+    const row = entry as Record<string, unknown>;
+    const hex = asHex(row["hex"]);
+    const lead = (asString(row["role"]) ?? "").split(",")[0]?.trim().toLowerCase() ?? "";
+    if (hex === undefined || lead.length === 0) continue;
+    // "foreground" ends in "ground", so the background test excludes it by
+    // name or every foreground entry would claim the page.
+    const saysBackground = /\bbackground\b|\bcanvas\b|\bpage\b/.test(lead) && !/\bforeground\b/.test(lead);
+    const saysForeground = /\bforeground\b|\btext\b|\bink\b|\btype\b/.test(lead);
+    if (saysBackground) {
+      if (hex === neutralDark) return { ground: neutralDark, fg: neutralLight };
+      if (hex === neutralLight) return { ground: neutralLight, fg: neutralDark };
+    }
+    if (saysForeground) {
+      if (hex === neutralDark) return { ground: neutralLight, fg: neutralDark };
+      if (hex === neutralLight) return { ground: neutralDark, fg: neutralLight };
+    }
+  }
+  return undefined;
+}
+
 function deriveGroundAndFg(brand: Record<string, unknown>): { ground: string; fg: string } | undefined {
   const neutrals = kitNeutrals(brand);
   if (neutrals === undefined) return undefined;
@@ -282,6 +325,25 @@ function deriveGroundAndFg(brand: Record<string, unknown>): { ground: string; fg
 
   const darkGround = { ground: neutralDark, fg: neutralLight };
   const lightGround = { ground: neutralLight, fg: neutralDark };
+
+  // ── (A0) THE BRAND RECORD SAYS WHICH ONE IS THE BACKGROUND. ──
+  //
+  // Read before any heuristic, because it is not one. `dominantColors[].role`
+  // is text a branding pass writes, and karoslabs' reads:
+  //
+  //     #ff6b2c  "Primary accent, CTA buttons"
+  //     #1a1a1a  "Background, text contrast"
+  //     #f2f1ec  "Foreground, card surfaces"
+  //
+  // The client's own document names `#1a1a1a` the background. Every karoslabs
+  // post has shipped on `#f2f1ec` instead, because this function skipped the
+  // roles and fell to the proximity rule below — which measured the accent
+  // 234.5 from the light neutral and 243.6 from the dark one and took light by
+  // a 3.8% margin. A coin flip, landed the wrong way, with the answer sitting
+  // unread two fields over. The owner, 2026-09-21: *"בדרך כלל הרקע אמור להיות
+  // בצבע הקלאסי של KAROS"*.
+  const stated = groundFromStatedRoles(brand, neutralDark, neutralLight);
+  if (stated !== undefined) return stated;
 
   const dominant = brand["dominantColors"];
   const rank1 = Array.isArray(dominant)

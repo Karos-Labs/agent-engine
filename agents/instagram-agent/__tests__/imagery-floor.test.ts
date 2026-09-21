@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ceilingFor, enforceImageryBand, MAX_PICTURE_SLIDES, MIN_PICTURE_SLIDES, MIN_QUIET_SLIDES } from "../src/workflow/imagery-floor.js";
+import { ceilingFor, enforceImageryBand, MAX_PICTURE_SLIDES, MIN_PICTURE_SLIDES, MIN_QUIET_SLIDES, placementMixShortfall } from "../src/workflow/imagery-floor.js";
 import { FULL_BLEED_IMAGE_LAYOUTS, HERO_IMAGE_LAYOUTS } from "../src/workflow/slides-data.js";
 import type { InstagramCopyOutput, InstagramSlideLayout } from "../src/workflow/types.js";
 import { goodCopyOutput } from "./test-helpers.js";
@@ -105,6 +105,49 @@ describe("where the pictures land, run to run (2026-09-20)", () => {
 
   it("with no seed, keeps the old slide order exactly — a fixture must not move because a run would have", () => {
     expect(placed(undefined)).toEqual([2, 3]);
+  });
+});
+
+describe("placementMixShortfall: a post whose every picture is a background", () => {
+  /**
+   * prep `pubsub-21926643455584277` (karoslabs, 2026-09-21) shipped three
+   * pictures — slides 1, 2 and 7, a `cover` and two `photo` plates. All three
+   * are full-bleed, so all three pictures WERE the plate and
+   * `figurePlacementFor` returned `"band"` for every one. Three picture-capable
+   * interior plates sat empty. The owner: *"יצא פה שכל התמונות הן רקע ...
+   * לפעמים זה טוב שזה באמצע למשל או בצד באמצע"*.
+   *
+   * Nothing had malfunctioned, which is why it lasted. The floor asks for
+   * three pictures, the post had three, `want` came out 0, and
+   * `planImageBackfill`'s own "a BOUNDED plate before a full-bleed one"
+   * preference never ran. A rule that fires only when a post is SHORT of
+   * pictures cannot shape one that has enough.
+   */
+  const karosShape = () => carousel("cover", "photo", "stat_callout", "list_takeaway", "quote_card", "headline_focus", "photo", "closer");
+
+  it("asks for one bounded picture when every picture the post holds is full-bleed", () => {
+    expect(placementMixShortfall(karosShape(), new Set([1, 2, 7]))).toBe(1);
+  });
+
+  it("asks for nothing once something bounded has landed", () => {
+    expect(placementMixShortfall(karosShape(), new Set([1, 2, 3]))).toBe(0);
+  });
+
+  it("stays out of a post with no pictures at all — that is the floor's business", () => {
+    expect(placementMixShortfall(karosShape(), new Set())).toBe(0);
+  });
+
+  it("has no opinion when the post has nowhere bounded to put one", () => {
+    expect(placementMixShortfall(carousel("cover", "photo", "photo", "photo", "closer", "closer"), new Set([1, 2]))).toBe(0);
+  });
+
+  it("stops at the ceiling rather than pushing a post over it for the sake of variety", () => {
+    expect(placementMixShortfall(karosShape(), new Set([1, 2, 3, 4, 7]))).toBe(0);
+  });
+
+  it("asks for ONE, never a quota — the defect is monotony and one inset breaks it", () => {
+    // Two full-bleed pictures and four empty bounded seats still asks for one.
+    expect(placementMixShortfall(karosShape(), new Set([1, 2]))).toBe(1);
   });
 });
 
