@@ -179,7 +179,14 @@ export const DEFAULT_CLIP_CONFIG: TikTokClipConfig = TikTokClipConfigSchema.pars
  * still where none matches); `generated` is kept in the type only so a
  * deliverable persisted before 2026-09-09 still reads, nothing produces it.
  */
-export type ClipSourceTier = "user-asset" | "owned-footage" | "web-harvest" | "stock" | "generated";
+/**
+ * Every tier, as a value — so a test can iterate them and a NEW tier cannot
+ * quietly miss a row in `clipLicenseConfidence`'s grid. The type is derived
+ * from this rather than declared beside it, because two lists is how they
+ * drift.
+ */
+export const CLIP_SOURCE_TIERS = ["user-asset", "owned-footage", "web-harvest", "podcast-feed", "stock", "generated"] as const;
+export type ClipSourceTier = (typeof CLIP_SOURCE_TIERS)[number];
 
 /**
  * How much this run knows about the right to publish the footage it clipped.
@@ -222,7 +229,10 @@ export function clipLicenseConfidence(
   if (tier === "stock" || tier === "generated") return "stock-licensed";
   if (tier === "owned-footage") return "client-provided";
   if (tier === "user-asset") return discovery === "pasted" ? "unknown" : "client-provided";
-  // web-harvest: cleared only when the client's own source list put it there.
+  // web-harvest and podcast-feed: somebody else's recording either way, and
+  // cleared only when the client's own source list put it there. A public RSS
+  // feed is a distribution channel, not a licence to republish, so an open
+  // directory search is `unknown` exactly as an open web search is.
   return discovery === "allowlist" ? "client-cleared" : "unknown";
 }
 

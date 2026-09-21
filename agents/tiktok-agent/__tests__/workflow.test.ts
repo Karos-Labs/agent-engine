@@ -18,6 +18,7 @@ import {
 import {
   BRAND_LOGO_CONTRAST_FLOOR,
   FindStockClipInputSchema,
+  HarvestPodcastInputSchema,
   HarvestVideoInputSchema,
   VisualQaGateInputSchema,
   contrastRatio,
@@ -143,6 +144,13 @@ interface StubOptions {
    * yields nothing and an open search of the same query does.
    */
   harvestServes?: boolean | "resolve-fails" | "allowlist-dry";
+  /**
+   * Register `media.harvestPodcast`. `true` serves a VIDEO episode from the
+   * show's own feed — which is what the clipping agent actually wants, and
+   * what a run gets when the show publishes on camera. `false` registers it
+   * answering content_fail, the audio-only show.
+   */
+  podcastServes?: boolean;
   /** Register `video.findStockClip` answering success (Tier 3, the original short over stock footage, serves). `false` registers it answering not_available. */
   stockServes?: boolean;
   /** 1-based beat the stock library refuses to serve, whatever query it is asked — the "one dark beat" case, as opposed to a library that is down entirely. */
@@ -167,6 +175,7 @@ interface Harness {
   qaArgs: Array<Record<string, unknown>>;
   /** Every `media.harvestVideo` payload, for asserting which search posture a run took. */
   harvestArgs: Array<Record<string, unknown>>;
+  podcastArgs: Array<Record<string, unknown>>;
   /** Every `ledger.writeDeliverable` payload, for asserting what shipped. */
   deliverables: Array<Record<string, unknown>>;
 }
@@ -176,6 +185,7 @@ function stubTools(opts: StubOptions = {}): Harness {
   const deliverables: Array<Record<string, unknown>> = [];
   const qaArgs: Array<Record<string, unknown>> = [];
   const harvestArgs: Array<Record<string, unknown>> = [];
+  const podcastArgs: Array<Record<string, unknown>> = [];
   const ok = (result: unknown) => ({ status: "success" as const, result });
   /**
    * A gate's verdict on the text it was actually handed.
@@ -297,6 +307,26 @@ function stubTools(opts: StubOptions = {}): Harness {
       HarvestVideoInputSchema,
     );
   }
+  if (opts.podcastServes !== undefined) {
+    tools["media.harvestPodcast"] = tool(
+      "media.harvestPodcast",
+      (args) => {
+        podcastArgs.push(args as unknown as Record<string, unknown>);
+        return opts.podcastServes
+          ? ok({
+              path: ".media-cache/run/podcast-episode.mp4",
+              sourceUrl: "https://show.example/ep12",
+              title: "Ep 12 — why CFOs cut AI budgets",
+              showTitle: "Margins",
+              provider: "itunes-rss",
+              discovery: (args as { discovery: string }).discovery,
+              media: "video",
+            })
+          : { status: "content_fail" as const, reason: "no episode is published on camera (7 audio-only episode(s) found)" };
+      },
+      HarvestPodcastInputSchema,
+    );
+  }
   if (opts.stockServes !== undefined) {
     let stockCalls = 0;
     tools["video.findStockClip"] = tool(
@@ -350,7 +380,7 @@ function stubTools(opts: StubOptions = {}): Harness {
       UploadDeliverableInputSchema,
     );
   }
-  return { tools: tools as unknown as AgentToolRegistry, calls, qaArgs, harvestArgs, deliverables };
+  return { tools: tools as unknown as AgentToolRegistry, calls, qaArgs, harvestArgs, podcastArgs, deliverables };
 }
 
 /**
@@ -1808,5 +1838,77 @@ describe("widening the topic rather than holding", () => {
     const repairs = (h.deliverables[0]!["contentRepairs"] as Array<{ check: string }> | undefined) ?? [];
     expect(repairs.map((r) => r.check)).not.toContain("topic-source");
     expect(h.deliverables[0]).toMatchObject({ topicSource: "reserved" });
+  }, 20_000);
+});
+
+/**
+ * ── THE PODCAST, ON SCREEN ──
+ *
+ * The owner's priority, 2026-09-21: a clip of a podcast where you can see the
+ * podcast. The YouTube harvest can give that and is refused by YouTube's bot
+ * check; a show's own RSS feed cannot be refused, because serving the episode
+ * to whoever asks is what a feed is for — and a large share of shows publish
+ * a VIDEO enclosure beside the audio one.
+ *
+ * So `media.harvestPodcast` runs with `requireVideo`, and what comes back is
+ * an ordinary video source. No new composition is needed for it: the
+ * commentary path transcribes it, picks the moment, cuts it and frames it
+ * with `blur-fill` — which is already there because it is "the way every
+ * podcast clip on the platform is cut. A crop would take the faces."
+ */
+describe("a podcast from the show's own feed", () => {
+  const REPO_ROOT = os.tmpdir();
+
+  it("clips the episode as a commentary clip, crediting the show", async () => {
+    const h = stubTools({ config: {}, podcastServes: true, harvestServes: true, stockServes: true });
+    const result = await run(h, "run-tt-podcast-video", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], REPO_ROOT, "clipping");
+
+    expect(result.status).toBe("completed");
+    expect(h.deliverables[0]).toMatchObject({ sourceTier: "podcast-feed", format: "commentary-clip" });
+    // The real clip path ran: the episode was cut and framed, not composed
+    // out of stock plates.
+    expect(h.calls).toContain("video.cutClip");
+    expect(h.calls).toContain("video.brandFrame");
+    expect(h.calls).not.toContain("video.composeSequence");
+  }, 20_000);
+
+  it("asks for an episode ON CAMERA, and tries it BEFORE YouTube", async () => {
+    // The order the owner ruled: the feed by default, YouTube first only
+    // where a cookies file makes it likely to answer at all.
+    const h = stubTools({ config: {}, podcastServes: true, harvestServes: true, stockServes: true });
+    await run(h, "run-tt-podcast-order", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], REPO_ROOT, "clipping");
+
+    expect(h.podcastArgs[0]!["requireVideo"]).toBe(true);
+    // …and the YouTube harvest never ran, because the feed answered first.
+    expect(h.calls).not.toContain("media.harvestVideo");
+  }, 20_000);
+
+  it("falls through to the YouTube harvest when the show publishes no video", async () => {
+    // An audio-only show. The audio composition is not wired yet, so this
+    // tier reports it and the cascade carries on rather than downloading an
+    // episode the run cannot use.
+    const h = stubTools({ config: {}, podcastServes: false, harvestServes: true, stockServes: true });
+    const result = await run(h, "run-tt-podcast-audio-only", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], REPO_ROOT, "clipping");
+
+    expect(result.status).toBe("completed");
+    expect(h.calls).toContain("media.harvestVideo");
+    expect(h.deliverables[0]).toMatchObject({ sourceTier: "web-harvest" });
+    // The reviewer is told the feed was tried and why it did not serve.
+    const notes = h.deliverables[0]!["sourceNotes"] as string[];
+    expect(notes.some((n) => n.includes("podcast-feed") && n.includes("on camera"))).toBe(true);
+  }, 20_000);
+
+  it("carries the show and the episode page to the reviewer, with rights unknown", async () => {
+    // Somebody else's recording, from a public feed. A feed is a distribution
+    // channel, not a licence to republish.
+    const h = stubTools({ config: {}, podcastServes: true, harvestServes: true, stockServes: true });
+    await run(h, "run-tt-podcast-credit", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], REPO_ROOT, "clipping");
+
+    const deliverable = h.deliverables[0]!;
+    expect(deliverable).toMatchObject({ licenseConfidence: "unknown" });
+    const ctx = deliverable["sourceContext"] as { channel?: string; url?: string; discovery?: string };
+    expect(ctx.channel).toBe("Margins");
+    expect(ctx.url).toBe("https://show.example/ep12");
+    expect(ctx.discovery).toBe("open");
   }, 20_000);
 });

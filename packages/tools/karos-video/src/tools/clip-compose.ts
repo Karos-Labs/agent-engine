@@ -24,11 +24,17 @@ import { assertNoTraversalOrNul, assertWithinTenantWorkRoot } from "../sandbox.j
 // express; see `karaoke-captions.ts`. When both are given the ASS wins and
 // the SRT is not burned: two caption tracks in one picture is the defect the
 // 2026-09-08 visual QA called "conflicting captioning styles".
+// 1.5.0 (2026-09-21): `video.cutAudio`, for a source that has no picture.
+// A podcast episode arrives from its own RSS feed as an MP3, and `cutClip`
+// hardcodes `-c:v libx264` — on an audio-only input ffmpeg has no video
+// stream to give that encoder. The two are kept as separate tools rather
+// than one with a flag, because a caller that reaches for the wrong one
+// should fail at the call, not produce a file the next step cannot read.
 // 1.3.0 (2026-09-10): `fit: "blur-fill"` for a client's 16:9 frame on a 9:16
 // short: the whole picture kept, as `contain`, but the letterbox filled with
 // a blurred, darkened copy of the clip instead of the ground colour, the way
 // every podcast clip on the platform is cut. `contain` and `cover` unchanged.
-const TOOL_VERSION = "1.4.0";
+const TOOL_VERSION = "1.5.0";
 
 /** `blur-fill`: how soft the background copy is (boxblur luma radius, two passes) and how much darker, so the real picture reads as the subject. */
 const BLUR_FILL_RADIUS = 40;
@@ -513,6 +519,78 @@ export function createCutClip(options: KarosVideoToolOptions = {}) {
         return toolingError(`video.cutClip: ffmpeg exited ${result.exitCode}${tail ? `: ${tail}` : ""}`);
       }
       return success<CutClipResult>({ outputPath, durationSeconds: await probeDuration(runtime, outputPath) });
+    },
+  });
+}
+
+export const CutAudioInputSchema = z.object({
+  sourcePath: z.string().min(1).describe("Path to the source AUDIO (or audio-carrying) file to cut a span from — a podcast episode's MP3, a recorded interview."),
+  startSeconds: z.number().nonnegative().describe("Start of the [start, end) span to cut, in seconds from the start of the source."),
+  endSeconds: z.number().positive().describe("End of the [start, end) span to cut, in seconds from the start of the source; must be after startSeconds."),
+  outputPath: z.string().min(1).describe("Path to write the cut audio to. The extension decides the container; `.mp3` is what the clip pipeline expects."),
+});
+export type CutAudioInput = z.infer<typeof CutAudioInputSchema>;
+
+export interface CutAudioResult {
+  outputPath: string;
+  durationSeconds: number | null;
+}
+
+/**
+ * `video.cutAudio` — one re-encoded cut of `[start, end)` from a source with
+ * no picture in it.
+ *
+ * `video.cutClip` cannot do this: it hardcodes `-c:v libx264`, and an
+ * audio-only input gives that encoder nothing to encode. Kept as a separate
+ * tool rather than a flag on that one, because a caller that reaches for the
+ * wrong tool should fail at the call rather than write a file the next step
+ * cannot read.
+ *
+ * `-vn` is explicit, so a source that DOES carry a picture (some feeds serve
+ * a video enclosure) still yields audio here — the caller asked for audio.
+ *
+ * Re-encoded rather than stream-copied, for the same reason `cutClip` is: a
+ * copy cut lands on the previous frame boundary and starts mid-word, which on
+ * a clip whose whole product is somebody's sentence is the defect.
+ */
+export function createCutAudio(options: KarosVideoToolOptions = {}) {
+  const runtime = resolveRuntime(options);
+  return defineTool<CutAudioInput, CutAudioResult>({
+    name: "video.cutAudio",
+    description:
+      "One re-encoded cut of [start, end) from a source that has no picture — a podcast episode's MP3, a recorded interview. Use video.cutClip for anything with a picture; this drops the video stream on purpose. Re-encode, not stream copy: a copy cut starts mid-word.",
+    version: TOOL_VERSION,
+    inputSchema: CutAudioInputSchema,
+    async execute({ sourcePath, startSeconds, endSeconds, outputPath }, { ctx }) {
+      if (endSeconds <= startSeconds) {
+        return toolingError(`video.cutAudio: endSeconds (${endSeconds}) must be after startSeconds (${startSeconds})`);
+      }
+      await assertToolPath(runtime, ctx.clientSlug, sourcePath, "sourcePath");
+      await assertToolPath(runtime, ctx.clientSlug, outputPath, "outputPath");
+      await fs.mkdir(path.dirname(path.resolve(outputPath)), { recursive: true });
+
+      const result = await runtime.runner(runtime.ffmpegBin, [
+        "-y",
+        "-ss",
+        String(startSeconds),
+        "-to",
+        String(endSeconds),
+        "-i",
+        sourcePath,
+        // Explicit: a feed that serves a video enclosure still yields audio
+        // here, because audio is what the caller asked for.
+        "-vn",
+        "-c:a",
+        "libmp3lame",
+        "-b:a",
+        "128k",
+        outputPath,
+      ]);
+      if (result.exitCode !== 0) {
+        const tail = (result.stderr || result.stdout || "").trim().slice(-2000);
+        return toolingError(`video.cutAudio: ffmpeg exited ${result.exitCode}${tail ? `: ${tail}` : ""}`);
+      }
+      return success<CutAudioResult>({ outputPath, durationSeconds: await probeDuration(runtime, outputPath) });
     },
   });
 }

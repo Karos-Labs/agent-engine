@@ -10,7 +10,7 @@ import { createGraphicsGate } from "./tools/graphics-gate.js";
 import { createRender } from "./tools/render.js";
 import { createRenderOverlays } from "./tools/render-overlays.js";
 import { createMaterializeInputs } from "./tools/materialize-inputs.js";
-import { createCutClip, createBrandFrame } from "./tools/clip-compose.js";
+import { createCutClip, createCutAudio, createBrandFrame } from "./tools/clip-compose.js";
 import { createComposeSequence } from "./tools/compose-sequence.js";
 import { createStillToClip } from "./tools/still-to-clip.js";
 import { createMixMusic } from "./tools/mix-music.js";
@@ -92,6 +92,7 @@ export function createKarosVideoTools(options: CreateKarosVideoToolsOptions = {}
     // karos-media's Tier 0 `objectReader`.
     "video.materializeInputs": createMaterializeInputs({ ...options, ...(options.mediaStore ? { objectReader: options.mediaStore } : {}) }),
     "video.cutClip": createCutClip(options),
+    "video.cutAudio": createCutAudio(options),
     "video.brandFrame": createBrandFrame(options),
     "video.composeSequence": createComposeSequence(options),
     "video.synthesizeVoice": createSynthesizeVoice({ ...options, ...options.synthesizeVoice }),

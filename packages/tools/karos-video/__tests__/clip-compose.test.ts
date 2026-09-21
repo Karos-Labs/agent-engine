@@ -13,6 +13,7 @@ import {
   buildSrt,
   createBrandFrame,
   createCutClip,
+  createCutAudio,
   hexToAss,
   hexToFfmpeg,
   sanitizeAssText,
@@ -277,5 +278,61 @@ describe("video.brandFrame", () => {
     );
     const result = (outcome as { result: { applied: string[] } }).result;
     expect(result.applied).toEqual(expect.arrayContaining(["bars", "accent-rules", "series-header", "handle"]));
+  });
+});
+
+/**
+ * `video.cutAudio` — the same cut, for a source with no picture in it.
+ *
+ * A podcast episode arrives from its own RSS feed as an MP3 (RFC-25 stage 1,
+ * `media.harvestPodcast`). `video.cutClip` cannot cut it: it hardcodes
+ * `-c:v libx264`, and an audio-only input gives that encoder nothing to
+ * encode. Two tools rather than one with a flag, so a caller that reaches for
+ * the wrong one fails at the call instead of writing a file the next step
+ * cannot read.
+ */
+describe("video.cutAudio", () => {
+  it("cuts the window, drops any picture, and writes mp3", async () => {
+    const calls: Array<{ bin: string; args: string[] }> = [];
+    const tool = createCutAudio({ runner: fakeRunner(calls), env: {} });
+    const outcome = await tool.execute({ sourcePath: "episode.mp3", startSeconds: 612, endSeconds: 651.5, outputPath: "moment.mp3" }, { ctx });
+
+    expect(outcome.status).toBe("success");
+    const ffmpeg = calls.find((c) => c.bin === "ffmpeg")!;
+    expect(ffmpeg.args).toEqual(expect.arrayContaining(["-ss", "612", "-to", "651.5", "-i", "episode.mp3", "moment.mp3"]));
+    // `-vn` is the whole difference, and it is explicit rather than implied by
+    // the input: some feeds serve a VIDEO enclosure, and a caller asking this
+    // tool for audio has asked for audio.
+    expect(ffmpeg.args).toContain("-vn");
+    expect(ffmpeg.args).toContain("libmp3lame");
+    // …and never the video encoder, which is what made cutClip unusable here.
+    expect(ffmpeg.args).not.toContain("libx264");
+    expect((outcome as { result: { durationSeconds: number } }).result.durationSeconds).toBe(12.5);
+  });
+
+  it("refuses an inverted window as a tooling error", async () => {
+    const calls: Array<{ bin: string; args: string[] }> = [];
+    const tool = createCutAudio({ runner: fakeRunner(calls), env: {} });
+    const outcome = await tool.execute({ sourcePath: "episode.mp3", startSeconds: 60, endSeconds: 60, outputPath: "moment.mp3" }, { ctx });
+    expect(outcome.status).toBe("tooling_error");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("refuses a traversal path before ever spawning ffmpeg", async () => {
+    // The same sandbox rule every tool in this file follows. A podcast source comes
+    // from an external feed, so the path it produces is the least trusted
+    // input this package takes.
+    const calls: Array<{ bin: string; args: string[] }> = [];
+    const tool = createCutAudio({ runner: fakeRunner(calls), env: {} });
+    const outcome = await tool.execute({ sourcePath: "../../etc/passwd", startSeconds: 0, endSeconds: 1, outputPath: "moment.mp3" }, { ctx });
+    expect(outcome.status).toBe("tooling_error");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("reports an ffmpeg failure as a tooling error with its tail", async () => {
+    const runner: ProcessRunner = async (bin) => (bin === "ffprobe" ? { exitCode: 0, stdout: "{}", stderr: "" } : { exitCode: 1, stdout: "", stderr: "Invalid data found when processing input" });
+    const outcome = await createCutAudio({ runner, env: {} }).execute({ sourcePath: "episode.mp3", startSeconds: 0, endSeconds: 10, outputPath: "moment.mp3" }, { ctx });
+    expect(outcome.status).toBe("tooling_error");
+    expect((outcome as { reason: string }).reason).toContain("Invalid data found");
   });
 });

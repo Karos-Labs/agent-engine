@@ -18,6 +18,23 @@ import { createSeoGeoAgentWorkflow } from "@agent-engine/agent-seo-geo";
 import { createIntelReportAgentWorkflow } from "@agent-engine/agent-intel-report";
 
 /**
+ * Whether the YouTube harvest is worth trying BEFORE the show's own feed.
+ *
+ * Owner ruling 2026-09-21: "RSS by default, YouTube when there are cookies."
+ * Both tiers answer the same question and differ in what comes back — YouTube
+ * yields the speakers on camera for any show, a feed yields them only when the
+ * show publishes on camera. YouTube is the better source when it answers, and
+ * on a worker with no cookies file it does not answer: it is refused with
+ * "Sign in to confirm you are not a bot", four player clients deep.
+ *
+ * So the presence of the cookies file IS the decision, and it is read here
+ * rather than in the workflow, which has no business reading env.
+ */
+function youtubeHarvestPreferred(): boolean {
+  return (process.env["YT_DLP_COOKIES_FILE"] ?? "").trim().length > 0;
+}
+
+/**
  * Every product this server can dispatch a run to (RFC-02) — the five
  * channel agents, the campaign orchestrator, and the five products wired in
  * afterward: `landing-builder-agent`/`branded-shorts-agent` need
@@ -211,11 +228,11 @@ export function buildWorkflowForProduct(productId: ProductId, deps: AgentRuntime
     // that differs, and it decides the ONE thing that used to be decided by
     // accident: which format the run produces.
     case "tiktok-clipping-agent":
-      return createTikTokAgentWorkflow({ ...deps, variant: "clipping" });
+      return createTikTokAgentWorkflow({ ...deps, variant: "clipping", youtubeHarvestPreferred: youtubeHarvestPreferred() });
     case "tiktok-content-design-agent":
       return createTikTokAgentWorkflow({ ...deps, variant: "content-design" });
     case "tiktok-agent":
-      return createTikTokAgentWorkflow({ ...deps, variant: "auto" });
+      return createTikTokAgentWorkflow({ ...deps, variant: "auto", youtubeHarvestPreferred: youtubeHarvestPreferred() });
     case "reputation-agent":
       return createReputationPulseWorkflow({ ...deps, store: deps.workspaceStore });
     // ── The two research agents run unattended, by product decision ──

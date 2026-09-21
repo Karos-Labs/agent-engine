@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clipLicenseConfidence, type ClipSourceTier } from "../src/workflow/types.js";
+import { CLIP_SOURCE_TIERS, clipLicenseConfidence, type ClipSourceTier } from "../src/workflow/types.js";
 
 /**
  * Whose recording the clip is of, at the gate that decides whether to publish
@@ -65,6 +65,10 @@ describe("clipLicenseConfidence", () => {
       ["web-harvest", "allowlist", "client-cleared"],
       ["web-harvest", "open", "unknown"],
       ["web-harvest", "pasted", "unknown"],
+      ["podcast-feed", undefined, "unknown"],
+      ["podcast-feed", "allowlist", "client-cleared"],
+      ["podcast-feed", "open", "unknown"],
+      ["podcast-feed", "pasted", "unknown"],
       ["stock", undefined, "stock-licensed"],
       ["stock", "allowlist", "stock-licensed"],
       ["stock", "open", "stock-licensed"],
@@ -77,5 +81,10 @@ describe("clipLicenseConfidence", () => {
     for (const [tier, posture, expected] of grid) {
       expect(clipLicenseConfidence(tier, posture), `${tier} / ${posture ?? "no posture"}`).toBe(expected);
     }
+    // The grid is a hand-written list, so on its own it would simply not
+    // mention a tier added later. Checking it against the exported tier
+    // values is what turns "no row" into a failure — the thing the paragraph
+    // above claims and, until 2026-09-21, did not do.
+    expect([...new Set(grid.map(([tier]) => tier))].sort()).toEqual([...CLIP_SOURCE_TIERS].sort());
   });
 });
