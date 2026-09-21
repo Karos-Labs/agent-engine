@@ -87,6 +87,39 @@ export function checkHygiene(registry: readonly PromptRegistryEntry[], disk: rea
     const lower = text.toLowerCase();
     const where = `${entry.promptId}@${entry.latestVersion}`;
 
+    // A PROMPT IS INSTRUCTIONS, NOT A CHANGELOG.
+    //
+    // `instagram-copy` reached v27 carrying five stacked "What changed at vNN"
+    // blocks at the top — about 12,300 characters, 11% of the file, describing
+    // edits to sections the writer reads two lines later. Every drafting
+    // attempt paid to read all five, three attempts to a run, on the
+    // highest-volume agent in the fleet; and a model already holding thirty
+    // rulesets was being asked to hold five obsolete descriptions of them too.
+    // They now live in a CHANGELOG.md beside the prompt, read by people.
+    //
+    // Checked on the LATEST version only. A frozen numbered version is
+    // history and must not be rewritten to satisfy a rule added after it.
+    const releaseNotes = text.match(/^\*\*What changed at v[\d.]+\.?\*\*/gm) ?? [];
+    if (releaseNotes.length > 0) {
+      problems.push({
+        kind: "hygiene-missing-marker",
+        promptId: entry.promptId,
+        detail: `${where} carries ${releaseNotes.length} release-history block(s) ("What changed at vNN") — the model pays to read them on every attempt. Move them to a CHANGELOG.md beside the prompt and leave the rules where the writer reads them`,
+      });
+    }
+
+    // Same defect, seen from the other side: each of those stacked blocks
+    // opened with its own `# Title, vNN`, so the file had five H1s and the
+    // model had five documents.
+    const titles = text.match(/^# .+$/gm) ?? [];
+    if (titles.length > 1) {
+      problems.push({
+        kind: "hygiene-missing-marker",
+        promptId: entry.promptId,
+        detail: `${where} has ${titles.length} top-level titles; a prompt is one document, and more than one H1 is how a changelog gets stacked on top of the guide`,
+      });
+    }
+
     if (entry.requires?.languageDirective === true && !hasAny(lower, HYGIENE_MARKERS.languageDirective)) {
       problems.push({
         kind: "hygiene-missing-marker",

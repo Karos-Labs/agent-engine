@@ -473,6 +473,17 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyDraft> {
     // `05f-author-custom-archetype` is priced separately at $0.030, at most
     // once per carousel and only when a draft asks for it. See
     // `InstagramCustomArchetypeAgent`.
-    skillRef: "instagram-copy@27",
+    // v28 is v27 with the release history moved OUT of the prompt and into
+    // CHANGELOG.md beside it. The guide's body is byte-identical; what left was
+    // ~12,300 characters of stacked "what changed at vNN" blocks describing
+    // edits to sections the writer reads two lines later. Every rule those
+    // blocks named was verified present in the body before they moved.
+    //
+    // A changelog is meta-commentary about a document's history; a drafting
+    // prompt is instructions for one task. This one was paid for on every
+    // attempt, three attempts to a run, by the highest-volume agent in the
+    // fleet — and it asked a model already holding thirty rulesets to hold
+    // five obsolete descriptions of them too.
+    skillRef: "instagram-copy@28",
   };
 }
