@@ -55,6 +55,32 @@ export interface FanoutOptions {
    * Defaults to {@link DEFAULT_FANOUT_CONCURRENCY}.
    */
   concurrency?: number;
+
+  /**
+   * The `wf.input` each slot's own workflow sees, derived from its item.
+   *
+   * WHY THIS EXISTS. A slot used to inherit the PARENT's input verbatim, which
+   * is right when the slots are variations on one instruction and wrong when
+   * the parent computed a different assignment for each of them. The
+   * campaign-orchestrator was the second case and had no way to say so: its
+   * plan gives every channel its own audience, angle and key message, and
+   * those three fields were read at exactly one place in that workflow — to
+   * build the guardrail text. The channels each re-ran their own topic
+   * selection and wrote what they would have written standalone, so a
+   * "campaign" was a plan document plus five unrelated posts that shared a
+   * client.
+   *
+   * Deliberately a MAPPER and not a merge: what a child should inherit from
+   * its parent is the parent's business, and a primitive that silently
+   * combined the two would make every existing call site's behaviour depend on
+   * key collisions it never thought about. Omit it and a slot inherits the
+   * parent input exactly as before.
+   *
+   * Called once per slot, and NOT on the replay path — a slot resuming from a
+   * checkpoint returns its recorded verdict without re-entering `fn` at all,
+   * so this must not be where anything other than input derivation happens.
+   */
+  inputFor?: (item: unknown, index: number) => Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -126,7 +152,11 @@ export async function runFanout<TItem, TResult>(
       return slotOutcome(slotId, existing.status, existing.output as TResult, existing.error);
     }
 
-    const slotRuntime: WorkflowRuntime = { ...runtime, slotId };
+    const slotRuntime: WorkflowRuntime = {
+      ...runtime,
+      slotId,
+      ...(options?.inputFor ? { input: options.inputFor(item, index) } : {}),
+    };
     const slotCtx = buildWorkflowContext(slotRuntime);
     const startedAt = runtime.now();
 
