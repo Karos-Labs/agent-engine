@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createHarvestPodcast, createItunesPodcastProvider, parseItunesDuration, readFeedEpisodes, readItunesShows } from "../src/index.js";
+import { createHarvestPodcast, createItunesPodcastProvider, enclosureIsVideo, parseItunesDuration, readFeedEpisodes, readItunesShows } from "../src/index.js";
 
 /**
  * `media.harvestPodcast` — podcasts from the place podcasts actually live.
@@ -332,5 +332,207 @@ describe("media.harvestPodcast", () => {
 
     expect(outcome.status).toBe("tooling_error");
     expect((outcome as { reason: string }).reason).toContain("503");
+  });
+});
+
+/**
+ * SEEING THE PODCAST is the point.
+ *
+ * Owner's priority, 2026-09-21. A clip of a podcast where you cannot see the
+ * podcast is a worse product than one where you can, and a large share of
+ * shows publish a VIDEO enclosure beside the audio one — the speakers on
+ * camera, from the show's own feed, with no bot check between us and it.
+ *
+ * So a video episode leads when it is on topic at all. The `on topic` guard
+ * is the part worth testing: preferring video unconditionally would ship an
+ * off-topic video episode over an audio one that is exactly right, and a clip
+ * about the wrong thing is not improved by being able to see who said it.
+ */
+describe("media.harvestPodcast — preferring the picture", () => {
+  const BOUNDS = { minDurationSeconds: 90, maxDurationSeconds: 10_800, maxBytes: 5_000_000 };
+
+  it("knows a video enclosure from an audio one", () => {
+    expect(enclosureIsVideo("video/mp4")).toBe(true);
+    expect(enclosureIsVideo("VIDEO/QUICKTIME")).toBe(true);
+    expect(enclosureIsVideo("audio/mpeg")).toBe(false);
+    expect(enclosureIsVideo(undefined)).toBe(false);
+    expect(enclosureIsVideo("")).toBe(false);
+  });
+
+  it("carries the feed's declared enclosure type through, so the ranking can read it before downloading", () => {
+    const episodes = readFeedEpisodes(feed("S", item({ title: "On camera", url: "https://cdn.example/v.mp4", type: "video/mp4" })), "x");
+    expect(episodes[0]!.enclosureType).toBe("video/mp4");
+  });
+
+  it("takes the VIDEO episode over an equally on-topic audio one", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "podcast-"));
+    const net = fakeNetwork({
+      shows: { results: [{ collectionName: "S", feedUrl: "https://feeds.example/s" }] },
+      feeds: {
+        "https://feeds.example/s": feed(
+          "S",
+          [
+            item({ title: "budgets episode audio", url: "https://cdn.example/a.mp3", duration: "40:00", pubDate: "Wed, 17 Sep 2026 09:00:00 GMT" }),
+            item({ title: "budgets episode video", url: "https://cdn.example/v.mp4", duration: "40:00", type: "video/mp4", pubDate: "Wed, 10 Sep 2026 09:00:00 GMT" }),
+          ].join("\n"),
+        ),
+      },
+      audio: { "https://cdn.example/v.mp4": { type: "video/mp4" }, "https://cdn.example/a.mp3": {} },
+    });
+    const tool = createHarvestPodcast({ provider: createItunesPodcastProvider({ fetchImpl: net.fetchImpl }), fetchImpl: net.fetchImpl });
+    const outcome = await tool.execute({ ...BOUNDS, repoRoot: dir, runId: "vid-1", query: "budgets", allowedShows: [], discovery: "open" } as never, CTX);
+
+    expect(outcome.status).toBe("success");
+    const result = (outcome as { result: { title: string; media: string; path: string } }).result;
+    // …even though the AUDIO one is a week newer. Recency is the tie-break
+    // inside a pool, not a reason to lose the picture.
+    expect(result.title).toBe("budgets episode video");
+    expect(result.media).toBe("video");
+    expect(result.path).toMatch(/\.mp4$/);
+  });
+
+  it("does NOT take an off-topic video over an on-topic audio", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "podcast-"));
+    const net = fakeNetwork({
+      shows: { results: [{ collectionName: "S", feedUrl: "https://feeds.example/s" }] },
+      feeds: {
+        "https://feeds.example/s": feed(
+          "S",
+          [
+            item({ title: "why CFOs cut budgets", url: "https://cdn.example/a.mp3", duration: "40:00" }),
+            item({ title: "a completely unrelated conversation about gardening", url: "https://cdn.example/v.mp4", duration: "40:00", type: "video/mp4" }),
+          ].join("\n"),
+        ),
+      },
+      audio: { "https://cdn.example/a.mp3": {}, "https://cdn.example/v.mp4": { type: "video/mp4" } },
+    });
+    const tool = createHarvestPodcast({ provider: createItunesPodcastProvider({ fetchImpl: net.fetchImpl }), fetchImpl: net.fetchImpl });
+    const outcome = await tool.execute({ ...BOUNDS, repoRoot: dir, runId: "vid-2", query: "cfo budgets", allowedShows: [], discovery: "open" } as never, CTX);
+
+    expect(outcome.status).toBe("success");
+    const result = (outcome as { result: { title: string; media: string } }).result;
+    expect(result.title).toBe("why CFOs cut budgets");
+    expect(result.media).toBe("audio");
+  });
+
+  it("falls back to the audio episode when the video one will not download", async () => {
+    // A link that will not serve is a link that will not serve, whichever
+    // pool it came from. The video candidate leads and the audio one is right
+    // behind it as an alternate.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "podcast-"));
+    const net = fakeNetwork({
+      shows: { results: [{ collectionName: "S", feedUrl: "https://feeds.example/s" }] },
+      feeds: {
+        "https://feeds.example/s": feed(
+          "S",
+          [item({ title: "budgets video", url: "https://cdn.example/v.mp4", duration: "40:00", type: "video/mp4" }), item({ title: "budgets audio", url: "https://cdn.example/a.mp3", duration: "40:00" })].join("\n"),
+        ),
+      },
+      audio: { "https://cdn.example/v.mp4": { status: 403 }, "https://cdn.example/a.mp3": {} },
+    });
+    const tool = createHarvestPodcast({ provider: createItunesPodcastProvider({ fetchImpl: net.fetchImpl }), fetchImpl: net.fetchImpl });
+    const outcome = await tool.execute({ ...BOUNDS, repoRoot: dir, runId: "vid-3", query: "budgets", allowedShows: [], discovery: "open" } as never, CTX);
+
+    expect(outcome.status).toBe("success");
+    expect((outcome as { result: { media: string } }).result.media).toBe("audio");
+  });
+
+  it("believes the RESPONSE, not the feed, about what arrived", async () => {
+    // A feed that declares `video/mp4` and serves an MP3 has served an MP3.
+    // Routing the clip pipeline off the feed's claim would send an audio file
+    // down the path that cuts and frames a picture.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "podcast-"));
+    const net = fakeNetwork({
+      shows: { results: [{ collectionName: "S", feedUrl: "https://feeds.example/s" }] },
+      feeds: { "https://feeds.example/s": feed("S", item({ title: "budgets claims video", url: "https://cdn.example/lies.mp4", duration: "40:00", type: "video/mp4" })) },
+      audio: { "https://cdn.example/lies.mp4": { type: "audio/mpeg" } },
+    });
+    const tool = createHarvestPodcast({ provider: createItunesPodcastProvider({ fetchImpl: net.fetchImpl }), fetchImpl: net.fetchImpl });
+    const outcome = await tool.execute({ ...BOUNDS, repoRoot: dir, runId: "vid-4", query: "budgets", allowedShows: [], discovery: "open" } as never, CTX);
+
+    expect(outcome.status).toBe("success");
+    const result = (outcome as { result: { media: string; path: string } }).result;
+    expect(result.media).toBe("audio");
+    expect(result.path).toMatch(/\.mp3$/);
+  });
+});
+
+/**
+ * `requireVideo` — for a caller that can only use a picture.
+ *
+ * The clip pipeline cuts and frames a video episode with machinery it already
+ * has. An audio episode needs a composition (real audio under sourced plates)
+ * that is not wired yet, so until it is, downloading an audio-only episode is
+ * bandwidth spent to learn nothing.
+ */
+describe("media.harvestPodcast — requireVideo", () => {
+  const BOUNDS = { minDurationSeconds: 90, maxDurationSeconds: 10_800, maxBytes: 5_000_000 };
+
+  function showWith(items: string, audio: Record<string, { status?: number; type?: string }>) {
+    return fakeNetwork({
+      shows: { results: [{ collectionName: "S", feedUrl: "https://feeds.example/s" }] },
+      feeds: { "https://feeds.example/s": feed("S", items) },
+      audio,
+    });
+  }
+
+  it("refuses a show that publishes no video, and says how many audio episodes it passed over", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "podcast-"));
+    const net = showWith(
+      [item({ title: "budgets one", url: "https://cdn.example/1.mp3", duration: "40:00" }), item({ title: "budgets two", url: "https://cdn.example/2.mp3", duration: "40:00" })].join("\n"),
+      {},
+    );
+    const tool = createHarvestPodcast({ provider: createItunesPodcastProvider({ fetchImpl: net.fetchImpl }), fetchImpl: net.fetchImpl });
+    const outcome = await tool.execute({ ...BOUNDS, repoRoot: dir, runId: "rv-1", query: "budgets", allowedShows: [], discovery: "open", requireVideo: true } as never, CTX);
+
+    expect(outcome.status).toBe("content_fail");
+    expect((outcome as { reason: string }).reason).toContain("no episode is published on camera");
+    expect((outcome as { reason: string }).reason).toContain("2 audio-only");
+    // Nothing was downloaded to learn that — the enclosure TYPE said it.
+    expect(net.fetched.filter((u) => u.startsWith("https://cdn."))).toEqual([]);
+  });
+
+  it("takes the video episode and ignores the audio ones entirely", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "podcast-"));
+    const net = showWith(
+      [
+        item({ title: "budgets newest audio", url: "https://cdn.example/a.mp3", duration: "40:00", pubDate: "Wed, 17 Sep 2026 09:00:00 GMT" }),
+        item({ title: "budgets older video", url: "https://cdn.example/v.mp4", duration: "40:00", type: "video/mp4", pubDate: "Wed, 03 Sep 2026 09:00:00 GMT" }),
+      ].join("\n"),
+      { "https://cdn.example/v.mp4": { type: "video/mp4" }, "https://cdn.example/a.mp3": {} },
+    );
+    const tool = createHarvestPodcast({ provider: createItunesPodcastProvider({ fetchImpl: net.fetchImpl }), fetchImpl: net.fetchImpl });
+    const outcome = await tool.execute({ ...BOUNDS, repoRoot: dir, runId: "rv-2", query: "budgets", allowedShows: [], discovery: "open", requireVideo: true } as never, CTX);
+
+    expect(outcome.status).toBe("success");
+    expect((outcome as { result: { media: string } }).result.media).toBe("video");
+    // The audio episode was never even offered as an alternate.
+    expect(net.fetched).not.toContain("https://cdn.example/a.mp3");
+  });
+
+  it("refuses when a feed DECLARED video and served sound", async () => {
+    // `requireVideo` is not a preference the caller can absorb — it means the
+    // pipeline has nowhere to put an audio file — so a feed that lied is a
+    // refusal, not a downgrade.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "podcast-"));
+    const net = showWith(item({ title: "budgets claims video", url: "https://cdn.example/lies.mp4", duration: "40:00", type: "video/mp4" }), {
+      "https://cdn.example/lies.mp4": { type: "audio/mpeg" },
+    });
+    const tool = createHarvestPodcast({ provider: createItunesPodcastProvider({ fetchImpl: net.fetchImpl }), fetchImpl: net.fetchImpl });
+    const outcome = await tool.execute({ ...BOUNDS, repoRoot: dir, runId: "rv-3", query: "budgets", allowedShows: [], discovery: "open", requireVideo: true } as never, CTX);
+
+    expect(outcome.status).toBe("content_fail");
+    expect((outcome as { reason: string }).reason).toContain("declared video and served");
+  });
+
+  it("still accepts audio when the caller did not ask for video only", async () => {
+    // The default, and the behaviour every other test in this file drives.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "podcast-"));
+    const net = showWith(item({ title: "budgets audio", url: "https://cdn.example/a.mp3", duration: "40:00" }), { "https://cdn.example/a.mp3": {} });
+    const tool = createHarvestPodcast({ provider: createItunesPodcastProvider({ fetchImpl: net.fetchImpl }), fetchImpl: net.fetchImpl });
+    const outcome = await tool.execute({ ...BOUNDS, repoRoot: dir, runId: "rv-4", query: "budgets", allowedShows: [], discovery: "open" } as never, CTX);
+
+    expect(outcome.status).toBe("success");
+    expect((outcome as { result: { media: string } }).result.media).toBe("audio");
   });
 });

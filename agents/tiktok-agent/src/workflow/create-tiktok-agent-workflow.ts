@@ -1652,11 +1652,20 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
                 query,
                 allowedShows: posture === "allowlist" ? allowedShows : [],
                 discovery: posture,
+                // ON CAMERA ONLY, for now. A video episode is cut and framed
+                // by the machinery this pipeline already has, and it is the
+                // thing actually worth shipping: a clip of a podcast where
+                // you can see the podcast. An AUDIO episode needs a
+                // composition — the real audio under sourced plates — that is
+                // not wired yet, and downloading one the run cannot use is
+                // bandwidth spent to learn nothing. The tool reads the feed's
+                // declared enclosure type, so this costs no download at all.
+                requireVideo: true,
               },
               { ctx },
             );
             if (outcome.status === "success") {
-              const result = outcome.result as { path: string; sourceUrl: string; title: string; showTitle: string };
+              const result = outcome.result as { path: string; sourceUrl: string; title: string; showTitle: string; media: "video" | "audio" };
               return {
                 ...base,
                 ...(tierOutcomes.length > 0 ? { sourceNotes: [...tierOutcomes] } : {}),

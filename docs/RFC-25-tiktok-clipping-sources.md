@@ -293,3 +293,49 @@ write for". Its reason names what to add.
 A scout **outage** also stopped being fatal on the way. It threw `WorkflowToolingFailure`,
 which killed a run that could still have reached rung 3; the tooling carve-out is for when
 nothing can be produced, and there something can.
+
+---
+
+## 6. The podcast, on screen (2026-09-21)
+
+Owner's priority, after the first two prep runs both produced a generic stock short:
+**a clip of a podcast where you can see the podcast.**
+
+`media.harvestVideo` can give that and is refused — YouTube answers the download with
+*"Sign in to confirm you're not a bot"*. A show's own RSS feed cannot refuse, because
+serving the episode to whoever asks is what a feed is for, and a large share of shows
+publish a **video enclosure** beside the audio one.
+
+`media.harvestPodcast` (Apple's keyless directory → the show's feed → a direct HTTP
+download) is registered ON by default, because unlike every other backend here it needs
+no key, no binary and no provisioning. Tier 2c runs it BEFORE the YouTube harvest unless
+`YT_DLP_COOKIES_FILE` is set, decided at wiring time: trying YouTube first on a worker
+with no cookies costs four player clients × four candidates to learn what the deployment
+already knows.
+
+### Video first, and the guard on it
+
+A video episode leads **when it is on topic at all**. Preferring video unconditionally
+would ship an off-topic video episode over an audio one that is exactly right, and a clip
+about the wrong thing is not improved by being able to see who said it.
+
+`media` is read from the RESPONSE, never from the feed's declared type: a feed that says
+`video/mp4` and serves an MP3 has served an MP3, and the clip pipeline routes on this.
+
+### What needed no new machinery
+
+A video episode is an ordinary video source. The commentary path transcribes it, picks
+the moment, cuts it and frames it with `blur-fill` — which was already there, described
+as *"the way every podcast clip on the platform is cut. A crop would take the faces."*
+
+### What is deferred, and why the tier asks for `requireVideo`
+
+An AUDIO episode needs a composition that does not exist yet: the real audio under sourced
+plates, with the speakers' own words as captions. Two of its three pieces are built —
+`video.cutAudio`, and `splitTranscriptIntoBeats`, which cuts the words **in code** from the
+transcript's timings so a model can never paraphrase a speaker or desynchronise a caption.
+What is missing is the model turn that dresses each beat with a picture.
+
+Until that lands the tier passes `requireVideo: true`, so an audio-only show is reported
+and the cascade carries on rather than downloading an episode the run cannot use. The
+tool reads the feed's declared enclosure type, so that costs no download at all.
