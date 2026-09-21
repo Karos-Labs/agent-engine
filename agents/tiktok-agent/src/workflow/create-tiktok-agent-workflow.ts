@@ -145,6 +145,23 @@ export interface CreateTikTokAgentWorkflowOptions {
   /** Injectable for tests; the brand-logo download uses it. */
   fetchImpl?: typeof fetch;
   /**
+   * Whether the YouTube harvest is tried BEFORE the podcast feed.
+   *
+   * Set from `YT_DLP_COOKIES_FILE` at wiring time (owner ruling, 2026-09-21:
+   * "RSS by default, YouTube when there are cookies"). Both tiers answer the
+   * same question — find an episode about this topic — and they differ in what
+   * comes back: YouTube yields the speakers on camera, a feed yields their
+   * audio over sourced footage. The first is a better clip when it works, and
+   * on a worker with no cookies it does not work, so trying it first there
+   * costs sixteen refused yt-dlp invocations to learn what the deployment
+   * already knows.
+   *
+   * Decided at wiring rather than read here because the workflow has no
+   * business reading `process.env`, and because a test must be able to drive
+   * both orders.
+   */
+  youtubeHarvestPreferred?: boolean;
+  /**
    * Which of D08's three TikTok agents this is (SCRUM-455). Defaults to
    * `auto`, the pre-split behaviour, so every existing caller and every
    * in-flight run keeps working unchanged. `buildWorkflowForProduct` passes
@@ -1592,6 +1609,73 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           tierOutcomes.push("owned-footage: sourcePool holds no gs://https:// footage URIs");
         }
 
+        /**
+         * ── Tier 2c: the SHOW'S OWN FEED (2026-09-21) ──
+         *
+         * A podcast is published to be fetched, so this path has no bot
+         * check, no login and no key. It is also a better question: the
+         * YouTube harvest asks "is there a video of somebody saying this" and
+         * takes whatever the index ranks, where this asks "is there a PODCAST
+         * about this" and every answer is one by construction.
+         *
+         * The trade is the picture. An enclosure is audio, so the clip
+         * carries the speakers' real words over sourced footage rather than
+         * over the speakers themselves — a normal short-form format, and a
+         * strictly better answer than the generated original short the
+         * cascade falls to when no footage can be had at all.
+         */
+        const harvestPodcastTier = async (): Promise<TikTokIntake | undefined> => {
+          const podcast = tools["media.harvestPodcast"];
+          if (podcast === undefined || options.repoRoot === undefined) {
+            tierOutcomes.push("podcast-feed: not wired in this deployment");
+            return undefined;
+          }
+          const allowedShows = plainSourceNames(config);
+          // Same ladder as the video harvest: the client's own shows first,
+          // the open directory when that comes back empty. A pool that
+          // answers ends the tier on one search.
+          const postures: Array<"allowlist" | "open"> = allowedShows.length > 0 ? ["allowlist", "open"] : ["open"];
+          for (const posture of postures) {
+            const query = await wf.step.code(`01h-build-podcast-query-${posture}`, () =>
+              posture === "open"
+                ? buildHarvestQuery({
+                    topic: claim.topic,
+                    ...(profile.industry !== undefined ? { industry: profile.industry } : {}),
+                    ...(claim.discovered !== undefined ? { discovered: claim.discovered } : {}),
+                  })
+                : claim.topic,
+            );
+            const outcome = await podcast.execute(
+              {
+                repoRoot: options.repoRoot,
+                runId: wf.runId,
+                query,
+                allowedShows: posture === "allowlist" ? allowedShows : [],
+                discovery: posture,
+              },
+              { ctx },
+            );
+            if (outcome.status === "success") {
+              const result = outcome.result as { path: string; sourceUrl: string; title: string; showTitle: string };
+              return {
+                ...base,
+                ...(tierOutcomes.length > 0 ? { sourceNotes: [...tierOutcomes] } : {}),
+                sourcePath: path.resolve(options.repoRoot, result.path),
+                sourceTier: "podcast-feed",
+                sourceContext: {
+                  url: result.sourceUrl,
+                  title: result.title,
+                  channel: result.showTitle,
+                  discovery: posture,
+                  harvestQuery: query,
+                },
+              };
+            }
+            tierOutcomes.push(`podcast-feed (${posture}, "${query}"): ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}`);
+          }
+          return undefined;
+        };
+
         // Tier 2b — a web harvest by topic.
         //
         // TWO POSTURES since RFC-25 (owner ruling, 2026-09-20). A client with
@@ -1607,6 +1691,7 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         // clip has made a statement about rights, and an open search would
         // quietly widen it. Setting a `sourcePool` is therefore how a client
         // opts back OUT, with no code change.
+        const harvestVideoTier = async (): Promise<TikTokIntake | undefined> => {
         const harvest = tools["media.harvestVideo"];
         const allowedSources = plainSourceNames(config);
         /**
@@ -1697,6 +1782,15 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             }
             tierOutcomes.push(`web-harvest (${discovery}, "${harvestQuery}"): ${outcome.status}${"reason" in outcome ? ` (${outcome.reason})` : ""}`);
           }
+        }
+        return undefined;
+        };
+
+        // The order the owner ruled: the feed by default, YouTube first only
+        // where a cookies file makes it likely to answer at all.
+        for (const tier of options.youtubeHarvestPreferred === true ? [harvestVideoTier, harvestPodcastTier] : [harvestPodcastTier, harvestVideoTier]) {
+          const served = await tier();
+          if (served !== undefined) return served;
         }
       }
 
