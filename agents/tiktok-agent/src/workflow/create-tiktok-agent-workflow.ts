@@ -3837,7 +3837,40 @@ ${credit}`,
       const swappedBeats = repicked.swapped.map((s) => s.index);
       const because = `${swappedBeats.map((i) => `beat ${i}`).join(", ")} re-sourced after the visual QA scored the footage under 5${repicked.misses.length > 0 ? ` (nothing else for ${repicked.misses.join("; ")})` : ""}`;
       const passRev = (id: string) => rev(`${id}-repick`);
-      const second = await finishPass(passRev, path.join(workDir, "repick"), { beats: swappedBeats, note: because });
+      /**
+       * THE RE-PICK IS AN IMPROVEMENT PASS OVER A FINISHED CLIP.
+       *
+       * By the time it runs, `first` has been rendered, passed the bitstream
+       * gate, been watched by the visual QA and UPLOADED to the bucket a
+       * reviewer plays it from. Letting the re-render's failure end the run
+       * throws all of that away to avoid shipping a clip whose beat 2 footage
+       * is merely mediocre.
+       *
+       * prep run `pubsub-21922188223732599` did exactly that. The worker was
+       * recycled between `10b-visual-qa` and `10d` (a 423-second gap in the
+       * step timings), so the plates from the first render — written to the
+       * container's own `/tmp` — were on a machine that no longer existed:
+       *
+       *     video.composeSequence: clips[0] ".../plate-hook.mp4" could not be
+       *     probed: ffprobe exited 1: No such file or directory
+       *
+       * The run failed with a complete, uploaded, QA'd clip already sitting
+       * in GCS. `AwaitingGateSignal` is re-thrown because it is control flow
+       * (the engine's "pause here" contract), not a failure; everything else
+       * falls back to the cut that already exists.
+       */
+      let second: ClipDraft;
+      try {
+        second = await finishPass(passRev, path.join(workDir, "repick"), { beats: swappedBeats, note: because });
+      } catch (error) {
+        if (error instanceof AwaitingGateSignal) throw error;
+        const why = error instanceof Error ? error.message : String(error);
+        console.warn(`${passRev("08-render")}: the re-render failed (${why}); the first cut ships`);
+        return {
+          ...first,
+          repick: { beats: swappedBeats, note: `${because}; the re-render could not be made (${why}), so the first cut ships unchanged` },
+        };
+      }
 
       // The cut the QA scored better ships. A re-render the QA did not get to
       // watch (an outage between the two calls) ships too — its footage was

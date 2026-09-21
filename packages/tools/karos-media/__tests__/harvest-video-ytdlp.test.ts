@@ -429,7 +429,7 @@ describe("media.harvestVideo — a candidate that will not download", () => {
       await fs.writeFile(template.replace("%(ext)s", "mp4"), Buffer.from("fake-mp4-bytes"));
       return { stdout: "", stderr: "", exitCode: 0 };
     };
-    return { runner, downloaded };
+    return { runner, downloaded, get candidates() { return [...new Set(downloaded)]; } };
   }
 
   const THREE = [
@@ -469,12 +469,12 @@ describe("media.harvestVideo — a candidate that will not download", () => {
     // operational problem from four different reasons, and a reviewer or an
     // operator can only tell them apart if both are printed.
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "harvest-alt-"));
-    const { runner, downloaded } = pickyRunner(THREE, ["best", "second", "third"]);
-    const tool = createHarvestVideo({ provider: createYtDlpHarvestProvider({ runner }) });
+    const h = pickyRunner(THREE, ["best", "second", "third"]);
+    const tool = createHarvestVideo({ provider: createYtDlpHarvestProvider({ runner: h.runner }) });
     const outcome = await tool.execute({ ...OPEN, repoRoot: dir, runId: "run-3", maxBytes: 5_000_000 } as never, CTX);
 
     expect(outcome.status).toBe("content_fail");
-    expect(downloaded).toHaveLength(3);
+    expect(h.candidates).toHaveLength(3);
     const reason = (outcome as { reason: string }).reason;
     expect(reason).toContain("none of the 3 candidate(s)");
     expect(reason).toContain("not a bot");
@@ -488,33 +488,138 @@ describe("media.harvestVideo — a candidate that will not download", () => {
     const many = Array.from({ length: 12 }, (_, i) =>
       entry({ id: `v${i}`, title: `ai agents podcast ${i}`, uploader: `Show ${i}`, channel: `Show ${i}`, duration: 2000 + i }),
     );
-    const { runner, downloaded } = pickyRunner(many, many.map((_, i) => `v${i}`));
-    const tool = createHarvestVideo({ provider: createYtDlpHarvestProvider({ runner }) });
+    const h = pickyRunner(many, many.map((_, i) => `v${i}`));
+    const tool = createHarvestVideo({ provider: createYtDlpHarvestProvider({ runner: h.runner }) });
     const outcome = await tool.execute({ ...OPEN, repoRoot: dir, runId: "run-4", maxBytes: 5_000_000 } as never, CTX);
 
     expect(outcome.status).toBe("content_fail");
-    expect(downloaded).toHaveLength(4);
+    expect(h.candidates).toHaveLength(4);
   });
 
   it("carries the retry to the allowlist posture too", async () => {
     // Same failure, same answer. A client's own show having one unavailable
     // episode is if anything MORE likely than an open search hitting one.
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "harvest-alt-"));
-    const { runner, downloaded } = pickyRunner(
+    const h = pickyRunner(
       [
         entry({ id: "best", title: "ai agents", uploader: "Lenny's Podcast", channel: "Lenny's Podcast", duration: 3000, upload_date: "20260901" }),
         entry({ id: "second", title: "ai", uploader: "Lenny's Podcast", channel: "Lenny's Podcast", duration: 2400, upload_date: "20260801" }),
       ],
       ["best"],
     );
-    const tool = createHarvestVideo({ provider: createYtDlpHarvestProvider({ runner }) });
+    const tool = createHarvestVideo({ provider: createYtDlpHarvestProvider({ runner: h.runner }) });
     const outcome = await tool.execute(
       { query: "ai agents", allowedSources: ["Lenny's Podcast"], discovery: "allowlist", minDurationSeconds: 90, maxDurationSeconds: 10_800, repoRoot: dir, runId: "run-5", maxBytes: 5_000_000 } as never,
       CTX,
     );
 
     expect(outcome.status).toBe("success");
-    expect(downloaded).toHaveLength(2);
+    expect(h.candidates).toHaveLength(2);
     expect((outcome as { result: { sourceUrl: string } }).result.sourceUrl).toContain("second");
+  });
+});
+
+/**
+ * YOUTUBE'S BOT CHALLENGE, which is the thing standing between the clipping
+ * agent and an actual podcast.
+ *
+ * Prep run `pubsub-21908845348121079`: the open search found a real podcast
+ * and the download came back *"Sign in to confirm you're not a bot"*. The
+ * challenge is issued per CLIENT, not only per IP — the default web client is
+ * the one it challenges hardest, and the TV and mobile players are routinely
+ * served where it is not.
+ *
+ * This is an arms race and none of it is guaranteed, which is why
+ * `YT_DLP_COOKIES_FILE` stays the real answer and the clip cascade keeps a
+ * tier below this one. What these tests pin is that a challenge costs a
+ * retry with a different client rather than the whole candidate, and that
+ * every OTHER failure still costs exactly one attempt.
+ */
+describe("yt-dlp against the bot check", () => {
+  const OPEN = { query: "ai agents podcast", allowedSources: [], discovery: "open" as const, minDurationSeconds: 90, maxDurationSeconds: 10_800 };
+  const ONE = [entry({ id: "only", title: "ai agents podcast", uploader: "Show", channel: "Show", duration: 3000 })];
+
+  /** Records the `--extractor-args` of each download attempt; `serveFrom` is the client that finally answers. */
+  function challengingRunner(serveFrom: string | null) {
+    const clients: Array<string | undefined> = [];
+    const runner: ProcessRunnerLike = async (_command, args) => {
+      if ((args[0] ?? "").startsWith("ytsearch")) return { stdout: searchJson(ONE), stderr: "", exitCode: 0 };
+      const at = args.indexOf("--extractor-args");
+      const client = at === -1 ? undefined : args[at + 1]!.replace("youtube:player_client=", "");
+      clients.push(client);
+      if (serveFrom !== null && client === serveFrom) {
+        const template = args[args.indexOf("-o") + 1]!;
+        await fs.writeFile(template.replace("%(ext)s", "mp4"), Buffer.from("fake-mp4-bytes"));
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      return { stdout: "", stderr: "ERROR: [youtube] only: Sign in to confirm you’re not a bot. Use --cookies", exitCode: 1 };
+    };
+    return { runner, clients };
+  }
+
+  it("retries a challenged download as a different player client, and keeps the video", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "harvest-bot-"));
+    const { runner, clients } = challengingRunner("tv");
+    const tool = createHarvestVideo({ provider: createYtDlpHarvestProvider({ runner }) });
+    const outcome = await tool.execute({ ...OPEN, repoRoot: dir, runId: "bot-1", maxBytes: 5_000_000 } as never, CTX);
+
+    expect(outcome.status).toBe("success");
+    // The default client FIRST — it is the highest-quality path and costs
+    // nothing when it works — then the alternates, in order.
+    expect(clients).toEqual([undefined, "tv"]);
+  });
+
+  it("gives up on the candidate once every client has been challenged", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "harvest-bot-"));
+    const { runner, clients } = challengingRunner(null);
+    const tool = createHarvestVideo({ provider: createYtDlpHarvestProvider({ runner }) });
+    const outcome = await tool.execute({ ...OPEN, repoRoot: dir, runId: "bot-2", maxBytes: 5_000_000 } as never, CTX);
+
+    // A blocked worker is still a blocked worker: this stays `content_fail`
+    // so the clip cascade reads it as "this tier did not serve" and moves on
+    // to the next one rather than degrading the run.
+    expect(outcome.status).toBe("content_fail");
+    expect(clients).toHaveLength(4);
+    expect((outcome as { reason: string }).reason).toContain("not a bot");
+  });
+
+  it("does NOT burn four attempts on a failure another client cannot fix", async () => {
+    // A private, removed or geo-blocked video answers the same way whoever
+    // asks. Retrying it three more times costs three more yt-dlp invocations
+    // to learn nothing.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "harvest-bot-"));
+    const clients: Array<string | undefined> = [];
+    const runner: ProcessRunnerLike = async (_command, args) => {
+      if ((args[0] ?? "").startsWith("ytsearch")) return { stdout: searchJson(ONE), stderr: "", exitCode: 0 };
+      clients.push(args.indexOf("--extractor-args") === -1 ? undefined : "alt");
+      return { stdout: "", stderr: "ERROR: [youtube] only: Video unavailable. This video is private", exitCode: 1 };
+    };
+    const tool = createHarvestVideo({ provider: createYtDlpHarvestProvider({ runner }) });
+    const outcome = await tool.execute({ ...OPEN, repoRoot: dir, runId: "bot-3", maxBytes: 5_000_000 } as never, CTX);
+
+    expect(outcome.status).toBe("content_fail");
+    expect(clients).toEqual([undefined]);
+  });
+
+  it("passes a cookies file on every attempt when one is configured", async () => {
+    // The real answer, and the only one that is not an arms race. It has to
+    // reach the RETRIES too — a ladder that drops the cookies on attempt two
+    // would turn a working deployment into a challenged one.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "harvest-bot-"));
+    const seen: string[][] = [];
+    const runner: ProcessRunnerLike = async (_command, args) => {
+      if ((args[0] ?? "").startsWith("ytsearch")) return { stdout: searchJson(ONE), stderr: "", exitCode: 0 };
+      seen.push([...args]);
+      if (seen.length < 2) return { stdout: "", stderr: "ERROR: Sign in to confirm you’re not a bot", exitCode: 1 };
+      const template = args[args.indexOf("-o") + 1]!;
+      await fs.writeFile(template.replace("%(ext)s", "mp4"), Buffer.from("fake-mp4-bytes"));
+      return { stdout: "", stderr: "", exitCode: 0 };
+    };
+    const provider = createYtDlpHarvestProvider({ runner, env: { YT_DLP_COOKIES_FILE: "/secrets/yt-cookies.txt" } });
+    const outcome = await createHarvestVideo({ provider }).execute({ ...OPEN, repoRoot: dir, runId: "bot-4", maxBytes: 5_000_000 } as never, CTX);
+
+    expect(outcome.status).toBe("success");
+    expect(seen).toHaveLength(2);
+    for (const args of seen) expect(args).toContain("/secrets/yt-cookies.txt");
   });
 });

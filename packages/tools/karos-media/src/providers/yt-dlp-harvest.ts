@@ -122,34 +122,70 @@ export function createYtDlpHarvestProvider(options: YtDlpHarvestProviderOptions 
   const env = options.env ?? {};
   const runner = options.runner ?? createDefaultProcessRunner();
   const ytDlpBin = options.ytDlpBin ?? env["YT_DLP_BIN"]?.trim() ?? "yt-dlp";
+  // The real answer to YouTube's bot challenge, and the only one that is not
+  // an arms race: a cookies.txt export from a signed-in session, mounted as a
+  // file. Absent, the player-client ladder in `downloadInto` is the fallback.
   const cookiesFile = options.cookiesFile ?? env["YT_DLP_COOKIES_FILE"]?.trim();
   const searchPerSource = options.searchPerSource ?? 8;
   const cookieArgs = cookiesFile ? ["--cookies", cookiesFile] : [];
 
-  async function downloadInto(url: string, destDirAbs: string, maxBytes: number): Promise<{ path: string }> {
-    // A previous attempt in the same run dir (a retry, a different candidate)
-    // may have left `harvested-clip.*` behind; yt-dlp would report "already
-    // downloaded" and exit 0, and the tool would then read the WRONG file.
-    for (const stale of await existingOutputs(destDirAbs)) {
-      await fs.rm(path.join(destDirAbs, stale), { force: true });
-    }
+  /**
+   * The clients yt-dlp can impersonate, tried in order until one is served.
+   *
+   * YouTube's "Sign in to confirm you're not a bot" is issued per CLIENT, not
+   * only per IP: the default web client is the one it challenges hardest, and
+   * the TV and mobile players are routinely served where it is not. This is
+   * an arms race and none of these is guaranteed — which is why
+   * `YT_DLP_COOKIES_FILE` remains the real answer and the clip cascade still
+   * has a tier below this one.
+   *
+   * `undefined` first: the default client is the highest-quality path and
+   * costs nothing when it works. The alternates only run after a challenge,
+   * so a healthy deployment never pays for them.
+   */
+  const PLAYER_CLIENTS: ReadonlyArray<string | undefined> = [undefined, "tv", "android_vr", "web_safari"];
 
-    const result = await runner(ytDlpBin, [
-      url,
-      "-f",
-      YT_DLP_DOWNLOAD_FORMAT,
-      "--merge-output-format",
-      "mp4",
-      "--max-filesize",
-      String(maxBytes),
-      "--no-playlist",
-      "--no-warnings",
-      "-o",
-      path.join(destDirAbs, `${OUTPUT_STEM}.%(ext)s`),
-      ...cookieArgs,
-    ]);
-    if (result.exitCode !== 0) {
-      throw new Error(`yt-dlp exited ${result.exitCode} downloading ${url}: ${tail(result.stderr || result.stdout) || "(no output)"}`);
+  /** YouTube's bot challenge, as it appears on stderr. Matched loosely: the wording has changed twice and the apostrophe is a curly one. */
+  function isBotChallenge(text: string): boolean {
+    return /confirm\s+you.{0,3}re\s+not\s+a\s+bot|sign in to confirm/i.test(text);
+  }
+
+  async function downloadInto(url: string, destDirAbs: string, maxBytes: number): Promise<{ path: string }> {
+    let lastError = "";
+    for (const client of PLAYER_CLIENTS) {
+      // A previous attempt in the same run dir (another candidate, or the
+      // previous player client) may have left `harvested-clip.*` behind;
+      // yt-dlp would report "already downloaded" and exit 0, and the tool
+      // would then read the WRONG file.
+      for (const stale of await existingOutputs(destDirAbs)) {
+        await fs.rm(path.join(destDirAbs, stale), { force: true });
+      }
+
+      const result = await runner(ytDlpBin, [
+        url,
+        "-f",
+        YT_DLP_DOWNLOAD_FORMAT,
+        "--merge-output-format",
+        "mp4",
+        "--max-filesize",
+        String(maxBytes),
+        "--no-playlist",
+        "--no-warnings",
+        "-o",
+        path.join(destDirAbs, `${OUTPUT_STEM}.%(ext)s`),
+        ...(client !== undefined ? ["--extractor-args", `youtube:player_client=${client}`] : []),
+        ...cookieArgs,
+      ]);
+      if (result.exitCode === 0) break;
+
+      lastError = tail(result.stderr || result.stdout) || "(no output)";
+      // Only a bot challenge is worth another client. A private video, a
+      // removed one or a geo-block answers the same way whoever asks, and
+      // retrying three more times would cost three more yt-dlp invocations
+      // to learn nothing.
+      if (!isBotChallenge(lastError) || client === PLAYER_CLIENTS[PLAYER_CLIENTS.length - 1]) {
+        throw new Error(`yt-dlp exited ${result.exitCode} downloading ${url}: ${lastError}`);
+      }
     }
 
     // `--max-filesize` is a SKIP, not an error: yt-dlp prints a notice and
