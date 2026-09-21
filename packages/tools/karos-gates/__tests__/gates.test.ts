@@ -1049,3 +1049,50 @@ describe("detectProductMentions", () => {
     expect(detectProductMentions("it is an ok result", ["ok"])).toEqual([]);
   });
 });
+
+/**
+ * THE CAP LINKEDIN'S OWN CRAFT GUIDE HAS ALWAYS NAMED.
+ *
+ * `linkedin-craft` §12 says "zero to three hashtags… never a generic
+ * stapled-on block like #business #growth #success", and gives the reason:
+ * "six or more measurably cuts reach". Nothing counted them. X's identical
+ * rule has been enforced since 1.0.0, so this is the same check one platform
+ * over, not a new opinion.
+ *
+ * Each case pairs a refusal with the control that must still pass, because a
+ * cap that fires on a good post is a cap somebody turns off.
+ */
+describe("gate.lintPost — the LinkedIn hashtag cap", () => {
+  const body = "A real observation about onboarding, written plainly, with something a reader can act on.";
+
+  it("passes a LinkedIn post at the limit of three", async () => {
+    const text = `${body}\n\n#onboarding #engineeringmanagement #retention`;
+    expect((await verdictOf("gate.lintPost", { text, platform: "linkedin" })).verdict).toBe("pass");
+  });
+
+  it("passes a LinkedIn post with none at all — zero is a valid answer", async () => {
+    expect((await verdictOf("gate.lintPost", { text: body, platform: "linkedin" })).verdict).toBe("pass");
+  });
+
+  it("refuses the stapled-on block the craft guide names", async () => {
+    const text = `${body}\n\n#business #growth #success #leadership #mindset`;
+    const verdict = await verdictOf("gate.lintPost", { text, platform: "linkedin" });
+    expect(verdict.verdict).toBe("content_fail");
+    expect(verdict.reason).toContain("the limit on linkedin is 3");
+    expect(verdict.evidence).toContain("#business");
+  });
+
+  it("leaves other platforms alone", async () => {
+    // A blog article may legitimately contain markdown headings; nothing here
+    // should start counting them as hashtags on a platform with no such rule.
+    const text = `${body}\n\n#one #two #three #four #five #six`;
+    expect((await verdictOf("gate.lintPost", { text, platform: "blog" })).verdict).toBe("pass");
+  });
+
+  it("does not count a fragment identifier in a URL as a hashtag", async () => {
+    // The counting expression is X's, unchanged, and this is why it has a
+    // lookbehind: `https://example.com/docs#install` is one link, not a tag.
+    const text = `${body}\n\nhttps://example.com/docs#install and https://example.com/faq#pricing`;
+    expect((await verdictOf("gate.lintPost", { text, platform: "linkedin" })).verdict).toBe("pass");
+  });
+});
