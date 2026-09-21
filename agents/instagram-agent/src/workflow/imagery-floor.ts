@@ -1,5 +1,5 @@
 import type { SceneSource } from "./scene-brief.js";
-import { FULL_BLEED_IMAGE_LAYOUTS } from "./slides-data.js";
+import { FULL_BLEED_IMAGE_LAYOUTS, HERO_IMAGE_LAYOUTS } from "./slides-data.js";
 import type { InstagramCopyOutput, InstagramSlideLayout } from "./types.js";
 
 /**
@@ -347,6 +347,58 @@ function choosePlacements(candidates: readonly number[], count: number, seed: st
     chosen.add(candidates[index]!);
   }
   return chosen;
+}
+
+/**
+ * Does this post need one more picture for the sake of WHERE its pictures
+ * sit, rather than how many it has?
+ *
+ * ## The post this exists because of
+ *
+ * prep `pubsub-21926643455584277` (karoslabs, 2026-09-21) shipped three
+ * pictures, on slides 1, 2 and 7 — a `cover` and two `photo` plates. All three
+ * are in `FULL_BLEED_IMAGE_LAYOUTS`, so all three pictures WERE the plate, and
+ * `figurePlacementFor` returns `"band"` for every one of them. The post had
+ * three picture-capable interior plates (`stat_callout`, `list_takeaway`,
+ * `quote_card`) and gave a picture to none. The owner: *"יצא פה שכל התמונות הן
+ * רקע ... לפעמים זה טוב שזה באמצע למשל או בצד באמצע"*.
+ *
+ * Nothing malfunctioned, which is why it had survived this long. The floor
+ * asks for THREE PICTURES and the post had three, so `want` came out 0,
+ * `planImageBackfill` was never called, and the bounded-plate preference that
+ * function already implements — "a BOUNDED plate before a full-bleed one" —
+ * never got a chance to express itself. A rule that only fires when the post
+ * is short of pictures cannot shape a post that has enough.
+ *
+ * ## What this asks for, and what it deliberately does not
+ *
+ * One bounded picture, and only when EVERY picture the post holds is
+ * full-bleed. Not a quota, not a ratio: the defect is the monotony of a post
+ * whose every image is a background, and one inset breaks it. Asking for more
+ * would start trading away the full-bleed plates that earn the swipe.
+ *
+ * It returns 0 when the post is already at its ceiling, when it holds no
+ * pictures at all (that is the floor's business, not this rule's), and when
+ * something bounded already landed — including a bounded plate the writer
+ * asked for itself, which is the case this must not double.
+ */
+export function placementMixShortfall(
+  copy: InstagramCopyOutput,
+  withPictureNs: ReadonlySet<number>,
+  ceiling: number = MAX_PICTURE_SLIDES,
+): number {
+  if (withPictureNs.size === 0) return 0;
+  if (withPictureNs.size >= ceilingFor(copy.slides.length, ceiling, MIN_PICTURE_SLIDES)) return 0;
+  const carrying = copy.slides.filter((slide) => withPictureNs.has(slide.n));
+  const anyBounded = carrying.some((slide) => !FULL_BLEED_IMAGE_LAYOUTS.has(slide.layout ?? "photo"));
+  if (anyBounded) return 0;
+  // Only worth asking when there is somewhere bounded for it to go. A post of
+  // nothing but covers and photo plates has no inset to offer and this rule
+  // has no opinion about it.
+  const boundedSeatsFree = copy.slides.some(
+    (slide) => !withPictureNs.has(slide.n) && HERO_IMAGE_LAYOUTS.has(slide.layout ?? "photo") && !FULL_BLEED_IMAGE_LAYOUTS.has(slide.layout ?? "photo"),
+  );
+  return boundedSeatsFree ? 1 : 0;
 }
 
 /**

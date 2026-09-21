@@ -110,13 +110,16 @@ describe("the sourcing ladder — the entity route is consulted before ordinary 
 
   it("orders media library, official assets, the cited article, commons, then stock", () => {
     const plan = planEntitySourcing({ entity: chatgpt, hasMediaLibrary: true, citedUrls: ["https://example.com/openai-ships-gpt"], sceneTerms: ["laptop", "long exposure"] });
-    expect(plan.map((s) => s.tier)).toEqual(["media-library", "official-assets", "cited-article", "commons", "stock"]);
-    expect(plan.map((s) => s.order)).toEqual([0, 1, 2, 3, 4]);
+    // Two `commons` rungs since 2026-09-21: the mark, then the bare name. See
+    // the logo tests below for why.
+    expect(plan.map((s) => s.tier)).toEqual(["media-library", "official-assets", "cited-article", "commons", "commons", "stock"]);
+    expect(plan.map((s) => s.order)).toEqual([0, 1, 2, 3, 4, 5]);
 
     // The `entity` route runs BEFORE `default`, which is the whole change:
     // Commons names its subjects in the file's own metadata, and stock does
     // not, so identification gets the first look.
-    const commons = plan.find((s) => s.tier === "commons")!;
+    // The bare-name rung, which is the one this case is about.
+    const commons = plan.filter((s) => s.tier === "commons").find((s) => s.query === "ChatGPT")!;
     const stock = plan.find((s) => s.tier === "stock")!;
     expect(commons.route).toBe("entity");
     expect(commons.requireTerm).toBe("ChatGPT");
@@ -126,6 +129,47 @@ describe("the sourcing ladder — the entity route is consulted before ordinary 
     // The entity name leads the stock query too — a generic frame should at
     // least argue for the right subject.
     expect(stock.query!.startsWith("ChatGPT")).toBe(true);
+  });
+
+  /**
+   * prep `pubsub-21926643455584277` (karoslabs, 2026-09-21) ran this ladder
+   * for Coca-Cola and got back, in order: "Share a Coke with ... James -
+   * Pershore Road, Stirchley", "one of the Share a Coke cans I bought",
+   * "coke", "Coke". Four photographs of a can, every one honestly matching
+   * the query — which was the bare name.
+   *
+   * The owner: *"אם מדברים על קוקה קולה זה קלאסי לשים את הלוגו שלהם"*. A post
+   * about a company shows that company's MARK; a stranger's snapshot of its
+   * packaging is the fallback. The mark was reachable the whole time —
+   * Wikimedia carries wordmarks, often `PD-textlogo`, and this module's own
+   * rights policy says a logo as the subject of commentary is nominative use.
+   * Nothing forbade it; nothing asked for it.
+   */
+  it("asks for a company's MARK before a stranger's photograph of its product", () => {
+    const coke = entity({ name: "Coca-Cola", kind: "company", cardIds: ["k3"], salience: 5 });
+    const plan = planEntitySourcing({ entity: coke });
+    const commons = plan.filter((s) => s.tier === "commons");
+
+    const logo = commons.find((s) => s.query === "Coca-Cola logo");
+    expect(logo, `no rung asked for the mark; queries were ${JSON.stringify(commons.map((s) => s.query))}`).toBeDefined();
+    expect(logo!.requireTerm).toBe("Coca-Cola");
+    // Ahead of the bare name, or the photographs win again.
+    expect(logo!.order).toBeLessThan(commons.find((s) => s.query === "Coca-Cola")!.order);
+  });
+
+  it("does not ask a person for a logo", () => {
+    // "Andrej Karpathy logo" returns noise, ranked above the press photograph
+    // the next rung would have found.
+    const person = entity({ name: "Andrej Karpathy", kind: "person", cardIds: ["k4"], salience: 5 });
+    const queries = planEntitySourcing({ entity: person }).map((s) => s.query);
+    expect(queries).not.toContain("Andrej Karpathy logo");
+  });
+
+  it("asks a product and a work for one, because they carry a mark too", () => {
+    for (const kind of ["product", "work"] as const) {
+      const queries = planEntitySourcing({ entity: entity({ name: "Figma", kind, cardIds: ["k5"], salience: 5 }) }).map((s) => s.query);
+      expect(queries, `kind "${kind}"`).toContain("Figma logo");
+    }
   });
 
   it("goes to the entity's own press pages only when a card gave us the domain, and never guesses one", () => {
