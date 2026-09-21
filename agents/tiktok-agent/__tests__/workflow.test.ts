@@ -562,7 +562,11 @@ describe("tiktok-agent clip pipeline", () => {
     expect(result.status).toBe("held");
     if (result.status !== "held") throw new Error("unreachable");
     expect(result.reason).toContain("nothing to widen to");
-    expect(result.reason).toContain("add a content pillar");
+    // The hold names what is missing, and since 2026-09-21 that is not a
+    // field somebody forgot to fill in — a profile description and an
+    // industry are on every client the portal onboards, so a run reaching
+    // here means we know nothing about them at all.
+    expect(result.reason).toContain("nothing on record about them");
     // Still refused before spending anything: no search, no cut.
     expect(h.calls).not.toContain("media.harvestVideo");
     expect(h.calls).not.toContain("video.cutClip");
@@ -1826,6 +1830,34 @@ describe("widening the topic rather than holding", () => {
     expect(h.deliverables[0]).toMatchObject({ topic: "how founders pick their first hire", topicSource: "widened" });
     const repairs = h.deliverables[0]!["contentRepairs"] as Array<{ check: string; detail: string }>;
     expect(repairs.find((r) => r.check === "topic-source")?.detail).toContain("topic scout");
+  }, 20_000);
+
+  it("rung 3b: takes the subject from the client's OWN PROFILE when they declare no pillars", async () => {
+    // Owner, 2026-09-21: a sourcePool is not something every client will
+    // have, and "there are all the documents on a client, that is where you
+    // should be finding things that help you". So the last rung before the
+    // hold does not depend on a field somebody has to fill in — a profile has
+    // an industry and a description on every client the portal onboards.
+    const h = stubTools({
+      reserveFails: true,
+      discoveryTools: true,
+      harvestServes: true,
+      stockServes: true,
+      // discoveryTools registers a profile; no contentPillars anywhere.
+      config: { tiktokClips: { sourcePool: [], guestWatchlist: [], narrowing: [] } },
+    });
+    const result = await run(h, "run-tt-widen-profile", { sourcePath: undefined }, [GOOD_MOMENT, GOOD_COMMENTARY], os.tmpdir());
+
+    expect(result.status).toBe("completed");
+    const deliverable = h.deliverables[0]!;
+    expect(deliverable["topicSource"]).toBe("widened");
+    // The profile's own description, not an invented subject.
+    expect(String(deliverable["topic"])).toContain("Acme sells");
+    const repairs = deliverable["contentRepairs"] as Array<{ check: string; detail: string }>;
+    const note = repairs.find((r) => r.check === "topic-source")?.detail;
+    expect(note).toContain("their own");
+    // …and it is honest about what that is worth.
+    expect(note).toContain("not a researched angle");
   }, 20_000);
 
   it("says nothing about the topic on a run that reserved one normally", async () => {

@@ -1499,13 +1499,23 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
         };
       }
 
-      // Rung 3 — discovery proposed nothing at all, so there is no subject to
-      // widen TO. A content pillar is the client's own declared answer to
-      // "what should we be talking about", which makes it a real subject
-      // rather than an invented one.
-      // The rotation discovery already computed (the lane's row count), so
-      // two runs in a row falling to this rung do not both land on pillar 0
-      // and this costs no second catalog read.
+      /**
+       * Rung 3 — discovery proposed nothing at all, so the subject has to
+       * come from what we already KNOW about this client.
+       *
+       * Two sources, in order, and neither is a field anybody has to fill in
+       * for this to work (owner, 2026-09-21: "there are all the documents on
+       * a client, that is where you should be finding things that help you").
+       * A `contentPillars` entry is the client's own declared answer to "what
+       * should we be talking about" and is used when it exists; a profile has
+       * an industry and a description on every client the portal onboards,
+       * and a subject drawn from those is the client's own positioning rather
+       * than something this run made up.
+       *
+       * The rotation is the one discovery already computed (the lane's row
+       * count), so two runs in a row falling to this rung do not both land on
+       * the same pillar, and it costs no second catalog read.
+       */
       const pillars = intakeConfig.contentPillars;
       const pillar = pillars.length > 0 ? pillars[discovery.rotation % pillars.length] : undefined;
       if (pillar !== undefined) {
@@ -1517,6 +1527,22 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
             `("${pillar}") rather than returning nothing — ${discovery.notes.join("; ")}`,
         };
       }
+      // The profile, which every onboarded client has. `description` first —
+      // it is the sentence the client wrote about themselves — and the
+      // industry behind it, which is thin but is still about them.
+      const fromProfile = (profile.description ?? "").trim() || (profile.industry ?? "").trim();
+      if (fromProfile.length > 0) {
+        // Trimmed to a catalog row's length. A whole paragraph is not a
+        // subject, and the drafting steps read this as one.
+        const subject = fromProfile.length <= 110 ? fromProfile : `${fromProfile.slice(0, 107).replace(/\s+\S*$/, "")}…`;
+        return {
+          topic: subject,
+          topicSource: "widened",
+          topicNote:
+            `the catalog lane is empty, discovery could not propose anything and this client declares no content pillars, so the subject was taken from their own ` +
+            `profile rather than returning nothing — a broad starting point, not a researched angle (${discovery.notes.join("; ")})`,
+        };
+      }
 
       // Nothing left. Not a domain dead end but an empty client: no catalog,
       // no footage, no research, no intel and no content pillars means this
@@ -1524,7 +1550,8 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
       // rule's "nobody to write for" carve-out, and the hold says what to add.
       throw new WorkflowHeld(
         `no ${CLIP_LANE} candidate to make and nothing to widen to: the catalog lane is empty, no footage was attached, discovery could not propose a subject, ` +
-          `and the client declares no content pillars — add a content pillar, a topic, or footage. (${discovery.notes.join("; ")})`,
+          `and this client has no content pillars, no profile description and no industry — there is nothing on record about them to be about. ` +
+          `(${discovery.notes.join("; ")})`,
       );
     });
 
