@@ -1,6 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentContext, AgentToolRegistry } from "@agent-engine/core";
-import { success, notAvailable } from "@agent-engine/tool-common";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createReputationPulseWorkflow } from "../src/workflow/create-reputation-pulse-workflow.js";
 import { runReputationRosterSetup } from "../src/workflow/roster-setup.js";
@@ -23,14 +22,17 @@ import {
  *
  * Each case pins one of the three paths (`already-configured` / `recorded` /
  * `not-supplied`) or one resolution rule from roster-setup.ts's header: an App
- * Store URL resolves on its own, Google resolves only through the owned
- * account, everything else is skipped WITH its reason. The last two cases run
- * the whole pulse, because the point of the pre-flight is what happens to the
- * client's first run: it completes against a roster it recorded itself, or it
- * refuses at step 03 quoting the cause.
+ * Store URL resolves on its own, a Google surface has no capture adapter
+ * (2026-09-21: the `gbp` leg was removed — Business Profile API access is
+ * unapproved for this project, quota 0), everything else is skipped WITH its
+ * reason. The last two cases run the whole pulse, because the point of the
+ * pre-flight is what happens to the client's first run: it completes against
+ * a roster it recorded itself, or it refuses at step 03 quoting the cause.
  */
 
 const CTX: AgentContext = { runId: "run_roster_1", clientSlug: "acme-cafe", productId: "reputation-agent", runKind: "recurring", metadata: {} };
+
+const GOOGLE_SURFACE_REASON = /Google Business Profile capture is not available in this deployment/;
 
 function args(env: TestEnvironment, input: Record<string, unknown>, tools: AgentToolRegistry = env.tools) {
   return { tools, ctx: { ...CTX, clientSlug: env.clientSlug }, runId: CTX.runId, clientSlug: env.clientSlug, input };
@@ -66,7 +68,8 @@ describe("00-roster-setup: runReputationRosterSetup", () => {
   });
 
   it("leaves a roster that is on file but does not parse alone, and says so", async () => {
-    await writeClientConfig(env.store, env.clientSlug, { reputationRoster: [{ leg: "gbp", listingId: "x" }] as never });
+    // Missing appId — a genuinely malformed appstore leg.
+    await writeClientConfig(env.store, env.clientSlug, { reputationRoster: [{ leg: "appstore", listingId: "x" }] as never });
     const outcome = await runReputationRosterSetup(args(env, { reviewSurfaces: ["https://apps.apple.com/us/app/acme/id111111111"] }));
     expect(outcome.status).toBe("already-configured");
     expect(outcome.note).toMatch(/does not parse, so setup left it alone/);
@@ -133,112 +136,24 @@ describe("00-roster-setup: runReputationRosterSetup", () => {
     expect(outcome.note).toMatch(/could not resolve: Yelp/);
   });
 
-  it("without an owned account id, asks the credential which accounts it manages — and with no credential in this composition, carries that gap as the reason", async () => {
+  it("a Google surface has no capture adapter, and is skipped with why (2026-09-21: the gbp leg was removed)", async () => {
     await writeClientConfig(env.store, env.clientSlug, {});
     const outcome = await runReputationRosterSetup(args(env, { reviewSurfaces: "Google" }));
 
     expect(outcome).toMatchObject({ status: "not-supplied", legCount: 0, written: [] });
-    expect(outcome.skipped).toEqual([{ seed: "Google", reason: expect.stringMatching(/missing env GOOGLE_BUSINESS_TOKEN, and no Application Default Credentials provider is wired/) }]);
+    expect(outcome.skipped).toEqual([{ seed: "Google", reason: expect.stringMatching(GOOGLE_SURFACE_REASON) }]);
     expect(outcome.note).toMatch(/none of the named surfaces resolved to a listing: Google/);
     expect((await readConfig(env))["reputationRoster"]).toEqual([]);
   });
 
-  it("without an owned account id, records every location of every account the credential manages, each leg on its own account (2026-09-06)", async () => {
-    await writeClientConfig(env.store, env.clientSlug, {});
-    const discover = vi.fn(async () =>
-      success({
-        account: "acct-1",
-        accounts: ["acct-1", "acct-2"],
-        credentialSource: "adc",
-        locations: [
-          { account: "acct-1", location: "loc-1", title: "Acme Cafe" },
-          { account: "acct-2", location: "loc-9", title: "Acme Riverside", address: "9 River Rd" },
-        ],
-      }),
-    );
-    const tools: AgentToolRegistry = {
-      ...env.tools,
-      "reputation.discoverGbpLocations": { ...env.tools["reputation.discoverGbpLocations"]!, execute: discover } as never,
-    };
-
-    const outcome = await runReputationRosterSetup(args(env, { reviewSurfaces: ["Google"] }, tools));
-
-    // No account id → the tool is asked with none, and enumerates what the credential manages.
-    expect(discover).toHaveBeenCalledWith({}, expect.anything());
-    expect(outcome).toMatchObject({ status: "recorded", legCount: 2, skipped: [] });
-    expect(outcome.resolvedFrom).toEqual(["Google Business Profile 2 managed accounts (acct-1, acct-2) → 2 location(s)"]);
-    expect((await readConfig(env))["reputationRoster"]).toEqual([
-      { leg: "gbp", listingId: "gbp:loc-1", listingLabel: "Acme Cafe", inRoster: true, account: "acct-1", location: "loc-1" },
-      { leg: "gbp", listingId: "gbp:loc-9", listingLabel: "Acme Riverside — 9 River Rd", inRoster: true, account: "acct-2", location: "loc-9" },
-    ]);
-  });
-
-  it("resolves a Google surface through the owned account's locations, one gbp leg per location", async () => {
-    await writeClientConfig(env.store, env.clientSlug, { gbpAccountId: "accounts/acct-1" });
-    const discover = vi.fn(async () =>
-      success({
-        account: "acct-1",
-        locations: [
-          { location: "loc-1", title: "Acme Cafe", address: "1 Main St, Springfield" },
-          { location: "loc-2", title: "Acme Cafe Riverside" },
-        ],
-      }),
-    );
-    const tools: AgentToolRegistry = {
-      ...env.tools,
-      "reputation.discoverGbpLocations": { ...env.tools["reputation.discoverGbpLocations"]!, execute: discover } as never,
-    };
-
-    const outcome = await runReputationRosterSetup(args(env, { reviewSurfaces: ["Google Business Profile"] }, tools));
-
-    expect(discover).toHaveBeenCalledWith({ account: "accounts/acct-1" }, expect.anything());
-    expect(outcome).toMatchObject({ status: "recorded", legCount: 2, skipped: [] });
-    expect(outcome.resolvedFrom).toEqual(['Google Business Profile account "acct-1" → 2 location(s)']);
-    expect((await readConfig(env))["reputationRoster"]).toEqual([
-      { leg: "gbp", listingId: "gbp:loc-1", listingLabel: "Acme Cafe — 1 Main St, Springfield", inRoster: true, account: "acct-1", location: "loc-1" },
-      { leg: "gbp", listingId: "gbp:loc-2", listingLabel: "Acme Cafe Riverside", inRoster: true, account: "acct-1", location: "loc-2" },
-    ]);
-  });
-
-  it("carries the discovery tool's own reason when the owned account cannot be enumerated", async () => {
-    await writeClientConfig(env.store, env.clientSlug, { gbpAccountId: "acct-1" });
-    const tools: AgentToolRegistry = {
-      ...env.tools,
-      "reputation.discoverGbpLocations": {
-        ...env.tools["reputation.discoverGbpLocations"]!,
-        execute: async () => notAvailable("missing env GOOGLE_BUSINESS_TOKEN — the Google Business Profile listings cannot be enumerated"),
-      } as never,
-    };
-    const outcome = await runReputationRosterSetup(args(env, { reviewSurfaces: ["google"] }, tools));
-    expect(outcome.status).toBe("not-supplied");
-    expect(outcome.skipped).toEqual([{ seed: "google", reason: expect.stringMatching(/GOOGLE_BUSINESS_TOKEN/) }]);
-  });
-
-  it("says what it needs when the run carried nothing at all — after trying the one automatic discovery it can", async () => {
+  it("says what it needs when the run carried nothing at all, and attempts no automatic discovery of anything", async () => {
     await writeClientConfig(env.store, env.clientSlug, {});
     const outcome = await runReputationRosterSetup(args(env, {}));
     expect(outcome.status).toBe("not-supplied");
-    expect(outcome.note).toMatch(/named no review surfaces — the reputation intake's "where people review you" is what this resolves from/);
-    // With nothing named, Google Business Profile discovery through the
-    // deployment's credential is still attempted, and its outcome is in the note.
-    expect(outcome.note).toMatch(/automatic Google Business Profile discovery: Google Business Profile \(missing env GOOGLE_BUSINESS_TOKEN/);
-  });
-
-  it("with nothing named but a credential that manages a profile, the first pulse gets a roster without anyone typing a surface", async () => {
-    await writeClientConfig(env.store, env.clientSlug, {});
-    const discover = vi.fn(async () =>
-      success({ account: "acct-1", accounts: ["acct-1"], credentialSource: "adc", locations: [{ account: "acct-1", location: "loc-1", title: "Acme Cafe" }] }),
+    expect(outcome.note).toBe(
+      'no roster on file and this run named no review surfaces — the reputation intake\'s "where people review you" is what this resolves from',
     );
-    const tools: AgentToolRegistry = {
-      ...env.tools,
-      "reputation.discoverGbpLocations": { ...env.tools["reputation.discoverGbpLocations"]!, execute: discover } as never,
-    };
-    const outcome = await runReputationRosterSetup(args(env, {}, tools));
-    expect(discover).toHaveBeenCalledWith({}, expect.anything());
-    expect(outcome).toMatchObject({ status: "recorded", legCount: 1 });
-    expect((await readConfig(env))["reputationRoster"]).toEqual([
-      { leg: "gbp", listingId: "gbp:loc-1", listingLabel: "Acme Cafe", inRoster: true, account: "acct-1", location: "loc-1" },
-    ]);
+    expect(outcome.skipped).toEqual([]);
   });
 });
 
@@ -304,9 +219,9 @@ describe("00-roster-setup inside the pulse", () => {
     if (result.status !== "blocked_intake") throw new Error("unreachable");
     expect(result.reason).toMatch(/no reputation capture legs are configured/);
     expect(result.reason).toMatch(/Setup: no roster on file and none of the named surfaces resolved to a listing: /);
-    // No account id and no credential in this composition: the Google seed is
-    // skipped with the credential gap, not with "no account id" (2026-09-06).
-    expect(result.reason).toMatch(/Google \(missing env GOOGLE_BUSINESS_TOKEN, and no Application Default Credentials provider is wired/);
+    // 2026-09-21: the gbp leg was removed, so the Google seed is skipped with
+    // that reason rather than a credential gap.
+    expect(result.reason).toMatch(GOOGLE_SURFACE_REASON);
     expect(result.reason).toMatch(/Trustpilot \(no capture adapter exists/);
   });
 });

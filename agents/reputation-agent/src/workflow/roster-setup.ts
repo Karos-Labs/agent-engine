@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { AgentContext, AgentToolRegistry } from "@agent-engine/core";
-import { CaptureLegRequestSchema, type CaptureLegRequest, type DiscoverGbpLocationsResult } from "@agent-engine/tool-karos-reputation";
+import { CaptureLegRequestSchema, type CaptureLegRequest } from "@agent-engine/tool-karos-reputation";
 import { parseReputationClientConfig } from "./intake.js";
 
 /**
@@ -32,12 +32,10 @@ import { parseReputationClientConfig } from "./intake.js";
  *  - A structured `reputationRoster` on the run input is taken as-is (an
  *    operator or a portal that already knows the ids).
  *  - An App Store URL carries its own app id, so it resolves without a lookup.
- *  - A Google surface resolves ONLY through an account the client owns: the
- *    one named in `gbpAccountId` (client config or the run), or — since
- *    2026-09-06 — every account the deployment's Google credential MANAGES,
- *    which for the engine's service account is exactly the profiles a person
- *    added it to. Locations are enumerated, never searched for by name. No
- *    account either way, no Google leg, and the reason says so.
+ *  - A Google surface has no capture adapter (2026-09-21: the `gbp` leg was
+ *    removed — Google Business Profile API access is unapproved for this
+ *    project, quota 0, so it could never produce real data). It is recorded
+ *    as skipped with that reason, same as any other unsupported surface.
  *  - Every other surface (Yelp, Trustpilot, TripAdvisor, ...) has no capture
  *    adapter yet; it is recorded as skipped with that reason rather than
  *    silently dropped, because the client named it and will look for it.
@@ -96,8 +94,6 @@ export const ROSTER_SETUP_INPUT_KEYS = {
   crisisRouting: "crisisRoutingTag",
   /** Standing background the client wrote; recorded as provenance. */
   context: "reputationContext",
-  /** A Google Business Profile account id, when the client supplies one on the run rather than in config. */
-  gbpAccount: "gbpAccountId",
 } as const;
 
 /** A list field as the portal may send it: an array, or one string with entries on separate lines or after commas. */
@@ -121,14 +117,16 @@ function readString(value: unknown): string | undefined {
 const APP_STORE_URL = /apps\.apple\.com\/(?:([a-z]{2})\/)?app\/(?:([^/\s?]+)\/)?id(\d{5,})/i;
 const APP_STORE_BARE = /^(?:app\s*store\s*[:#-]?\s*)?id(\d{5,})$/i;
 
-/** Google Play is Google, but it is not a Business Profile — matched before the GBP test so it lands on "no adapter" rather than "no account". */
+/** Google Play is Google, but it is not a Business Profile — matched before the Google test so it lands on "no adapter" rather than the GBP-specific reason. */
 const NO_ADAPTER_SURFACE =
   /yelp|trustpilot|tripadvisor|facebook\.com|fb\.com|glassdoor|g2\.com|capterra|indeed|booking\.com|expedia|play\.google|healthgrades|zocdoc|houzz|angi\b|bbb\.org|amazon/i;
+/** 2026-09-21: the `gbp` capture leg was removed (Google Business Profile API access is unapproved for this project — quota 0, could never produce real data), so a Google surface is now just another no-adapter surface, with a reason specific to why. */
 const GOOGLE_SURFACE = /google|gbp|g\.page|goo\.gl|maps\.app/i;
+const GOOGLE_SURFACE_REASON =
+  "Google Business Profile capture is not available in this deployment (Business Profile API access is unapproved for this project)";
 
 type SeedResolution =
   | { kind: "appstore"; leg: CaptureLegRequest }
-  | { kind: "google" }
   | { kind: "skipped"; reason: string };
 
 function resolveSeed(seed: string): SeedResolution {
@@ -162,7 +160,7 @@ function resolveSeed(seed: string): SeedResolution {
   if (NO_ADAPTER_SURFACE.test(seed)) {
     return { kind: "skipped", reason: "no capture adapter exists for this surface yet; a manual export is the floor for it (ADAPTERS.md)" };
   }
-  if (GOOGLE_SURFACE.test(seed)) return { kind: "google" };
+  if (GOOGLE_SURFACE.test(seed)) return { kind: "skipped", reason: GOOGLE_SURFACE_REASON };
   return { kind: "skipped", reason: "not a review surface this agent can read" };
 }
 
@@ -226,68 +224,21 @@ export async function runReputationRosterSetup(args: RosterSetupArgs): Promise<R
   }
 
   const seeds = readList(input[ROSTER_SETUP_INPUT_KEYS.surfaces]);
-  const googleSeeds: string[] = [];
   for (const seed of seeds) {
     const resolution = resolveSeed(seed);
     if (resolution.kind === "appstore") {
       add(resolution.leg);
       resolvedFrom.push(`"${seed}" → App Store app ${resolution.leg.listingId.slice("appstore:".length)}`);
-    } else if (resolution.kind === "google") {
-      googleSeeds.push(seed);
     } else {
       skipped.push({ seed, reason: resolution.reason });
     }
   }
 
-  // Google resolves through an OWNED account: the one the client named in
-  // config or on the run, or — with none named — every account the
-  // deployment's Google credential manages (a service account sees only the
-  // profiles a person added it to, so this is ownership, not a search). Tried
-  // when the client named Google, when an account id is on file, and as the one
-  // automatic discovery this setup can do when the run carried nothing at all.
-  const gbpAccount = readString(config["gbpAccountId"]) ?? readString(input[ROSTER_SETUP_INPUT_KEYS.gbpAccount]);
   const nothingNamed = seeds.length === 0 && rosterRaw === undefined;
-  if (googleSeeds.length > 0 || gbpAccount !== undefined || nothingNamed) {
-    const seedLabel = googleSeeds[0] ?? "Google Business Profile";
-    const discover = tools["reputation.discoverGbpLocations"];
-    if (!discover) {
-      skipped.push({ seed: seedLabel, reason: "reputation.discoverGbpLocations is not registered, so the owned account's listings could not be enumerated" });
-    } else {
-      const outcome = await discover.execute(gbpAccount !== undefined ? { account: gbpAccount } : {}, { ctx });
-      if (outcome.status !== "success") {
-        const reason = "reason" in outcome && typeof outcome.reason === "string" ? outcome.reason : outcome.status;
-        skipped.push({ seed: seedLabel, reason });
-      } else {
-        const { account, accounts, locations } = outcome.result as DiscoverGbpLocationsResult;
-        const accountLabel =
-          gbpAccount !== undefined || !Array.isArray(accounts) || accounts.length <= 1
-            ? `account "${account}"`
-            : `${accounts.length} managed accounts (${accounts.join(", ")})`;
-        if (locations.length === 0) {
-          skipped.push({ seed: seedLabel, reason: `Google Business Profile ${accountLabel} has no locations` });
-        } else {
-          for (const location of locations) {
-            add({
-              leg: "gbp",
-              listingId: `gbp:${location.location}`,
-              listingLabel: location.address ? `${location.title} — ${location.address}` : location.title,
-              inRoster: true,
-              // Per-location since multi-account discovery; the top-level
-              // `account` is what a single-account read (or an older tool
-              // build) reports.
-              account: typeof location.account === "string" && location.account.length > 0 ? location.account : account,
-              location: location.location,
-            });
-          }
-          resolvedFrom.push(`Google Business Profile ${accountLabel} → ${locations.length} location(s)`);
-        }
-      }
-    }
-  }
 
   if (legs.size === 0) {
     const note = nothingNamed
-      ? `no roster on file and this run named no review surfaces — the reputation intake's "where people review you" is what this resolves from${skipped.length > 0 ? `; automatic Google Business Profile discovery: ${describeSkipped(skipped)}` : ""}`
+      ? `no roster on file and this run named no review surfaces — the reputation intake's "where people review you" is what this resolves from`
       : `no roster on file and none of the named surfaces resolved to a listing: ${describeSkipped(skipped)}`;
     return { status: "not-supplied", legCount: 0, resolvedFrom, skipped, written: [], note };
   }

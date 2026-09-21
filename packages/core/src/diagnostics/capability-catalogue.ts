@@ -291,19 +291,6 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
       "SPEC-AU63 option A, decided 2026-09-06: the engine (SCRUM-362) is vendored in-repo and pinned by the Dockerfile's ENV, never injected per deploy — apps/agent-server/__tests__/video-engine-in-image.test.ts asserts every script the adapters name is in the build context.",
   },
 
-  // ── Reputation ───────────────────────────────────────────────────────────
-  {
-    id: "reputation-capture",
-    title: "Review capture from Google Business Profile — the credentialed review source",
-    owner: "packages/tools/karos-reputation (reputation.capture, reputation.discoverGbpLocations)",
-    requires: [{ name: "GOOGLE_BUSINESS_TOKEN", kind: "enhances" }],
-    whenAbsent:
-      "Since 2026-09-06 the GBP legs fall back to a business.manage token minted from the worker's own service account (Application Default Credentials, wired in apps/agent-server/src/wiring/tools.ts), so the variable is an override for a user token, not the only credential. That fallback reaches exactly the Business Profiles a person has added the service account to as a manager; for every other client the GBP leg writes an UNAVAILABLE tombstone naming that gap, and the pulse runs on only the uncredentialed legs (App Store RSS, and whatever the client exports by hand). The tombstone keeps that visible rather than letting it read as 'no reviews this month'.",
-    shortfall: "no Google reviews without profile access",
-    rationale:
-      "Decided 2026-09-06: no deployment ever carried GOOGLE_BUSINESS_TOKEN, so the leg was a guaranteed tombstone; the service account is the credential the engine already runs with, and adding it as a profile manager is a per-client step a person can do in Business Profile Manager. A user grant WAS then pasted (2026-09-07, both projects) and is wired alongside GOOGLE_OAUTH_CLIENT_ID/SECRET — but it is a REFRESH token, not the access token this variable was designed for, so gbp-credential.ts exchanges it and falls back to ADC when it cannot: filling this variable in must never remove the credential that already worked. The two OAuth secrets arrived CROSSED between the projects (each held the other project's app, so every exchange returned unauthorized_client while both looked present); corrected by testing each token against each client, and both now exchange for scope business.manage. NEITHER credential reaches reviews yet, for a reason no variable can express: Google's Business Profile access is unapproved for these projects. The API quota is literally 0 (DefaultRequestsPerMinutePerProject — verified 429/RESOURCE_EXHAUSTED with a valid minted token, i.e. authentication SUCCEEDING), and mybusiness.googleapis.com — the legacy v4 surface where reviews live and the only one this adapter calls — cannot even be enabled (AUTH_PERMISSION_DENIED binding the service; it is allow-list-only). So a credential being present here says nothing about reviews arriving until that approval lands.",
-  },
-
   // ── Instagram / Meta ─────────────────────────────────────────────────────
   {
     id: "meta-instagram-internal",
@@ -318,34 +305,6 @@ export const CAPABILITY_CATALOGUE: readonly CapabilityDefinition[] = [
     rationale:
       "packages/tools/karos-meta/README.md — generated in Meta Business Settings -> System Users, once the app's Advanced Access is approved. META_SYSTEM_USER_TOKEN is wired via --set-secrets in both cloudbuild.yaml (prep) and cloudbuild.promote.yaml (prod) as of 2026-09-20 — the secret and the runtime SA's secretmanager.secretAccessor grant already existed in both projects since 2026-09-17 (AU55), so this row moves from DISABLED to ENABLED (reads only) once that deploy lands. META_PUBLISH_ENABLED stays deliberately unwired in both files; per Albert (2026-09), it is not to be flipped on without checking with him first.",
     shortfall: "no Instagram Graph API access",
-  },
-
-  // ── Google first-party connectors (SEO/GEO Layer 1) ──────────────────────
-  {
-    id: "google-connectors-oauth",
-    title: "Google first-party SEO data — Search Console rankings, GA4 AI-referral outcomes, Business Profile listing",
-    owner: "packages/tools/karos-connectors (connectors.googleDataSync)",
-    requires: [
-      { name: "GOOGLE_OAUTH_CLIENT_ID", kind: "required" },
-      { name: "GOOGLE_OAUTH_CLIENT_SECRET", kind: "required" },
-      { name: "GSC_SERVICE_ACCOUNT_KEY", kind: "enhances" },
-      { name: "GSC_SITE_URL", kind: "enhances" },
-    ],
-    whenAbsent:
-      "Every client stays on the SEO/GEO Layer-2 path, which is the validated default and produces a complete, scored, deliverable 0-100 result on its own. What is lost is accuracy and detail, not the score: real Google positions/impressions/clicks show an honest empty state instead of numbers, GEO-01/41's AI-features opt-out leg drops from its denominator (partial credit over the remaining robots legs), GEO-28 reads a proxy labelled 'estimated (proxy)' instead of real AI-surface impressions, and GA4's AI-referral panel shows 'Connect Google Analytics to measure' rather than a fabricated zero. Each connector's snapshot hash resolves to the literal UNCONNECTED.",
-    rationale:
-      "packages/tools/karos-seo-geo/src/config/connectors-config.data.ts works_unconnected.guarantee — connecting Google is a per-input accuracy upgrade and never a hard dependency; revoking cannot break the product.",
-    shortfall: "no Google connection — first-party SEO data unavailable",
-  },
-  {
-    id: "google-connectors-psi",
-    title: "Core Web Vitals field data — real-user p75 LCP/INP/CLS from PageSpeed Insights / CrUX",
-    owner: "packages/tools/karos-connectors (connectors.googleDataSync)",
-    requires: [{ name: "PSI_API_KEY", kind: "required" }],
-    whenAbsent:
-      "SEO-04 scores from the lab p75 the Lighthouse audit already produces, against the SAME 8/7/5 bands — the Technical/CWV bucket scores in full either way. The field-data swap changes the measured value and its confidence label (estimated -> measured_field), not the formula. Note the key alone does not switch anything: field data is read only for a client who has also set the per-client Google-connect opt-in, so the lab->field move is always a logged per-client source change (Defect-2).",
-    rationale: "connectors-config.data.ts crux_per_client_gate, and per_metric_degradation's SEO-04 line.",
-    shortfall: "no field CWV — lab p75 only",
   },
 
   // ── Landing builder ──────────────────────────────────────────────────────

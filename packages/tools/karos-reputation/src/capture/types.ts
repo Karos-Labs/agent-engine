@@ -23,7 +23,7 @@ export interface CaptureLegOutcome {
 
 // listingId/listingLabel have no existing TSDoc to transcribe (SCRUM-293 flag) — synthesized from their names and the capture-tool's own doc comment.
 const LegRequestBaseSchema = z.object({
-  listingId: z.string().min(1).describe("This listing's id on its own platform (e.g. a GBP location id, an App Store app id)."),
+  listingId: z.string().min(1).describe("This listing's id on its own platform (e.g. an App Store app id)."),
   listingLabel: z.string().min(1).describe("A human-readable label for this listing, for display and logging."),
   /** ADAPTERS.md rule 3 ("no leg invention"): a leg not in the client's `seeds.yaml` roster is skipped cleanly, never guessed at. */
   inRoster: z
@@ -31,14 +31,6 @@ const LegRequestBaseSchema = z.object({
     .default(true)
     .describe("ADAPTERS.md rule 3 (\"no leg invention\"): a leg not in the client's seeds.yaml roster is skipped cleanly, never guessed at."),
 });
-
-export const GbpLegRequestSchema = LegRequestBaseSchema.extend({
-  leg: z.literal("gbp"),
-  // account/location have no existing TSDoc to transcribe (SCRUM-293 flag) — synthesized from Google Business Profile's own account/location addressing.
-  account: z.string().min(1).describe("The Google Business Profile account id this listing belongs to."),
-  location: z.string().min(1).describe("The Google Business Profile location id to capture reviews for."),
-});
-export type GbpLegRequest = z.infer<typeof GbpLegRequestSchema>;
 
 export const AppstoreLegRequestSchema = LegRequestBaseSchema.extend({
   leg: z.literal("appstore"),
@@ -62,7 +54,6 @@ export const ManualExportLegRequestSchema = LegRequestBaseSchema.extend({
 export type ManualExportLegRequest = z.infer<typeof ManualExportLegRequestSchema>;
 
 export const CaptureLegRequestSchema = z.discriminatedUnion("leg", [
-  GbpLegRequestSchema,
   AppstoreLegRequestSchema,
   ManualExportLegRequestSchema,
 ]);

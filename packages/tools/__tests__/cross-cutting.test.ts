@@ -146,7 +146,11 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // `ledger.writeRunState` in karos-ledger. 63 -> 65, both in bundled
     // servers this count covers. Measured off the assertion, as before.
     // C1 / SCRUM-464 adds `ledger.writeStrategyMap`: 65 -> 66.)
-    expect(names.length).toBe(66);
+    // (66 -> 65, 2026-09-21: `reputation.discoverGbpLocations` is removed —
+    // the `gbp` capture leg it fed is gone too, since Google Business Profile
+    // API access is unapproved for this project (quota 0) and could never
+    // produce real data. reputation shrinks from 5 to 4.)
+    expect(names.length).toBe(65);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }

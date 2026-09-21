@@ -173,8 +173,8 @@ export function createReputationPulseWorkflow(options: CreateReputationPulseWork
     // Nothing on the engine ever wrote `reputationRoster`, so every client's
     // first pulse died at step 03. Now the run checks first: a client with a
     // roster pays one config read; a run that arrived with the portal's intake
-    // (the surfaces the client named, an owned GBP account) resolves and
-    // records one here and pulses against it immediately. See roster-setup.ts
+    // (the surfaces the client named) resolves and records one here and
+    // pulses against it immediately. See roster-setup.ts
     // for what resolves and what is refused as a guess. NOT blocking on its
     // own: step 03 is where "nothing to capture" is decided, and it now quotes
     // this step's note so the refusal names the cause.

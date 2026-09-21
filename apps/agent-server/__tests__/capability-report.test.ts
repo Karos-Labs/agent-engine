@@ -213,11 +213,15 @@ describe("the capability-by-product work: the report answers at product level", 
   it("reports every product RUNNABLE against production as it is actually configured today", () => {
     // The payoff line, and the one that fails the day a real regression lands
     // in the deploy config: with prod wired as of 2026-09-06 there is no
-    // UNRUNNABLE product left, and reputation is the only DEGRADED one (no
-    // credentialed review source — an open decision, not an oversight).
+    // UNRUNNABLE product left. reputation-agent used to be the one DEGRADED
+    // product (no credentialed Google review source); as of 2026-09-21 the
+    // `gbp` leg is removed outright (Business Profile API access is
+    // unapproved for this project, quota 0 — it could never produce real
+    // data), so the product's floor (App Store RSS + hand exports) is no
+    // longer a degradation of anything, and no product is DEGRADED either.
     const products = buildCapabilityReport(PROD_ENV).products;
     expect(products.filter((p) => p.status === "UNRUNNABLE").map((p) => p.productId)).toEqual([]);
-    expect(products.filter((p) => p.status === "DEGRADED").map((p) => p.productId)).toEqual(["reputation-agent"]);
+    expect(products.filter((p) => p.status === "DEGRADED").map((p) => p.productId)).toEqual([]);
   });
 
   it("reports branded-shorts UNRUNNABLE — NOT_CONFIGURED — outside the container, where the engine variable is unset", () => {
