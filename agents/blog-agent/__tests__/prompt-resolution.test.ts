@@ -47,7 +47,15 @@ describe("PromptStore resolution (RFC-01 §16.1)", () => {
 
     await agent.run(ctx, {});
 
-    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "blog-craft", "3.md"), "utf8");
+    // Derived from the pin rather than hardcoded. The literal "3.md" sat here
+    // while the pin was "blog-craft@3", so the two agreed and neither noticed
+    // that `latest.md` had moved to v4 and taken the whole FAQ/GEO section
+    // with it. Reading the version out of the config means a future bump is
+    // checked rather than re-encoded in two places.
+    const pinned = readFileSync(path.join(SRC_ROOT, "agent", "blog-draft-agent.ts"), "utf8")
+      .match(/skillRef:\s*"blog-craft@(\d+)"/)?.[1];
+    expect(pinned).toBeDefined();
+    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "blog-craft", `${pinned}.md`), "utf8");
     // SCRUM-298: `system` now also carries the response contract, appended
     // after the resolved skill body — assert the prefix, not exact equality.
     const call = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
@@ -114,6 +122,23 @@ describe("zero hardcoded prompts (RFC-01 §16.1)", () => {
 
   it("BlogDraftAgent's config carries a skillRef, not an inline system prompt field", () => {
     const configSource = readFileSync(path.join(SRC_ROOT, "agent", "blog-draft-agent.ts"), "utf8");
-    expect(configSource).toMatch(/skillRef:\s*"blog-craft@3"/);
+    expect(configSource).toMatch(/skillRef:\s*"blog-craft@4"/);
+  });
+
+  it("the pinned version is the one that actually teaches the FAQ block", () => {
+    // The pin sat on v3 while `latest.md` was v4, and v3 does not contain the
+    // word `faqItems` anywhere — so the schema field, the FAQPage JSON-LD
+    // builder and the registry entry all existed while the model was never
+    // told the capability was there. Asserting the CONTENT rather than the
+    // number, because a future v5 should keep this section and a pin bump
+    // alone would not prove it does.
+    const configSource = readFileSync(path.join(SRC_ROOT, "agent", "blog-draft-agent.ts"), "utf8");
+    const pinned = configSource.match(/skillRef:\s*"blog-craft@(\d+)"/)?.[1];
+    expect(pinned).toBeDefined();
+    const prompt = readFileSync(
+      path.join(SRC_ROOT, "..", "prompts", "blog-craft", `${pinned}.md`),
+      "utf8",
+    );
+    expect(prompt).toContain("faqItems");
   });
 });
