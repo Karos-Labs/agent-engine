@@ -219,6 +219,34 @@ different product was delivered) and on the gate payload as `modeSubstitution`. 
 reviewer decides whether that was the right call for this topic; what they are never shown
 is an `original-short` deliverable with no sign that a clip was what was asked for.
 
+
+### What widening the cascade broke, and the lesson
+
+Making the cascade able to return `sourceTier: "stock"` for a CLIPPING run invalidated an
+invariant nothing had written down: before it, `mode: "commentary"` plus the hold guaranteed
+a clipping run never saw a stock intake. So `format` was pinned straight from the pressed
+product —
+
+```ts
+formatForVariant(variant) ?? (intake.sourceTier === "stock" ? "original-short" : "commentary-clip")
+```
+
+— and for `variant: "clipping"` the left side always won. Prep run
+`pubsub-21908845348121079` reached `08-render` and failed with
+`video.brandFrame: videoPath: undefined`: a stock intake has no source video at all.
+
+`format` now reads the source first. The variant pin still decides everything it should —
+a clipping card answers with a clip whenever there is anything to clip — but a `stock`
+intake is a physical fact, not a preference.
+
+Two things this should have been caught by and was not: every test in
+`agents/tiktok-agent/__tests__/workflow.test.ts` ran `productId: "tiktok-agent"`, so
+`variant` was always `"auto"` and the named variants' pin was never executed by any test;
+and the same reasoning that justified the dry-cascade hold also justified a second hold on
+footage with no speech in it (`variant === "clipping"`, `02-transcribe`), which PR #170 left
+in place. Both are fixed: `run()` takes a variant, and silent footage delivers an original
+short announced the same way.
+
 One hold remains at the end of the cascade, and it is the carve-out: a deployment with no
 `video.findStockClip` or no repoRoot cannot make anything at all, which is a fact about
 the deployment rather than about this client's topic.

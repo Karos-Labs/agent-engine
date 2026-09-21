@@ -1709,7 +1709,34 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
     // it is decided here and never moves — which is the whole point of the
     // split: before it, what a run produced fell out of whichever sourcing
     // tier happened to answer, and nobody pressing a button could predict it.
-    let format: ClipFormat = formatForVariant(variant) ?? (intake.sourceTier === "stock" ? "original-short" : "commentary-clip");
+    /**
+     * THE SOURCE OUTRANKS THE BUTTON, and only here.
+     *
+     * The variant pin is right about everything else: what a run produces
+     * should not fall out of whichever sourcing tier happened to answer, and
+     * somebody pressing "clipping" should get a clip. But a `stock` intake has
+     * no source video AT ALL — its plates are found per beat once a script
+     * exists — so `commentary-clip` over one does not mean "a worse clip", it
+     * means calling `video.cutClip` and `video.brandFrame` with an undefined
+     * path. That is a physical fact about the intake, not a preference.
+     *
+     * It could not happen before 2026-09-20: `mode: "commentary"` forbade the
+     * stock tier and a dry cascade held, so a clipping run could never reach
+     * here with `sourceTier: "stock"`. PR #170 made the cascade deliver an
+     * original short rather than hold, and this line kept pinning the format
+     * to the button — prep run pubsub-21908845348121079 got all the way to
+     * `08-render` before failing with `videoPath: undefined`. Widening what a
+     * producer can be handed means re-reading everything downstream that
+     * assumed the old narrower set.
+     */
+    let format: ClipFormat = intake.sourceTier === "stock" ? "original-short" : (formatForVariant(variant) ?? "commentary-clip");
+    /**
+     * Set when this run is delivering a different KIND of short than the
+     * client's mode or the pressed product asks for — carried to the reviewer
+     * as a `clip-mode` repair. Seeded from the intake (a dry cascade) and also
+     * set below (footage with no speech in it).
+     */
+    let modeSubstitution: string | undefined = intake.modeSubstitution;
     /** The client's own silent footage, when it is what the plates are cut from. */
     let clientFootage: { path: string; durationSeconds: number } | undefined;
 
@@ -1830,15 +1857,25 @@ export function createTikTokAgentWorkflow(options: CreateTikTokAgentWorkflowOpti
           console.warn(`02-transcribe: the silent source is ${transcript.durationSeconds ?? "of unknown length"} s, under ${MIN_CLIENT_FOOTAGE_SECONDS}; the short's plates come from the library instead`);
         }
         if (variant === "clipping") {
-          // The clipping agent does not write scripts. A source with no speech
-          // in it has no moment to cut, and pivoting to a generated short here
-          // would hand back a different product than the one that was asked
-          // for — the same reasoning as the never-topic hold: answering a
-          // request with something else reads as having honoured it.
-          throw new WorkflowHeld(
-            `the source has no speech to clip — the clipping agent cuts moments out of real footage and does not write scripts; ` +
-              `a scripted short over this footage is the content-design agent's job`,
-          );
+          // REVERSED 2026-09-20. This threw `WorkflowHeld`, reasoning that the
+          // clipping agent does not write scripts and that handing back a
+          // scripted short would be answering a request with something else.
+          //
+          // That is the same argument the dry cascade used, and the owner's
+          // standing ruling (2026-09-17) settled it the other way: a
+          // domain-level dead end is fall-back-and-annotate, not one of the
+          // three carve-outs. Leaving this hold in place would also make the
+          // agent answer two identical situations differently — footage with
+          // no speech held, a cascade with no footage delivered — which is
+          // worse than either answer on its own.
+          //
+          // The client's own file is right here and the lines below already
+          // know how to write over it. So it ships, and says so.
+          modeSubstitution =
+            "this run was dispatched as a clipping run — a cut from somebody's spoken words — and the footage it was given has no speech in it, " +
+            (clientFootage !== undefined
+              ? "so the run wrote an original short over the client's own footage instead of returning nothing"
+              : "and is too short to cut plates from, so the run wrote an original short over library footage instead of returning nothing");
         }
         format = "original-short";
         moment = await wf.step.code("03-select-moment", () => ({
@@ -4021,7 +4058,7 @@ ${credit}`,
           // The client asked for a commentary clip and is being shown an
           // original short. Nothing else on this payload says so — `format`
           // reads `original-short` as if that were the plan.
-          ...(intake.modeSubstitution !== undefined ? { modeSubstitution: intake.modeSubstitution } : {}),
+          ...(modeSubstitution !== undefined ? { modeSubstitution } : {}),
           voiceover: draft.voiceover,
           ...(draft.script ? { script: draft.script } : {}),
           revision,
@@ -4158,13 +4195,13 @@ ${credit}`,
       });
     }
 
-    if (intake.modeSubstitution !== undefined) {
+    if (modeSubstitution !== undefined) {
       // The biggest substitution this pipeline can make: the client asked for
       // a commentary clip and is holding an original short. It is `unresolved`
       // rather than `substituted` on purpose — the run did not fix anything,
       // it delivered a different product, and the reviewer is the one who
       // decides whether that was the right call for this topic.
-      contentRepairs.push({ check: "clip-mode", action: "unresolved", detail: intake.modeSubstitution });
+      contentRepairs.push({ check: "clip-mode", action: "unresolved", detail: modeSubstitution });
     }
 
     // A person pasted a link, it did not resolve, and the run found footage

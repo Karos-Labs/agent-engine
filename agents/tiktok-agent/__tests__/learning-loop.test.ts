@@ -211,17 +211,32 @@ describe("D08: the variant is the product, and the product decides the format", 
     expect(modeForVariant("auto", "commentary")).toBe("commentary");
   });
 
-  it("the clipping agent HOLDS on a silent source instead of writing a script", async () => {
-    // `auto` pivots to an original short here, which is the right answer when
-    // nobody chose a product. The clipping agent does not write scripts, and
-    // delivering one would hand back a different product than the one asked
-    // for — the same reasoning as the never-topic hold.
+  it("the clipping agent writes over a silent source rather than holding on it", async () => {
+    // REVERSED 2026-09-21. This asserted a hold, reasoning that the clipping
+    // agent does not write scripts and that delivering one would hand back a
+    // different product than the one asked for.
+    //
+    // The owner's standing ruling (2026-09-17) settles it the other way: a
+    // domain-level dead end is fall-back-and-annotate, not one of the three
+    // carve-outs. Keeping this hold after PR #170 also left the agent
+    // answering two identical situations differently — no footage at all
+    // delivered an original short, footage with no words in it held.
+    //
+    // The variant pin is NOT weakened by this. It still decides the format
+    // whenever there is anything to clip; what it no longer does is insist on
+    // a product the run has no material for.
+    // This harness registers none of the plate tools, so the run cannot
+    // finish a short here — and that is fine for what this file pins. What
+    // matters is that it is no longer HELD on the silence and that it pivoted
+    // into original-short production, which the plate complaint proves it
+    // reached. `workflow.test.ts`'s "the clipping variant" block asserts the
+    // finished deliverable and the `clip-mode` note against a full harness.
     const h = stubTools(undefined, { silentSource: true });
     const result = await run(h, "tt-clip-silent", "tiktok-clipping-agent", "clipping");
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/no speech to clip/);
-    expect(result.reason).toMatch(/content-design/);
+    expect(result.status).not.toBe("held");
+    if (result.status !== "degraded") throw new Error(`expected the plate-less harness to degrade, got ${result.status}`);
+    expect(result.failureReason).toMatch(/no plate could be made/);
+    expect(result.failureReason).not.toMatch(/no speech to clip/);
   });
 
   it("records which card was pressed on the deliverable, not only what came out", async () => {
