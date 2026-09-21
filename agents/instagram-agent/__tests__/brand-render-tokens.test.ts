@@ -74,6 +74,74 @@ describe("deriveBrandRenderTokens: the derivation ladder", () => {
     expect(tokens?.cssVars["--fg"]).toBeUndefined();
   });
 
+  describe("the brand record states which colour is the background", () => {
+    /**
+     * karoslabs' own record, verbatim from prep run `pubsub-21926643455584277`:
+     *
+     *     #ff6b2c  "Primary accent, CTA buttons"
+     *     #1a1a1a  "Background, text contrast"
+     *     #f2f1ec  "Foreground, card surfaces"
+     *
+     * Every karoslabs post shipped on `#f2f1ec`. The roles were never read —
+     * the derivation went to its proximity rule, measured the accent 234.5
+     * from the light neutral and 243.6 from the dark one, and chose light by
+     * 3.8%. A coin flip landed the wrong way while the answer sat two fields
+     * over. The owner, 2026-09-21: *"בדרך כלל הרקע אמור להיות בצבע הקלאסי של
+     * KAROS"*.
+     */
+    const KAROS = {
+      colors: ["#ff6b2c", "#1a1a1a", "#f2f1ec"],
+      dominantColors: [
+        { hex: "#ff6b2c", role: "Primary accent, CTA buttons", dominanceRank: 1 },
+        { hex: "#1a1a1a", role: "Background, text contrast", dominanceRank: 2 },
+        { hex: "#f2f1ec", role: "Foreground, card surfaces", dominanceRank: 3 },
+      ],
+      visualStyle: "High-Tech",
+      fonts: { heading: "Space Grotesk", body: "Inter" },
+    };
+
+    it("uses the colour the record CALLS the background, not the one nearest the accent", () => {
+      const kit = deriveBrandRenderTokens(KAROS, baseTokens);
+      expect(kit?.cssVars["--bg"], "the record names #1a1a1a the background").toBe("#1a1a1a");
+      expect(kit?.cssVars["--fg"]).toBe("#f2f1ec");
+    });
+
+    it("reads the leading term only, so \"Background, text contrast\" is a background and not also text", () => {
+      // The clause after the comma says what the colour contrasts against. A
+      // substring match over the whole string would make this entry claim
+      // both roles and the answer would depend on which test ran first.
+      const kit = deriveBrandRenderTokens(
+        { ...KAROS, dominantColors: [{ hex: "#1a1a1a", role: "Background, text contrast", dominanceRank: 1 }] },
+        baseTokens,
+      );
+      expect(kit?.cssVars["--bg"]).toBe("#1a1a1a");
+    });
+
+    it("does not let \"foreground\" be read as a background just because it ends in one", () => {
+      const kit = deriveBrandRenderTokens(
+        { ...KAROS, dominantColors: [{ hex: "#f2f1ec", role: "Foreground, card surfaces", dominanceRank: 1 }] },
+        baseTokens,
+      );
+      expect(kit?.cssVars["--bg"], "#f2f1ec is the FOREground, so the ground is the other neutral").toBe("#1a1a1a");
+    });
+
+    it("leaves a record that states no roles on the path it always took", () => {
+      const noRoles = { colors: ["#5938b7", "#201547", "#ffcf25"], dominantColors: [{ hex: "#5938b7", dominanceRank: 1 }] };
+      const kit = deriveBrandRenderTokens(noRoles, baseTokens);
+      expect(kit?.cssVars["--bg"]).toBe("#201547");
+      expect(kit?.cssVars["--fg"]).toBe("#ffcf25");
+    });
+
+    it("ignores a stated background that is neither of the resolved neutrals rather than inventing an ink for it", () => {
+      const kit = deriveBrandRenderTokens(
+        { ...KAROS, dominantColors: [{ hex: "#ff6b2c", role: "Background", dominanceRank: 1 }] },
+        baseTokens,
+      );
+      // Falls through to the proximity rule, which is the pre-existing answer.
+      expect(kit?.cssVars["--bg"]).toBe("#f2f1ec");
+    });
+  });
+
   it("the contrast floor also protects the explicit renderTokens path against a portal typo", () => {
     const withOverride: BrandTokens = { ...baseTokens, renderTokens: { ground: "#101010", fg: "#181818" } };
     const tokens = deriveBrandRenderTokens({}, withOverride);
