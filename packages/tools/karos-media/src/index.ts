@@ -8,6 +8,7 @@ import { createGenerateImage, type ImageGenerationClient } from "./generate-imag
 import { createGenerateVideo, type VideoGenerationClient } from "./generate-video.js";
 import { createFindStockClip } from "./stock-video.js";
 import { createHarvestVideo, type VideoHarvestProvider } from "./harvest-video.js";
+import { createHarvestPodcast, createItunesPodcastProvider, type PodcastHarvestProvider } from "./harvest-podcast.js";
 import { createYtDlpHarvestProvider } from "./providers/yt-dlp-harvest.js";
 import { createScrapeImages } from "./scrape-images.js";
 import { createIngestAssets, type ObjectReader } from "./ingest-assets.js";
@@ -32,6 +33,7 @@ export * from "./image-provenance.js";
 export * from "./generate-image.js";
 export * from "./scrape-images.js";
 export * from "./ingest-assets.js";
+export * from "./harvest-podcast.js";
 export * from "./routing.js";
 export * from "./quality.js";
 export * from "./brand-logo.js";
@@ -68,6 +70,13 @@ export interface KarosMediaToolsOptions {
    * `createYtDlpHarvestProvider({ env })`; tests inject a fake here instead.
    */
   videoHarvestProvider?: VideoHarvestProvider | undefined;
+  /**
+   * A podcast-harvest backend. Unlike the video one this needs NO
+   * configuration — Apple's directory is keyless and feeds are public HTTP —
+   * so it is on by default and this option exists for tests and for turning
+   * it off (`null`).
+   */
+  podcastHarvestProvider?: PodcastHarvestProvider | null;
   /** Overrides the env-derived VIDEO generation client (`video.generateClip`). Tests pass a fake; `null` disables it explicitly. */
   videoGenerationClient?: VideoGenerationClient | null;
   /** Overrides the env-derived scraper backing the scrape tier. `null` disables it explicitly. */
@@ -194,6 +203,13 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
   const env = options.env ?? process.env;
   const videoHarvestProvider: VideoHarvestProvider | undefined =
     options.videoHarvestProvider ?? (env["VIDEO_HARVEST_PROVIDER"]?.trim() === "yt-dlp" ? createYtDlpHarvestProvider({ env }) : undefined);
+  // ON BY DEFAULT, deliberately. Every other backend here waits on a key or
+  // a binary; this one needs neither, and the clipping agent's whole problem
+  // is that the configured path (YouTube) is the one that gets refused.
+  const podcastHarvestProvider: PodcastHarvestProvider | undefined =
+    options.podcastHarvestProvider === null
+      ? undefined
+      : (options.podcastHarvestProvider ?? createItunesPodcastProvider({ ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}) }));
 
   return {
     // ── Tier 0: media the client attached to this run ──
@@ -225,6 +241,15 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
     // otherwise, so the cascade skips it rather than holding.
     "media.harvestVideo": createHarvestVideo({
       ...(videoHarvestProvider !== undefined ? { provider: videoHarvestProvider } : {}),
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    }),
+    // ── Video Tier 2b-audio: the SHOW's own feed. A podcast is published to
+    // be fetched, so this path has no bot check, no login and no key — which
+    // is why it is the default and `media.harvestVideo` is the one that waits
+    // on a cookies file. The trade is the picture: an enclosure is audio, so
+    // the clip carries the speakers' real words over sourced footage.
+    "media.harvestPodcast": createHarvestPodcast({
+      ...(podcastHarvestProvider !== undefined ? { provider: podcastHarvestProvider } : {}),
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
     }),
     // ── Video Tier 2c: real portrait footage from Pexels' free video
