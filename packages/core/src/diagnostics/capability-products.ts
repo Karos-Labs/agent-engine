@@ -175,10 +175,13 @@ export const PRODUCT_CAPABILITIES: readonly ProductCapabilities[] = [
     productId: "reputation-agent",
     title: "Reputation pulse",
     requires: ["durable-workspace", "prompt-store"],
-    // Not `requires`: with no credentialed source the pulse still runs on App
-    // Store RSS and hand exports, and the UNAVAILABLE tombstones keep the gap
-    // visible. See the reputation-capture row for what that actually costs.
-    enhances: ["reputation-capture"],
+    // 2026-09-21: the `gbp` capture leg (and its "reputation-capture"
+    // capability row) was removed — Google Business Profile API access is
+    // unapproved for this project (quota 0) and could never produce real
+    // data. The pulse runs on App Store RSS and hand exports, which is now
+    // its whole floor rather than a degraded fallback, so nothing here
+    // enhances it.
+    enhances: [],
   },
   {
     productId: "seo-geo-agent",

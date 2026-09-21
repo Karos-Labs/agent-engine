@@ -1,15 +1,22 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { WorkspaceStore } from "@agent-engine/tool-common";
-import { createDiscoverGbpLocations } from "../src/setup/discover-gbp-tool.js";
 import { createSaveRoster } from "../src/setup/save-roster-tool.js";
 import type { CaptureLegRequest } from "../src/capture/types.js";
 
 const ctx = { runId: "run_setup_1", clientSlug: "acme", productId: "reputation-agent", runKind: "recurring" as const, metadata: {} };
 
-const GBP_LEG: CaptureLegRequest = { leg: "gbp", listingId: "gbp:loc-1", listingLabel: "Acme Cafe — Main St", inRoster: true, account: "acct-1", location: "loc-1" };
+const SAMPLE_LEG: CaptureLegRequest = {
+  leg: "appstore",
+  listingId: "appstore:123456789",
+  listingLabel: "Acme Cafe (App Store)",
+  inRoster: true,
+  appId: "123456789",
+  country: "us",
+  maxPages: 10,
+};
 
 describe("reputation.saveRoster (the one reputation tool that writes)", () => {
   let rootDir: string;
@@ -32,7 +39,7 @@ describe("reputation.saveRoster (the one reputation tool that writes)", () => {
     });
 
     const tool = createSaveRoster(store);
-    const outcome = await tool.execute({ roster: [GBP_LEG], setup: { seeds: ["google"] } }, { ctx });
+    const outcome = await tool.execute({ roster: [SAMPLE_LEG], setup: { seeds: ["https://apps.apple.com/us/app/acme/id123456789"] } }, { ctx });
     expect(outcome.status).toBe("success");
     if (outcome.status !== "success") throw new Error("unreachable");
     expect(outcome.result).toMatchObject({ id: "client/config", created: false, legCount: 1, wrote: ["reputationRoster", "reputationSetup"] });
@@ -42,33 +49,37 @@ describe("reputation.saveRoster (the one reputation tool that writes)", () => {
       xHandle: "acme",
       instagramStyleConfig: { rules: ["no emoji"] },
       reputationAutonomy: "approve-all",
-      reputationRoster: [GBP_LEG],
+      reputationRoster: [SAMPLE_LEG],
     });
-    expect(config?.["reputationSetup"]).toMatchObject({ seeds: ["google"], recordedBy: "reputation.saveRoster", runId: "run_setup_1" });
+    expect(config?.["reputationSetup"]).toMatchObject({
+      seeds: ["https://apps.apple.com/us/app/acme/id123456789"],
+      recordedBy: "reputation.saveRoster",
+      runId: "run_setup_1",
+    });
     // No locks were supplied, so none were invented.
     expect(config?.["reputationLocks"]).toBeUndefined();
   });
 
   it("creates the config record when the client has none at all", async () => {
     const tool = createSaveRoster(store);
-    const outcome = await tool.execute({ roster: [GBP_LEG] }, { ctx });
+    const outcome = await tool.execute({ roster: [SAMPLE_LEG] }, { ctx });
     expect(outcome.status).toBe("success");
     if (outcome.status !== "success") throw new Error("unreachable");
     expect(outcome.result.created).toBe(true);
     const config = await store.readJson<Record<string, unknown>>("acme", ["client", "config"]);
-    expect(config?.["reputationRoster"]).toEqual([GBP_LEG]);
+    expect(config?.["reputationRoster"]).toEqual([SAMPLE_LEG]);
   });
 
   it("writes the never-say locks only when the client has none on file", async () => {
     const tool = createSaveRoster(store);
-    const first = await tool.execute({ roster: [GBP_LEG], locks: { neverSay: ["refund"], requiredFramingAnyOf: [] } }, { ctx });
+    const first = await tool.execute({ roster: [SAMPLE_LEG], locks: { neverSay: ["refund"], requiredFramingAnyOf: [] } }, { ctx });
     expect(first.status).toBe("success");
     if (first.status !== "success") throw new Error("unreachable");
     expect(first.result.wrote).toEqual(["reputationRoster", "reputationLocks", "reputationSetup"]);
 
     await store.writeJson("beta", ["client", "config"], { reputationLocks: { neverSay: ["lawsuit"], requiredFramingAnyOf: ["as a licensed provider"] } });
     const second = await tool.execute(
-      { roster: [GBP_LEG], locks: { neverSay: ["refund"], requiredFramingAnyOf: [] } },
+      { roster: [SAMPLE_LEG], locks: { neverSay: ["refund"], requiredFramingAnyOf: [] } },
       { ctx: { ...ctx, clientSlug: "beta" } },
     );
     expect(second.status).toBe("success");
@@ -80,121 +91,22 @@ describe("reputation.saveRoster (the one reputation tool that writes)", () => {
   });
 
   it("refuses to replace a roster already on file", async () => {
-    await store.writeJson("acme", ["client", "config"], { reputationRoster: [GBP_LEG] });
+    await store.writeJson("acme", ["client", "config"], { reputationRoster: [SAMPLE_LEG] });
     const tool = createSaveRoster(store);
     const outcome = await tool.execute(
-      { roster: [{ ...GBP_LEG, listingId: "gbp:loc-9", location: "loc-9" }] },
+      { roster: [{ ...SAMPLE_LEG, listingId: "appstore:987654321", appId: "987654321" }] },
       { ctx },
     );
     expect(outcome.status).toBe("content_fail");
     if (outcome.status !== "content_fail") throw new Error("unreachable");
     expect(outcome.reason).toMatch(/already has a reputationRoster on file \(1 legs\)/);
     const config = await store.readJson<Record<string, unknown>>("acme", ["client", "config"]);
-    expect(config?.["reputationRoster"]).toEqual([GBP_LEG]);
+    expect(config?.["reputationRoster"]).toEqual([SAMPLE_LEG]);
   });
 
   it("refuses an empty roster at the schema", async () => {
     const tool = createSaveRoster(store);
     const outcome = await tool.execute({ roster: [] }, { ctx });
     expect(outcome.status).toBe("tooling_error");
-  });
-});
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-}
-
-describe("reputation.discoverGbpLocations (enumerates an OWNED account, never searches)", () => {
-  it("reports not_available without GOOGLE_BUSINESS_TOKEN and never touches the network", async () => {
-    const fetchImpl = vi.fn();
-    const tool = createDiscoverGbpLocations({ env: {}, fetchImpl: fetchImpl as unknown as typeof fetch });
-    const outcome = await tool.execute({ account: "acct-1" }, { ctx });
-    expect(outcome.status).toBe("not_available");
-    if (outcome.status !== "not_available") throw new Error("unreachable");
-    expect(outcome.reason).toMatch(/GOOGLE_BUSINESS_TOKEN/);
-    expect(fetchImpl).not.toHaveBeenCalled();
-  });
-
-  it("lists every page of the account's locations as bare ids with a label, following nextPageToken", async () => {
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
-      const url = String(input);
-      expect(url).toMatch(/^https:\/\/mybusinessbusinessinformation\.googleapis\.com\/v1\/accounts\/acct-1\/locations\?/);
-      if (url.includes("pageToken=page-2")) {
-        return jsonResponse({ locations: [{ name: "locations/loc-2", title: "Acme Cafe Riverside" }] });
-      }
-      return jsonResponse({
-        locations: [
-          {
-            name: "locations/loc-1",
-            title: "Acme Cafe",
-            storefrontAddress: { addressLines: ["1 Main St"], locality: "Springfield", postalCode: "12345" },
-            metadata: { placeId: "ChIJ-1", mapsUri: "https://maps.google.com/?cid=1" },
-          },
-        ],
-        nextPageToken: "page-2",
-      });
-    });
-    const tool = createDiscoverGbpLocations({ env: { GOOGLE_BUSINESS_TOKEN: "tok" }, fetchImpl: fetchImpl as unknown as typeof fetch });
-    const outcome = await tool.execute({ account: "accounts/acct-1" }, { ctx });
-    expect(outcome.status).toBe("success");
-    if (outcome.status !== "success") throw new Error("unreachable");
-    expect(outcome.result).toEqual({
-      account: "acct-1",
-      accounts: ["acct-1"],
-      credentialSource: "env",
-      locations: [
-        { account: "acct-1", location: "loc-1", title: "Acme Cafe", placeId: "ChIJ-1", address: "1 Main St, Springfield, 12345", mapsUri: "https://maps.google.com/?cid=1" },
-        { account: "acct-1", location: "loc-2", title: "Acme Cafe Riverside" },
-      ],
-    });
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
-    expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer tok");
-  });
-
-  // 2026-09-06: no account id on file — the credential is asked what it manages.
-  it("with no account, enumerates every account the credential manages (via ADC when no env token) and reads each one's locations", async () => {
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
-      const url = String(input);
-      if (url.startsWith("https://mybusinessaccountmanagement.googleapis.com/v1/accounts")) {
-        return jsonResponse({ accounts: [{ name: "accounts/acct-1", accountName: "Acme" }, { name: "accounts/acct-2", accountName: "Acme Riverside" }] });
-      }
-      if (url.includes("/accounts/acct-1/locations")) return jsonResponse({ locations: [{ name: "locations/loc-1", title: "Acme Cafe" }] });
-      if (url.includes("/accounts/acct-2/locations")) return jsonResponse({ locations: [{ name: "locations/loc-9", title: "Acme Riverside" }] });
-      throw new Error(`unexpected url ${url}`);
-    });
-    const tool = createDiscoverGbpLocations({ env: {}, fetchImpl: fetchImpl as unknown as typeof fetch, gbpAccessToken: async () => "adc-tok" });
-    const outcome = await tool.execute({}, { ctx });
-    expect(outcome.status).toBe("success");
-    if (outcome.status !== "success") throw new Error("unreachable");
-    expect(outcome.result).toEqual({
-      account: "acct-1",
-      accounts: ["acct-1", "acct-2"],
-      credentialSource: "adc",
-      locations: [
-        { account: "acct-1", location: "loc-1", title: "Acme Cafe" },
-        { account: "acct-2", location: "loc-9", title: "Acme Riverside" },
-      ],
-    });
-    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
-    expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer adc-tok");
-  });
-
-  it("with no account and a credential that manages none, says exactly what a person has to do", async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse({ accounts: [] }));
-    const tool = createDiscoverGbpLocations({ env: {}, fetchImpl: fetchImpl as unknown as typeof fetch, gbpAccessToken: async () => "adc-tok" });
-    const outcome = await tool.execute({}, { ctx });
-    expect(outcome.status).toBe("not_available");
-    if (outcome.status !== "not_available") throw new Error("unreachable");
-    expect(outcome.reason).toMatch(/its own service account\) manages no Google Business Profile account — add it as a manager/);
-  });
-
-  it("reports not_available with the connector's own reason when the account cannot be read", async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse({ error: { message: "forbidden" } }, 403));
-    const tool = createDiscoverGbpLocations({ env: { GOOGLE_BUSINESS_TOKEN: "tok" }, fetchImpl: fetchImpl as unknown as typeof fetch });
-    const outcome = await tool.execute({ account: "acct-1" }, { ctx });
-    expect(outcome.status).toBe("not_available");
-    if (outcome.status !== "not_available") throw new Error("unreachable");
-    expect(outcome.reason).toMatch(/account "acct-1": UNAVAILABLE/);
   });
 });

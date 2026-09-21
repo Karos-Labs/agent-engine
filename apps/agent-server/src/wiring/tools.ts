@@ -2,13 +2,11 @@ import type { AgentToolRegistry } from "@agent-engine/core";
 import { GoogleAuth } from "google-auth-library";
 import type { WorkspaceStoreLike } from "@agent-engine/tools";
 import {
-  GBP_OAUTH_SCOPE,
   createAllKarosTools,
   createKarosVideoTools,
   createKarosLandingTools,
   createKarosIntakeTools,
   createKarosMediaTools,
-  createKarosConnectorsTools,
   createKarosMetaTools,
   createLandingEngineConfigFromEnv,
 } from "@agent-engine/tools";
@@ -39,24 +37,6 @@ function createAdcAuthorize(): () => Promise<string> {
     const bearer = headers.get("authorization");
     if (!bearer) throw new Error("vertex gemini capture: ADC returned no authorization header");
     return bearer;
-  };
-}
-
-/**
- * An ADC access-token minter in ONE named scope, for the Google APIs that do
- * not accept `cloud-platform`: Business Profile wants `business.manage`, and
- * a token minted for the wrong scope is a 403 that reads like "not a manager".
- * Same lazy, cached `GoogleAuth` as above; a failure is the caller's to state
- * per call (karos-reputation turns it into the leg's tombstone reason), never
- * a boot failure.
- */
-function createAdcAccessToken(scope: string): () => Promise<string | undefined> {
-  let auth: GoogleAuth | undefined;
-  return async () => {
-    auth ??= new GoogleAuth({ scopes: [scope] });
-    const client = await auth.getClient();
-    const token = await client.getAccessToken();
-    return token.token ?? undefined;
   };
 }
 
@@ -108,12 +88,6 @@ export function createServerTools(workspaceStore: WorkspaceStoreLike, env: Recor
       // root a deployment's configuration enters the tool graph, so the tool
       // packages keep no `google-auth-library` dependency of their own.
       vertexAuthorize: createAdcAuthorize(),
-      // The Google Business Profile legs (reputation-agent) authenticate as
-      // this service account when no GOOGLE_BUSINESS_TOKEN is set — neither
-      // prep nor prod ever had one, so every Google review leg was a
-      // guaranteed tombstone. Works for the profiles a person has added the
-      // service account to as a manager; the leg says so when they have not.
-      gbpAccessToken: createAdcAccessToken(GBP_OAUTH_SCOPE),
     }),
     // `synthesizeVoice.authorize` is the same ADC bearer the Gemini capture
     // route uses, minted here for the same reason: Google Cloud Text-to-Speech
@@ -142,18 +116,10 @@ export function createServerTools(workspaceStore: WorkspaceStoreLike, env: Recor
     // name it in a step -- a drafting agent that never calls it cannot
     // rewrite the charter it is judged against.
     ...createKarosIntakeTools(workspaceStore),
-    // SCRUM-232 (T-A6): the Google first-party connector pack. Merged in here
-    // rather than inside createAllKarosTools() for the same reason media.* is
-    // — it reaches a client's own Search Console/GA4/GBP on that client's
-    // OAuth grant. `env` is threaded so PSI_API_KEY and the
-    // GOOGLE_OAUTH_CLIENT_* pair enter the tool graph at this one composition
-    // root; with none of them set the tool reports `not_available` and the
-    // SEO/GEO score still computes in full from the validated Layer-2 path.
-    ...createKarosConnectorsTools({ env }),
     // Meta (Instagram) read + internal publish pack, on Karos Labs' own
     // shared Business Manager System User token. Merged in here rather than
-    // inside createAllKarosTools() for the same reason media.*/connectors.*
-    // are — third-party egress on a credential a caller asking for "all
+    // inside createAllKarosTools() for the same reason media.* is —
+    // third-party egress on a credential a caller asking for "all
     // karos tools" should not silently acquire. `meta.publishInstagramPost`
     // stays inert (`not_available`, zero network calls) unless this
     // deployment has explicitly set META_PUBLISH_ENABLED in addition to
