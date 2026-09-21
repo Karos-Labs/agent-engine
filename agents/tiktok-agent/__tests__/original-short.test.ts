@@ -142,6 +142,13 @@ function stubTools(
     /** `"down"` makes the TTS tool answer tooling_error, as every route did under the 2026-09-10 billing hold. */
     voice?: "ok" | "down";
     qa?: "pass" | "fail" | "none" | "down" | "weak-beat" | "weak-beat-sticky";
+    /**
+     * `video.composeSequence` answers a tooling error on the SECOND call — the
+     * re-render after a re-pick. The shape prep run pubsub-21922188223732599
+     * hit: the worker was recycled between the two renders and the plates
+     * from the first were in a `/tmp` that no longer existed.
+     */
+    composeFailsOnRepick?: boolean;
     /** How the stock library answers. Default `hit`; `none` leaves it unregistered. */
     stock?: "hit" | "miss" | "hit-then-miss" | "none";
     /** Whether the still tier (image.generate + video.stillToClip) is registered. Default true. */
@@ -233,6 +240,13 @@ function stubTools(
       (args) => {
         const input = args as { outputPath: string; clips: unknown[]; voiceoverPath?: string };
         composeArgs.push(input as unknown as Record<string, unknown>);
+        if (opts.composeFailsOnRepick === true && composeArgs.length > 1) {
+          const missing = (input.clips[0] as { path?: string } | undefined)?.path ?? "(no clip)";
+          return {
+            status: "tooling_error" as const,
+            reason: `video.composeSequence: clips[0] "${missing}" could not be probed: ffprobe exited 1: ${missing}: No such file or directory`,
+          };
+        }
         return ok({ outputPath: input.outputPath, durationSeconds: 13.5, clipsUsed: input.clips.length, hasVoiceover: input.voiceoverPath !== undefined });
       },
       ComposeSequenceInputSchema,
@@ -1468,5 +1482,53 @@ describe("craft checks on the redraft", () => {
     await run(h, "run-os-craft-clean", [longWinded, VOICED_SCRIPT]);
     const repairs = (h.deliverables[0]?.["contentRepairs"] as Array<{ check: string }> | undefined) ?? [];
     expect(repairs.map((r) => r.check)).not.toContain("script-craft");
+  }, 20_000);
+});
+
+/**
+ * ── THE RUN THAT DIED HOLDING A FINISHED CLIP. ──
+ *
+ * prep run `pubsub-21922188223732599` (karoslabs, 2026-09-21). The short was
+ * rendered, passed the bitstream gate, was watched by the visual QA and was
+ * UPLOADED to the bucket a reviewer plays it from. Then the QA's weak beats
+ * triggered a re-pick, and:
+ *
+ *     13:49:12  10b-visual-qa          completed
+ *     13:56:31  10d-repick-weak-beats  completed   (+423s)
+ *     13:57:04  08-render-repick       failed
+ *
+ *     video.composeSequence: clips[0] ".../plate-hook.mp4" could not be
+ *     probed: ffprobe exited 1: No such file or directory
+ *
+ * Seven minutes is a redelivery: the worker was recycled, and `/tmp` on
+ * Cloud Run belongs to one instance. Every plate from the first render was on
+ * a machine that no longer existed. The run failed with a complete clip
+ * already in GCS — the improvement pass taking the finished work down with
+ * it. The same root cause cost instagram a pictureless post the day before
+ * (`image-survives-instance-recycle.test.ts`).
+ */
+describe("a re-pick never costs the clip that already exists", () => {
+  it("ships the first cut when the re-render cannot be made, and says why", async () => {
+    const h = stubTools({ qa: "weak-beat", composeFailsOnRepick: true });
+    const result = await run(h, "run-os-repick-render-died");
+
+    expect(result.status).toBe("completed");
+    // Both renders were attempted — this is the fallback, not a skipped
+    // re-pick — and the deliverable is the FIRST cut.
+    expect(h.composeArgs).toHaveLength(2);
+    const shipped = h.deliverables[0] as { repick?: { beats: number[]; note: string } };
+    expect(shipped.repick?.beats).toEqual([2]);
+    expect(shipped.repick?.note).toContain("the first cut ships unchanged");
+    expect(shipped.repick?.note).toContain("No such file or directory");
+  }, 20_000);
+
+  it("still prefers the re-render when it works", async () => {
+    // The floor must not become the behaviour. Same setup, compose healthy.
+    const h = stubTools({ qa: "weak-beat" });
+    const result = await run(h, "run-os-repick-render-fine");
+
+    expect(result.status).toBe("completed");
+    const shipped = h.deliverables[0] as { repick?: { note: string } };
+    expect(shipped.repick?.note).not.toContain("could not be made");
   }, 20_000);
 });
