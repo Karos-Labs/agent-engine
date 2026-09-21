@@ -6,6 +6,13 @@ reader was about to reach anyway.
 
 ---
 
+**What changed at v8.** Everything v7 says still stands, unchanged. The v7
+release-history block moved out of the prompt and into this file; the guide's
+body is byte-identical.
+
+**Cost.** INPUT: about -1,200 prompt characters, about -300 tokens, about
+-$0.0009 a call. OUTPUT: unchanged, $0.000.
+
 # Instagram Image Vetting Craft Guide — v7
 
 **What changed at v7.** Everything v6 says still stands. Section 1b gains the

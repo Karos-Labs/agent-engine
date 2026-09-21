@@ -16,6 +16,20 @@ to hold five obsolete descriptions of them as well.
 
 ---
 
+**What changed at v28.** Everything v27 says still stands, unchanged. The
+release history moved out of the prompt and into this file.
+
+v27 opened with five stacked `# Instagram Copy Craft Guide, vNN` blocks —
+12,483 characters, 11% of the file — describing edits to sections the writer
+reaches two lines later. Every drafting attempt read all five, three attempts
+to a run, on the highest-volume agent in the fleet. Every rule those blocks
+named was verified present in the guide's body before they were moved, and the
+body itself is byte-identical to v27's.
+
+**Cost.** INPUT: about -12,480 prompt characters, about -3,100 tokens, about
+-$0.0094 an attempt. OUTPUT: unchanged, $0.000 — nothing about what the model
+writes has changed.
+
 # Instagram Copy Craft Guide, v27
 
 **What changed at v27.** Everything v26 says still stands except one
