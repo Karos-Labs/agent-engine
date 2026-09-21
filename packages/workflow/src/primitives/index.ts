@@ -11,3 +11,4 @@ export * from "./run-gate.js";
 export * from "./content-repair.js";
 export * from "./finalize-deliverable.js";
 export * from "./agent-exhaustion.js";
+export * from "./gate-timeout.js";

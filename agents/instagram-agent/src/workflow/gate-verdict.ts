@@ -1,3 +1,9 @@
+import {
+  CLEAN_GATE_TIMEOUT,
+  COMPLIANCE_GATE_TIMEOUT,
+  FLAGGED_GATE_TIMEOUT,
+  type GateTimeoutPolicy,
+} from "@agent-engine/workflow";
 import type { ImageryShortfall } from "./imagery-floor.js";
 import { formatUsd, roundUsd, type SpendLine } from "./run-budget.js";
 import type { ImageSelection, VisualQaFinding } from "./types.js";
@@ -577,17 +583,17 @@ export function gateVerdictLine(verdict: GateVerdict): string {
  * that quietly waits a day instead of an hour, with nothing saying why, is the
  * same class of defect as one that quietly approves.
  */
-export interface GateTimeoutPolicy {
-  duration: string;
-  onTimeout: "hold" | "auto_approve" | "escalate";
-  /** One sentence for the reviewer, naming what made this post wait. */
-  reason: string;
-  /** The individual marks against the post, empty when it is clean. */
-  flags: string[];
-}
+// The SHAPE and the three TIERS are platform-wide and now live in
+// `@agent-engine/workflow`: ten other products register a human gate and each
+// was writing `{ duration: "1h", onTimeout: "auto_approve" }` out by hand, so a
+// draft those runs had already REPAIRED got the same hour as a clean one and a
+// compliance finding got no special treatment at all. Still exported from here
+// so every existing importer of this module is unaffected — but there is one
+// definition now rather than two that can drift.
+export type { GateTimeoutPolicy };
 
 /** What a clean post gets: an hour, then it ships. Unchanged from every run before RFC-22. */
-export const CLEAN_GATE_TIMEOUT = "1h";
+export { CLEAN_GATE_TIMEOUT };
 /**
  * What a flagged post gets: six hours for a person to look, and then it ships
  * anyway.
@@ -613,9 +619,9 @@ export const CLEAN_GATE_TIMEOUT = "1h";
  * The one exception is below and it stays a `hold`: a regulated-compliance
  * finding is not a quality flag.
  */
-export const FLAGGED_GATE_TIMEOUT = "6h";
+export { FLAGGED_GATE_TIMEOUT };
 /** The regulated-compliance case, which is the only remaining `hold`. RFC-19 §5.5. */
-export const COMPLIANCE_GATE_TIMEOUT = "24h";
+export { COMPLIANCE_GATE_TIMEOUT };
 
 /**
  * ---- A GATE THAT APPROVES ON TIMEOUT IS A DELAY, NOT A GATE. ----

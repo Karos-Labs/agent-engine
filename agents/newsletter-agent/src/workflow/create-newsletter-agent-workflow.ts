@@ -36,6 +36,7 @@ import {
   localPass,
   spansFromEvidence,
   type ContentRepair,
+  textGateTimeout,
 } from "@agent-engine/workflow";
 import type { GateVerdict } from "@agent-engine/core";
 import { NewsletterDraftAgent, type NewsletterPostOutput } from "../agent/newsletter-draft-agent.js";
@@ -986,7 +987,20 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
       maxRevisions: MAX_REVISION_ROUNDS,
       ...(options.autoApprove ? { autoApprove: true } : {}),
       attempt: draftOnce,
-      buildGate: (draft, revision) => ({
+      buildGate: (draft, revision) => {
+        // THE THREE TIERS, NOT A FLAT HOUR.
+        //
+        // This gate used to carry `{ duration: "1h", onTimeout: "auto_approve" }`
+        // written out by hand, so an edition the run had already REPAIRED got
+        // exactly the same hour as a clean one, and a regulated-compliance
+        // finding got no special treatment at all. An email is the one
+        // deliverable here that cannot be unsent.
+        //
+        // Read ONCE and used both as the policy and as the payload block, so the
+        // clock a reviewer is racing and the sentence explaining it can never
+        // disagree.
+        const gateTimeout = textGateTimeout({ repairs: repairsByRevision.get(revision) });
+        return {
         kind: "batch_review",
         payload: {
           runId: wf.runId,
@@ -998,10 +1012,14 @@ export function createNewsletterAgentWorkflow(options: CreateNewsletterAgentWork
           previewText: draft.previewText,
           planThesis: plan.thesis,
           ...(editorialByRevision.has(revision) ? { editorial: editorialByRevision.get(revision) } : {}),
+          // WHY this edition waits as long as it does, in front of the person
+          // whose time it is spending.
+          gateTimeout,
         },
         requiredRole: "account_manager",
-        timeout: { duration: "1h", onTimeout: "auto_approve" },
-      }),
+        timeout: { duration: gateTimeout.duration, onTimeout: gateTimeout.onTimeout },
+        };
+      },
       onDecision: async ({ revision, response, output }) => {
         // SCRUM-306 (AU23): a reject's drafted content previously had nowhere
         // durable to go — it lived only in this round's step checkpoints and

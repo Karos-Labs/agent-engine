@@ -1,6 +1,6 @@
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, researchDigestForDrafting, researchSourceTexts, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, toAgentContext, runGate, finalizeDeliverable, recordOutputExcerpt, runCheckWithRepair, redactSentencesCarrying, stripSpansFrom, localContentFail, localPass, spansFromEvidence, type ContentRepair} from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, researchDigestForDrafting, researchSourceTexts, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, toAgentContext, runGate, finalizeDeliverable, recordOutputExcerpt, runCheckWithRepair, redactSentencesCarrying, stripSpansFrom, localContentFail, localPass, spansFromEvidence, type ContentRepair, textGateTimeout} from "@agent-engine/workflow";
 import type { GateVerdict } from "@agent-engine/core";
 import { BlogDraftAgent, type BlogPostOutput } from "../agent/blog-draft-agent.js";
 import { renderPreview, BLOG_MIN_WORD_COUNT, BLOG_MAX_WORD_COUNT, type RenderPreviewResult } from "../tools/render-preview.js";
@@ -719,12 +719,26 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
       maxRevisions: MAX_REVISION_ROUNDS,
       ...(options.autoApprove ? { autoApprove: true } : {}),
       attempt: draftOnce,
-      buildGate: (draft, revision) => ({
-        kind: "batch_review",
-        payload: { runId: wf.runId, topic: selected.topic, angle, preview: draft.text, revision },
-        requiredRole: "account_manager",
-        timeout: { duration: "1h", onTimeout: "auto_approve" },
-      }),
+      buildGate: (draft, revision) => {
+        // THE THREE TIERS, NOT A FLAT HOUR.
+        //
+        // This gate used to carry `{ duration: "1h", onTimeout: "auto_approve" }`
+        // written out by hand, so an article the run had already REPAIRED — an
+        // unsourced figure redacted, a banned term redrafted — got exactly the
+        // same hour as a clean one, and a regulated-compliance finding got no
+        // special treatment at all.
+        //
+        // Read ONCE and used both as the policy and as the payload block, so the
+        // clock a reviewer is racing and the sentence explaining it can never
+        // disagree.
+        const gateTimeout = textGateTimeout({ repairs: repairsByRevision.get(revision) });
+        return {
+          kind: "batch_review",
+          payload: { runId: wf.runId, topic: selected.topic, angle, preview: draft.text, revision, gateTimeout },
+          requiredRole: "account_manager",
+          timeout: { duration: gateTimeout.duration, onTimeout: gateTimeout.onTimeout },
+        };
+      },
       onDecision: async ({ revision, response, output }) => {
         // SCRUM-306 (AU23): a reject's drafted content previously had nowhere
         // durable to go — it lived only in this round's step checkpoints and
