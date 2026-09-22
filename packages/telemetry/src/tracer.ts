@@ -1,4 +1,5 @@
 import { metrics, trace, type Meter, type Tracer } from "@opentelemetry/api";
+import { logError } from "./structured-log.js";
 // Type-only: erased at compile time, so this does not pull the OTel SDK
 // dependency graph into every workspace that imports this module the way a
 // runtime import would — see the `started` comment below for why that matters.
@@ -121,6 +122,50 @@ export function telemetryResourceAttributes(env: NodeJS.ProcessEnv = process.env
   };
 }
 
+/**
+ * Makes a rejected metrics export say what the SERVER said.
+ *
+ * `DiagConsoleLogger` (set above) reports the exporter's own message, and for
+ * an HTTP failure that message is the bare status text — `Forbidden`, and
+ * nothing else. Which is progress over the silence it replaced, and still not
+ * an answer: 403 does not say WHICH permission, and the response body that
+ * does say is carried on the error as `data` and thrown away.
+ *
+ * Measured 2026-09-22: every metrics export from both prep services was
+ * failing 403 while traces from the same process, on the same credentials, to
+ * the same host, succeeded. Two plausible roles were granted on the strength
+ * of that message and neither changed anything, because a status text cannot
+ * tell you which grant you are missing. The body can.
+ *
+ * Wrapping `export` rather than raising the diag level to DEBUG, deliberately:
+ * DEBUG turns on every internal OTel message on every tick, which is a lot of
+ * noise to carry permanently for one line that matters. This logs on failure
+ * only, under a stable `event` a log-based metric can count.
+ */
+function explainExportFailures<TExporter extends { export(batch: never, done: (result: { code: number; error?: Error }) => void): void }>(
+  exporter: TExporter,
+): TExporter {
+  const original = exporter.export.bind(exporter);
+  exporter.export = (batch: never, done: (result: { code: number; error?: Error }) => void): void => {
+    original(batch, (result) => {
+      if (result.error) {
+        // `data` and `code` are `OTLPExporterError`'s own fields; typed
+        // loosely because this must never be the thing that throws.
+        const err = result.error as Error & { data?: unknown; code?: unknown };
+        const body = typeof err.data === "string" ? err.data.slice(0, 600) : undefined;
+        logError("telemetry: metrics export was rejected — these counters are LOST, not delayed", undefined, {
+          event: "telemetry.metrics_export_failed",
+          reason: err.message,
+          ...(err.code !== undefined ? { status: err.code } : {}),
+          ...(body !== undefined ? { body } : {}),
+        });
+      }
+      done(result);
+    });
+  };
+  return exporter;
+}
+
 export async function initTelemetry(): Promise<void> {
   if (started || !process.env.GOOGLE_CLOUD_PROJECT) return;
   started = true;
@@ -189,10 +234,12 @@ export async function initTelemetry(): Promise<void> {
     // aggregate, not something that needs per-event flushing.
     metricReaders: [
       new PeriodicExportingMetricReader({
-        exporter: new OTLPMetricExporter({
-          url: TELEMETRY_OTLP_METRICS_ENDPOINT,
-          headers: authHeaders,
-        }),
+        exporter: explainExportFailures(
+          new OTLPMetricExporter({
+            url: TELEMETRY_OTLP_METRICS_ENDPOINT,
+            headers: authHeaders,
+          }),
+        ),
       }),
     ],
   });
