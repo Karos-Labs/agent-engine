@@ -17,6 +17,8 @@ export interface CreateAppDeps extends RunsRouterDeps {
   durableStore: DurableStepStore;
   /** Epoch-ms clock for the gate-timeout sweep (and the engine it resumes with). Tests age a gate through it. */
   clock?: () => number;
+  /** How many `awaiting_gate` runs one sweep reads. Defaults to the sweep's own bound; a test lowers it to drive the truncation warning. */
+  gateSweepScanLimit?: number;
   /** See `routes/queue.ts`'s `QueueRouterDeps` — all optional, so an app built with none of this still boots (the push route just 500s if ever hit, same as any other unconfigured-dependency mistake). */
   queuePushAudienceUrl?: string;
   verifyPushIdToken?: VerifyPushIdToken;
@@ -94,7 +96,13 @@ export function createApp(deps: CreateAppDeps): Application {
   // Service-authenticated (above) but NOT tenant-scoped: the gate-timeout
   // sweep works across every client's runs, so it sits before the
   // tenant-assertion middleware — see `createMaintenanceRouter`.
-  app.use(createMaintenanceRouter({ ...runsDeps, ...(deps.clock !== undefined ? { clock: deps.clock } : {}) }));
+  app.use(
+    createMaintenanceRouter({
+      ...runsDeps,
+      ...(deps.clock !== undefined ? { clock: deps.clock } : {}),
+      ...(deps.gateSweepScanLimit !== undefined ? { scanLimit: deps.gateSweepScanLimit } : {}),
+    }),
+  );
 
   // Layered on top of "who is the caller" (AU1, immediately above): "which
   // tenant is this specific request for" (AU46 / SCRUM-329). Mounted after

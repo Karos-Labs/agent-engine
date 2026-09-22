@@ -1,8 +1,8 @@
-import { computeToolCostUsd, runInToolUsageScope, type AgentContext, type AgentExecutionResult, type AgentExecutionStatus, type BaseAgent, type ToolUnitUsage } from "@agent-engine/core";
+import { ABORT_SIGNAL_METADATA_KEY, computeToolCostUsd, runInToolUsageScope, type AgentContext, type AgentExecutionResult, type AgentExecutionStatus, type BaseAgent, type ToolUnitUsage } from "@agent-engine/core";
 import { recordCostAndTokens, recordWorkflowStepMetric, withWorkflowStepSpan } from "@agent-engine/telemetry";
 import type { StepRecord } from "../adapters/types.js";
 import type { WorkflowRuntime } from "./context.js";
-import { markStepRunning, scopedStepId, sumRunCost } from "./context.js";
+import { markStepRunning, recordRunCost, runCostSoFar, scopedStepId } from "./context.js";
 import { WorkflowBudgetExceeded, WorkflowStepTimeout } from "./signals.js";
 import { isCheckpointedStepStatus, type StepRecordStatus } from "../adapters/types.js";
 
@@ -67,7 +67,7 @@ export interface StepAgentOptions {
  * every Layer 3 tool's `ToolExecuteOptions.ctx`, which is exactly the set of
  * places that can act on a cancellation.
  */
-export const STEP_ABORT_SIGNAL_METADATA_KEY = "abortSignal";
+export const STEP_ABORT_SIGNAL_METADATA_KEY = ABORT_SIGNAL_METADATA_KEY;
 
 /**
  * Reads the abort signal the engine attached to this step, if any.
@@ -96,11 +96,12 @@ export function stepAbortSignal(ctx: AgentContext): AbortSignal | undefined {
  * turns and any Layer 3 tool holding `ctx` can see the step has given up and
  * stop.
  *
- * LIMIT, stated plainly: firing a signal cancels nothing by itself. Today
- * `BaseAgent.runReActLoop` does not check it, so an in-flight provider call
- * still runs to completion; consuming the signal is a `@agent-engine/core`
- * change and is NOT in this ticket's surface. What lands here is the signal
- * being created, fired, and delivered — verified by test — not the consumer.
+ * The consumer landed 2026-09-22 (`agentAbortReason` in
+ * `@agent-engine/core`): `BaseAgent.runReActLoop` checks the signal before and
+ * after every turn and before every tool execution, and stops. What is still
+ * NOT cancelled is the single provider call already in flight when the timer
+ * fires — no `ModelAdapter.complete()` accepts a signal — so that
+ * one call runs to completion and bills. Everything after it does not.
  */
 function withStepTimeout<T>(run: Promise<T>, stepId: string, timeoutMs: number, controller: AbortController): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -247,7 +248,7 @@ export async function runStepAgent<TOutput>(
   }
 
   if (runtime.budget?.maxTotalCostUsd !== undefined) {
-    const spentSoFar = await sumRunCost(runtime.store, runtime.runId);
+    const spentSoFar = await runCostSoFar(runtime);
     if (spentSoFar >= runtime.budget.maxTotalCostUsd) {
       throw new WorkflowBudgetExceeded(runtime.runId, spentSoFar, runtime.budget.maxTotalCostUsd);
     }
@@ -441,6 +442,7 @@ export async function runStepAgent<TOutput>(
         ...(outcomeError !== undefined ? { error: outcomeError } : {}),
       };
       await runtime.store.saveStep(runtime.runId, record);
+      recordRunCost(runtime, record.costUsd ?? 0);
       return result;
     },
   );

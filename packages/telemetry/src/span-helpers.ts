@@ -3,6 +3,7 @@ import { getTracer } from "./tracer.js";
 import { describeError } from "./errors.js";
 import { biTable } from "./bigquery-client.js";
 import { recordHttpRequestMetric } from "./metrics.js";
+import { withLogScope, currentLogScope, type LogScopeFields } from "./log-scope.js";
 
 interface IdentityAttributes {
   runId: string;
@@ -78,6 +79,20 @@ export interface CostAndTokenAttributes {
    */
   servedByHop?: string;
   servingAdapter?: string;
+}
+
+/**
+ * The same identity the span carries, as log-scope fields — so a span and the
+ * log lines written inside it can never name different runs.
+ */
+function logScopeFor(attrs: IdentityAttributes, extra: LogScopeFields): LogScopeFields {
+  return {
+    runId: attrs.runId,
+    clientSlug: attrs.clientSlug,
+    productId: attrs.productId,
+    ...(attrs.slotId !== undefined ? { slotId: attrs.slotId } : {}),
+    ...extra,
+  };
 }
 
 function setIdentityAttributes(span: Span, attrs: IdentityAttributes): void {
@@ -263,27 +278,31 @@ function runInSpan<T>(name: string, setup: (span: Span) => void, fn: (span: Span
 
 /** Wraps one Layer 1 workflow step (`step.code`/`step.agent`) in a span tagged per RFC-01 §11. */
 export function withWorkflowStepSpan<T>(attrs: WorkflowStepSpanAttributes, fn: (span: Span, markOutcome: MarkSpanOutcome) => Promise<T>): Promise<T> {
-  return runInSpan(
-    `workflow.step.${attrs.stepKind}`,
-    (span) => {
-      setIdentityAttributes(span, attrs);
-      span.setAttribute("step_id", attrs.stepId);
-      span.setAttribute("step_kind", attrs.stepKind);
-    },
-    fn,
+  return withLogScope(logScopeFor(attrs, { stepId: attrs.stepId }), () =>
+    runInSpan(
+      `workflow.step.${attrs.stepKind}`,
+      (span) => {
+        setIdentityAttributes(span, attrs);
+        span.setAttribute("step_id", attrs.stepId);
+        span.setAttribute("step_kind", attrs.stepKind);
+      },
+      fn,
+    ),
   );
 }
 
 /** Wraps one Layer 3 tool execution in a span tagged per RFC-01 §11 (including `tool_version`). */
 export function withToolCallSpan<T>(attrs: ToolCallSpanAttributes, fn: (span: Span, markOutcome: MarkSpanOutcome) => Promise<T>): Promise<T> {
-  return runInSpan(
-    `tool.call.${attrs.toolName}`,
-    (span) => {
-      setIdentityAttributes(span, attrs);
-      span.setAttribute("tool_name", attrs.toolName);
-      span.setAttribute("tool_version", attrs.toolVersion);
-    },
-    fn,
+  return withLogScope(logScopeFor(attrs, { toolName: attrs.toolName }), () =>
+    runInSpan(
+      `tool.call.${attrs.toolName}`,
+      (span) => {
+        setIdentityAttributes(span, attrs);
+        span.setAttribute("tool_name", attrs.toolName);
+        span.setAttribute("tool_version", attrs.toolVersion);
+      },
+      fn,
+    ),
   );
 }
 
@@ -310,19 +329,34 @@ export interface WorkflowRunSpanAttributes {
  * outcomes that are actually failures; see `WorkflowEngine.run()`.
  */
 export function withWorkflowRunSpan<T>(attrs: WorkflowRunSpanAttributes, fn: (span: Span, markOutcome: MarkSpanOutcome) => Promise<T>): Promise<T> {
-  return runInSpan(
-    "workflow.run",
-    (span) => {
-      span.setAttribute("run_id", attrs.runId);
-      span.setAttribute("client_slug", attrs.clientSlug);
-      span.setAttribute("product_id", attrs.productId);
-      span.setAttribute("run_kind", attrs.runKind);
-    },
-    fn,
+  // Also the outermost log scope for the run: every structured log line
+  // written anywhere under `workflowFn` — including from a shared model
+  // adapter that has never heard of this run — carries its identity from
+  // here. See `withLogScope`.
+  return withLogScope({ runId: attrs.runId, clientSlug: attrs.clientSlug, productId: attrs.productId, runKind: attrs.runKind }, () =>
+    runInSpan(
+      "workflow.run",
+      (span) => {
+        span.setAttribute("run_id", attrs.runId);
+        span.setAttribute("client_slug", attrs.clientSlug);
+        span.setAttribute("product_id", attrs.productId);
+        span.setAttribute("run_kind", attrs.runKind);
+      },
+      fn,
+    ),
   );
 }
 
-/** Attributes for one model-adapter call span (AU42/SCRUM-326). */
+/**
+ * Attributes for one model-adapter call span (AU42/SCRUM-326).
+ *
+ * Deliberately carries no identity fields: `ModelRouter.complete()` is handed
+ * a prompt, a schema and a policy, and is told nothing about which run it is
+ * serving. The run, client, product and step are read from the ambient log
+ * scope instead (`withLogScope`, entered by the run and step spans), which is
+ * the same source the failover warnings use — so a model-call span and the
+ * warning logged from inside it always agree.
+ */
 export interface ModelCallSpanAttributes {
   vendor: string;
   model: string;
@@ -350,6 +384,17 @@ export function withModelCallSpan<T>(attrs: ModelCallSpanAttributes, fn: (span: 
       span.setAttribute("vendor", attrs.vendor);
       span.setAttribute("model", attrs.model);
       span.setAttribute("tier", attrs.tier);
+      // Which run's step this call belongs to, as ATTRIBUTES and not merely as
+      // a parent-span relationship. "How much did this client's runs spend at
+      // gemini-3-pro yesterday" is a filter over model-call spans; answering it
+      // through the trace parent means walking up to `workflow.step` for every
+      // span. Absent outside a workflow (a script, a test), which is why each
+      // one is guarded rather than defaulted to a placeholder.
+      const scope = currentLogScope();
+      if (scope.runId !== undefined) span.setAttribute("run_id", scope.runId);
+      if (scope.clientSlug !== undefined) span.setAttribute("client_slug", scope.clientSlug);
+      if (scope.productId !== undefined) span.setAttribute("product_id", scope.productId);
+      if (scope.stepId !== undefined) span.setAttribute("step_id", scope.stepId);
     },
     fn,
   );

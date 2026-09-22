@@ -231,6 +231,10 @@ export class WorkflowEngine {
       // wedge has cleared. Persisting it would make a run that once absorbed
       // its allowance un-absorbing forever.
       absorbedStepTimeouts: { count: 0 },
+      // Seeded lazily (null, not 0): a RESUMED execution has to count what a
+      // previous process already spent, and only the store knows that. See
+      // `runCostSoFar`.
+      costLedger: { totalUsd: null },
     };
     const wf = buildWorkflowContext(runtime);
 

@@ -75,7 +75,8 @@ describe("GooglePubSubQueueAdapter", () => {
       const handler = vi.fn().mockResolvedValue(undefined);
       adapter.subscribe("my-subscription", handler);
 
-      expect(client.subscription).toHaveBeenCalledWith("my-subscription");
+      // The second argument is the flow-control bound; `flow-control.test.ts` is where it is asserted in full.
+      expect(client.subscription).toHaveBeenCalledWith("my-subscription", expect.objectContaining({ flowControl: expect.any(Object) }));
 
       const message = fakeMessage({
         id: "msg-42",

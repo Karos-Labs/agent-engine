@@ -132,12 +132,18 @@ export class WorkflowConcurrentRunError extends Error {
  *
  * As of AU5 / SCRUM-316 the engine also ABORTS the step's `AbortSignal` with
  * this error as the abort reason, and hands that signal to the agent on
- * `AgentContext.metadata` (`stepAbortSignal(ctx)`). Read that for what it is:
- * the cancellation is now PROPAGATED, not yet CONSUMED — `BaseAgent`'s ReAct
- * loop in `@agent-engine/core` does not check it, so an in-flight provider
- * call still runs to completion. Today this still mostly bounds how long a
- * run can be wedged; it stops doing only that the moment a consumer reads
- * the signal.
+ * `AgentContext.metadata` (`stepAbortSignal(ctx)`).
+ *
+ * Since 2026-09-22 that signal is also CONSUMED, which it was not before:
+ * `BaseAgent`'s ReAct loop checks it before and after every turn, and again
+ * before it executes a tool, and ends as a `tooling_error` naming the
+ * cancellation (`agentAbortReason`). So a timed-out step no longer keeps
+ * buying images and footage for a result nobody will read.
+ *
+ * The remaining LIMIT, stated plainly: the call ALREADY in flight when the
+ * timer fires is not cancelled. No `ModelAdapter.complete()` takes a signal,
+ * so one long provider call runs to completion and bills. The bound this
+ * closes is on everything AFTER it.
  */
 export class WorkflowStepTimeout extends Error {
   constructor(

@@ -1,4 +1,5 @@
 import { describeError } from "./errors.js";
+import { currentLogScope } from "./log-scope.js";
 
 /**
  * Cloud Logging's own structured-log convention (https://cloud.google.com/
@@ -27,6 +28,11 @@ function emit(severity: "ERROR" | "WARNING" | "INFO", message: string, err: unkn
     severity,
     message,
     ...(err !== undefined ? { error: describeError(err) } : {}),
+    // Whose run this line belongs to, when something up the stack said (see
+    // `withLogScope`). Spread BEFORE `fields` so an explicit field always wins
+    // over the ambient one — a call site that knows better is never
+    // overwritten by the scope.
+    ...currentLogScope(),
     ...fields,
   };
   // Cloud Run forwards stdout as severity DEFAULT/INFO and stderr as ERROR

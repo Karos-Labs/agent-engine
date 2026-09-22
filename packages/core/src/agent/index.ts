@@ -1,3 +1,4 @@
+export * from "./abort.js";
 export * from "./tool.js";
 export * from "./tool-usage-scope.js";
 export * from "./types.js";
