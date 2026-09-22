@@ -147,8 +147,10 @@ async function main(): Promise<void> {
 
     // Same deterministic-runId reasoning as the push route (routes/queue.ts):
     // a redelivery of the same unacked message reuses the same message id,
-    // so this can never double-run a job.
-    const runId = `pubsub-${message.id}`;
+    // so this can never double-run a job. A CONTINUATION (`/resume` handing a
+    // gate decision's remaining work to this worker — see
+    // `RunJobRequestSchema.runId`) names the existing run instead.
+    const runId = parsed.data.runId ?? `pubsub-${message.id}`;
     // Registered BEFORE the await and cleared in `finally`, so the window in
     // which a run is executing is exactly the window in which shutdown can see
     // it. The tracked promise deliberately swallows — it exists to be awaited

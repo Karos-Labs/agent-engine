@@ -58,6 +58,36 @@ describe("POST /api/v1/maintenance/sweep-gate-timeouts", () => {
     expect(gate?.response?.actor).toBe("system:gate-timeout");
   }, 90_000);
 
+  /**
+   * A WEDGED run (2026-09-22): parked at a gate that already carries a
+   * decision. The loop used to `continue` past these — "has a response,
+   * nothing to time out" — which made the state permanent, since nothing
+   * else calls `run()` unprompted. The decision is on record, applying it is
+   * all that is missing, and it is due immediately, whatever the clock says.
+   */
+  it("resumes a run parked at a gate that already has a decision, straight away, with that decision", async () => {
+    const started = await request(app).post("/api/v1/runs/start").send({ clientSlug: "acme", productId: "x-agent", runKind: "recurring", inputParams: {} });
+    const runId = started.body.runId as string;
+    const gateId = `${runId}__15-batch-review-r0`;
+    const gate = await env.durableStore.getGate(gateId);
+    // A human decided; the continuation never ran (the run is still awaiting_gate).
+    await env.durableStore.saveGate({ ...gate!, response: { decision: "reject", actor: "jane@karoslabs.com", at: new Date(clock).toISOString(), reason: "off-brand" } });
+    expect((await env.durableStore.getRun(runId))?.status).toBe("awaiting_gate");
+
+    // Two minutes in — nowhere near the hour. Still due: the decision exists.
+    clock += 2 * 60 * 1000;
+    const res = await request(app).post("/api/v1/maintenance/sweep-gate-timeouts").send();
+    expect(res.status).toBe(200);
+    expect(res.body.due).toBe(1);
+    expect(res.body.resumed).toHaveLength(1);
+    expect(res.body.resumed[0]).toMatchObject({ runId, productId: "x-agent" });
+    expect((await env.durableStore.getRun(runId))?.status).not.toBe("awaiting_gate");
+    // Jane's decision was applied, not replaced by a timeout approval.
+    const after = await env.durableStore.getGate(gateId);
+    expect(after?.response?.actor).toBe("jane@karoslabs.com");
+    expect(after?.response?.decision).toBe("reject");
+  }, 90_000);
+
   it("reports an empty sweep when nothing is waiting", async () => {
     const res = await request(app).post("/api/v1/maintenance/sweep-gate-timeouts").send();
     expect(res.status).toBe(200);

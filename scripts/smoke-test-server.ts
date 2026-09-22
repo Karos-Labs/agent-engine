@@ -75,7 +75,7 @@ async function main(): Promise<void> {
     durableStore: env.durableStore,
     runtimeDeps: env.runtimeDeps,
     enqueueRunJob: async (request) => {
-      const runId = `smoke-${randomUUID()}`;
+      const runId = request.runId ?? `smoke-${randomUUID()}`;
       await startRunJob(request, runId, { durableStore: env.durableStore, runtimeDeps: env.runtimeDeps });
       return { runId };
     },

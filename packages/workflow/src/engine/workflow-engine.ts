@@ -3,7 +3,7 @@ import { describeError, recordWorkflowRunMetric, withWorkflowRunSpan } from "@ag
 import type { DurableStepStore, RunRecord, RunStatus, WorkflowBudget } from "../adapters/types.js";
 import type { GateResponse, WorkflowContext, WorkflowRuntime } from "../primitives/context.js";
 import { buildWorkflowContext, sumRunCost } from "../primitives/context.js";
-import { normalizeGateId } from "../primitives/step-gate.js";
+import { GATE_TIMEOUT_ACTOR, normalizeGateId } from "../primitives/step-gate.js";
 import {
   AwaitingGateSignal,
   GateAlreadyResolvedError,
@@ -255,7 +255,7 @@ export class WorkflowEngine {
     try {
       return await withWorkflowRunSpan({ runId: params.runId, clientSlug: params.clientSlug, productId: params.productId, runKind: params.runKind }, async (span, markOutcome) => {
       try {
-        const output = await workflowFn(wf);
+        const output = await this.runUntilParkedOrDone(workflowFn, wf, params.runId);
         const totalCostUsd = await sumRunCost(this.store, params.runId);
         await this.store.updateRun(params.runId, { status: "completed", updatedAt: this.now(), totalCostUsd, ...terminalRunFields() });
         span.setAttribute("run_status", "completed");
@@ -321,6 +321,38 @@ export class WorkflowEngine {
   }
 
   /**
+   * Runs the workflow function, and — when it stops at a gate — checks once
+   * more that the gate is still open before letting the run park there.
+   *
+   * The race this closes (2026-09-22): `runStepGate` reads the gate record,
+   * sees no response, and throws `AwaitingGateSignal`; between that read and
+   * this execution writing `status: "awaiting_gate"`, a `/resume` request
+   * records a human's decision on the very same gate and then fails to claim
+   * the run (this execution holds the lease). The decision is on the gate, the
+   * run is parked at the gate, the gate step still says "running", and every
+   * later decision on it is a 409 — a run nothing will ever move again, since
+   * the timeout sweep skips gates that already have a response. Re-reading the
+   * gate here and going round again (bounded, so a gate that keeps being
+   * resolved under us cannot spin forever) turns that into the ordinary
+   * "decision arrived, workflow continued" path.
+   */
+  private async runUntilParkedOrDone<T>(workflowFn: (wf: WorkflowContext) => Promise<T>, wf: WorkflowContext, runId: string): Promise<T> {
+    const MAX_REENTRIES = 3;
+    for (let reentry = 0; ; reentry++) {
+      try {
+        return await workflowFn(wf);
+      } catch (err) {
+        if (!(err instanceof AwaitingGateSignal) || reentry >= MAX_REENTRIES) throw err;
+        const gate = await this.store.getGate(err.gateId).catch(() => undefined);
+        if (gate?.response === undefined) throw err;
+        console.warn(
+          `workflow-engine: gate "${err.gateId}" on run "${runId}" was resolved ("${gate.response.decision}" by ${gate.response.actor}) while this execution was about to park at it — continuing instead`,
+        );
+      }
+    }
+  }
+
+  /**
    * Renews this execution's claim on the run every `RUN_LEASE_HEARTBEAT_MS`,
    * so `claimRun`'s lease check can tell a live execution from an abandoned
    * one. Without it `updatedAt` never moves between the claim and the terminal
@@ -373,15 +405,32 @@ export class WorkflowEngine {
    * here, so round-tripping its own response 404'd). Throws
    * `GateAlreadyResolvedError` rather than overwriting an existing response
    * — a human decision's audit trail must never be silently replaced.
+   *
+   * The one exception, `options.supersedeTimeoutApproval`, is narrow on
+   * purpose: an `auto_approve` timeout's own synthetic response (actor
+   * `GATE_TIMEOUT_ACTOR`) may be replaced by a human's, and ONLY while the run
+   * is still parked at that gate — i.e. the default approval was recorded but
+   * nothing has acted on it yet. A timeout approval is what happens when
+   * nobody is there; a person who then turns up outranks it. A response any
+   * human recorded is never replaced, whatever the option says.
    */
-  async resolveGate(runId: string, id: string, response: GateResponse): Promise<void> {
+  async resolveGate(runId: string, id: string, response: GateResponse, options: { supersedeTimeoutApproval?: boolean } = {}): Promise<void> {
     const gateId = normalizeGateId(runId, id);
     const gate = await this.store.getGate(gateId);
     if (!gate) {
       throw new Error(`WorkflowEngine.resolveGate: no gate found for id "${id}" on run "${runId}"`);
     }
     if (gate.response) {
-      throw new GateAlreadyResolvedError(runId, gateId, gate.response.decision);
+      const run = await this.store.getRun(runId);
+      const stillParkedHere = run?.status === "awaiting_gate" && run.pendingGateId === gateId;
+      const supersedable = options.supersedeTimeoutApproval === true && gate.response.actor === GATE_TIMEOUT_ACTOR && stillParkedHere;
+      if (!supersedable) {
+        throw new GateAlreadyResolvedError(runId, gateId, gate.response.decision);
+      }
+      console.warn(
+        `workflow-engine: gate "${gateId}" on run "${runId}" had auto-approved on its timeout at ${gate.response.at} but the run never moved past it; ` +
+          `a human decision ("${response.decision}" by ${response.actor}) supersedes the default approval`,
+      );
     }
     await this.store.saveGate({ ...gate, response });
   }

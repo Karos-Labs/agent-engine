@@ -67,6 +67,33 @@ export const RunJobRequestSchema = z.object({
    * entry should not fail a run that is otherwise fine.
    */
   stageModels: z.record(z.string(), z.string().min(1)).optional(),
+  /**
+   * CONTINUE THIS EXISTING RUN rather than start a new one.
+   *
+   * Set only by `POST /runs/:runId/resume` (2026-09-22): a human decision on a
+   * gate used to run the rest of the workflow INLINE in that HTTP request, on
+   * the one service that has CPU throttling on and a 300s request timeout —
+   * the exact trap `/runs/start` was pulled out of by AU66 / SCRUM-364. An
+   * Instagram "Request changes" redrafts and re-renders a carousel (Chromium)
+   * for several minutes; the portal severs its request at 30s; the redraft
+   * then crawls on a throttled CPU while the reviewer sees an error and clicks
+   * again into a 409. The continuation now goes down the same topic every
+   * start does and is executed by the worker, which is the only thing that
+   * should ever execute a run.
+   *
+   * A consumer that receives it uses this id in place of the one it would
+   * derive from the message id, so `WorkflowEngine.run` re-enters the stored
+   * run (claim from `awaiting_gate`, replay from checkpoints) instead of
+   * creating a sibling. A redelivery is as idempotent as any other: a
+   * completed run is a no-op, a live one is refused and retried after its
+   * lease. Absent on every start message, which is why it is optional.
+   */
+  runId: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[A-Za-z0-9_.-]+$/, "runId may contain only letters, digits, '_', '.' and '-'")
+    .optional(),
 });
 export type RunJobRequest = z.infer<typeof RunJobRequestSchema>;
 
@@ -162,8 +189,24 @@ function budgetFor(productId: string): { maxTotalCostUsd: number } | undefined {
   return max === undefined ? undefined : { maxTotalCostUsd: max };
 }
 
-export async function startRunJob(request: RunJobRequest, runId: string, deps: StartRunJobDeps): Promise<StartRunJobOutcome> {
+export async function startRunJob(request: RunJobRequest, derivedRunId: string, deps: StartRunJobDeps): Promise<StartRunJobOutcome> {
   const engine = new WorkflowEngine(deps.durableStore);
+  // A continuation names its run in the payload and that name wins over the
+  // message-derived id, whichever consumer called this — so the rule lives in
+  // one place rather than in each of the three entry points.
+  const runId = request.runId ?? derivedRunId;
+
+  if (request.runId !== undefined) {
+    // A continuation names a run that must already exist. Letting it fall
+    // through to `createRunIfNotExists` would mint a brand-new run under a
+    // caller-chosen id with no brief and no budget — a start disguised as a
+    // resume. Permanent, like an unknown productId: the message goes to the
+    // dead-letter queue rather than being retried into existence.
+    const existing = await deps.durableStore.getRun(request.runId);
+    if (!existing) {
+      return { outcome: "not_found", runId, message: `continuation names run "${request.runId}", which does not exist` };
+    }
+  }
 
   let workflowFn;
   try {
