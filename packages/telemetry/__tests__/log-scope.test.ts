@@ -13,7 +13,7 @@ import { logError, logWarning, withLogScope, withToolCallSpan, withWorkflowRunSp
  */
 
 /** The JSON payloads `logWarning`/`logError` wrote while `fn` ran. */
-async function captureLogs(fn: () => Promise<void> | void): Promise<Array<Record<string, unknown>>> {
+async function captureLogs(fn: () => unknown): Promise<Array<Record<string, unknown>>> {
   const payloads: Array<Record<string, unknown>> = [];
   const record = (line: unknown): void => {
     payloads.push(JSON.parse(String(line)) as Record<string, unknown>);
