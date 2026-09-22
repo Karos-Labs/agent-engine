@@ -82,6 +82,45 @@ const TELEMETRY_OTLP_METRICS_ENDPOINT = "https://telemetry.googleapis.com/v1/met
  * break that "zero-overhead when unconfigured" guarantee for build/test
  * tooling, and — worse — attempt real Cloud Trace network calls under test.
  */
+/**
+ * The resource every span and every metric point from this process is tagged
+ * with.
+ *
+ * Exported and pure so the one attribute that is a BACKEND CONTRACT rather
+ * than a nicety can be asserted by a test. `initTelemetry` itself starts a
+ * real SDK against a real endpoint and cannot be exercised, which is exactly
+ * how `gcp.project_id` came to be missing for months.
+ *
+ * `environment`: the same prep/prod signal agent-engine's own cloudbuild.yaml
+ * already sets (`FIRESTORE_DATABASE_ID`), reused rather than inventing a
+ * second variable, matching karosCMO's instrumentation.node.ts convention.
+ */
+export function telemetryResourceAttributes(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  return {
+    "service.name": INSTRUMENTATION_NAME,
+    "deployment.environment.name": env["FIRESTORE_DATABASE_ID"] === "prep" ? "prep" : "prod",
+    // REQUIRED BY GOOGLE'S OTLP **METRICS** INGEST, AND BY NOTHING ELSE.
+    //
+    // `telemetry.googleapis.com/v1/metrics` rejects any payload whose resource
+    // lacks it, verbatim:
+    //
+    //   HTTP 400 — Resource is missing required attribute "gcp.project_id"
+    //
+    // `/v1/traces` has no such requirement, and `gcpDetector` does not supply
+    // the attribute — it sets `cloud.account.id`, `cloud.platform`,
+    // `faas.name`, `faas.instance` and friends, never `gcp.project_id`. So
+    // traces arrived and metrics did not, in every service, in both projects,
+    // for as long as this has existed: measured 2026-09-22, Cloud Monitoring
+    // held ZERO descriptors matching `agent_engine` out of 1,992 in each
+    // project, while Cloud Trace held traces from the same minute.
+    //
+    // Not a semantic-convention constant because it is not a semantic
+    // convention — it is Google's own ingest contract, and a literal is the
+    // honest spelling.
+    "gcp.project_id": env["GOOGLE_CLOUD_PROJECT"] ?? "",
+  };
+}
+
 export async function initTelemetry(): Promise<void> {
   if (started || !process.env.GOOGLE_CLOUD_PROJECT) return;
   started = true;
@@ -90,29 +129,36 @@ export async function initTelemetry(): Promise<void> {
     { NodeSDK },
     { BatchSpanProcessor },
     { resourceFromAttributes },
-    { ATTR_SERVICE_NAME, ATTR_DEPLOYMENT_ENVIRONMENT_NAME },
     { OTLPTraceExporter },
     { OTLPMetricExporter },
     { PeriodicExportingMetricReader },
     { gcpDetector },
     { GoogleAuth },
+    { diag, DiagConsoleLogger, DiagLogLevel },
   ] = await Promise.all([
     import("@opentelemetry/sdk-node"),
     import("@opentelemetry/sdk-trace-node"),
     import("@opentelemetry/resources"),
-    import("@opentelemetry/semantic-conventions"),
     import("@opentelemetry/exporter-trace-otlp-proto"),
     import("@opentelemetry/exporter-metrics-otlp-proto"),
     import("@opentelemetry/sdk-metrics"),
     import("@opentelemetry/resource-detector-gcp"),
     import("google-auth-library"),
+    import("@opentelemetry/api"),
   ]);
 
-  // Same prep/prod signal agent-engine's own cloudbuild.yaml already sets
-  // (FIRESTORE_DATABASE_ID: "(default)" for prod, "prep" for prep) — reused
-  // rather than inventing a second environment variable, matching karosCMO's
-  // instrumentation.node.ts convention.
-  const environment = process.env.FIRESTORE_DATABASE_ID === "prep" ? "prep" : "prod";
+  // AN EXPORT THAT IS REJECTED MUST SAY SO (2026-09-22).
+  //
+  // OpenTelemetry swallows exporter failures by design: the SDK's own
+  // diagnostics go to a no-op logger unless one is set, so a backend that
+  // refuses every single export looks exactly like a backend receiving them.
+  // That is how the defect below survived: `telemetry.googleapis.com` was
+  // answering 400 on every metrics export, for months, in both environments,
+  // in complete silence.
+  //
+  // ERROR only — a WARNING level here is noisy on every transient retry, and
+  // the thing worth waking up for is "the backend is refusing us".
+  diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR);
 
   const auth = new GoogleAuth({ scopes: "https://www.googleapis.com/auth/cloud-platform" });
   const authClient = await auth.getClient();
@@ -126,10 +172,10 @@ export async function initTelemetry(): Promise<void> {
 
   const sdk = new NodeSDK({
     resourceDetectors: [gcpDetector],
-    resource: resourceFromAttributes({
-      [ATTR_SERVICE_NAME]: INSTRUMENTATION_NAME,
-      [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: environment,
-    }),
+    // `ATTR_SERVICE_NAME`/`ATTR_DEPLOYMENT_ENVIRONMENT_NAME` are asserted
+    // against the constants in `telemetryResourceAttributes`' own test, so the
+    // literal keys there cannot drift from the semantic conventions here.
+    resource: resourceFromAttributes(telemetryResourceAttributes()),
     spanProcessor: new BatchSpanProcessor(
       new OTLPTraceExporter({
         url: TELEMETRY_OTLP_TRACES_ENDPOINT,
