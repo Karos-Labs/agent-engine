@@ -1,5 +1,5 @@
 import { PubSub } from "@google-cloud/pubsub";
-import { GooglePubSubQueueAdapter } from "./adapters/google-pubsub-adapter.js";
+import { DEFAULT_MAX_ACK_EXTENSION_MINUTES, DEFAULT_MAX_CONCURRENT_MESSAGES, GooglePubSubQueueAdapter, type PubSubFlowControlOptions } from "./adapters/google-pubsub-adapter.js";
 import type { QueueAdapter } from "./types.js";
 
 export interface CreateQueueFromEnvOptions {
@@ -15,6 +15,24 @@ function readEnv(env: Record<string, string | undefined>, ...names: string[]): s
     if (value !== undefined && value.length > 0) return value;
   }
   return undefined;
+}
+
+/** A positive integer from the environment, or the default — a malformed value must never silently become 0 (which would stop the worker consuming entirely). */
+function readPositiveInt(env: Record<string, string | undefined>, name: string, fallback: number): number {
+  const raw = readEnv(env, name);
+  if (raw === undefined) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`createQueueFromEnv: ${name}="${raw}" is not a positive integer`);
+  }
+  return parsed;
+}
+
+export function resolvePubSubFlowControl(env: Record<string, string | undefined>): PubSubFlowControlOptions {
+  return {
+    maxMessages: readPositiveInt(env, "QUEUE_MAX_CONCURRENT_MESSAGES", DEFAULT_MAX_CONCURRENT_MESSAGES),
+    maxExtensionMinutes: readPositiveInt(env, "QUEUE_MAX_ACK_EXTENSION_MINUTES", DEFAULT_MAX_ACK_EXTENSION_MINUTES),
+  };
 }
 
 /**
@@ -57,7 +75,7 @@ function createGooglePubSubAdapter(env: Record<string, string | undefined>): Goo
     return client;
   };
 
-  return new GooglePubSubQueueAdapter({ client: resolveClient });
+  return new GooglePubSubQueueAdapter({ client: resolveClient, flowControl: resolvePubSubFlowControl(env) });
 }
 
 /**

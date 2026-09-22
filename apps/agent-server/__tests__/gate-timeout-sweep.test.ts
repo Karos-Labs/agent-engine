@@ -1,4 +1,4 @@
-import { describe, expect, it, afterEach, beforeEach } from "vitest";
+import { describe, expect, it, afterEach, beforeEach, vi } from "vitest";
 import request from "supertest";
 import type { Application } from "express";
 import { createApp } from "../src/app.js";
@@ -63,4 +63,69 @@ describe("POST /api/v1/maintenance/sweep-gate-timeouts", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ scanned: 0, due: 0, resumed: [], skipped: [] });
   });
+
+  /**
+   * The scan bound (2026-09-22). `listRunsByStatus` applies Firestore's
+   * `.limit()` BEFORE sorting by `updatedAt` — the sort is in memory, over
+   * whatever slice came back — so a backlog past the limit is not "the
+   * oldest N", it is an arbitrary N ordered by document id. The runs left out
+   * are left out of EVERY later sweep too, so a run parked at a gate would
+   * never auto-approve and nothing would say so.
+   *
+   * Latent today (39 parked runs in prep, 3 in production, against a bound of
+   * 1000). The point of the warning is that it stops being latent audibly.
+   */
+  it("says so when it read a full page, because the runs beyond it are invisible to every later sweep too", async () => {
+    const narrow = createApp({
+      durableStore: env.durableStore,
+      runtimeDeps: env.runtimeDeps,
+      enqueueRunJob: inProcessEnqueue(env),
+      clock: () => clock,
+      gateSweepScanLimit: 2,
+    });
+
+    for (let i = 0; i < 3; i += 1) {
+      const started = await request(narrow).post("/api/v1/runs/start").send({ clientSlug: "acme", productId: "x-agent", runKind: "recurring", inputParams: {} });
+      expect(started.status).toBe(202);
+    }
+
+    const warnings: Array<Record<string, unknown>> = [];
+    const log = vi.spyOn(console, "log").mockImplementation((line: unknown) => {
+      const parsed = JSON.parse(String(line)) as Record<string, unknown>;
+      if (parsed["event"] === "gate.sweep.truncated") warnings.push(parsed);
+    });
+    try {
+      const res = await request(narrow).post("/api/v1/maintenance/sweep-gate-timeouts").send();
+      expect(res.status).toBe(200);
+      expect(res.body.scanned).toBe(2);
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ severity: "WARNING", scanned: 2, limit: 2 });
+    expect(String(warnings[0]?.["remedy"])).toMatch(/composite index/);
+  }, 90_000);
+
+  it("stays quiet when the page was not full", async () => {
+    const narrow = createApp({
+      durableStore: env.durableStore,
+      runtimeDeps: env.runtimeDeps,
+      enqueueRunJob: inProcessEnqueue(env),
+      clock: () => clock,
+      gateSweepScanLimit: 5,
+    });
+    await request(narrow).post("/api/v1/runs/start").send({ clientSlug: "acme", productId: "x-agent", runKind: "recurring", inputParams: {} });
+
+    const warnings: unknown[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((line: unknown) => {
+      if (String(line).includes("gate.sweep.truncated")) warnings.push(line);
+    });
+    try {
+      await request(narrow).post("/api/v1/maintenance/sweep-gate-timeouts").send();
+    } finally {
+      log.mockRestore();
+    }
+    expect(warnings).toEqual([]);
+  }, 90_000);
 });

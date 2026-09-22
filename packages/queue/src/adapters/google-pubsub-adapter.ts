@@ -1,3 +1,4 @@
+import { Duration } from "@google-cloud/pubsub";
 import type { Message, PubSub } from "@google-cloud/pubsub";
 import { logError } from "@agent-engine/telemetry";
 import { RetryLater, type PublishResult, type QueueAdapter, type QueueMessage, type QueueMessageHandler, type QueueSubscription } from "../types.js";
@@ -5,8 +6,51 @@ import { RetryLater, type PublishResult, type QueueAdapter, type QueueMessage, t
 /** Same client-resolver-function convention `GeminiAdapter`/`OpenAICompatibleAdapter` use — lets a caller memoize one client (the common case) or hand back a per-call/test double, without this class caring which. */
 export type PubSubClientResolver = () => PubSub;
 
+/**
+ * How many run-jobs one consumer process will hold at once, and how long it
+ * will keep extending their ack deadlines.
+ *
+ * This is not a tuning knob; it is a bound that was missing. The Node client's
+ * default `flowControl.maxMessages` is 1000, and this repo's consumer is a
+ * PULL worker (`apps/agent-server/dist/queue-consumer.js`, `minScale=1`,
+ * 1 vCPU / 2 GiB per instance). One message is one whole workflow run started
+ * inline — model calls, rendered plates, and the in-process `.media-cache`
+ * holding every downloaded image for the life of the run. A thousand of them
+ * on one 2 GiB instance is not a slow instance, it is an OOM, and the
+ * redelivery lands on an instance in exactly the same shape.
+ *
+ * Cloud Run cannot save it either: a pull consumer scales on CPU, not on
+ * subscription backlog, so the instance that swallowed the burst is the one
+ * that dies with it.
+ */
+/**
+ * How many run-jobs one consumer process holds at once, when nothing says
+ * otherwise. FOUR, not the client's 1000 — see `PubSubFlowControlOptions`.
+ *
+ * The default lives on the ADAPTER rather than only in
+ * `createQueueFromEnv`, so that constructing this class directly (a test, a
+ * script, a future second entry point) cannot quietly inherit the unbounded
+ * one. The env reader imports this constant rather than restating it.
+ */
+export const DEFAULT_MAX_CONCURRENT_MESSAGES = 4;
+
+/** An agent run can legitimately hold a message for a long time; 60 minutes is the client's own default, restated here so it is a decision rather than an inheritance. */
+export const DEFAULT_MAX_ACK_EXTENSION_MINUTES = 60;
+
+export interface PubSubFlowControlOptions {
+  /** Messages in flight per process. Small on purpose — the fleet scales by adding INSTANCES (`maxScale`), not by piling runs onto one. */
+  maxMessages?: number;
+  /**
+   * How long the client keeps extending a message's ack deadline before giving
+   * up on it. A long agent run legitimately holds one for a while; past this
+   * the message is redelivered and the run lease decides what happens next.
+   */
+  maxExtensionMinutes?: number;
+}
+
 export interface GooglePubSubAdapterOptions {
   client: PubSub | PubSubClientResolver;
+  flowControl?: PubSubFlowControlOptions;
 }
 
 /**
@@ -20,9 +64,11 @@ export interface GooglePubSubAdapterOptions {
 export class GooglePubSubQueueAdapter implements QueueAdapter {
   readonly providerId = "google-pubsub";
   private readonly resolveClient: PubSubClientResolver;
+  private readonly flowControl: PubSubFlowControlOptions;
 
   constructor(options: GooglePubSubAdapterOptions) {
     this.resolveClient = typeof options.client === "function" ? options.client : () => options.client as PubSub;
+    this.flowControl = options.flowControl ?? {};
   }
 
   async publish(topic: string, payload: unknown, attributes?: Record<string, string>): Promise<PublishResult> {
@@ -34,7 +80,19 @@ export class GooglePubSubQueueAdapter implements QueueAdapter {
 
   subscribe<TPayload = unknown>(subscriptionName: string, handler: QueueMessageHandler<TPayload>): QueueSubscription {
     const client = this.resolveClient();
-    const subscription = client.subscription(subscriptionName);
+    // `allowExcessMessages: false` matters as much as the count: left true
+    // (the client default) the library delivers whatever the server sends in a
+    // batch even once `maxMessages` is reached, which turns the bound into a
+    // suggestion.
+    const subscription = client.subscription(subscriptionName, {
+      flowControl: {
+        maxMessages: this.flowControl.maxMessages ?? DEFAULT_MAX_CONCURRENT_MESSAGES,
+        allowExcessMessages: false,
+      },
+      // A `SubscriberOptions` field, not a flow-control one — they read as
+      // one setting and the client keeps them apart.
+      maxExtensionTime: Duration.from({ minutes: this.flowControl.maxExtensionMinutes ?? DEFAULT_MAX_ACK_EXTENSION_MINUTES }),
+    });
 
     const onMessage = (message: Message): void => {
       // Deliberately not awaited here: `subscription.on("message", ...)` is a

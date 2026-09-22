@@ -10,10 +10,28 @@ export interface MaintenanceRouterDeps extends RunsRouterDeps {
   clock?: () => number;
   /** How many due runs one sweep resumes before answering. Each resume runs the rest of that workflow inline. */
   maxResumesPerSweep?: number;
+  /** How many `awaiting_gate` runs one sweep READS, defaulting to `SWEEP_SCAN_LIMIT`. Injectable so the truncation warning can be driven by a test rather than only described. */
+  scanLimit?: number;
 }
 
-/** How many `awaiting_gate` runs one sweep reads. Far above any real backlog; a bound, not a budget. */
-const SWEEP_SCAN_LIMIT = 200;
+/**
+ * How many `awaiting_gate` runs one sweep reads.
+ *
+ * Raised from 200 on 2026-09-22, and the truncation made loud, because the
+ * bound is not the benign one its old comment claimed. `listRunsByStatus`
+ * applies Firestore's `.limit()` BEFORE it sorts the results by `updatedAt`
+ * — the sort is in memory, over whatever slice the query returned — so a
+ * backlog past the limit is not "the oldest N", it is an arbitrary N ordered
+ * by document id. The runs left out are left out of every subsequent sweep
+ * too, for as long as the backlog holds: a run parked at a gate would never
+ * auto-approve, and nothing anywhere would say so.
+ *
+ * Measured 2026-09-22: 39 runs in prep, 3 in production. So this is a latent
+ * defect, not an active one, and the proportionate fix is headroom plus a
+ * warning that fires the moment the headroom runs out — not a composite
+ * index for a query that has never yet needed one.
+ */
+const SWEEP_SCAN_LIMIT = 1_000;
 const DEFAULT_MAX_RESUMES = 5;
 
 export interface SweepGateTimeoutsResponse {
@@ -61,19 +79,33 @@ export function createMaintenanceRouter(deps: MaintenanceRouterDeps): Router {
   const clock = deps.clock ?? Date.now;
   const engine = new WorkflowEngine(deps.durableStore, clock);
   const maxResumes = deps.maxResumesPerSweep ?? DEFAULT_MAX_RESUMES;
+  const scanLimit = deps.scanLimit ?? SWEEP_SCAN_LIMIT;
 
   router.post("/api/v1/maintenance/sweep-gate-timeouts", async (_req, res) => {
     const store = deps.durableStore;
     const response: SweepGateTimeoutsResponse = { scanned: 0, due: 0, resumed: [], skipped: [] };
     let waiting: RunRecord[];
     try {
-      waiting = await store.listRunsByStatus("awaiting_gate", SWEEP_SCAN_LIMIT);
+      waiting = await store.listRunsByStatus("awaiting_gate", scanLimit);
     } catch (err) {
       logWarning(`gate-timeout sweep could not list waiting runs: ${describeError(err)}`);
       res.status(500).json({ error: "could not list runs awaiting a gate" });
       return;
     }
     response.scanned = waiting.length;
+    if (waiting.length >= scanLimit) {
+      // A full page means the read was cut off, and Firestore cut it off
+      // before the ordering was applied — so the runs missing from this
+      // sweep are missing from every sweep, not merely deferred to the next
+      // one. The fix when this fires is a composite index on
+      // (status, updatedAt) so the query can `orderBy` and take the OLDEST.
+      logWarning(`gate-timeout sweep read a FULL page of ${scanLimit} runs awaiting a gate — older runs beyond it are invisible to this and every later sweep`, {
+        event: "gate.sweep.truncated",
+        scanned: waiting.length,
+        limit: scanLimit,
+        remedy: "create a composite index on agentEngineRuns(status, updatedAt) and order the query by updatedAt",
+      });
+    }
 
     for (const run of waiting) {
       const gateId = run.pendingGateId;
