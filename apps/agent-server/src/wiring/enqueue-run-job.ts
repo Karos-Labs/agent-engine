@@ -42,6 +42,8 @@ export function createRunJobPublisher(env: Record<string, string | undefined> = 
   const topic = runJobsTopicName(env);
   return async (request) => {
     const { messageId } = await queue.publish(topic, request);
-    return { runId: `pubsub-${messageId}` };
+    // A continuation keeps the id of the run it continues — the consumer
+    // reads `request.runId` first for exactly this reason.
+    return { runId: request.runId ?? `pubsub-${messageId}` };
   };
 }

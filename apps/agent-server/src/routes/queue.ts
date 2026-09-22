@@ -119,8 +119,9 @@ export function createQueueRouter(deps: QueueRouterDeps): Router {
     // `WorkflowEngine.run()` already treats re-invoking an existing,
     // completed runId as a safe, idempotent no-op (see its own doc
     // comment), so at-least-once Pub/Sub delivery can never double-run a
-    // job. See `run-job.ts`.
-    const runId = `pubsub-${messageId}`;
+    // job. See `run-job.ts`. A continuation message (`RunJobRequestSchema.runId`)
+    // names the run it continues instead.
+    const runId = parsedPayload.data.runId ?? `pubsub-${messageId}`;
 
     const outcome = await startRunJob(parsedPayload.data, runId, {
       durableStore: deps.durableStore,

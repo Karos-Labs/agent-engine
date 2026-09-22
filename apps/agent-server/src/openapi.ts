@@ -61,6 +61,10 @@ const runResponseSchema = {
     },
     pendingGateId: { type: "string", description: "Present only when status is \"awaiting_gate\"." },
     report: { $ref: "#/components/schemas/DynamicAgentRunReport" },
+    gateId: { type: "string", description: "/resume only: the fully qualified id of the gate the decision landed on." },
+    decision: { type: "string", enum: ["approve", "revise", "reject"], description: "/resume only: the decision now on the gate (yours, or the one already recorded)." },
+    decisionOutcome: { type: "string", enum: ["recorded", "already_recorded", "superseded_timeout_approval"], description: "/resume only." },
+    continuation: { type: "string", enum: ["enqueued", "inline"], description: "/resume only: where the rest of the run is executing." },
   },
 };
 
@@ -70,6 +74,22 @@ const errorResponseSchema = {
   properties: {
     error: { type: "string" },
     details: { type: "array", items: { type: "object" }, description: "Zod issue list, present on 400 validation errors." },
+  },
+};
+
+/** `POST /runs/:runId/resume`'s 409 body — `GateConflictBody` in routes/runs.ts. */
+const gateConflictResponseSchema = {
+  type: "object",
+  required: ["error", "code", "runStatus"],
+  properties: {
+    error: { type: "string" },
+    code: { type: "string", enum: ["RUN_NOT_AWAITING_GATE", "GATE_NOT_PENDING", "GATE_ALREADY_RESOLVED", "RUN_BUSY"] },
+    runStatus: { type: "string" },
+    pendingGateId: { type: "string" },
+    resolvedDecision: { type: "string", enum: ["approve", "revise", "reject"] },
+    resolvedBy: { type: "string", description: "The recorded actor; `system:gate-timeout` for an auto-approval." },
+    resolvedAt: { type: "string", format: "date-time" },
+    continuation: { type: "string", enum: ["enqueued", "enqueue_failed"] },
   },
 };
 
@@ -248,8 +268,15 @@ export const openApiDocument: OpenApiDocument = {
           },
         },
         responses: {
+          "202": {
+            description:
+              "The decision was recorded on the gate and the rest of the run was handed to the worker as a continuation (2026-09-22; the same hand-off /runs/start makes). " +
+              "`status`/`report` describe the store at the moment of answering — the run is still `awaiting_gate` until the worker claims it, seconds later; poll /status. " +
+              "`decisionOutcome` is `recorded` (yours), `already_recorded` (the same decision was already on the gate and has now been applied), or `superseded_timeout_approval` (the gate had auto-approved on its timeout but the run never moved; a person outranks that default).",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/RunResponse" } } },
+          },
           "200": {
-            description: "The gate was resolved and the run resumed (possibly pausing again at a later gate).",
+            description: "Deployments with no queue configured only (tests, the smoke script): the continuation ran inline in this request and this is its result.",
             content: { "application/json": { schema: { $ref: "#/components/schemas/RunResponse" } } },
           },
           "400": {
@@ -261,8 +288,10 @@ export const openApiDocument: OpenApiDocument = {
             content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
           },
           "409": {
-            description: "The run is not currently awaiting a gate, its gate was already resolved by someone else, or a concurrent resume request won the race first.",
-            content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } },
+            description:
+              "A structured conflict: `code` is RUN_NOT_AWAITING_GATE (the run is not parked at a gate; `runStatus` says where it is), GATE_NOT_PENDING (parked at a different gate, named in `pendingGateId`), " +
+              "GATE_ALREADY_RESOLVED (this gate already carries a DIFFERENT decision — `resolvedDecision`/`resolvedBy`/`resolvedAt`; it stands, and the run is continued with it), or RUN_BUSY (decision recorded; another execution holds the run and will apply it).",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/GateConflictResponse" } } },
           },
           "500": {
             description: "The resume failed unexpectedly.",
@@ -330,6 +359,7 @@ export const openApiDocument: OpenApiDocument = {
       DynamicAgentRunReport: dynamicAgentRunReportSchema,
       DynamicAgentRunStep: dynamicAgentRunStepSchema,
       ErrorResponse: errorResponseSchema,
+      GateConflictResponse: gateConflictResponseSchema,
       PubSubPushEnvelope: pubSubPushEnvelopeSchema,
     },
   },

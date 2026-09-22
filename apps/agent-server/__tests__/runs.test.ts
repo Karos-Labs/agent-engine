@@ -6,10 +6,10 @@ import request from "supertest";
 import type { Application } from "express";
 import { createAllKarosTools, WorkspaceStore } from "@agent-engine/tools";
 import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
-import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
+import { GATE_TIMEOUT_ACTOR, MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createApp } from "../src/app.js";
 import { setupTestEnvironment, type TestEnvironment, inProcessEnqueue } from "./test-helpers.js";
-import { startRunJob } from "../src/run-job.js";
+import { startRunJob, type RunJobRequest } from "../src/run-job.js";
 
 /**
  * Starts a run through the route and returns the state it reached (AU66 /
@@ -79,7 +79,7 @@ describe("POST /api/v1/runs/start", () => {
       .post(`/api/v1/runs/${runId}/resume`)
       .send({ gateId: "15-batch-review-r0", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
 
-    expect(resumeRes.status).toBe(200);
+    expect(resumeRes.status).toBe(202);
     expect(resumeRes.body.status).toBe("completed");
     expect(resumeRes.body.report.domainOutcome).toBe("delivered");
     // Every step the run actually recorded, since 2026-09-07 the report is
@@ -157,7 +157,7 @@ describe("POST /api/v1/runs/start", () => {
       const resumeRes = await request(app)
         .post(`/api/v1/runs/${runId}/resume`)
         .send({ gateId, resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
-      expect(resumeRes.status, `${productId} should resume cleanly`).toBe(200);
+      expect(resumeRes.status, `${productId} should resume cleanly`).toBe(202);
       expect(resumeRes.body.status, `${productId} should complete`).toBe("completed");
       expect(resumeRes.body.report.domainOutcome, `${productId} should be delivered`).toBe("delivered");
 
@@ -298,7 +298,7 @@ describe("POST /api/v1/runs/:runId/resume — edits.style (IGSTYLE-1)", () => {
       const resumeRes = await request(app)
         .post(`/api/v1/runs/${started.runId}/resume`)
         .send({ gateId: "15-batch-review-r0", resolution });
-      expect(resumeRes.status).toBe(200);
+      expect(resumeRes.status).toBe(202);
       expect(resumeRes.body.status).toBe("completed");
     }
   }, 60_000);
@@ -319,7 +319,7 @@ describe("POST /api/v1/runs/:runId/resume — edits.style (IGSTYLE-1)", () => {
     // IGSTYLE-3 on) — this asserts the ROUTE and the shared GateResponseSchema
     // accept and pass it through cleanly for ANY agent, not that x-agent acts
     // on it.
-    expect(resumeRes.status).toBe(200);
+    expect(resumeRes.status).toBe(202);
     expect(resumeRes.body.status).toBe("completed");
   }, 60_000);
 
@@ -343,7 +343,7 @@ describe("POST /api/v1/runs/:runId/resume — edits.style (IGSTYLE-1)", () => {
     // `approve` — whatever x-agent (which implements no revision loop) does
     // with the decision itself is a separate question from whether the
     // ROUTE let the payload through.
-    expect(resumeRes.status).toBe(200);
+    expect(resumeRes.status).toBe(202);
   }, 60_000);
 });
 
@@ -424,7 +424,7 @@ describe("POST /api/v1/runs/:runId/resume — campaign orchestrator gate", () =>
       .post(`/api/v1/runs/${runId}/resume`)
       .send({ gateId: "13-campaign-review", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
 
-    expect(resumeRes.status).toBe(200);
+    expect(resumeRes.status).toBe(202);
     expect(resumeRes.body.status).toBe("completed");
     expect(resumeRes.body.report.domainOutcome).toBe("delivered");
     // The dynamically-discovered fan-out slots (5 channels) all show up as their own report entries.
@@ -462,7 +462,7 @@ describe("POST /api/v1/runs/:runId/resume — campaign orchestrator gate", () =>
       .post(`/api/v1/runs/${runId}/resume`)
       .send({ gateId: "13-campaign-review", resolution: { decision: "reject", actor: "jane@karoslabs.com", notes: "needs a different theme" } });
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(202);
     expect(res.body.status).toBe("held");
   }, 60_000);
 
@@ -497,7 +497,7 @@ describe("POST /api/v1/runs/:runId/resume — concurrency and gate-lifecycle gua
     const firstResume = await request(app)
       .post(`/api/v1/runs/${runId}/resume`)
       .send({ gateId: "15-batch-review-r0", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
-    expect(firstResume.status).toBe(200);
+    expect(firstResume.status).toBe(202);
     expect(firstResume.body.status).toBe("completed");
 
     // The run is now "completed" — a second resume of the same run is not a valid
@@ -507,25 +507,139 @@ describe("POST /api/v1/runs/:runId/resume — concurrency and gate-lifecycle gua
       .send({ gateId: "15-batch-review-r0", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
     expect(secondResume.status).toBe(409);
     expect(secondResume.body.error).toMatch(/not awaiting a gate/i);
+    // The code the portal branches on, and where the run actually is.
+    expect(secondResume.body.code).toBe("RUN_NOT_AWAITING_GATE");
+    expect(secondResume.body.runStatus).toBe("completed");
   });
 
-  it("returns 409, not 404 or 500, when the gate was already resolved by someone else (a concurrent approval)", async () => {
+  /**
+   * THE WEDGE (2026-09-22, prep run pubsub-21936957999643915, Instagram).
+   *
+   * A decision is on the gate but the run is still parked at it — a `/resume`
+   * whose continuation died after `resolveGate`, or the read/write race
+   * `runUntilParkedOrDone` closes. This used to be a permanent 409 on every
+   * click, and the sweep skipped it too. The recorded decision is
+   * authoritative, so a matching re-click APPLIES it and says so.
+   */
+  it("applies the decision already on record when a resume arrives at a wedged run with the same decision (202, already_recorded)", async () => {
     const startRes = await request(app)
       .post("/api/v1/runs/start")
       .send({ clientSlug: "acme", productId: "blog-agent", runKind: "recurring" });
     const { runId } = startRes.body;
 
-    // Simulates a second, concurrent approval channel resolving the same gate directly
-    // against the shared store — the run record is still "awaiting_gate" (only
-    // WorkflowEngine.run() flips that), so this HTTP request's own pre-check passes, and
-    // it reaches engine.resolveGate() to find the gate itself already answered.
+    // Resolve the gate directly against the store: the run record stays
+    // "awaiting_gate" (only WorkflowEngine.run() flips that) — the wedge.
     const rivalEngine = new WorkflowEngine(env.durableStore);
     await rivalEngine.resolveGate(runId, "15-batch-review-r0", { decision: "approve", actor: "mallory@example.com", at: "2026-08-15T00:00:00Z" });
 
     const res = await request(app)
       .post(`/api/v1/runs/${runId}/resume`)
       .send({ gateId: "15-batch-review-r0", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
+    expect(res.status).toBe(202);
+    expect(res.body.decisionOutcome).toBe("already_recorded");
+    expect(res.body.decision).toBe("approve");
+    expect(res.body.status).toBe("completed");
+    // The audit trail is mallory's, untouched: a recorded human decision is never overwritten.
+    const gate = await env.durableStore.getGate(`${runId}__15-batch-review-r0`);
+    expect(gate?.response?.actor).toBe("mallory@example.com");
+  });
+
+  it("answers 409 GATE_ALREADY_RESOLVED, naming who decided what and when, when the recorded decision differs — and still unwedges the run with the recorded one", async () => {
+    const startRes = await request(app)
+      .post("/api/v1/runs/start")
+      .send({ clientSlug: "acme", productId: "blog-agent", runKind: "recurring" });
+    const { runId } = startRes.body;
+
+    const rivalEngine = new WorkflowEngine(env.durableStore);
+    await rivalEngine.resolveGate(runId, "15-batch-review-r0", { decision: "approve", actor: "mallory@example.com", at: "2026-08-15T00:00:00Z" });
+
+    const res = await request(app)
+      .post(`/api/v1/runs/${runId}/resume`)
+      .send({ gateId: "15-batch-review-r0", resolution: { decision: "reject", actor: "jane@karoslabs.com", notes: "no" } });
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/already resolved/i);
+    expect(res.body.code).toBe("GATE_ALREADY_RESOLVED");
+    expect(res.body.resolvedDecision).toBe("approve");
+    expect(res.body.resolvedBy).toBe("mallory@example.com");
+    expect(res.body.resolvedAt).toBe("2026-08-15T00:00:00Z");
+    expect(res.body.continuation).toBe("enqueued");
+    // The in-process "queue" ran the continuation: the run is no longer wedged.
+    const run = await env.durableStore.getRun(runId);
+    expect(run?.status).toBe("completed");
+  });
+
+  it("lets a human decision supersede a gate that auto-approved on its timeout while the run was still parked there", async () => {
+    const startRes = await request(app)
+      .post("/api/v1/runs/start")
+      .send({ clientSlug: "acme", productId: "blog-agent", runKind: "recurring" });
+    const { runId } = startRes.body;
+
+    const gateId = `${runId}__15-batch-review-r0`;
+    const gate = await env.durableStore.getGate(gateId);
+    await env.durableStore.saveGate({ ...gate!, response: { decision: "approve", actor: GATE_TIMEOUT_ACTOR, at: "2026-09-22T20:05:00Z" } });
+
+    const res = await request(app)
+      .post(`/api/v1/runs/${runId}/resume`)
+      .send({ gateId: "15-batch-review-r0", resolution: { decision: "reject", actor: "jane@karoslabs.com", notes: "not this one" } });
+    expect(res.status).toBe(202);
+    expect(res.body.decisionOutcome).toBe("superseded_timeout_approval");
+    expect(res.body.decision).toBe("reject");
+    const after = await env.durableStore.getGate(gateId);
+    expect(after?.response?.actor).toBe("jane@karoslabs.com");
+    expect(after?.response?.decision).toBe("reject");
+    // The continuation ran on the HUMAN's decision: the gate step in the report
+    // carries the rejection, not the timeout's approval. (blog-agent returns a
+    // rejected draft marked as such rather than holding — see `runReviewCycle`.)
+    expect(res.body.status).toBe("completed");
+    const gateStep = await env.durableStore.getStep(runId, "15-batch-review-r0");
+    expect(gateStep?.output).toMatchObject({ decision: "reject", actor: "jane@karoslabs.com" });
+  });
+
+  it("answers 409 GATE_NOT_PENDING when the caller names a gate the run is not parked at", async () => {
+    const startRes = await request(app)
+      .post("/api/v1/runs/start")
+      .send({ clientSlug: "acme", productId: "blog-agent", runKind: "recurring" });
+    const { runId } = startRes.body;
+
+    const res = await request(app)
+      .post(`/api/v1/runs/${runId}/resume`)
+      .send({ gateId: "15-batch-review-r7", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe("GATE_NOT_PENDING");
+    expect(res.body.pendingGateId).toBe(`${runId}__15-batch-review-r0`);
+    // Nothing was written: the real gate is still open for the right request.
+    const gate = await env.durableStore.getGate(`${runId}__15-batch-review-r0`);
+    expect(gate?.response).toBeUndefined();
+  });
+
+  it("hands the continuation to the queue as THIS run rather than executing it in the request", async () => {
+    const published: RunJobRequest[] = [];
+    const captureApp = createApp({
+      durableStore: env.durableStore,
+      runtimeDeps: env.runtimeDeps,
+      enqueueRunJob: async (req) => {
+        published.push(req);
+        // Starts still execute (so the run reaches its gate); a continuation is only recorded.
+        if (req.runId === undefined) return inProcessEnqueue(env)(req);
+        return { runId: req.runId };
+      },
+    });
+    const startRes = await request(captureApp)
+      .post("/api/v1/runs/start")
+      .send({ clientSlug: "acme", productId: "blog-agent", runKind: "recurring" });
+    const { runId } = startRes.body;
+
+    const res = await request(captureApp)
+      .post(`/api/v1/runs/${runId}/resume`)
+      .send({ gateId: "15-batch-review-r0", resolution: { decision: "approve", actor: "jane@karoslabs.com" } });
+    expect(res.status).toBe(202);
+    expect(res.body.continuation).toBe("enqueued");
+    // Honest about the store's state at answer time: nothing has claimed the run yet.
+    expect(res.body.status).toBe("awaiting_gate");
+    const continuation = published.find((p) => p.runId !== undefined);
+    expect(continuation).toEqual({ runId, clientSlug: "acme", productId: "blog-agent", runKind: "recurring" });
+    // The decision itself is on the gate, for the worker to find.
+    const gate = await env.durableStore.getGate(`${runId}__15-batch-review-r0`);
+    expect(gate?.response?.actor).toBe("jane@karoslabs.com");
   });
 });

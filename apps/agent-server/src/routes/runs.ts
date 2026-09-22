@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { z } from "zod";
 import { GateResponseSchema, HEX_COLOR, loadClientContentLanguage, type AgentDefinitionStore } from "@agent-engine/core";
-import { describeError } from "@agent-engine/telemetry";
+import { describeError, logWarning } from "@agent-engine/telemetry";
 import { GateAlreadyResolvedError, WorkflowConcurrentRunError, WorkflowEngine, type DurableStepStore } from "@agent-engine/workflow";
 import { buildRunReport } from "../report.js";
 import { RunJobRequestSchema, type RunJobRequest } from "../run-job.js";
@@ -13,6 +13,42 @@ import { respondInternalError, respondWithLoggedDetail } from "./error-response.
 
 /** Hands a run-job off to the queue. Returns the id the consumer will derive from the published message. */
 export type EnqueueRunJob = (request: RunJobRequest) => Promise<{ runId: string }>;
+
+/**
+ * Why `POST /runs/:runId/resume` answered 409, as a code a caller can branch
+ * on — rather than only a sentence it can show.
+ *
+ * Until 2026-09-22 every conflict on that route was `{ error: string }`, and
+ * the portal collapsed even that into "Agent engine request failed (409).
+ * Please try again or contact support." A reviewer who pressed "Request
+ * changes" on an Instagram run whose gate had already been decided saw exactly
+ * that, three times, with the buttons still lit — and "try again" was the one
+ * thing guaranteed not to help.
+ *
+ * - `RUN_NOT_AWAITING_GATE` — the run is not parked at any gate (`runStatus`
+ *   says where it is: `running` means a continuation is in flight).
+ * - `GATE_NOT_PENDING` — parked, but at a different gate (`pendingGateId`);
+ *   the caller rendered a stale round.
+ * - `GATE_ALREADY_RESOLVED` — this gate already carries a decision, by
+ *   `resolvedBy` at `resolvedAt`, and it differs from the one just sent. The
+ *   recorded one stands and the run continues with it (`continuation`).
+ * - `RUN_BUSY` — the decision was recorded, but another execution holds the
+ *   run's lease and will apply it; nothing for the caller to redo.
+ */
+export interface GateConflictBody {
+  code: "RUN_NOT_AWAITING_GATE" | "GATE_NOT_PENDING" | "GATE_ALREADY_RESOLVED" | "RUN_BUSY";
+  error: string;
+  runStatus: string;
+  pendingGateId?: string;
+  resolvedDecision?: string;
+  resolvedBy?: string;
+  resolvedAt?: string;
+  continuation?: "enqueued" | "enqueue_failed";
+}
+
+function respondGateConflict(res: Response, body: GateConflictBody): void {
+  res.status(409).json(body);
+}
 
 export interface RunsRouterDeps {
   durableStore: DurableStepStore;
@@ -291,7 +327,12 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
     // just turns the ordinary sequential case into a clean, fast 409 instead of a wasted
     // resolveGate call followed by a claim failure.
     if (runRecord.status !== "awaiting_gate") {
-      res.status(409).json({ error: `run "${runId}" is not awaiting a gate (current status: "${runRecord.status}")` });
+      respondGateConflict(res, {
+        code: "RUN_NOT_AWAITING_GATE",
+        error: `run "${runId}" is not awaiting a gate (current status: "${runRecord.status}")`,
+        runStatus: runRecord.status,
+        ...(runRecord.pendingGateId ? { pendingGateId: runRecord.pendingGateId } : {}),
+      });
       return;
     }
     // SCRUM-315 / AU6. Resolved through the SAME function `/runs/start` uses (via
@@ -351,16 +392,127 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
       return;
     }
 
-    try {
-      await engine.resolveGate(runId, gateId, responseParsed.data);
-    } catch (err) {
-      if (err instanceof GateAlreadyResolvedError) {
-        res.status(409).json({ error: err.message });
-        return;
-      }
-      respondWithLoggedDetail(res, 404, "gate not found", `resolveGate failed for run ${runId} gate ${gateId}`, err);
+    // The gate the run is actually parked at, checked BEFORE the decision is
+    // written. A page rendered before a revision round opened offers the
+    // previous round's gate; recording a decision against it would either 409
+    // as already-resolved (confusing) or, worse, land on a gate the workflow is
+    // not waiting on. Named in the body so the caller can re-render the right one.
+    const qualifiedGateId = gateId.startsWith(`${runId}__`) ? gateId : `${runId}__${gateId}`;
+    if (runRecord.pendingGateId !== undefined && runRecord.pendingGateId !== null && runRecord.pendingGateId !== qualifiedGateId) {
+      respondGateConflict(res, {
+        code: "GATE_NOT_PENDING",
+        error: `run "${runId}" is waiting on gate "${runRecord.pendingGateId}", not "${gateId}"`,
+        runStatus: runRecord.status,
+        pendingGateId: runRecord.pendingGateId,
+      });
       return;
     }
+
+    // What this request DID with the decision, reported back so the caller
+    // can tell "recorded and continuing" from "already decided, continuing
+    // with the earlier decision".
+    let decisionOutcome: "recorded" | "superseded_timeout_approval" | "already_recorded" = "recorded";
+    let recordedResponse: { decision: string; actor: string; at: string } = responseParsed.data;
+    try {
+      // A person turning up after the gate approved itself on its timeout —
+      // while the run is still parked there, so the default approval never
+      // took effect — outranks that default. See `resolveGate`'s own note.
+      const before = await deps.durableStore.getGate(qualifiedGateId);
+      await engine.resolveGate(runId, gateId, responseParsed.data, { supersedeTimeoutApproval: true });
+      if (before?.response !== undefined) decisionOutcome = "superseded_timeout_approval";
+    } catch (err) {
+      if (err instanceof GateAlreadyResolvedError) {
+        // The run is `awaiting_gate` on THIS gate (both checked above), yet
+        // the gate already carries a decision: a wedge. Something recorded a
+        // decision and the run never moved past it — a `/resume` whose
+        // continuation died between writing the response and claiming the
+        // run, or the race `runUntilParkedOrDone` now closes. Before
+        // 2026-09-22 this was a permanent state: every click answered 409,
+        // the sweep skipped it (gate has a response), and nothing else ever
+        // calls `run()`. The recorded decision is authoritative — a human's
+        // audit trail is never overwritten — so the right move is to APPLY it:
+        // continue the run with what was recorded, and tell the caller which
+        // decision that was, in a body it can render.
+        const gate = await deps.durableStore.getGate(qualifiedGateId);
+        if (gate?.response === undefined) {
+          respondWithLoggedDetail(res, 404, "gate not found", `resolveGate failed for run ${runId} gate ${gateId}`, err);
+          return;
+        }
+        recordedResponse = gate.response;
+        if (gate.response.decision !== responseParsed.data.decision) {
+          // A different decision was asked for than the one on record. The
+          // record wins, and the caller learns so in a shape it can show —
+          // but the run must still be unwedged, so the continuation is
+          // handed off below exactly as for an accepted decision.
+          const continuation = await handOffContinuation(runId, runRecord, workflowFn, "conflict");
+          respondGateConflict(res, {
+            code: "GATE_ALREADY_RESOLVED",
+            error: err.message,
+            runStatus: runRecord.status,
+            pendingGateId: qualifiedGateId,
+            resolvedDecision: gate.response.decision,
+            resolvedBy: gate.response.actor,
+            resolvedAt: gate.response.at,
+            ...(continuation !== undefined ? { continuation } : {}),
+          });
+          return;
+        }
+        decisionOutcome = "already_recorded";
+      } else {
+        respondWithLoggedDetail(res, 404, "gate not found", `resolveGate failed for run ${runId} gate ${gateId}`, err);
+        return;
+      }
+    }
+
+    // ── THE CONTINUATION LEAVES THIS REQUEST (2026-09-22). ──
+    //
+    // This route used to call `engine.run()` here and run the rest of the
+    // workflow inside the HTTP request — the same shape `/runs/start` was
+    // pulled out of by AU66 / SCRUM-364, on the same service: CPU throttled
+    // between requests, 300s request timeout. A "revise" on the Instagram
+    // agent redrafts, re-vets and re-renders a carousel in Chromium for
+    // several minutes. The portal severs its request at 30s. From that moment
+    // the redraft crawled on a throttled CPU, the reviewer saw an error, and
+    // every further click met a 409 from a run that was `running` or wedged.
+    // The decision is now recorded here (cheap, synchronous, the thing the
+    // caller actually asked for) and the remaining work is published to the
+    // run-jobs topic as a continuation of THIS run (`RunJobRequestSchema.runId`),
+    // for the worker — `--no-cpu-throttling`, `min-instances=1`, the only
+    // process that should ever execute a run — to pick up.
+    //
+    // `report`/`status` in the 202 body are the store's state at the moment of
+    // answering, not a promise about the continuation: on a real queue the run
+    // is still `awaiting_gate` (with its gate now resolved) until the worker
+    // claims it, seconds later. Poll `/status` for the rest.
+    const continuation = await handOffContinuation(runId, runRecord, workflowFn, "accepted");
+    if (continuation === "enqueued") {
+      const after = await deps.durableStore.getRun(runId);
+      const report = await buildRunReport(deps.durableStore, runId, runRecord.productId);
+      res.status(202).json({
+        runId,
+        status: after?.status ?? runRecord.status,
+        ...(after?.status === "awaiting_gate" && after.pendingGateId ? { pendingGateId: after.pendingGateId } : {}),
+        gateId: qualifiedGateId,
+        decision: recordedResponse.decision,
+        decisionOutcome,
+        continuation,
+        report,
+      });
+      return;
+    }
+    if (continuation === "enqueue_failed") {
+      // The decision IS recorded; only the hand-off failed. Said plainly rather
+      // than as a generic 500 so the caller does not "try again" into a 409.
+      respondInternalError(res, `run ${runId}: the decision on gate ${gateId} was recorded but the continuation could not be enqueued; the gate-timeout sweep or the next resume will pick it up`, undefined);
+      return;
+    }
+
+    // No queue configured — tests and `scripts/smoke-test-server.ts` only.
+    // Never a deployed service: both `cloudbuild.yaml` deploys set
+    // QUEUE_TOPIC_RUN_JOBS on the HTTP service. Kept so the route stays
+    // exercisable end-to-end on a machine with no Pub/Sub, and loud when it
+    // happens anywhere it should not.
+    logWarning(`resume: no queue configured — running run ${runId}'s continuation inline in the HTTP request. Fine in a test; a trap on Cloud Run (see AU66 / SCRUM-364).`);
 
     // AU34 (SCRUM-312). Re-read on resume for the same reason `budget` and
     // `input` are recovered from the run record inside `engine.run`: the second
@@ -388,19 +540,66 @@ export function createRunsRouter(deps: RunsRouterDeps): Router {
         runId,
         status: result.status,
         ...(result.status === "awaiting_gate" ? { pendingGateId: result.pendingGateId } : {}),
+        gateId: qualifiedGateId,
+        decision: recordedResponse.decision,
+        decisionOutcome,
+        continuation: "inline",
         report,
       });
     } catch (err) {
       if (err instanceof WorkflowConcurrentRunError) {
         // The true race-closing backstop: a second resume request that slipped past the
         // status pre-check above (both read "awaiting_gate" before either wrote) loses
-        // here instead, at the store's atomic claim.
-        res.status(409).json({ error: err.message });
+        // here instead, at the store's atomic claim. The decision itself IS on
+        // the gate; the execution that holds the lease picks it up
+        // (`runUntilParkedOrDone`), or the sweep does.
+        respondGateConflict(res, {
+          code: "RUN_BUSY",
+          error: `${err.message} — the decision on gate "${gateId}" was recorded and will be applied by the execution that holds the run`,
+          runStatus: "running",
+          pendingGateId: qualifiedGateId,
+          resolvedDecision: recordedResponse.decision,
+          resolvedBy: recordedResponse.actor,
+          resolvedAt: recordedResponse.at,
+        });
         return;
       }
       respondInternalError(res, `resume failed unexpectedly for run ${runId}`, err);
     }
   });
+
+  /**
+   * Publishes the rest of `runId`'s workflow to the run-jobs topic as a
+   * continuation (see the block comment in `/resume`). Returns what happened,
+   * never throws: `"enqueued"`, `"enqueue_failed"` (logged), or `undefined`
+   * when no queue is configured and the caller should run inline.
+   *
+   * `workflowFn` is taken only to prove the productId resolved before anything
+   * is published — the worker resolves it again itself.
+   */
+  async function handOffContinuation(
+    runId: string,
+    runRecord: { clientSlug: string; productId: string; runKind: RunJobRequest["runKind"] },
+    _workflowFn: WorkflowFn,
+    why: "accepted" | "conflict",
+  ): Promise<"enqueued" | "enqueue_failed" | undefined> {
+    if (!deps.enqueueRunJob) return undefined;
+    try {
+      await deps.enqueueRunJob({
+        runId,
+        clientSlug: runRecord.clientSlug,
+        productId: runRecord.productId,
+        runKind: runRecord.runKind,
+        // No `input`/`stageModels`: `engine.run` recovers both from the run
+        // record on a resume, and a continuation must draft against the brief
+        // the run was started with, not a second copy of it.
+      });
+      return "enqueued";
+    } catch (err) {
+      logWarning(`resume (${why}): could not enqueue the continuation of run ${runId}: ${describeError(err)}`);
+      return "enqueue_failed";
+    }
+  }
 
   router.get("/api/v1/runs/:runId/status", async (req, res) => {
     const { runId } = req.params as { runId: string };

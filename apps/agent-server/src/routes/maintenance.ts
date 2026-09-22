@@ -111,19 +111,38 @@ export function createMaintenanceRouter(deps: MaintenanceRouterDeps): Router {
       const gateId = run.pendingGateId;
       if (gateId == null) continue;
       const gate = await store.getGate(gateId);
-      if (!gate || gate.response !== undefined) continue;
-      if (gate.timeout?.onTimeout !== "auto_approve") continue;
-      const durationMs = parseGateDurationMs(gate.timeout.duration);
-      if (durationMs === undefined) continue;
+      if (!gate) continue;
 
-      // The gate step's own `startedAt` is when the gate opened (preserved
-      // across replays — see `gateStepStartedAt`); the run's `updatedAt` is
-      // the fallback for a record from before gates checkpointed themselves.
-      const localId = gateId.startsWith(`${run.runId}__`) ? gateId.slice(run.runId.length + 2) : gateId;
-      const stepId = gate.slotId !== undefined ? `${gate.slotId}::${localId}` : localId;
-      const gateStep = await store.getStep(run.runId, stepId);
-      const openedAt = gateStep?.startedAt ?? run.updatedAt;
-      if (clock() - openedAt < durationMs) continue;
+      // A WEDGED run (2026-09-22): parked at a gate that already carries a
+      // decision. Something recorded the decision and the run never moved —
+      // a `/resume` whose continuation died after writing the response, or
+      // the read/write race `runUntilParkedOrDone` now closes. This loop used
+      // to `continue` past exactly these ("gate has a response, nothing to
+      // time out"), which made the state permanent: nothing else in the
+      // system calls `run()` unprompted. The decision is on record; applying
+      // it is all that is missing, and it is due NOW, whatever the timeout says.
+      const wedged = gate.response !== undefined;
+      if (!wedged) {
+        if (gate.timeout?.onTimeout !== "auto_approve") continue;
+        const durationMs = parseGateDurationMs(gate.timeout.duration);
+        if (durationMs === undefined) continue;
+
+        // The gate step's own `startedAt` is when the gate opened (preserved
+        // across replays — see `gateStepStartedAt`); the run's `updatedAt` is
+        // the fallback for a record from before gates checkpointed themselves.
+        const localId = gateId.startsWith(`${run.runId}__`) ? gateId.slice(run.runId.length + 2) : gateId;
+        const stepId = gate.slotId !== undefined ? `${gate.slotId}::${localId}` : localId;
+        const gateStep = await store.getStep(run.runId, stepId);
+        const openedAt = gateStep?.startedAt ?? run.updatedAt;
+        if (clock() - openedAt < durationMs) continue;
+      } else {
+        logWarning(`gate-timeout sweep: run ${run.runId} is parked at gate ${gateId} which already carries a decision ("${gate.response!.decision}" by ${gate.response!.actor} at ${gate.response!.at}) — applying it`, {
+          event: "gate.sweep.wedged_run",
+          runId: run.runId,
+          gateId,
+          decision: gate.response!.decision,
+        });
+      }
 
       response.due += 1;
       if (response.resumed.length >= maxResumes) {

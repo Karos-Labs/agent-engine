@@ -328,7 +328,9 @@ export async function setupTestEnvironment(clientSlug = "acme"): Promise<TestEnv
  */
 export function inProcessEnqueue(env: TestEnvironment): (request: RunJobRequest) => Promise<{ runId: string }> {
   return async (request) => {
-    const runId = `test-${randomUUID()}`;
+    // A continuation (`/resume` → `RunJobRequestSchema.runId`) re-enters the
+    // named run, exactly as the real consumer does.
+    const runId = request.runId ?? `test-${randomUUID()}`;
     await startRunJob(request, runId, { durableStore: env.durableStore, runtimeDeps: env.runtimeDeps });
     return { runId };
   };
