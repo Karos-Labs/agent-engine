@@ -21,6 +21,7 @@
     "check:pricing": "tsx scripts/check-model-pricing.ts",
     "check:tool-versions": "tsx scripts/check-tool-versions.ts",
     "check:bq-schema": "tsx scripts/check-bq-insert-schema.ts",
+    "check:deps": "node scripts/check-dependency-audit.mjs",
     "check:prompts": "tsx scripts/check-prompts.ts",
     "pretest": "node scripts/check-dist-freshness.mjs && npm run check:pricing",
     "test": "npm run test --workspaces --if-present",
