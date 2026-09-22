@@ -63,6 +63,38 @@ const RELATIVE_DAY_PATTERNS: readonly RegExp[] = [
   /\byesterday\b/i,
   /\btomorrow\b/i,
   /\btonight\b/i,
+  // ── Hebrew ──
+  //
+  // A post written for an Israeli client decays at exactly the same rate as an
+  // English one, and this list only knew English — so "אתמול" in a LinkedIn
+  // post read as clean while "yesterday" was caught. Clients writing natively
+  // in Hebrew are a third of the roster.
+  //
+  // `\b` is useless here: it is defined on ASCII word characters, so it
+  // matches on either side of every Hebrew letter and would fire inside a
+  // longer word. The guard is instead that no Hebrew letter may sit on either
+  // side of the match.
+  //
+  // The optional `[ובלמשכ]` is the closed set of single-letter Hebrew
+  // prefixes — "and", "in", "to", "from/since", "that", "as" — so "מאתמול"
+  // ("since yesterday") and "ומחר" ("and tomorrow") are caught as the whole
+  // word they are. Written as a fixed set rather than "any one letter"
+  // precisely so a longer word that merely ends in one of these stems cannot
+  // slip through the front.
+  //
+  // "שלשום" is the day before yesterday and is first for the same
+  // longest-first reason as its English counterpart.
+  /(?<![֐-׿])[ובלמשכ]?שלשום(?![֐-׿])/,
+  /(?<![֐-׿])[ובלמשכ]?אתמול(?![֐-׿])/,
+  /(?<![֐-׿])[ובלמשכ]?מחר(?![֐-׿])/,
+  /(?<![֐-׿])[ובלמשכ]?הערב(?![֐-׿])/,
+  /(?<![֐-׿])[ובלמשכ]?הבוקר(?![֐-׿])/,
+  /(?<![֐-׿])[ובלמשכ]?אמש(?![֐-׿])/,
+  // Bare "היום" ("today") is deliberately NOT here, for the same reason bare
+  // "today" is not on the English list: it is overwhelmingly used as "the day"
+  // in ordinary prose ("היום שבו…"), and a floor that deletes it would edit
+  // sentences that never carried a date at all. "earlier/later today" has no
+  // idiomatic one-word Hebrew equivalent, so there is nothing to add for it.
 ];
 
 /**

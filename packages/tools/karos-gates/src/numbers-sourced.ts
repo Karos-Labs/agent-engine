@@ -51,10 +51,50 @@ import { defineTool, success } from "@agent-engine/tool-common";
 // pubsub-21854296073980161 (intel-report-agent, karoslabs, 2026-09-17) was
 // held on "$30M" while its research pull carried "($5M-$30M ARR)" verbatim.
 // Minor bump, same reasoning as 1.1.0.
-const TOOL_VERSION = "1.6.0";
+//
+// 1.7.0 - the shekel. This gate knew `$`, `€` and `£`, so a figure in ₪ matched
+// no claim pattern at all — which does not mean it was refused, it means it was
+// never CHECKED. An agent writing for an Israeli client could state any sum in
+// shekels and pass, while the same sentence in dollars had to be traceable to a
+// source. Both orders ("₪1,200" and "1,200 ₪"), the written-out forms (ש"ח,
+// שקל, שקלים), the ISO codes (ILS, NIS) and the Hebrew magnitude words
+// (אלף/מיליון/מיליארד/טריליון) now fold to one normal form, so a Hebrew draft
+// quoting a source verbatim verifies and an unsourced shekel figure fails the
+// way an unsourced dollar figure always has. Minor bump, same reasoning as
+// 1.1.0: the verdict for a real class of drafts genuinely changes.
+const TOOL_VERSION = "1.7.0";
 
 /** A magnitude suffix that belongs to the figure in front of it: written out, or the common abbreviations. */
 const MAGNITUDE_SUFFIX = "(?:trillion|billion|million|thousand|tn|bn|mn|[kmbt])";
+
+/**
+ * THE SHEKEL, AND WHY IT WAS MISSING.
+ *
+ * This gate knew `$`, `€` and `£`. A figure in shekels therefore matched no
+ * claim pattern at all, which does not mean it was refused — it means it was
+ * never CHECKED. An agent writing for an Israeli client could state any sum in
+ * ₪ and the numbers gate would pass the draft without looking, while the same
+ * sentence in dollars would have to be traceable to a source. Clients writing
+ * natively in Hebrew are a third of the roster.
+ *
+ * Hebrew writes the sign AFTER the figure at least as often as before it
+ * ("1,200 ₪" and "₪1,200" are both ordinary), and the currency is written out
+ * as ש"ח, שקל or שקלים as readily as it is signed. Both orders and all of those
+ * spellings fold to a leading `₪` in `normalizeClaim`, so a draft quoting
+ * "1,200 ₪" still matches a source that wrote "₪1,200".
+ *
+ * `ils` and `nis` are the two ISO/colloquial codes, folded the same way `usd`
+ * already is.
+ */
+const SHEKEL_WORDS = String.raw`(?:ש"ח|שקלים|שקל|שח)`;
+
+/**
+ * Hebrew magnitude words, folded to the same one-letter abbreviations the
+ * English ones already use — so "1.2 מיליון" and "1.2 million" both normalize
+ * to "1.2m" and a Hebrew draft can be checked against an English source.
+ * Longest-first so "מיליארד" is not matched as "מיליון" + noise.
+ */
+const HEBREW_MAGNITUDE = String.raw`(?:טריליון|מיליארד|מיליון|אלף|אלפי)`;
 
 /**
  * Numeric-claim shapes that read as a factual assertion needing a source:
@@ -64,7 +104,12 @@ const MAGNITUDE_SUFFIX = "(?:trillion|billion|million|thousand|tn|bn|mn|[kmbt])"
 const NUMERIC_CLAIM_PATTERN = new RegExp(
   [
     String.raw`(\d[\d,]*(?:\.\d+)?\s?%)`,
-    String.raw`((?:[$€£]|\busd|\beur|\bgbp)\s?\d[\d,]*(?:\.\d+)?(?:\s?${MAGNITUDE_SUFFIX}\b)?)`,
+    String.raw`((?:[$€£₪]|\busd|\beur|\bgbp|\bils|\bnis)\s?\d[\d,]*(?:\.\d+)?(?:\s?${MAGNITUDE_SUFFIX}\b)?)`,
+    // The sign or the word AFTER the figure, which is how Hebrew usually
+    // writes it. The magnitude word sits between them ("1.2 מיליון ₪"), so it
+    // is optional here too.
+    String.raw`(\d[\d,]*(?:\.\d+)?(?:\s?${MAGNITUDE_SUFFIX}\b)?\s?(?:₪|${SHEKEL_WORDS}))`,
+    String.raw`(\d[\d,]*(?:\.\d+)?\s?(?:${HEBREW_MAGNITUDE})(?:\s?(?:₪|${SHEKEL_WORDS}))?)`,
     String.raw`(\b\d+(?:\.\d+)?\s?(?:x\b|×))`,
     String.raw`(\b\d+(?:\.\d+)?\s?(?:trillion|billion|million|thousand)\b)`,
   ].join("|"),
@@ -86,10 +131,25 @@ function normalizeClaim(raw: string): string {
     .replace(/\busd\s?(?=\d)/g, "$")
     .replace(/\beur\s?(?=\d)/g, "€")
     .replace(/\bgbp\s?(?=\d)/g, "£")
+    .replace(/\b(?:ils|nis)\s?(?=\d)/g, "₪")
     .replace(/(\d)\s?(?:trillion|tn)\b/g, "$1t")
     .replace(/(\d)\s?(?:billion|bn)\b/g, "$1b")
     .replace(/(\d)\s?(?:million|mn)\b/g, "$1m")
     .replace(/(\d)\s?thousand\b/g, "$1k")
+    // Hebrew magnitude words fold to the same abbreviations, BEFORE the
+    // trailing-shekel move below, so "1.2 מיליון ₪" becomes "1.2m ₪" and then
+    // "₪1.2m" — the same string an English source writing "$1.2 billion"
+    // would not match, but that a source writing "₪1.2 million" would.
+    .replace(/(\d)\s?טריליון/g, "$1t")
+    .replace(/(\d)\s?מיליארד/g, "$1b")
+    .replace(/(\d)\s?מיליון/g, "$1m")
+    .replace(/(\d)\s?אלפי?/g, "$1k")
+    // The written-out currency folds to the sign, then a TRAILING sign moves
+    // to the front. Hebrew writes "1,200 ₪" as readily as "₪1,200", and the
+    // two have to compare equal or a draft quoting a source verbatim would
+    // fail its own check.
+    .replace(/\s?(?:ש"ח|שקלים|שקל|שח)/g, "₪")
+    .replace(/(\d[\d,]*(?:\.\d+)?(?:[kmbt])?)\s?₪/g, "₪$1")
     .replace(/[‐-―]/g, "-")
     .replace(/\s+/g, "");
 }
@@ -158,7 +218,7 @@ function exactRangePattern(normalizedRange: string): RegExp {
  * "5 mark-up" would parse as the magnitude "5m" and widen into a range that
  * is not one.
  */
-const RANGE_ENDPOINT = String.raw`[$€£]?\s?\d[\d,]*(?:\.\d+)?\s?(?:%|x\b|×|${MAGNITUDE_SUFFIX}\b)?`;
+const RANGE_ENDPOINT = String.raw`[$€£₪]?\s?\d[\d,]*(?:\.\d+)?\s?(?:%|x\b|×|${MAGNITUDE_SUFFIX}\b)?`;
 const NUMERIC_RANGE_PATTERN = new RegExp(String.raw`${RANGE_ENDPOINT}\s*[-‐-―]\s*${RANGE_ENDPOINT}`, "gi");
 
 /**
@@ -181,15 +241,15 @@ function sourceHasRangeEndpoint(normalizedClaim: string, sourceBlob: string): bo
   // 3.4x, "$500-$2,000" repeats the currency, "12-34%" does not repeat the
   // percent. So the claim's unit may be absent from the endpoint it matches
   // when the other endpoint carries it.
-  const parts = /^([$€£]?)(\d[\d,]*(?:\.\d+)?)(%|x|[kmbt])?$/.exec(normalizedClaim);
+  const parts = /^([$€£₪]?)(\d[\d,]*(?:\.\d+)?)(%|x|[kmbt])?$/.exec(normalizedClaim);
   if (!parts) return false;
   const [, currency, number, unit] = parts;
   const cur = escapeForRegex(currency ?? "");
   const num = escapeForRegex(number!);
   const unitPattern = unit ? escapeForRegex(unit) : "";
-  const anyFigure = String.raw`[$€£]?\d[\d,]*(?:\.\d+)?(?:%|x|[kmbt])?`;
+  const anyFigure = String.raw`[$€£₪]?\d[\d,]*(?:\.\d+)?(?:%|x|[kmbt])?`;
   const upper = new RegExp(`(?<![\\d.,])${anyFigure}-${cur}${num}${unitPattern}(?![\\d.,])`);
-  const lower = new RegExp(`(?<![\\d.,-])${cur}${num}(?:${unitPattern})?-[$€£]?\\d[\\d,]*(?:\\.\\d+)?${unitPattern || "(?:%|x|[kmbt])?"}`);
+  const lower = new RegExp(`(?<![\\d.,-])${cur}${num}(?:${unitPattern})?-[$€£₪]?\\d[\\d,]*(?:\\.\\d+)?${unitPattern || "(?:%|x|[kmbt])?"}`);
   return upper.test(sourceBlob) || lower.test(sourceBlob);
 }
 

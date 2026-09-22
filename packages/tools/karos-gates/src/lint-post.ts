@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { GateVerdict } from "@agent-engine/core";
 import { defineTool, success } from "@agent-engine/tool-common";
 
-const TOOL_VERSION = "1.3.0"; // 1.3.0: Instagram gets its own hook rule (<=100 chars, no emoji/@/# LEADING), and six more tells join the bank (Instagram Phase 5.6, items A10/B5)
+const TOOL_VERSION = "1.4.0"; // 1.4.0: the LinkedIn hashtag cap. linkedin-craft §12 has said "zero to three hashtags" since it was written and nothing counted them; X's identical rule has been enforced since 1.0.0.
 
 /**
  * Em dash, en dash, and a literal double ASCII hyphen (the typed stand-in for
@@ -176,6 +176,41 @@ const HOOK_MAX_CHARACTERS = 70;
 
 /** Craft 01 §11: at most one hashtag, at most two mentions, neither leading. */
 const X_MAX_HASHTAGS = 1;
+/** `linkedin-craft` §12: "zero to three hashtags", and zero is a valid answer. */
+const LINKEDIN_MAX_HASHTAGS = 3;
+// No TikTok cap here, deliberately. `tiktok-commentary` lints with
+// `platform: "generic"` and the schema has no `tiktok` member, so a cap keyed
+// to that platform would never run — dead code wearing the shape of a rule.
+// Giving TikTok a real platform key (with its own length limit) and then a cap
+// is a change worth making on its own, not a line smuggled in beside
+// LinkedIn's.
+
+/**
+ * The hashtag count on one platform, when that platform is the one being
+ * linted. Returns `undefined` when it passes, or when a different platform is
+ * in play — so a call site reads as a cap rather than as a
+ * nested conditional.
+ *
+ * Same counting expression X has used since 1.0.0, deliberately: `(?<![\w&])#`
+ * is what tells a hashtag from a fragment identifier in a URL or an `&#39;`
+ * entity, and a second spelling of that would drift.
+ */
+function lintHashtagCap(
+  text: string,
+  platform: string,
+  forPlatform: string,
+  max: number,
+): GateVerdict | undefined {
+  if (platform !== forPlatform) return undefined;
+  const hashtags = text.match(/(?<![\w&])#\w+/g) ?? [];
+  if (hashtags.length <= max) return undefined;
+  return {
+    verdict: "content_fail",
+    evidence: hashtags,
+    reason: `${hashtags.length} hashtags, and the limit on ${forPlatform} is ${max}: tags that name the post's actual subject earn their place, a block at the bottom does not`,
+    toolVersion: TOOL_VERSION,
+  };
+}
 const X_MAX_MENTIONS = 2;
 
 /**
@@ -358,6 +393,14 @@ function lintOne(text: string, { platform, checkAntiSlop, maxExclamationMarks, b
     const shape = lintShapeForX(text);
     if (shape !== undefined) return shape;
   }
+
+  // LinkedIn's own cap, from its craft guide's §12: "zero to three hashtags…
+  // never a generic stapled-on block like #business #growth #success". The
+  // rule was written, the reason was given ("six or more measurably cuts
+  // reach") — and nothing anywhere counted them. X's identical rule has been
+  // enforced since 1.0.0; this is the same check, one platform over.
+  const linkedInShape = lintHashtagCap(text, platform, "linkedin", LINKEDIN_MAX_HASHTAGS);
+  if (linkedInShape !== undefined) return linkedInShape;
 
   const unresolvedLinkMatch = /\[[^\]]+\]\(\s*\)/.exec(text);
   if (unresolvedLinkMatch) {

@@ -5,7 +5,7 @@ import { createLinkedInAgentWorkflow } from "@agent-engine/agent-linkedin";
 import { createRedditAgentWorkflow } from "@agent-engine/agent-reddit";
 import { createBlogAgentWorkflow } from "@agent-engine/agent-blog";
 import { createNewsletterAgentWorkflow } from "@agent-engine/agent-newsletter";
-import { CampaignStrategyAgent, type CampaignChannel } from "../agent/campaign-strategy-agent.js";
+import { CampaignStrategyAgent, type CampaignChannel, type CampaignChannelSlot, type CampaignPlanOutput } from "../agent/campaign-strategy-agent.js";
 import type {
   CampaignAgentWorkflowResult,
   CampaignChannelResult,
@@ -112,6 +112,66 @@ async function runChannelWorkflow(
 }
 
 /**
+ * THE ASSIGNMENT ONE CHANNEL RECEIVES, as the `wf.input` its own workflow reads.
+ *
+ * Pure, and exported, so the thing this orchestrator exists to do can be
+ * asserted directly rather than inferred from a five-channel fan-out.
+ *
+ * ## Why it is shaped like a portal instruction
+ *
+ * Every channel agent already calls `readRunDirection(wf.input)` and already
+ * lets a typed instruction outrank its own topic catalog. That seam is built,
+ * tested on all five channels, and is exactly the relationship an orchestrator
+ * wants: "someone with more information about this run than the catalog has
+ * told you what to write." So the plan speaks through it, rather than through
+ * five new per-channel parameters that would each need their own wiring and
+ * their own tests.
+ *
+ * ## What each field becomes, and why
+ *
+ * `keyMessage` becomes `requestedTopic`, which `readRunDirection` treats as a
+ * subject "full stop — no length or style heuristic applies to it". That is
+ * the point: the plan decided this channel's subject, and a heuristic second-
+ * guessing it would put the catalog back in charge.
+ *
+ * `targetAudience`, `angle` and the campaign's own name and theme become the
+ * free-text direction, because they steer HOW the channel writes rather than
+ * WHAT about — which is the same division the portal's own brief already uses.
+ *
+ * ## What it does not do
+ *
+ * It does not touch media, the brief, or anything else the parent input
+ * carried; those ride along untouched. And it does not disable a channel's own
+ * research or gates — the channel still verifies its own numbers, still runs
+ * its own compliance checks, and still fails its own way. The plan chooses the
+ * subject; the channel is still responsible for the post.
+ */
+export function campaignSlotInput(
+  parentInput: Readonly<Record<string, unknown>>,
+  plan: Pick<CampaignPlanOutput, "campaignName" | "theme">,
+  slot: CampaignChannelSlot,
+): Readonly<Record<string, unknown>> {
+  const assignment = [
+    `This is one channel of the campaign "${plan.campaignName}". The campaign's theme is: ${plan.theme}.`,
+    `Your angle for this channel: ${slot.angle}`,
+    `Write it for: ${slot.targetAudience}`,
+    "Stay on the campaign's key message above. Do not pick a different subject — the other channels are covering the same campaign from their own angles, and this one is yours.",
+  ].join("\n");
+
+  // The parent's own instruction is KEPT and the assignment appended, not
+  // replaced: if a person typed something when they launched the campaign, it
+  // outranks a plan the model wrote, and dropping it here would silently
+  // discard the one input with a human behind it.
+  const parentPrompt = typeof parentInput["customPrompt"] === "string" ? parentInput["customPrompt"] : "";
+
+  return {
+    ...parentInput,
+    requestedTopic: slot.keyMessage,
+    customPrompt: parentPrompt ? `${parentPrompt}\n\n${assignment}` : assignment,
+  };
+}
+
+/**
  * `createCampaignWorkflow()` (RFC-02 §4): the 16-step orchestrator
  * protocol, steps `00`–`15`. Unlike every channel agent, this workflow
  * doesn't draft anything itself — `06`-`08` produce a cross-channel
@@ -121,12 +181,16 @@ async function runChannelWorkflow(
  * completely unmodified from how it runs standalone), and `13` pauses for
  * one human review of the whole bundle before `14`-`15` persist and
  * commit. The plan's per-slot `targetAudience`/`angle`/`keyMessage` are
- * persisted as the campaign's documented strategy intent (RFC-02 §4); each
- * channel still autonomously selects its own actual topic from the shared
- * catalog via its own internal `topics.reserve`/`research.pull` — Phase 1
- * doesn't yet thread the plan's assignment into that selection, the same
- * kind of documented simplification as `research.pull`'s stand-in search
- * backend (`packages/tools/karos-research/src/pull.ts`).
+ * persisted as the campaign's documented strategy intent (RFC-02 §4) AND are
+ * now what each channel actually writes to: `campaignSlotInput` turns the slot
+ * into the same `wf.input` shape a typed portal instruction uses, so the
+ * channel honours it through `readRunDirection` — the seam it already had.
+ *
+ * Until that landed, those three fields were read at exactly one place in this
+ * file (building the guardrail text) and every child inherited the parent's
+ * input verbatim, so each channel re-ran its own topic selection and wrote what
+ * it would have written standalone. The campaign was a plan document plus five
+ * unrelated posts that shared a client.
  */
 export function createCampaignWorkflow(options: CreateCampaignWorkflowOptions) {
   return async function campaignWorkflow(wf: WorkflowContext): Promise<CampaignAgentWorkflowResult> {
@@ -288,15 +352,36 @@ export function createCampaignWorkflow(options: CreateCampaignWorkflowOptions) {
     // ── 09-12: multi-channel fan-out (RFC-01 §5.5) ──
     const fanoutItems = await wf.step.code("09-prepare-channel-fanout-items", () => plan.channelSlots);
 
-    const slotOutcomes = await wf.fanout("channel-fanout", fanoutItems, async (slot, slotCtx) => {
-      const channelOptions: ChannelRuntimeOptions = {
-        tools: options.tools,
-        promptStore: options.channelPromptStores[slot.channel],
-        router: options.channelRouters[slot.channel],
-        autoApprove: true,
-      };
-      return runChannelSlot(slot.channel, channelOptions, slotCtx);
-    });
+    const slotOutcomes = await wf.fanout(
+      "channel-fanout",
+      fanoutItems,
+      async (slot, slotCtx) => {
+        const channelOptions: ChannelRuntimeOptions = {
+          tools: options.tools,
+          promptStore: options.channelPromptStores[slot.channel],
+          router: options.channelRouters[slot.channel],
+          autoApprove: true,
+        };
+        return runChannelSlot(slot.channel, channelOptions, slotCtx);
+      },
+      {
+        // THE PLAN NOW REACHES THE CHANNELS. Before this, `slot.targetAudience`,
+        // `slot.angle` and `slot.keyMessage` were read at exactly ONE place in
+        // this workflow — building the guardrail text above — and every child
+        // inherited the parent's input verbatim. So each channel re-ran its own
+        // topic selection and wrote what it would have written standalone: a
+        // campaign was a plan document plus five unrelated posts that happened
+        // to share a client, and everything `campaign-craft` teaches about
+        // narrative alignment and per-channel angles was decorative.
+        //
+        // It arrives through the SEAM THAT ALREADY EXISTS rather than a new
+        // per-channel parameter: `readRunDirection` is how every channel agent
+        // already honours a typed instruction from the portal, it is already
+        // tested on all five, and it already outranks the topic catalog. The
+        // orchestrator is simply another author of that instruction.
+        inputFor: (item) => campaignSlotInput(wf.input, plan, item as CampaignChannelSlot),
+      },
+    );
 
     const channelResults = await wf.step.code("11-aggregate-channel-outcomes", (): CampaignChannelResult[] => {
       return plan.channelSlots.map((slot, index) => {
