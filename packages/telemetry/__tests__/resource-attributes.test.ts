@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ATTR_DEPLOYMENT_ENVIRONMENT_NAME, ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
-import { telemetryResourceAttributes } from "../src/index.js";
+import { resolveTelemetryProjectId, telemetryResourceAttributes } from "../src/index.js";
 
 /**
  * `gcp.project_id` is an INGEST CONTRACT, not a nicety (2026-09-22).
@@ -30,7 +30,22 @@ import { telemetryResourceAttributes } from "../src/index.js";
  */
 describe("telemetryResourceAttributes", () => {
   it("carries gcp.project_id, without which every metrics export is refused", () => {
-    const attrs = telemetryResourceAttributes({ GOOGLE_CLOUD_PROJECT: "karoscmo-prep" } as NodeJS.ProcessEnv);
+    const attrs = telemetryResourceAttributes("karoscmo-prep", {} as NodeJS.ProcessEnv);
+    expect(attrs["gcp.project_id"]).toBe("karoscmo-prep");
+  });
+
+  it("takes the project as an argument rather than reading GOOGLE_CLOUD_PROJECT, which names a DIFFERENT project", () => {
+    // The defect this pins. `GOOGLE_CLOUD_PROJECT` names where FIRESTORE
+    // lives; the prep worker runs in `karoscmo-prep` and sets it to
+    // `karoscmo`, because both environments share one Firestore project and
+    // are separated by database. Reading it addressed prep's metrics to
+    // PRODUCTION's monitoring workspace, which answered:
+    //
+    //   403 Permission 'monitoring.timeSeries.create' denied on resource
+    //       '//logging.googleapis.com/projects/karoscmo'
+    //
+    // No grant in the prep project could fix that, and three were tried.
+    const attrs = telemetryResourceAttributes("karoscmo-prep", { GOOGLE_CLOUD_PROJECT: "karoscmo" } as NodeJS.ProcessEnv);
     expect(attrs["gcp.project_id"]).toBe("karoscmo-prep");
   });
 
@@ -38,25 +53,34 @@ describe("telemetryResourceAttributes", () => {
     // The literals here and the constants the OTel SDK exports have to agree;
     // asserting it is what lets the resource be built from a plain, testable
     // object instead of from imports only reachable inside `initTelemetry`.
-    const attrs = telemetryResourceAttributes({} as NodeJS.ProcessEnv);
+    const attrs = telemetryResourceAttributes("p", {} as NodeJS.ProcessEnv);
     expect(Object.keys(attrs).sort()).toEqual([ATTR_DEPLOYMENT_ENVIRONMENT_NAME, "gcp.project_id", ATTR_SERVICE_NAME].sort());
   });
 
   it("reads prep and prod off the database id the deploy already sets", () => {
-    expect(telemetryResourceAttributes({ FIRESTORE_DATABASE_ID: "prep" } as NodeJS.ProcessEnv)[ATTR_DEPLOYMENT_ENVIRONMENT_NAME]).toBe("prep");
-    expect(telemetryResourceAttributes({ FIRESTORE_DATABASE_ID: "(default)" } as NodeJS.ProcessEnv)[ATTR_DEPLOYMENT_ENVIRONMENT_NAME]).toBe("prod");
+    expect(telemetryResourceAttributes("p", { FIRESTORE_DATABASE_ID: "prep" } as NodeJS.ProcessEnv)[ATTR_DEPLOYMENT_ENVIRONMENT_NAME]).toBe("prep");
+    expect(telemetryResourceAttributes("p", { FIRESTORE_DATABASE_ID: "(default)" } as NodeJS.ProcessEnv)[ATTR_DEPLOYMENT_ENVIRONMENT_NAME]).toBe("prod");
     // Absent is prod, deliberately: an unset variable in a deployed service is
     // production far more often than it is prep.
-    expect(telemetryResourceAttributes({} as NodeJS.ProcessEnv)[ATTR_DEPLOYMENT_ENVIRONMENT_NAME]).toBe("prod");
+    expect(telemetryResourceAttributes("p", {} as NodeJS.ProcessEnv)[ATTR_DEPLOYMENT_ENVIRONMENT_NAME]).toBe("prod");
   });
 
-  it("never omits the key when the project is unset, because an absent attribute and an empty one fail differently", () => {
-    // `initTelemetry` already returns early without GOOGLE_CLOUD_PROJECT, so
-    // this shape is unreachable in a deployed process. It is pinned anyway:
-    // an OMITTED attribute is the 400 this whole file is about, while an empty
-    // one is a value the backend can name in its complaint.
-    const attrs = telemetryResourceAttributes({} as NodeJS.ProcessEnv);
+  it("never omits the key when the project is unknown, because an absent attribute and an empty one fail differently", () => {
+    // An OMITTED attribute is the 400 this file opens with; an empty one is a
+    // value the backend can name in its complaint. The second is far easier to
+    // diagnose, which is the entire lesson of this file.
+    const attrs = telemetryResourceAttributes("", {} as NodeJS.ProcessEnv);
     expect(Object.keys(attrs)).toContain("gcp.project_id");
     expect(attrs["gcp.project_id"]).toBe("");
+  });
+
+  it("prefers an explicit TELEMETRY_PROJECT_ID over anything it could detect", async () => {
+    await expect(resolveTelemetryProjectId({ TELEMETRY_PROJECT_ID: "explicit", GOOGLE_CLOUD_PROJECT: "firestore-project" } as NodeJS.ProcessEnv)).resolves.toBe("explicit");
+  });
+
+  it("falls back to GOOGLE_CLOUD_PROJECT when there is no metadata server, rather than giving up on telemetry", async () => {
+    // Local development and tests: a wrong project beats none, and the export
+    // now names the project it was refused on.
+    await expect(resolveTelemetryProjectId({ GOOGLE_CLOUD_PROJECT: "karoscmo" } as NodeJS.ProcessEnv)).resolves.toBe("karoscmo");
   });
 });
