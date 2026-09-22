@@ -21,7 +21,7 @@
  */
 import { createModelRouterFromEnv } from "@agent-engine/core";
 import { RetryLater } from "@agent-engine/queue";
-import { logError } from "@agent-engine/telemetry";
+import { initTelemetry, logError, shutdownTelemetry } from "@agent-engine/telemetry";
 import { RUN_LEASE_TTL_MS } from "@agent-engine/workflow";
 import { RunJobRequestSchema, startRunJob } from "./run-job.js";
 import { createAgentDefinitionStoreFromEnv } from "./wiring/agent-definitions-store.js";
@@ -73,6 +73,25 @@ async function main(): Promise<void> {
   // empty silently resolves to "(default)" — production client data — in all
   // five Firestore clients, so this runs before any store is constructed.
   assertFirestoreDatabaseIdOrExit();
+
+  // THE PROCESS THAT RUNS EVERY AGENT HAD NO TELEMETRY AT ALL (2026-09-22).
+  //
+  // `initTelemetry()` was called in `server.ts` and only there. Both deployed
+  // workers — `agent-engine-prep-worker` and `agent-engine-prod-worker` —
+  // run THIS file (`node apps/agent-server/dist/queue-consumer.js`), and the
+  // HTTP server only serves the API. So no `TracerProvider` and no
+  // `MeterProvider` were ever registered in the process that actually executes
+  // runs: every `workflow.run` / `workflow.step.*` / `tool.call.*` /
+  // `model.call.*` span from AU42/SCRUM-326 was created against the OTel
+  // API's no-op tracer and discarded, and every counter with it.
+  //
+  // Measured, not inferred: Cloud Monitoring held ZERO metric descriptors
+  // matching `workload.googleapis.com/agent_engine*` in either project. Which
+  // is also why an alert policy on "runs ending degraded" could not be built
+  // — the metric it would read does not exist.
+  //
+  // No-ops without GOOGLE_CLOUD_PROJECT — see packages/telemetry/src/tracer.ts.
+  await initTelemetry();
 
   // This is a queue consumer, not an HTTP server, but Cloud Run *services*
   // (unlike Jobs) require the container to listen on $PORT to pass the
@@ -236,10 +255,15 @@ async function main(): Promise<void> {
         } else {
           console.log(`queue-consumer: drained cleanly after ${signal}`);
         }
-        process.exit();
+        // `BatchSpanProcessor` buffers for ~5s: without this, the spans of
+        // whatever the worker was doing when it was told to stop —
+        // disproportionately the ones worth having — die in the buffer.
+        return shutdownTelemetry();
       })
       .catch((err: unknown) => {
         logError("queue-consumer: error while draining in-flight runs", err);
+      })
+      .finally(() => {
         process.exit();
       });
   }
