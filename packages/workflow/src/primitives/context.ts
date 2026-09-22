@@ -64,6 +64,23 @@ export interface WorkflowRuntime {
    * reference, which is the whole reason it is one.
    */
   absorbedStepTimeouts?: { count: number };
+
+  /**
+   * What this run has spent so far, carried in memory instead of re-summed
+   * from the store on every step.
+   *
+   * A mutable box for exactly the reason `absorbedStepTimeouts` above is one:
+   * `fanout` hands each slot `{ ...runtime, slotId }`, so a plain number would
+   * be copied per slot and two concurrent slots would each believe the run had
+   * spent only what IT spent. The object survives the spread by reference.
+   *
+   * `totalUsd` is null until the first read seeds it from the store, because a
+   * resumed run has to count what a previous process already spent. A cost
+   * recorded while it is still null is deliberately NOT accumulated (see
+   * `recordRunCost`) — the next read re-sums from the store and picks it up
+   * there, which is what keeps the two paths from double-counting.
+   */
+  costLedger?: RunCostLedger;
   now(): number;
 }
 
@@ -107,7 +124,8 @@ export interface WorkflowContext {
   /**
    * What this run has spent so far, in USD, summed over every checkpointed
    * step (the same `sumRunCost` the budget check uses, so the two never
-   * disagree). Cheap: one `listSteps` read. Lets a workflow write an honest
+   * disagree). Served from the run's in-memory ledger, so calling it from
+   * inside a per-beat loop costs nothing. Lets a workflow write an honest
    * "spent so far / estimated total" onto a gate payload instead of leaving
    * the reviewer to find the number after the fact.
    */
@@ -146,10 +164,66 @@ export interface WorkflowContext {
   ): Promise<Array<SlotOutcome<TResult>>>;
 }
 
+/**
+ * A run's accumulated spend, held by reference so every slot of a `fanout`
+ * and every step primitive reads and writes the SAME number. See
+ * `WorkflowRuntime.costLedger`.
+ */
+export interface RunCostLedger {
+  /** USD spent so far, or null when nothing has seeded it from the store yet. */
+  totalUsd: number | null;
+}
+
 /** Sums every checkpointed `step.agent` call's cost for a run — the single source of truth for budget enforcement, so a resumed run counts correctly. `?? 0`: a `"running"` step (real-time progress reporting) has no `costUsd` yet. */
 export async function sumRunCost(store: DurableStepStore, runId: string): Promise<number> {
   const steps = await store.listSteps(runId);
   return steps.reduce((sum, step) => sum + (step.costUsd ?? 0), 0);
+}
+
+/**
+ * The run's spend, from the in-memory ledger when there is one and from the
+ * store when there is not.
+ *
+ * This is what the budget pre-check in `step.code`/`step.agent` and
+ * `wf.costSoFarUsd()` both call, and it exists because `sumRunCost` is not the
+ * cheap read its own doc comment claimed. `listSteps` fetches every step
+ * DOCUMENT of the run, and a step document carries that step's whole `output`
+ * — for `step.agent` an entire `AgentExecutionResult` with every turn's
+ * transcript. Calling it once per step therefore re-downloads the run's full
+ * history on every step: quadratic in bytes, not just in reads. A tiktok run
+ * (the one product with a `RUN_BUDGET_USD_DEFAULTS` entry, and so the one that
+ * takes the pre-check today) also calls `wf.costSoFarUsd()` from inside its
+ * per-beat loops, several times per beat.
+ *
+ * The ledger is authoritative only for what THIS process recorded; the seed
+ * below is what makes a resume correct. The number written onto the run
+ * document at the end of `WorkflowEngine.execute` stays a real `sumRunCost`
+ * read, so the persisted total is always store-derived.
+ */
+export async function runCostSoFar(runtime: WorkflowRuntime): Promise<number> {
+  const ledger = runtime.costLedger;
+  if (ledger === undefined) return sumRunCost(runtime.store, runtime.runId);
+  if (ledger.totalUsd === null) ledger.totalUsd = await sumRunCost(runtime.store, runtime.runId);
+  return ledger.totalUsd;
+}
+
+/**
+ * Folds a just-checkpointed step's cost into the ledger, so the next read does
+ * not have to go back to the store for it.
+ *
+ * Called AFTER `saveStep`, on every path that writes a `costUsd` — including
+ * the failure paths, because a step that threw after buying footage was still
+ * billed for it.
+ *
+ * An unseeded ledger (`totalUsd === null`) is left alone rather than
+ * initialised to this step's cost: the first read seeds from the store, which
+ * by then already contains this step, so accumulating here too would count it
+ * twice.
+ */
+export function recordRunCost(runtime: WorkflowRuntime, costUsd: number): void {
+  const ledger = runtime.costLedger;
+  if (ledger === undefined || ledger.totalUsd === null) return;
+  ledger.totalUsd += costUsd;
 }
 
 /**
@@ -200,7 +274,7 @@ export function buildWorkflowContext(runtime: WorkflowRuntime): WorkflowContext 
     input: runtime.input,
     ...(runtime.slotId !== undefined ? { slotId: runtime.slotId } : {}),
     ...(runtime.budget !== undefined ? { budget: runtime.budget } : {}),
-    costSoFarUsd: () => sumRunCost(runtime.store, runtime.runId),
+    costSoFarUsd: () => runCostSoFar(runtime),
     step: {
       code: (id, fn) => runStepCode(runtime, id, fn),
       agent: (id, agent, input, options) => runStepAgent(runtime, id, agent, input, options),

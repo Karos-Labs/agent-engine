@@ -4,7 +4,7 @@ import { isCheckpointedStepStatus, type StepRecord } from "../adapters/types.js"
 // AU67's translation, shared with `fanout` since AU68 (SCRUM-366) — see that module.
 import { describeOutcomeReason, statusFromOutcome } from "./outcome-status.js";
 import type { WorkflowRuntime } from "./context.js";
-import { markStepRunning, scopedStepId, sumRunCost } from "./context.js";
+import { markStepRunning, recordRunCost, runCostSoFar, scopedStepId } from "./context.js";
 import { WorkflowBudgetExceeded } from "./signals.js";
 
 /**
@@ -33,7 +33,7 @@ export async function runStepCode<T>(runtime: WorkflowRuntime, id: string, fn: (
   // a would-be $2 ceiling never met a check at all. Before, not after: a step
   // that has already spent is billed by the catch below regardless.
   if (runtime.budget?.maxTotalCostUsd !== undefined) {
-    const spentSoFar = await sumRunCost(runtime.store, runtime.runId);
+    const spentSoFar = await runCostSoFar(runtime);
     if (spentSoFar >= runtime.budget.maxTotalCostUsd) {
       throw new WorkflowBudgetExceeded(runtime.runId, spentSoFar, runtime.budget.maxTotalCostUsd);
     }
@@ -85,6 +85,7 @@ export async function runStepCode<T>(runtime: WorkflowRuntime, id: string, fn: (
           ...describeOutcomeReason(output),
         };
         await runtime.store.saveStep(runtime.runId, record);
+        recordRunCost(runtime, record.costUsd ?? 0);
         recordWorkflowStepMetric({ stepKind: "code", status });
         // AU42/SCRUM-326. `fn()` returning normally is not the same as the step
         // succeeding — `statusFromOutcome` can read `"tooling_error"` straight
@@ -125,6 +126,7 @@ export async function runStepCode<T>(runtime: WorkflowRuntime, id: string, fn: (
           error: describeError(err),
         };
         await runtime.store.saveStep(runtime.runId, record);
+        recordRunCost(runtime, record.costUsd ?? 0);
         recordWorkflowStepMetric({ stepKind: "code", status: "failed" });
         throw err;
       }

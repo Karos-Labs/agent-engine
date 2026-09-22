@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { agentAbortReason } from "./abort.js";
 import type { AgentContext } from "../types/agent-context.js";
 import type {
   AgentExecutionResult,
@@ -214,10 +215,22 @@ export abstract class BaseAgent<TOutput> {
     let turnsThisPass = 0;
 
     while (loop.stepIndex < maxSteps) {
+      // The step this agent is running inside has given up on it (a
+      // `step.agent` timeout, `agentAbortReason`). Whatever this loop produces
+      // from here will be discarded by construction, so the only thing another
+      // turn can still do is spend. Checked before the turn AND after it: a
+      // step can time out at any point, including while the turn below is in
+      // flight.
+      const abortedBeforeTurn = agentAbortReason(ctx);
+      if (abortedBeforeTurn !== undefined) return this.cancelledExit(steps, loop, abortedBeforeTurn);
+
       const turn = await this.runOneTurn(ctx, input, transcript, systemPrompt, loop.stepIndex, this.turnBudget(loop.stepIndex, maxSteps, false));
       steps.push(turn.telemetry);
       loop.stepIndex++;
       turnsThisPass++;
+
+      const abortedAfterTurn = agentAbortReason(ctx);
+      if (abortedAfterTurn !== undefined) return this.cancelledExit(steps, loop, abortedAfterTurn);
 
       // `commit_refused` cannot arise on a working turn (only a commit turn
       // refuses a tool call); it is handled here so the union stays total.
@@ -258,6 +271,31 @@ export abstract class BaseAgent<TOutput> {
       return { kind: "budget_exceeded" };
     }
     return this.runCommitTurn(ctx, input, transcript, systemPrompt, steps, loop, maxSteps);
+  }
+
+  /**
+   * Ends the loop because the step was cancelled, leaving a telemetry entry
+   * that says so.
+   *
+   * `tooling_error` and not a status of its own: the step record this lands in
+   * is ALREADY being written as a `tooling_error` by `runStepAgent`'s timeout
+   * branch, and inventing a fourth `AgentExecutionStatus` would mean every
+   * workflow's `result.status` switch — fourteen agents' worth —
+   * silently growing an unhandled case. The distinction a reader needs is
+   * carried in the entry's `error`, which names the step and its bound.
+   */
+  private cancelledExit<T>(steps: AgentStepTelemetry[], loop: LoopState, reason: string): LoopExit<T> {
+    steps.push({
+      stepIndex: loop.stepIndex,
+      modelUsed: "none",
+      inputTokens: { cached: 0, uncached: 0 },
+      outputTokens: 0,
+      durationMs: 0,
+      costUsd: 0,
+      status: "tooling_error",
+      error: `stopped: ${reason}`,
+    });
+    return { kind: "tooling_error" };
   }
 
   private turnBudget(stepIndex: number, maxSteps: number, commit: boolean): TurnBudget {
@@ -895,6 +933,38 @@ export abstract class BaseAgent<TOutput> {
           durationMs,
           costUsd,
           status: "tooling_error",
+        },
+      };
+    }
+
+    // A tool call is where the money is — an image generated, footage
+    // bought, a video rendered. A step that has already timed out must not buy
+    // any of it. This is the same check the loop makes between turns, one
+    // level in, because the turn that decided to call this tool may have been
+    // in flight when the step was written off.
+    const abortedBeforeTool = agentAbortReason(ctx);
+    if (abortedBeforeTool !== undefined) {
+      const reason = `stopped before calling ${tool.name}: ${abortedBeforeTool}`;
+      return {
+        kind: "tool_call",
+        toolName: tool.name,
+        args: parsedArgs.data,
+        outcome: { status: "tooling_error", reason },
+        telemetry: {
+          stepIndex,
+          ...(turn.thought !== undefined ? { thought: turn.thought } : {}),
+          toolCall: { name: tool.name, args: parsedArgs.data, result: { error: reason }, toolVersion: tool.version },
+          modelUsed: completion.modelUsed,
+          inputTokens: completion.inputTokens,
+          outputTokens: completion.outputTokens,
+          durationMs,
+          costUsd,
+          status: "tooling_error",
+          // Also at the top level, not only inside `toolCall.result`: this is
+          // the field the step record surfaces, and a reader sorting a failed
+          // run's turns needs "stopped" to be legible without unwrapping the
+          // tool payload.
+          error: reason,
         },
       };
     }
