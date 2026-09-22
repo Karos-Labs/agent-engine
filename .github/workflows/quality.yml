@@ -93,6 +93,15 @@ jobs:
       - name: BigQuery insert/schema agreement
         run: npm run check:bq-schema
 
+      # There was no dependency gate in this repository at all, so a
+      # supply-chain advisory could land and ship with nothing anywhere saying
+      # so. The threshold is HIGH and stays there: accepted advisories are
+      # dated entries with a stated reason in the script, so turning one off is
+      # a reviewable diff rather than a one-word edit to this line. See the
+      # script's own header for why `--audit-level=high` alone was not enough.
+      - name: Production dependency advisories
+        run: npm run check:deps
+
       # instagram-agent's default-template-render.test.ts launches a real,
       # un-mocked Chromium against the actual production slide template
       # (agent-engine#4) — every other render-carousel test deliberately
