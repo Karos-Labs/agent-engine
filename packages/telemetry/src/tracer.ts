@@ -96,7 +96,47 @@ const TELEMETRY_OTLP_METRICS_ENDPOINT = "https://telemetry.googleapis.com/v1/met
  * already sets (`FIRESTORE_DATABASE_ID`), reused rather than inventing a
  * second variable, matching karosCMO's instrumentation.node.ts convention.
  */
-export function telemetryResourceAttributes(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+/**
+ * The project this service is RUNNING IN, which is where its telemetry belongs.
+ *
+ * Not `GOOGLE_CLOUD_PROJECT`: that names the project whose FIRESTORE this
+ * deployment uses, and the two differ in prep. Both environments share one
+ * Firestore project (`karoscmo`) and are separated by database
+ * (`FIRESTORE_DATABASE_ID`), while the prep services run in `karoscmo-prep`.
+ *
+ * Resolution order, most explicit first:
+ *
+ *  1. `TELEMETRY_PROJECT_ID`, for a deployment that wants to say outright
+ *     where its telemetry goes, and for a local process that has no metadata
+ *     server.
+ *  2. The GCP metadata server, which on Cloud Run answers with the project the
+ *     revision runs in. This is the authority, and it cannot be misconfigured
+ *     into pointing at another environment.
+ *  3. `GOOGLE_CLOUD_PROJECT`, as a last resort, because a wrong project is
+ *     better than no telemetry at all — and the export now says loudly which
+ *     project it was refused on.
+ *
+ * Never throws: telemetry must not be the thing that stops a worker booting.
+ */
+export async function resolveTelemetryProjectId(env: NodeJS.ProcessEnv = process.env): Promise<string> {
+  const explicit = env["TELEMETRY_PROJECT_ID"];
+  if (explicit !== undefined && explicit.length > 0) return explicit;
+  try {
+    const res = await fetch("http://metadata.google.internal/computeMetadata/v1/project/project-id", {
+      headers: { "Metadata-Flavor": "Google" },
+      signal: AbortSignal.timeout(2_000),
+    });
+    if (res.ok) {
+      const id = (await res.text()).trim();
+      if (id.length > 0) return id;
+    }
+  } catch {
+    // No metadata server: local development, or a test. Fall through.
+  }
+  return env["GOOGLE_CLOUD_PROJECT"] ?? "";
+}
+
+export function telemetryResourceAttributes(projectId: string, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   return {
     "service.name": INSTRUMENTATION_NAME,
     "deployment.environment.name": env["FIRESTORE_DATABASE_ID"] === "prep" ? "prep" : "prod",
@@ -118,7 +158,25 @@ export function telemetryResourceAttributes(env: NodeJS.ProcessEnv = process.env
     // Not a semantic-convention constant because it is not a semantic
     // convention — it is Google's own ingest contract, and a literal is the
     // honest spelling.
-    "gcp.project_id": env["GOOGLE_CLOUD_PROJECT"] ?? "",
+    //
+    // THE VALUE IS THE PROJECT THIS SERVICE RUNS IN, and it is passed in
+    // rather than read from `GOOGLE_CLOUD_PROJECT`. That variable names where
+    // FIRESTORE lives, which is not the same thing: the prep worker RUNS in
+    // `karoscmo-prep` and sets `GOOGLE_CLOUD_PROJECT=karoscmo`, because both
+    // environments share one Firestore project and are separated by DATABASE
+    // (`FIRESTORE_DATABASE_ID=prep`).
+    //
+    // Reading it here addressed prep's metrics to PRODUCTION's monitoring
+    // workspace, and the API answered exactly as it should have:
+    //
+    //   403 — Permission 'monitoring.timeSeries.create' denied on resource
+    //         '//logging.googleapis.com/projects/karoscmo'
+    //
+    // No grant in the prep project could have fixed that, and three were tried
+    // before the response body was readable. Even WITH permission it would
+    // still have been wrong: prep's metrics would have landed in production's
+    // workspace, mixed with prod's. See `resolveTelemetryProjectId`.
+    "gcp.project_id": projectId,
   };
 }
 
@@ -220,7 +278,7 @@ export async function initTelemetry(): Promise<void> {
     // `ATTR_SERVICE_NAME`/`ATTR_DEPLOYMENT_ENVIRONMENT_NAME` are asserted
     // against the constants in `telemetryResourceAttributes`' own test, so the
     // literal keys there cannot drift from the semantic conventions here.
-    resource: resourceFromAttributes(telemetryResourceAttributes()),
+    resource: resourceFromAttributes(telemetryResourceAttributes(await resolveTelemetryProjectId())),
     spanProcessor: new BatchSpanProcessor(
       new OTLPTraceExporter({
         url: TELEMETRY_OTLP_TRACES_ENDPOINT,
