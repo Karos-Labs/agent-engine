@@ -33,7 +33,40 @@ import { createServerTemplateStore } from "./wiring/template-store.js";
 import { assertFirestoreDatabaseIdOrExit } from "./wiring/firestore-database-id.js";
 import { createServerWorkspaceStore } from "./wiring/workspace-store.js";
 import { createServer } from "node:http";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { resolveInstagramRepoRoot } from "./wiring/workflows.js";
+
+/**
+ * Wait for the handlers that are still running, and report the ones that were
+ * not finished when the grace ran out.
+ *
+ * Exported so the behaviour can be asserted rather than described: the whole
+ * point of this function is what it does at the two edges — resolving as soon
+ * as the last handler settles, and naming the stragglers when it cannot — and
+ * both of those are invisible from inside `main`.
+ *
+ * Takes the live map, not a snapshot: a handler that clears itself while we
+ * wait should shorten the wait, and a straggler must be reported under the
+ * runId it still holds.
+ */
+export async function drainInFlight(
+  inFlight: Map<string, Promise<void>>,
+  graceMs: number,
+): Promise<string[]> {
+  if (inFlight.size === 0) return [];
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<"expired">((resolve) => {
+    timer = setTimeout(() => resolve("expired"), graceMs);
+  });
+  try {
+    const settled = Promise.allSettled([...inFlight.values()]).then(() => "settled" as const);
+    const winner = await Promise.race([settled, expired]);
+    return winner === "settled" ? [] : [...inFlight.keys()];
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 async function main(): Promise<void> {
   // AU60: refuse to start on an unrecognised FIRESTORE_DATABASE_ID. Absent or
@@ -65,6 +98,23 @@ async function main(): Promise<void> {
 
   console.log(`queue-consumer: pull-subscribing to "${subscriptionName}" (provider: ${queue.providerId})`);
 
+  /**
+   * THE HANDLERS THAT ARE RUNNING RIGHT NOW, so shutdown can wait for them and
+   * — more importantly — SAY WHAT IT CUT.
+   *
+   * A worker roll used to `process.exit()` the instant the subscription closed,
+   * without waiting for anything. What that produced in prep was nine runs
+   * frozen with a step still marked `running`, no `failureReason` and no
+   * `reason` at all: a run the client sees as failed with a blank error, and an
+   * operator has nothing to read. Recovery itself was never the problem — the
+   * lease lapses, `RetryLater` holds the message for one lease period, and the
+   * redelivery replays from checkpoints — but a silent kill is indistinguishable
+   * from a bug until someone reads Pub/Sub.
+   *
+   * Keyed by runId so the log names the runs, not a count.
+   */
+  const inFlight = new Map<string, Promise<void>>();
+
   const subscription = queue.subscribe(subscriptionName, async (message) => {
     const parsed = RunJobRequestSchema.safeParse(message.payload);
     if (!parsed.success) {
@@ -80,7 +130,18 @@ async function main(): Promise<void> {
     // a redelivery of the same unacked message reuses the same message id,
     // so this can never double-run a job.
     const runId = `pubsub-${message.id}`;
-    const outcome = await startRunJob(parsed.data, runId, { durableStore, runtimeDeps, agentDefinitionStore });
+    // Registered BEFORE the await and cleared in `finally`, so the window in
+    // which a run is executing is exactly the window in which shutdown can see
+    // it. The tracked promise deliberately swallows — it exists to be awaited
+    // by `shutdown`, and the real outcome is handled below by this handler.
+    const started = startRunJob(parsed.data, runId, { durableStore, runtimeDeps, agentDefinitionStore });
+    inFlight.set(runId, started.then(() => undefined, () => undefined));
+    let outcome;
+    try {
+      outcome = await started;
+    } finally {
+      inFlight.delete(runId);
+    }
 
     if (outcome.outcome === "error" || outcome.outcome === "not_found") {
       // "not_found" (Task 2: productId named neither a fixed product nor a registered
@@ -126,21 +187,90 @@ async function main(): Promise<void> {
     console.log(`queue-consumer: run "${outcome.runId}" -> ${outcome.status}`);
   });
 
+  /**
+   * HOW LONG SHUTDOWN WAITS FOR RUNNING HANDLERS.
+   *
+   * Cloud Run sends SIGTERM and then SIGKILLs the container about ten seconds
+   * later, and for a *service* that window is not configurable — `gcloud run
+   * deploy` has no termination-grace flag — so this cannot be raised into
+   * something that would let a ten-minute agent step finish. It is not meant
+   * to: a step that long is recovered by the lease + `RetryLater` + checkpoint
+   * replay path, which already works.
+   *
+   * What the wait buys is the short tail — a handler in its final Firestore
+   * write, or one that has just resolved and is about to clear itself — which
+   * is the difference between a clean terminal status and a run frozen at
+   * `running` with no reason on it. Nine prep runs ended that way.
+   *
+   * Overridable for the local `dev:queue-consumer` process, where there is no
+   * external killer and finishing the message you are on is simply nicer.
+   */
+  const DRAIN_GRACE_MS = Number(process.env["QUEUE_DRAIN_GRACE_MS"] ?? 8_000);
+
   let shuttingDown = false;
   function shutdown(signal: string): void {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`${signal} received — stopping the pull subscription`);
-    subscription
+    const draining = [...inFlight.keys()];
+    console.log(
+      `${signal} received — stopping the pull subscription` +
+        (draining.length ? `; draining ${draining.length} in-flight run(s) for up to ${DRAIN_GRACE_MS}ms: ${draining.join(", ")}` : ""),
+    );
+
+    void subscription
       .stop()
       .catch((err: unknown) => logError("queue-consumer: error while stopping the pull subscription", err))
-      .finally(() => process.exit());
+      // Stopping delivery FIRST means nothing new joins the set while we wait.
+      .then(() => drainInFlight(inFlight, DRAIN_GRACE_MS))
+      .then((stillRunning) => {
+        if (stillRunning.length) {
+          // THE LINE THAT WAS MISSING. A run cut here does come back by
+          // redelivery once its lease lapses, but until now nothing anywhere
+          // said it had been cut — so the step frozen at `running` read as an
+          // unexplained failure to everyone downstream, including the client.
+          logError(
+            "queue-consumer: shutdown grace expired with runs still executing; they resume on redelivery once their lease lapses",
+            undefined,
+            { signal, graceMs: DRAIN_GRACE_MS, runIds: stillRunning },
+          );
+        } else {
+          console.log(`queue-consumer: drained cleanly after ${signal}`);
+        }
+        process.exit();
+      })
+      .catch((err: unknown) => {
+        logError("queue-consumer: error while draining in-flight runs", err);
+        process.exit();
+      });
   }
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
-main().catch((err) => {
-  logError("queue-consumer: fatal error during startup", err);
-  process.exit(1);
-});
+/**
+ * ONLY BOOT WHEN THIS FILE IS THE ENTRY POINT.
+ *
+ * `main()` used to run on import, which is fine for the two things that run
+ * this module (`dev:queue-consumer` and the worker's `CMD`) and fatal for
+ * anything that wants to read a function out of it: importing the module
+ * connected to Pub/Sub, failed on the missing credentials and called
+ * `process.exit(1)` — so `drainInFlight`, the one piece of shutdown behaviour
+ * worth asserting, could not be tested at all. Both real entry points invoke
+ * the file directly, so both still match.
+ */
+const invokedDirectly = (() => {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return resolve(entry) === resolve(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
+
+if (invokedDirectly) {
+  main().catch((err) => {
+    logError("queue-consumer: fatal error during startup", err);
+    process.exit(1);
+  });
+}
