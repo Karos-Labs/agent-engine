@@ -54,9 +54,9 @@ const BUMPED = [
     // actually reads. The Phase 5 sections the second block below asserts by name are all still present at
     // @22, which is what makes following safe rather than merely cheap.
     promptId: "instagram-copy",
-    version: "27",
-    h1: "# Instagram Copy Craft Guide, v27",
-    skillRef: "instagram-copy@27",
+    version: "28",
+    h1: "# Instagram Copy Craft Guide, v28",
+    skillRef: "instagram-copy@28",
     agent: () => new InstagramCopyAgent({ router: fakeRouterSequence([]), tools: {}, promptStore: makePromptStore() }),
   },
   {
@@ -101,17 +101,37 @@ describe("the copy prompt bump: instagram-copy@23 (live) and instagram-post-pack
         expect(skillRefOf(agent())).toBe(skillRef);
       });
 
-      it(`step 4: the H1 carries the version, and an inline ledger states the INPUT and OUTPUT deltas separately`, () => {
+      it(`step 4: the H1 carries the version, and a ledger states the INPUT and OUTPUT deltas separately`, () => {
         const text = readPrompt(promptId, `${version}.md`);
         expect(text.split(/\r?\n/)[0]).toBe(h1);
+
         // The house rule the @14 to @15 note exists to enforce: an output-heavy bump priced on its input
         // alone under-counted by nine tenths, so BOTH sides are stated every time, including the times one
         // side is nearly zero. Asserted as two separate labelled statements, because a ledger that says
         // "costs a bit more" satisfies no reader and no future re-pricing.
-        const ledger = text.slice(0, 4_000);
+        //
+        // READ FROM WHEREVER THE LEDGER LIVES. It used to sit inline in the
+        // prompt's first 4,000 characters, which meant the model paid on every
+        // call to read an accounting note written for a human — and, stacked
+        // five versions deep, that was 11% of `instagram-copy`. Prompts that
+        // have moved their history to a CHANGELOG.md are checked there; ones
+        // that have not are checked in place, so this does not force a
+        // migration on a prompt nobody has touched.
+        //
+        // The RULE is unchanged either way, and it is the rule that matters:
+        // every bump is priced, on both sides, in writing.
+        const changelogPath = path.join(PROMPTS_ROOT, promptId, "CHANGELOG.md");
+        const hasChangelog = existsSync(changelogPath);
+        const ledger = hasChangelog
+          ? readFileSync(changelogPath, "utf8").slice(0, 8_000)
+          : text.slice(0, 4_000);
         expect(ledger).toMatch(/\bINPUT\b[:.]/);
         expect(ledger).toMatch(/\bOUTPUT\b[:.]/);
         expect(ledger).toMatch(/\$0\.\d+/);
+
+        // Once a prompt HAS a changelog, the prompt itself must not keep one
+        // too, or the move was cosmetic and the model still pays for it.
+        if (hasChangelog) expect(text).not.toMatch(/^\*\*What changed at v/m);
       });
 
       it(`step 5: scripts/prompt-registry.ts carries ${promptId} with "${version}" in versions and latestVersion "${version}"`, () => {

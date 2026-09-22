@@ -6,6 +6,7 @@ import { InMemoryPromptStore } from "@agent-engine/core";
 import { createAllKarosTools, WorkspaceStore } from "@agent-engine/tools";
 import { createOfflineScraper } from "@agent-engine/tool-karos-scraper";
 import { MemoryDurableStepStore } from "@agent-engine/workflow";
+import { PROMPT_REGISTRY } from "../../../scripts/prompt-registry.js";
 import type { AgentRuntimeDeps } from "../src/wiring/workflows.js";
 import { randomUUID } from "node:crypto";
 import { startRunJob, type RunJobRequest } from "../src/run-job.js";
@@ -215,50 +216,26 @@ export function goodCampaignPlan() {
 /** All six agents' craft prompts, seeded with short placeholder content — this is a server-wiring test, not a prompt-resolution test, so the real markdown files' exact text doesn't matter, only that every promptId the six workflows resolve is registered. */
 export function makeSharedPromptStore(): InMemoryPromptStore {
   const store = new InMemoryPromptStore();
-  // Every numbered version any agent here has ever pinned to is registered,
-  // so this wiring test doesn't care which one a given agent's pinned
-  // skillRef resolves -- x-craft/linkedin-craft/reddit-craft bumped to @2 in
-  // Phase 2.5 (lane restoration / archetype restoration / reply-only model),
-  // then all five bumped again (x/linkedin/reddit to @3, blog/newsletter to
-  // @2) for the client-language check added against `clientVoiceContext`.
-  store.setPrompt("x-craft", "1", "X craft guidance.");
-  store.setPrompt("x-craft", "2", "X craft guidance.");
-  store.setPrompt("x-craft", "3", "X craft guidance.");
-  store.setPrompt("x-craft", "4", "X craft guidance.");
-  store.setPrompt("x-craft", "5", "X craft guidance.");
-  store.setPrompt("x-craft", "6", "X craft guidance."); // C7 learning loop (SCRUM-459/460)
-  store.setPrompt("x-craft", "7", "X craft guidance."); // D24 text only, the hook rule, weighted length
-  store.setPrompt("x-craft", "8", "X craft guidance."); // §12b no relative day words
-  store.setPrompt("linkedin-craft", "1", "LinkedIn craft guidance.");
-  store.setPrompt("linkedin-craft", "2", "LinkedIn craft guidance.");
-  store.setPrompt("linkedin-craft", "3", "LinkedIn craft guidance.");
-  store.setPrompt("linkedin-craft", "4", "LinkedIn craft guidance.");
-  store.setPrompt("linkedin-craft", "5", "LinkedIn craft guidance.");
-  store.setPrompt("linkedin-craft", "6", "LinkedIn craft guidance."); // C7 learning loop (SCRUM-466)
-  store.setPrompt("linkedin-craft", "7", "LinkedIn craft guidance."); // §12b the eleven rules, §8 the image gates
-  store.setPrompt("linkedin-craft", "8", "LinkedIn craft guidance."); // §12a no relative day words
-  store.setPrompt("reddit-craft", "1", "Reddit craft guidance.");
-  store.setPrompt("reddit-craft", "2", "Reddit craft guidance.");
-  store.setPrompt("reddit-craft", "3", "Reddit craft guidance.");
-  store.setPrompt("reddit-craft", "4", "Reddit craft guidance.");
-  store.setPrompt("reddit-craft", "5", "Reddit craft guidance.");
-  store.setPrompt("reddit-craft", "6", "Reddit craft guidance."); // C7 learning loop (SCRUM-466)
-  // reddit-agent's two judgment steps (auto-setup planner, thread scout).
-  store.setPrompt("reddit-channel-plan", "1", "Reddit channel planning guidance.");
-  store.setPrompt("reddit-scout", "1", "Reddit thread scouting guidance.");
-  store.setPrompt("blog-craft", "1", "Blog craft guidance.");
-  store.setPrompt("blog-craft", "2", "Blog craft guidance.");
-  store.setPrompt("blog-craft", "3", "Blog craft guidance.");
-  store.setPrompt("newsletter-craft", "1", "Newsletter craft guidance.");
-  store.setPrompt("newsletter-craft", "2", "Newsletter craft guidance.");
-  store.setPrompt("newsletter-craft", "3", "Newsletter craft guidance.");
-  store.setPrompt("newsletter-craft", "4", "Newsletter craft guidance.");
-  store.setPrompt("newsletter-craft", "5", "Newsletter craft guidance.");
-  store.setPrompt("newsletter-craft", "6", "Newsletter craft guidance.");
-  // newsletter-agent's two judgment steps (edition plan, editor verdict).
-  store.setPrompt("newsletter-plan", "1", "Newsletter edition planning guidance.");
-  store.setPrompt("newsletter-editor", "1", "Newsletter editor guidance.");
-  store.setPrompt("campaign-craft", "1", "Campaign strategy guidance.");
+  // DERIVED FROM THE REGISTRY, not hand-listed.
+  //
+  // This used to be ~40 `store.setPrompt(...)` lines carrying every version any
+  // agent had ever pinned to, with a comment narrating the history. It went
+  // stale the way a hand-maintained list always does: bumping `blog-craft` from
+  // @3 to @4 in the agent left the pinned version unregistered here, the prompt
+  // lookup failed, and this wiring suite reported `degraded` instead of
+  // `awaiting_gate` on three unrelated tests — a failure that says nothing
+  // about what it was testing.
+  //
+  // `PROMPT_REGISTRY` is already the one place that must agree with `agents/`
+  // (CI fails when it does not), so reading it here means a pin bump is
+  // registered the moment the registry knows about it. The content is a
+  // placeholder on purpose: this is a server-wiring test, not a
+  // prompt-resolution test, so only the promptId/version pair matters.
+  for (const entry of PROMPT_REGISTRY) {
+    for (const version of entry.versions) {
+      store.setPrompt(entry.promptId, version, `${entry.promptId} guidance.`);
+    }
+  }
   return store;
 }
 

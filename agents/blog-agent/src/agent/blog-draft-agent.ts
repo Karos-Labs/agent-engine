@@ -86,12 +86,23 @@ export class BlogDraftAgent extends BaseAgent<BlogPostOutput> {
     // every channel). Cut from 1.md, not from latest.md — latest.md carries
     // a separate, still-uncommitted GEO/FAQ section this change does not
     // touch and must not overwrite. v1 stays frozen.
-    // Pinned to "3": v3 adds the client-knowledge-and-recent-posts section
-    // — clientIntelContext (the client's own intel report, distilled) is read
-    // as authoritative before external facts, and recentPosts (the shipped-
-    // output dedup window this agent now writes back into on delivery) is a
-    // hard do-not-repeat constraint. v2 stays frozen.
-    skillRef: "blog-craft@3",
+    // Pinned to "4": v4 adds the DIRECT-ANSWER and FAQ section (§9), which is
+    // the GEO half of this agent — lead with a concrete answer to the title's
+    // own question in the first one or two sentences, written to survive being
+    // lifted out on its own, and populate `faqItems` with self-contained Q&A
+    // pairs traceable to claims already in the body.
+    //
+    // THIS WAS BUILT AND UNREACHABLE. The pin sat on "3" while `latest.md` was
+    // v4, and v3 does not contain the word `faqItems` anywhere — yet the output
+    // schema carries the field, `buildBlogJsonLd` emits a `FAQPage` block from
+    // it, `PROMPT_REGISTRY` already lists it as a structured-output field and
+    // `length-floor-and-metadata.test.ts` asserts that block persists. Every
+    // piece of the capability shipped except the one that tells the model it
+    // exists, so every article since has left `faqItems` empty by default.
+    //
+    // v3 (client knowledge and recent posts) and v2 stay frozen; v4 is v3 plus
+    // §9, so nothing about the earlier sections changes.
+    skillRef: "blog-craft@4",
     selfCritique: { gateTool: "gate.lintPost", maxRevisions: 1, gateArgs: { platform: "blog" } },
   };
 }

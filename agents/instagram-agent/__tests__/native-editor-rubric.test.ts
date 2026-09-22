@@ -86,7 +86,7 @@ function verdict(over: Partial<NativeEditorVerdict> = {}): NativeEditorVerdict {
 
 describe("RFC-15 §6.2 — the rubric on disk", () => {
   it("ships `3.md` and a byte-identical `latest.md` (prompt-bump checklist step 2)", async () => {
-    const [pinned, latest] = await Promise.all([readPrompt("3.md"), readPrompt("latest.md")]);
+    const [pinned, latest] = await Promise.all([readPrompt("4.md"), readPrompt("latest.md")]);
     expect(latest).toBe(pinned);
     expect(latest.length).toBeGreaterThan(2_000);
     // @1 stays on disk and stays resolvable: a checkpoint replayed from a run judged under the old rubric
@@ -583,7 +583,7 @@ describe("the judge's own configuration", () => {
     expect(config.id).toBe("instagram-native-editor");
     expect(config.allowedTools).toEqual([]);
     expect(config.maxSteps).toBe(1);
-    expect(config.skillRef).toBe("instagram-native-editor@3");
+    expect(config.skillRef).toBe("instagram-native-editor@4");
     expect(config.modelPolicy.policy).toBe("pinned");
   });
 

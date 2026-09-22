@@ -67,6 +67,7 @@ import {
   localPass,
   spansFromEvidence,
   type ContentRepair,
+  textGateTimeout,
 } from "@agent-engine/workflow";
 import type { GateVerdict } from "@agent-engine/core";
 import { LinkedInDraftAgent, type LinkedInPostOutput } from "../agent/linkedin-draft-agent.js";
@@ -1354,7 +1355,20 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       maxRevisions: MAX_REVISION_ROUNDS,
       ...(options.autoApprove ? { autoApprove: true } : {}),
       attempt: draftOnce,
-      buildGate: (draft, revision) => ({
+      buildGate: (draft, revision) => {
+        // THE THREE TIERS, NOT A FLAT HOUR.
+        //
+        // This gate used to carry `{ duration: "1h", onTimeout: "auto_approve" }`
+        // written out by hand, so a draft the run had already REPAIRED — an
+        // unsourced figure redacted, a banned phrase redrafted, a part trimmed
+        // to fit — got exactly the same hour as a clean one, and a
+        // regulated-compliance finding got no special treatment at all.
+        //
+        // Read ONCE and used both as the policy and as the payload block, so
+        // the clock a reviewer is racing and the sentence explaining it can
+        // never disagree.
+        const gateTimeout = textGateTimeout({ repairs: repairsByRevision.get(revision) });
+        return {
         kind: "batch_review",
         payload: {
           runId: wf.runId,
@@ -1367,10 +1381,14 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
           ...mediaForDeliverable(draft.mediaPlan),
           ...(selected.trend !== undefined ? { trend: { whyNow: selected.trend.whyNow, brandFitReason: selected.trend.brandFitReason, sourceUrls: selected.trend.sourceUrls } } : {}),
           revision,
+          // WHY this draft waits as long as it does, in front of the person
+          // whose time it is spending.
+          gateTimeout,
         },
         requiredRole: "account_manager",
-        timeout: { duration: "1h", onTimeout: "auto_approve" },
-      }),
+        timeout: { duration: gateTimeout.duration, onTimeout: gateTimeout.onTimeout },
+        };
+      },
       onDecision: async ({ revision, response, output }) => {
         // SCRUM-306 (AU23): a reject's drafted content previously had nowhere
         // durable to go — it lived only in this round's step checkpoints and

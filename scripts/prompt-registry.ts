@@ -174,8 +174,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "instagram-copy",
     agent: "instagram-agent",
-    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27"],
-    latestVersion: "27",
+    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28"],
+    latestVersion: "28",
     // `requires` is UNCHANGED at @16. §23 makes `languageBrief` binding when it is present, but §1 is
     // demoted rather than deleted, so the `languageDirective` marker — which looks for the literal
     // `clientVoiceContext` — is still satisfied, and an English run reads identically to @15.
@@ -270,7 +270,7 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   // but @1 was never told any of it existed — so on `08c2` the judge had only `"caption"`/`"slide:N"` to
   // write, and every correction it produced was correctly dropped as cross-context. Prompt-only: no new
   // step, no code change, no re-price beyond the file's own growth.
-  { promptId: "instagram-native-editor", agent: "instagram-agent", versions: ["1", "2", "3"], latestVersion: "3" },
+  { promptId: "instagram-native-editor", agent: "instagram-agent", versions: ["1", "2", "3", "4"], latestVersion: "4" },
   // Phase 2, item N. The Template Studio's three setup-time prompts. None of
   // them carries `requires` flags, for the same reason `instagram-brief` and
   // `instagram-angle` do not: they receive the resolved `targetLanguage`
@@ -289,7 +289,7 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   // `scene` decorative — on 2026-09-16 @5 refused five correct photographs of
   // server infrastructure for not having been shot with a long exposure, and
   // the post shipped with no pictures in it.
-  { promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5", "6", "7"], latestVersion: "7" },
+  { promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5", "6", "7", "8"], latestVersion: "8" },
   // Phase 5.5 (item A2): `04b3-extract-entities`. No `requires` flags — the
   // step writes nothing a reader sees and carries no statistics; its output is
   // re-checked against the evidence by `groundEntities` in code, which is a
