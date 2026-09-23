@@ -8,6 +8,7 @@ export * from "./primitives/research-candidate.js";
 export * from "./primitives/run-direction.js";
 export * from "./primitives/client-voice-context.js";
 export * from "./primitives/history-dedup.js";
+export * from "./primitives/structural-echo.js";
 // A draft is written now and published later; this is the check that a
 // sentence anchored to "yesterday" never reaches a client's feed.
 export * from "./primitives/dated-language.js";

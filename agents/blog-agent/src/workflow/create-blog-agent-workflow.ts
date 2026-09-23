@@ -1,6 +1,6 @@
 import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
-import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, researchDigestForDrafting, researchSourceTexts, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, toAgentContext, runGate, finalizeDeliverable, recordOutputExcerpt, runCheckWithRepair, redactSentencesCarrying, stripSpansFrom, localContentFail, localPass, spansFromEvidence, type ContentRepair, textGateTimeout} from "@agent-engine/workflow";
+import { type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, extractResearchCandidate, researchDigestForDrafting, researchSourceTexts, type ResearchPullResult, readRunDirection, runDirectionField, type RevisionNote, MAX_REVISION_ROUNDS, persistReviewFeedbackToMemory, readPastFeedback, revisionDirective, runReviewCycle, buildClientVoiceContext, readOutputHistoryForDedup, dedupeDirective, checkOutputDedupe, dedupeRetryDirective, historyShapeEchoes, structuralEchoDirective, readClientIntelContext, toAgentContext, runGate, finalizeDeliverable, recordOutputExcerpt, runCheckWithRepair, redactSentencesCarrying, stripSpansFrom, localContentFail, localPass, spansFromEvidence, type ContentRepair, textGateTimeout} from "@agent-engine/workflow";
 import type { GateVerdict } from "@agent-engine/core";
 import { BlogDraftAgent, type BlogPostOutput } from "../agent/blog-draft-agent.js";
 import { renderPreview, BLOG_MIN_WORD_COUNT, BLOG_MAX_WORD_COUNT, type RenderPreviewResult } from "../tools/render-preview.js";
@@ -274,6 +274,17 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
     // decisions are distinct from feedback.
     const outputHistory = await readOutputHistoryForDedup(wf, tools, ctx, "blog-agent", "read-output-history");
     const recentPostsDirective = dedupeDirective(outputHistory);
+    // The OTHER kind of repetition, from the same history at no extra cost.
+    // `dedupeDirective` steers away from repeating a topic; this steers away
+    // from repeating a SHAPE, which is what a reader recognises first and what
+    // trigram overlap cannot see. The 2026-09-21 audit found posts that scored
+    // clean on words while being identical in paragraph count, hashtag count,
+    // opening word and closing line. Asked of the history alone, before
+    // drafting, because the only place a DRAFT gets compared is the
+    // de-duplication retry loop and that fires on lexical similarity — the one
+    // thing these posts do not have. `undefined` for a client with no
+    // template, so their prompt is byte-identical to before.
+    const shapeDirective = structuralEchoDirective(historyShapeEchoes(outputHistory));
     // The client intel report, distilled to what steers copy (voice rows,
     // positioning, whitespace opportunities) — intel.getReport has been in
     // every agent registry since the intel agent shipped, with zero
@@ -354,6 +365,7 @@ export function createBlogAgentWorkflow(options: CreateBlogAgentWorkflowOptions)
       ...(clientIntelContext !== undefined ? { clientIntelContext } : {}),
       ...(researchDigest !== undefined ? { research: researchDigest } : {}),
       ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
+      ...(shapeDirective !== undefined ? { recentShape: shapeDirective } : {}),
       ...(extra.dedupeAvoid !== undefined ? { dedupeAvoid: extra.dedupeAvoid } : {}),
       // Two distinct steers, kept apart on purpose: `pastFeedback` is what
       // this client has said across previous RUNS, `revisionRequest` is what
