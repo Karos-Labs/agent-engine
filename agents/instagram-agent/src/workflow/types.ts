@@ -260,6 +260,13 @@ export interface InstagramRunClaim {
    * every run before formats existed.
    */
   requestedFormat?: "carousel" | "single" | "auto";
+  /**
+   * 2026-09-23: how picture-led this client's carousels are (`imagery-floor.ts`,
+   * `PICTURE_BANDS`). From the run input's `pictureDensity` first, then the
+   * client's `instagramPictureDensity` config; absent means `standard`, the
+   * band every run used before this existed.
+   */
+  pictureDensity?: "standard" | "photo-first";
 }
 
 // ─────────────────────────────────────────────────────────────────────────

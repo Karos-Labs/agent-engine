@@ -808,6 +808,10 @@ function deviceTextOf(device: SlideDevice): string[] {
       return [device.left.label, device.left.body, device.right.label, device.right.body];
     case "unit_grid":
       return [device.label];
+    case "position_map":
+      return [device.xAxis.low, device.xAxis.high, device.yAxis.low, device.yAxis.high, ...device.points.map((point) => point.label)];
+    case "spec_table":
+      return [...device.rows.flatMap((row) => [row.label, row.value]), ...(device.source !== undefined ? [device.source] : [])];
   }
 }
 
@@ -903,6 +907,15 @@ function isolateDeviceLabels(device: SlideDevice, dir: "rtl" | "ltr"): SlideDevi
       };
     case "unit_grid":
       return { ...device, label: iso(device.label) };
+    case "position_map":
+      return {
+        ...device,
+        xAxis: { low: iso(device.xAxis.low), high: iso(device.xAxis.high) },
+        yAxis: { low: iso(device.yAxis.low), high: iso(device.yAxis.high) },
+        points: device.points.map((point) => ({ ...point, label: iso(point.label) })),
+      };
+    case "spec_table":
+      return { ...device, rows: device.rows.map((row) => ({ label: iso(row.label), value: iso(row.value) })) };
   }
 }
 

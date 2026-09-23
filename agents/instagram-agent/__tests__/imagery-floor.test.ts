@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ceilingFor, enforceImageryBand, MAX_PICTURE_SLIDES, MIN_PICTURE_SLIDES, MIN_QUIET_SLIDES, placementMixShortfall } from "../src/workflow/imagery-floor.js";
+import { ceilingFor, enforceImageryBand, isPictureDensity, MAX_PICTURE_SLIDES, MIN_PICTURE_SLIDES, MIN_QUIET_SLIDES, PICTURE_BANDS, placementMixShortfall } from "../src/workflow/imagery-floor.js";
 import { FULL_BLEED_IMAGE_LAYOUTS, HERO_IMAGE_LAYOUTS } from "../src/workflow/slides-data.js";
 import type { InstagramCopyOutput, InstagramSlideLayout } from "../src/workflow/types.js";
 import { goodCopyOutput } from "./test-helpers.js";
@@ -381,5 +381,26 @@ describe("enforceImageryBand", () => {
     expect(cut.after).toBe(MAX_PICTURE_SLIDES);
     expect(cutTwice.demotions).toEqual([]);
     expect(cutTwice.promotions).toEqual([]);
+  });
+});
+
+// 2026-09-23: a photo-led client. The owner's Deel reference carousels carry a
+// real photograph on four slides of five; the standard band demotes one.
+describe("picture density: photo-first", () => {
+  it("keeps four photographs in a five-slide carousel where the standard band keeps three", () => {
+    const copy = carousel("cover", "photo", "photo", "photo", "closer");
+    expect(pictures(copy)).toBe(4);
+    const standard = PICTURE_BANDS.standard;
+    const photoFirst = PICTURE_BANDS["photo-first"];
+    expect(pictures(enforceImageryBand(copy, standard.floor, standard.ceiling, undefined, standard.quiet).copy)).toBe(3);
+    expect(pictures(enforceImageryBand(copy, photoFirst.floor, photoFirst.ceiling, undefined, photoFirst.quiet).copy)).toBe(4);
+  });
+
+  it("still keeps one quiet plate, never lowers the floor, and leaves the standard band exactly as it was", () => {
+    expect(ceilingFor(8, PICTURE_BANDS["photo-first"].ceiling, PICTURE_BANDS["photo-first"].floor, PICTURE_BANDS["photo-first"].quiet)).toBe(7);
+    expect(PICTURE_BANDS["photo-first"].floor).toBe(MIN_PICTURE_SLIDES);
+    expect(PICTURE_BANDS.standard).toEqual({ floor: MIN_PICTURE_SLIDES, ceiling: MAX_PICTURE_SLIDES, quiet: MIN_QUIET_SLIDES });
+    expect(isPictureDensity("photo-first")).toBe(true);
+    expect(isPictureDensity("photo first")).toBe(false);
   });
 });

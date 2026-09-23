@@ -226,7 +226,7 @@ import {
 } from "./interest-floor.js";
 import { boundedObjectFor, composeBoundedObjects, type BoundedObjectDecision } from "./bounded-object.js";
 import { checkSlideWordBudget, formatWordBudgetFindings, MAX_WORDS_PER_SLIDE } from "./slide-word-budget.js";
-import { ceilingFor, enforceImageryBand, imageryShortfallsFor, MIN_PICTURE_SLIDES, placementMixShortfall, type ImageryDemotion, type ImageryPromotion, type ImageryShortfall } from "./imagery-floor.js";
+import { ceilingFor, enforceImageryBand, imageryShortfallsFor, isPictureDensity, MIN_PICTURE_SLIDES, PICTURE_BANDS, placementMixShortfall, type ImageryDemotion, type ImageryPromotion, type ImageryShortfall } from "./imagery-floor.js";
 // Phase 5.5, spec §2 A1b — the split every optional-spend gate in the generate
 // ladder consults, so the image floor is enforced where it actually binds.
 import { guaranteedGapCount, partitionGaps } from "./image-gap-partition.js";
@@ -1175,6 +1175,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       const isFormatChoice = (v: unknown): v is "carousel" | "single" | "auto" => v === "carousel" || v === "single" || v === "auto";
       const runFormat = (wf.input ?? {})["requestedFormat"];
       const requestedFormat = isFormatChoice(runFormat) ? runFormat : isFormatChoice(runConfig["instagramFormat"]) ? runConfig["instagramFormat"] : undefined;
+      // 2026-09-23: how picture-led the carousel is, the same precedence as
+      // the format. Anything but a known value is ignored, so a typo keeps the
+      // standard band rather than switching a client's feed.
+      const runDensity = (wf.input ?? {})["pictureDensity"];
+      const pictureDensity = isPictureDensity(runDensity) ? runDensity : isPictureDensity(runConfig["instagramPictureDensity"]) ? runConfig["instagramPictureDensity"] : undefined;
       // `wf.runId` is already a caller-supplied, globally-unique idempotency
       // key (RFC-01 §9.1 rule 2), so it doubles as `postId` directly — a
       // dedicated sequential-counter tool (RFC-03 §3's suggested
@@ -1188,8 +1193,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         ...(requestedLane !== undefined ? { requestedLane } : {}),
         ...(requestedSubject !== undefined ? { requestedSubject } : {}),
         ...(requestedFormat !== undefined ? { requestedFormat } : {}),
+        ...(pictureDensity !== undefined ? { pictureDensity } : {}),
       };
     });
+    // The picture band in force for this run. `standard` is the band every run
+    // used before densities existed, so an unset client is byte-identical.
+    const pictureBand = PICTURE_BANDS[runClaim.pictureDensity ?? "standard"];
 
     // ── 02: freeze the small files — style config + brand tokens, parse-check-or-HALT ──
     const frozen = await wf.step.code("02-freeze-style-config", async (): Promise<InstagramFrozenConfig> => {
@@ -7299,6 +7308,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // designed slide and a deep caption). The copy step echoes it back and
         // `checkSlidesData` holds the slide count to it.
         format: format.format,
+        // 2026-09-23: a photo-led client (prompt section 12). Absent on the
+        // standard band, so every other client's input is unchanged.
+        ...(runClaim.pictureDensity === "photo-first" ? { pictureDensity: "photo-first" } : {}),
         // The scouted story, when one took the slot: angle, hook, why-now, the
         // brand-fit bridge, and the source URLs it rests on.
         ...(topicClaim.trend !== undefined ? { trendCandidate: trendCandidateForDrafting(topicClaim.trend) } : {}),
@@ -7814,7 +7826,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // *"תבניות גנריות בכל הפוסטים נראה AI"*. Still deterministic within a
       // run, which this step needs: it is pure, it runs before sourcing, and a
       // resume must rebuild the identical `copy`.
-      const imagery = enforceImageryBand(copy, undefined, undefined, wf.runId);
+      const imagery = enforceImageryBand(copy, pictureBand.floor, pictureBand.ceiling, wf.runId, pictureBand.quiet);
       if (imagery.promotions.length > 0 || imagery.demotions.length > 0) {
         copy = imagery.copy;
         imageryPromotions = imagery.promotions;
@@ -7842,7 +7854,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                   (imagery.promotions.length > 0
                     ? `promoted ${imagery.promotions.length} text_only slide(s) to photo: ${imagery.promotions.map((p) => `slide ${p.slide}`).join(", ")}`
                     : `demoted ${imagery.demotions.length} photo slide(s) to text_only: ${imagery.demotions.map((d) => `slide ${d.slide}`).join(", ")}`) +
-                  ` (${imagery.before} -> ${imagery.after} picture slides, band ${MIN_PICTURE_SLIDES}-${ceilingFor(copy.slides.length)})` +
+                  ` (${imagery.before} -> ${imagery.after} picture slides, band ${pictureBand.floor}-${ceilingFor(copy.slides.length, pictureBand.ceiling, pictureBand.floor, pictureBand.quiet)})` +
                   (imagery.shortfallReason !== undefined ? ` — SHORT: ${imagery.shortfallReason}` : "") +
                   (imagery.excessReason !== undefined ? ` — OVER: ${imagery.excessReason}` : ""),
               },
@@ -9399,7 +9411,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // preference never runs. karoslabs' 2026-09-21 post was exactly that:
         // three pictures, all of them the plate, three picture-capable
         // interior slides left empty. See `placementMixShortfall`.
-        const mixShortfall = placementMixShortfall(copy, withPictureNs);
+        const mixShortfall = placementMixShortfall(copy, withPictureNs, pictureBand.ceiling, pictureBand.quiet);
         const want = Math.min(MIN_PICTURE_SLIDES - withPicture + mixShortfall, guaranteeLeft);
 
         // ── THE FLOOR USED TO SEE ONLY THE SLIDES THAT ASKED. ──

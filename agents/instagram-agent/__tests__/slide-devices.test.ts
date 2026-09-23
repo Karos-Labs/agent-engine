@@ -73,7 +73,7 @@ describe("SlideDeviceSchema — the caps are the defect fix", () => {
   });
 
   it("names all six kinds", () => {
-    expect([...SLIDE_DEVICE_KINDS].sort()).toEqual(["bars", "figure", "figure_pair", "timeline", "unit_grid", "versus"]);
+    expect([...SLIDE_DEVICE_KINDS].sort()).toEqual(["bars", "figure", "figure_pair", "position_map", "spec_table", "timeline", "unit_grid", "versus"]);
   });
 });
 
@@ -307,8 +307,68 @@ describe("validateDevice — a fact, never a gate", () => {
       { kind: "timeline", points: [{ at: "2024", what: "manual" }, { at: "2026", what: "automated" }] },
       { kind: "versus", left: { label: "a", body: "b" }, right: { label: "c", body: "d" }, winner: "left" },
       { kind: "unit_grid", filled: 72, of: 100, label: "of the queue" },
+      POSITION_MAP,
+      SPEC_TABLE,
     ];
     for (const device of devices) expect(validateDevice(device), device.kind).toEqual({ ok: true });
+  });
+});
+
+// 2026-09-23 (stage 1 of the reference-looks plan): the Karos Labs feed's
+// positioning map and Deel's "What was on the table".
+const POSITION_MAP: SlideDevice = {
+  kind: "position_map",
+  xAxis: { low: "sensible", high: "ridiculous" },
+  yAxis: { low: "functional", high: "entertaining" },
+  points: [
+    { label: "Liquid Death", x: 82, y: 86, subject: true },
+    { label: "Energy drinks", x: 60, y: 64, subject: false },
+    { label: "Premium water", x: 38, y: 38, subject: false },
+    { label: "Bottled water", x: 20, y: 20, subject: false },
+  ],
+};
+const SPEC_TABLE: SlideDevice = {
+  kind: "spec_table",
+  rows: [
+    { label: "Regional winner check", value: "up to $50,000 SAFE" },
+    { label: "The terms", value: "20% discount to the next priced round" },
+    { label: "The pitch", value: "two minutes" },
+  ],
+  source: "The Pitch by Deel, official terms",
+};
+
+describe("position_map and spec_table", () => {
+  it("a positioning map has exactly one subject and no two points on top of each other", () => {
+    const noSubject = validateDevice({ ...(POSITION_MAP as Extract<SlideDevice, { kind: "position_map" }>), points: (POSITION_MAP as Extract<SlideDevice, { kind: "position_map" }>).points.map((p) => ({ ...p, subject: false })) });
+    expect(noSubject.ok).toBe(false);
+    const crowded = validateDevice({
+      kind: "position_map",
+      xAxis: { low: "a", high: "b" },
+      yAxis: { low: "c", high: "d" },
+      points: [
+        { label: "one", x: 50, y: 50, subject: true },
+        { label: "two", x: 55, y: 58, subject: false },
+      ],
+    });
+    expect(crowded.ok).toBe(false);
+    if (!crowded.ok) expect(crowded.reason).toContain("on top of each other");
+  });
+
+  it("the map paints its geometry from integers and prints the illustrative note; the one accent is the subject", () => {
+    const fragment = buildDeviceFragment(POSITION_MAP, "ltr");
+    expect(fragment).toContain('style="inset-inline-start:82%;inset-block-end:86%"');
+    expect(fragment.match(/dv-accent/g)).toHaveLength(1);
+    expect(fragment).toContain("Illustrative, not measured");
+    expect(deviceFigureValues(POSITION_MAP)).toEqual([]);
+  });
+
+  it("the table escapes its rows, prints its source, carries no accent, and paints only the values that are figures", () => {
+    const fragment = buildDeviceFragment({ kind: "spec_table", rows: [{ label: "<b>x</b>", value: "two minutes" }, { label: "cap", value: "none" }] }, "ltr");
+    expect(fragment).toContain("&lt;b&gt;x&lt;/b&gt;");
+    expect(fragment).not.toContain("dv-accent");
+    expect(fragment).not.toContain("dv-source");
+    expect(buildDeviceFragment(SPEC_TABLE, "ltr")).toContain("The Pitch by Deel, official terms");
+    expect(deviceFigureValues(SPEC_TABLE)).toEqual(["up to $50,000 SAFE", "20% discount to the next priced round"].filter((v) => /^[^\p{L}]*\d/u.test(v)));
   });
 });
 
