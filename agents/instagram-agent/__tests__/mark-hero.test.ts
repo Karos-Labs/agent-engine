@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { MARK_CANDIDATE_TAG, planEntitySourcing, type RecognisedEntity } from "../src/workflow/entity-imagery.js";
+import { looksLikeMark, MARK_CANDIDATE_TAG, planEntitySourcing, type RecognisedEntity } from "../src/workflow/entity-imagery.js";
 import { MARK_AUTO_CANDIDATES, rotatedCandidates } from "@agent-engine/tool-karos-publish";
 import { assembleSlidesData } from "../src/workflow/slides-data.js";
 import type { ImageSelection, InstagramCopyOutput } from "../src/workflow/types.js";
@@ -109,5 +109,15 @@ describe("every picture plate carries the badge slot, in flow", () => {
     for (const rule of rules) if (/position:\s*absolute/u.test(rule)) expect(rule).toMatch(/data-at\^="(corner|side)-"/u);
     // The first version's 700px panel is gone.
     expect(css).not.toContain('img.hero[data-kind="mark"]');
+  });
+});
+
+describe("a badge must be a mark (2026-09-23)", () => {
+  it("accepts a title that calls itself a logo, or a vector file, and refuses a photograph that only mentions the name", () => {
+    expect(looksLikeMark({ path: "a.png", description: "slide 3 candidate — Anthropic logo (Wikimedia) [licence: public domain]" })).toBe(true);
+    expect(looksLikeMark({ path: "a.svg", description: "slide 3 candidate — Sagum (Wikimedia) [licence: CC0]" })).toBe(true);
+    expect(looksLikeMark({ path: "a.jpg", description: "slide 3 candidate — Sagum team at the office (Openverse) [licence: CC0]" })).toBe(false);
+    // The engine's own tag says "logo"; the check reads the provider's title, not the tag.
+    expect(looksLikeMark({ path: "a.jpg", description: "slide 3 candidate — a desk [licence: CC0] [kind: brand mark — a logo or wordmark, not a photograph]" })).toBe(false);
   });
 });
