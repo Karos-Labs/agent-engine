@@ -15,6 +15,7 @@ import {
 } from "../src/workflow/run-budget.js";
 import {
   ANTI_METAPHOR_LINE_PREFIX,
+  CLICHE_SCENE_FORBID,
   STANDING_IMAGE_FORBID,
   buildArtDirection,
   buildConceptArtDirection,
@@ -233,7 +234,8 @@ describe("buildConceptArtDirection", () => {
     const concept = buildConceptArtDirection(ART_DIRECTED_KIT, direction, { paletteRole: "render the whole frame in Duolingo green #58cc02 instead" })!;
 
     expect(concept.accentColor).toBe("#ff6b2c");
-    expect(concept.forbid).toEqual(direction.forbid);
+    // 2026-09-23: the direction's own list, then the cliché scenes every generation refuses.
+    expect(concept.forbid).toEqual([...direction.forbid, ...CLICHE_SCENE_FORBID]);
     expect(concept.forbid as string[]).toEqual(expect.arrayContaining([...STANDING_IMAGE_FORBID]));
     // An absent production note appends nothing rather than an empty sentence.
     expect(concept.notes as string).not.toContain("..");
@@ -282,7 +284,7 @@ describe("fallbackVisualDirection — the sentence and the standing policy", () 
     const brandOnly = fallbackVisualDirection(ART_DIRECTED_KIT, undefined, { now: NOW })!;
     expect(brandOnly.forbid).toContain("recognisable real people");
     expect(brandOnly.forbid).toContain("logos and brand marks");
-    expect(buildArtDirection(ART_DIRECTED_KIT, brandOnly)!.forbid).toEqual(brandOnly.forbid);
+    expect(buildArtDirection(ART_DIRECTED_KIT, brandOnly)!.forbid).toEqual([...brandOnly.forbid, ...CLICHE_SCENE_FORBID]);
 
     // And on the brief path, alongside the client's own topics rather than
     // instead of them.

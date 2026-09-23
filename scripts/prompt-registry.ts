@@ -157,7 +157,7 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   // Phase 5.5, item D. @2 adds the six frozen per-client axes (`ClientVisualSystem`) — the
   // display register, composition grammar, ground texture and the rest — so two clients stop
   // resolving to the same visual system. Runs once per client per 90 days on the setup meter.
-  { promptId: "instagram-art-director", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
+  { promptId: "instagram-art-director", agent: "instagram-agent", versions: ["1", "2", "3"], latestVersion: "3" },
   // Phase 4 (RFC-16 §2.2), the concept direction. No `requires` flags for the
   // same reason `instagram-art-director` has none: it receives the resolved
   // `targetLanguage` and never `clientVoiceContext` (so the `languageDirective`

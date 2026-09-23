@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { InstagramArtDirectorAgent } from "../src/agent/instagram-art-director-agent.js";
 import type { BrandTokens } from "../src/workflow/types.js";
-import { buildArtDirection, type VisualDirection } from "../src/workflow/visual-direction.js";
+import { buildArtDirection, checkVisualDirection, CLICHE_SCENE_FORBID, prescribesClicheScene, VISUAL_DIRECTION_BELIEF_KEY, type VisualDirection } from "../src/workflow/visual-direction.js";
 
 /**
  * RFC-13 Phase 3, item Q — the half that finally reads the direction.
@@ -60,16 +60,44 @@ describe("buildArtDirection", () => {
   it("returns the direction's own lines, forbid list and style lock", () => {
     const art = buildArtDirection(KIT, direction())!;
 
-    expect(art["aesthetic"]).toBe("a laptop on a kitchen table before the office opens");
+    // 2026-09-23: the direction's SUBJECT never reaches generation (the slide's
+    // brief carries the subject); the brand token is the aesthetic.
+    expect(art["aesthetic"]).toBe("minimal product photography");
     expect(art["lighting"]).toBe("soft window light from one side, no fill");
     expect(art["palette"]).toEqual(["warm charcoal", "paper white"]);
     expect(art["mood"]).toBe("35mm, shallow depth of field, fine grain");
     // Every line, joined: `notes` is the field `buildBrief` appends verbatim,
     // and the lines ARE the direction.
-    expect(art["notes"]).toContain("Photograph the work itself");
+    // "at the desk where it happens" names the cliché scene (2026-09-23) and is dropped.
+    expect(art["notes"]).not.toContain("Photograph the work itself");
+    expect(art["notes"]).toContain("Soft window light");
     expect(art["notes"]).toContain("One subject per frame");
-    expect(art["forbid"]).toEqual(["stock handshakes", "glass-tower skylines"]);
+    expect(art["forbid"]).toEqual(["stock handshakes", "glass-tower skylines", ...CLICHE_SCENE_FORBID]);
     expect(art["styleLock"]).toBe("Warm documentary photography, one subject, soft single-source light, no composite.");
+  });
+
+  it("drops every line, light and style lock that prescribes the feed's cliché scene (the karoslabs direction of 2026-09-18)", () => {
+    const karos = direction({
+      light: ["Cool blue-grey screen glow from front-left as the primary source", "Deep falloff into the ground colour"],
+      lines: [
+        { line: "Scene ground is near-black; all imagery sits inside this tone.", basis: "brand kit", confidence: "high" },
+        { line: "Show one person at work alone, a founder mid-task at a laptop in a dim room.", basis: "https://instagram.com/p/x", confidence: "medium" },
+        { line: "Wide aperture: the subject (person or hands on keyboard) is sharp.", basis: "https://instagram.com/p/y", confidence: "medium" },
+        { line: "Fine grain, moderate contrast, selective desaturation.", basis: "brand kit", confidence: "high" },
+      ],
+      styleLock: { id: "night-operator-35mm", line: "Cinematic 35 mm, near-black ground, cool screen-glow primary with one warm practical, fine grain." },
+    });
+    const art = buildArtDirection(KIT, karos)!;
+    expect(art["lighting"]).toBe("Deep falloff into the ground colour");
+    expect(String(art["notes"])).toContain("near-black");
+    expect(String(art["notes"])).toContain("Fine grain");
+    expect(String(art["notes"])).not.toMatch(/laptop|keyboard/iu);
+    expect(art["styleLock"]).toBeUndefined();
+    // The premise: every dropped string does name the scene, and the kept ones do not.
+    expect(prescribesClicheScene(karos.lines[1]!.line)).toBe(true);
+    expect(prescribesClicheScene(karos.lines[2]!.line)).toBe(true);
+    expect(prescribesClicheScene(karos.styleLock.line)).toBe(true);
+    expect(prescribesClicheScene(karos.lines[0]!.line)).toBe(false);
   });
 
   it("keeps the BRAND's accent colour even when a direction exists — that is a fact, not an opinion", () => {
@@ -88,8 +116,10 @@ describe("buildArtDirection", () => {
     expect(art["palette"]).toEqual(["slate", "bone"]);
     expect(art["mood"]).toBe("urgent");
     // The lines and the forbid list survive regardless — they are not an axis.
-    expect(art["notes"]).toContain("Photograph the work itself");
-    expect(art["forbid"]).toHaveLength(2);
+    // "at the desk where it happens" names the cliché scene (2026-09-23) and is dropped.
+    expect(art["notes"]).not.toContain("Photograph the work itself");
+    expect(art["notes"]).toContain("Soft window light");
+    expect(art["forbid"]).toHaveLength(2 + CLICHE_SCENE_FORBID.length);
   });
 
   it("is byte-identical to the old artDirectionFor(tokens) when no direction exists", () => {
@@ -161,7 +191,7 @@ describe("InstagramArtDirectorAgent", () => {
     // output. The ceiling does NOT move with it: the axes are six enums and
     // six short sentences, about 900 characters at their maximum, inside the
     // headroom the ten lines already bought.
-    expect(config.skillRef).toBe("instagram-art-director@2");
+    expect(config.skillRef).toBe("instagram-art-director@3");
     // No Opus in a run or a setup, per the owner's standing rule.
     expect(JSON.stringify(config.modelPolicy)).toContain("claude-sonnet-4-6");
     expect(JSON.stringify(config.modelPolicy)).not.toContain("opus");
@@ -171,5 +201,27 @@ describe("InstagramArtDirectorAgent", () => {
     const source = readFileSync(path.join(HERE, "..", "src", "agent", "instagram-art-director-agent.ts"), "utf8");
 
     expect(source).toContain("contentLanguageSensitive: false");
+  });
+});
+
+
+describe("a stored direction that prescribes the cliché heals itself (2026-09-23)", () => {
+  const NOW = new Date("2026-09-23T22:00:00.000Z");
+  const fresh = "2026-09-18T11:24:45.766Z";
+  const cliche = direction({ generatedAt: fresh, generatedBy: "instagram-art-director@2", subject: ["A founder alone at a cluttered desk, focused on a laptop screen"] });
+  const beliefs = (d: VisualDirection) => ({ [VISUAL_DIRECTION_BELIEF_KEY]: d });
+
+  it("re-derives a pre-v3 direction that prescribes the scene, however fresh", () => {
+    expect(checkVisualDirection(beliefs(cliche), { now: NOW, allowDerive: true }).action).toBe("derive");
+  });
+
+  it("never re-derives a v3 direction for this reason, so it cannot loop", () => {
+    expect(checkVisualDirection(beliefs({ ...cliche, generatedBy: "instagram-art-director@3" }), { now: NOW, allowDerive: true }).action).toBe("reuse");
+  });
+
+  it("reuses a clean pre-v3 direction inside its TTL (the premise), and respects allowDerive", () => {
+    const clean = direction({ generatedAt: fresh, generatedBy: "instagram-art-director@2", subject: ["practitioners at work in a clinic"], lines: [{ line: "Photograph the work where it happens, never posed.", basis: "https://instagram.com/p/abc", confidence: "high" }, ...direction().lines.slice(1)] });
+    expect(checkVisualDirection(beliefs(clean), { now: NOW, allowDerive: true }).action).toBe("reuse");
+    expect(checkVisualDirection(beliefs(cliche), { now: NOW, allowDerive: false }).action).toBe("reuse");
   });
 });
