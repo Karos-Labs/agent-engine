@@ -1243,6 +1243,21 @@ body:not(:has(#takeaway > span:not(:empty))) .cl-panel { background-image: none;
 }
 [data-fit="1"] .rc-plate .item-title,
 [data-fit="2"] .rc-plate .item-title { font-size: var(--t-micro); }
+/* 2026-09-23: a FIGURE plate sets its number as a number, and says under it
+   what the number counts (the stat's own sub-label). */
+.rc-plate.rc-fig .item-title {
+  font-size: var(--t-statement);
+  line-height: 1.05;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.rc-label {
+  font-size: var(--t-micro);
+  line-height: 1.3;
+  color: color-mix(in srgb, var(--fg) 66%, transparent);
+}
+[data-fit="1"] .rc-plate.rc-fig .item-title,
+[data-fit="2"] .rc-plate.rc-fig .item-title { font-size: var(--t-lead); }
 
 .cl-ask {
   display: flex;
