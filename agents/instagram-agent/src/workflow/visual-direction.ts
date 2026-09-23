@@ -601,6 +601,26 @@ function clamp(value: string, max: number): string {
   return tidy.length <= max ? tidy : `${tidy.slice(0, max - 1).trimEnd()}…`;
 }
 
+/**
+ * The scene every AI-written feed shows (2026-09-23, the owner): a person lit
+ * by a laptop or monitor in a dark room, hands on a keyboard, a lone
+ * workstation. A direction line that PRESCRIBES it is dropped from generation;
+ * see `buildArtDirection`. Matched on the objects that make the scene, not on
+ * mood words, so "deep falloff into near-black" survives and "cool screen glow
+ * wrapping a face" does not.
+ */
+export const CLICHE_SCENE_PATTERN =
+  /\b(laptops?|keyboards?|monitors?|workstations?|dashboards?|terminal|desk ?lamps?|screen[- ]?(?:glow|spill|light)|at (?:a|the|his|her|their) desk|(?:dim|dark) room|mid-task at)\b/iu;
+export function prescribesClicheScene(text: string): boolean {
+  return CLICHE_SCENE_PATTERN.test(text);
+}
+/** Added to every direction's negatives for generation. */
+export const CLICHE_SCENE_FORBID: readonly string[] = [
+  "a person at a laptop or desk in a dark room",
+  "hands on a keyboard",
+  "a face lit by a screen",
+];
+
 function nonEmpty(value: string | undefined): string | undefined {
   const tidy = value?.trim();
   return tidy !== undefined && tidy.length > 0 ? tidy : undefined;
@@ -1095,17 +1115,33 @@ export function fallbackVisualDirection(tokens: BrandTokens | undefined, brief?:
  * for any client with either a brand kit or a brief.
  */
 export function buildArtDirection(tokens: BrandTokens | undefined, direction?: VisualDirection): Record<string, unknown> | undefined {
-  const aesthetic = direction?.subject[0] ?? nonEmpty(tokens?.aesthetic);
-  const lighting = direction?.light[0] ?? nonEmpty(tokens?.lighting);
+  // ── THE SLIDE DECIDES WHAT IS IN FRAME; THE BRAND DECIDES THE LOOK. ──
+  //
+  // 2026-09-23: the karoslabs direction's first `subject` line ("a founder
+  // alone at a cluttered desk, focused on a laptop screen") rode into EVERY
+  // generation as the `aesthetic`, next to its lines "one person at work
+  // alone ... at a laptop in a dim room" and a style lock built on screen
+  // glow. Prep `pubsub-21248870282578044` briefed a stopwatch and a desk
+  // calendar; the vet approved them by their briefs, and the frames that
+  // rendered were a man at a laptop in a dark room, the scene the owner
+  // named as the feed's cliché. So the direction's subject no longer reaches
+  // generation at all (the slide's own brief carries the subject), and any
+  // direction line, light line or style lock that prescribes the cliché scene
+  // is dropped before it does.
+  const aesthetic = nonEmpty(tokens?.aesthetic);
+  const lighting = direction?.light.find((l) => !prescribesClicheScene(l)) ?? nonEmpty(tokens?.lighting);
   const palette = (direction?.palette.length ?? 0) > 0 ? direction!.palette : (tokens?.palette ?? []).length > 0 ? [...tokens!.palette!] : undefined;
   const accentColor = nonEmpty(tokens?.accentColor);
   const mood = direction?.treatment[0] ?? nonEmpty(tokens?.visualMood);
   // Every line, joined: the lines ARE the direction, and `notes` is the one
   // field `buildBrief` appends verbatim. Ten lines of at most 200 characters
   // is ~2k characters, which is a rounding error against an image charge.
-  const notes = (direction?.lines.length ?? 0) > 0 ? direction!.lines.map((l) => l.line).join(" ") : undefined;
-  const forbid = (direction?.forbid.length ?? 0) > 0 ? direction!.forbid : undefined;
-  const styleLock = direction?.styleLock.line;
+  const lookLines = (direction?.lines ?? []).filter((l) => !prescribesClicheScene(l.line));
+  const notes = lookLines.length > 0 ? lookLines.map((l) => l.line).join(" ") : undefined;
+  // The cliché scenes join every direction's negatives: the generator's own
+  // default for "a business picture" is exactly them.
+  const forbid = direction !== undefined ? [...direction.forbid, ...CLICHE_SCENE_FORBID.filter((f) => !direction.forbid.includes(f))] : undefined;
+  const styleLock = direction !== undefined && !prescribesClicheScene(direction.styleLock.line) ? direction.styleLock.line : undefined;
 
   const art = {
     ...(aesthetic !== undefined ? { aesthetic } : {}),

@@ -93,6 +93,6 @@ export class InstagramArtDirectorAgent extends BaseAgent<ArtDirectorOutput> {
     // its maximum — which fits here with room to spare.
     maxTokens: 16_384,
     modelPolicy: resolveModelPolicy("instagram-art-director", { policy: "pinned", model: "claude-sonnet-4-6", contentLanguageSensitive: false }),
-    skillRef: "instagram-art-director@2",
+    skillRef: "instagram-art-director@3",
   };
 }

@@ -157,14 +157,14 @@ describe("instagram-art-director@2 — every line names its basis, and the six f
   // with the agent's own `skillRef` (`art-direction.test.ts` pins that the two
   // agree), because a suite pinned to a superseded version is a suite that has
   // stopped watching the prompt the run actually uses.
-  const v1 = read("instagram-art-director", "2.md");
+  const v1 = read("instagram-art-director", "3.md");
 
   it("is byte-identical to its own latest.md", () => {
-    expect(readFileSync(path.join(PROMPTS, "instagram-art-director", "2.md"))).toEqual(readFileSync(path.join(PROMPTS, "instagram-art-director", "latest.md")));
+    expect(readFileSync(path.join(PROMPTS, "instagram-art-director", "3.md"))).toEqual(readFileSync(path.join(PROMPTS, "instagram-art-director", "latest.md")));
   });
 
   it("carries its own version in the H1", () => {
-    expect(v1.split("\n")[0]).toBe("# Instagram Art Direction Guide — v2");
+    expect(v1.split("\n")[0]).toBe("# Instagram Art Direction Guide — v3");
   });
 
   it("names every field of ArtDirectorOutputSchema and nothing code owns", () => {

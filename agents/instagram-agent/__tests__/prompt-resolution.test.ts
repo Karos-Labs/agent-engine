@@ -525,7 +525,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // Phase 5.5 items C/D bump the director to @2: it now also derives the six
     // frozen axes of `ClientVisualSystem` — the per-client half of the visual
     // system, and the reason two clients' posts stop looking like one machine's.
-    expect(registry).toContain(`{ promptId: "instagram-art-director", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" }`);
+    expect(registry).toContain(`{ promptId: "instagram-art-director", agent: "instagram-agent", versions: ["1", "2", "3"], latestVersion: "3" }`);
     expect(registry).toContain(`{ promptId: "instagram-visual-qa", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5"], latestVersion: "5" }`);
     expect(registry).toContain(`{ promptId: "instagram-design-brief", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
     expect(registry).toContain(`{ promptId: "instagram-template-designer", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
@@ -550,7 +550,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     const entities = new InstagramEntityAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((entities as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-entities@1");
     const director = new InstagramArtDirectorAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((director as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-art-director@2");
+    expect((director as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-art-director@3");
     const concept = new InstagramConceptAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((concept as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-concept@1");
   });
@@ -566,7 +566,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
       ["instagram-post-package", "2", "# Instagram Post Package Guide, v2"],
       ["instagram-image-vet", "9", "# Instagram Image Vetting Craft Guide — v9"],
       ["instagram-entities", "1", "# Instagram Entity Extraction — v1"],
-      ["instagram-art-director", "2", "# Instagram Art Direction Guide — v2"],
+      ["instagram-art-director", "3", "# Instagram Art Direction Guide — v3"],
       ["instagram-concept", "1", "# Instagram Concept Direction Guide — v1"],
     ] as const) {
       const pinned = await promptStore.getPrompt(promptId, version);
