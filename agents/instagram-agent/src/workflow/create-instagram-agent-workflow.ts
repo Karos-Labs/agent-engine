@@ -379,6 +379,7 @@ import {
   licenceAdmissible,
   licenceClassFor,
   needsLikenessConsent,
+  markEntityForLabel,
   planEntitySourcing,
   sceneDeclaresIllustration,
   screenLegibleText,
@@ -9296,6 +9297,82 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       }
       if (rehydrated.length > 0 || gone.length > 0) unfillable = selections.filter(isUnfillable);
 
+      // ── 06e3: each comparison column under its own mark (2026-09-23) ──
+      //
+      // The Karos Labs reference sets Pepsi and Coca-Cola each in a white disc
+      // above its column. A column whose label names a recognised company,
+      // product or work gets that entity's mark from Wikimedia/Openverse (the
+      // same `"<name> logo"` query the entity route's logo rung uses), and
+      // only a blanket-licensed one: a lettering-only wordmark is typically
+      // `PD-textlogo`, and showing a mark as the subject of commentary is
+      // nominative use (the rights policy in `entity-imagery.ts`). Staged to
+      // the media bucket in the same step, because `.media-cache` is RAM and a
+      // resume on a fresh instance would otherwise point at nothing.
+      const comparisonLogos = await wf.step.code(rev(`06e3-source-comparison-logos-attempt-${attempt}`), async () => {
+        const out: Array<{ n: number; side: "left" | "right"; path: string; uri?: string }> = [];
+        const find = tools["media.findImages"];
+        const stage = tools["media.stageAsset"];
+        if (find === undefined || attemptEntities.length === 0) return out;
+        for (const slide of copy.slides) {
+          if (slide.layout !== "comparison_card" || slide.comparison === undefined) continue;
+          for (const side of ["left", "right"] as const) {
+            const entity = markEntityForLabel(side === "left" ? slide.comparison.leftLabel : slide.comparison.rightLabel, attemptEntities);
+            if (entity === undefined) continue;
+            try {
+              const outcome = await find.execute(
+                { repoRoot: options.repoRoot, runId: wf.runId, maxPerNeed: 3, needs: [{ n: slide.n, query: `${entity.name} logo`, route: "entity", requireTerm: entity.name, allowUnknownLicence: false }] },
+                { ctx },
+              );
+              if (outcome.status !== "success") continue;
+              // Public domain or CC0 only. Wikimedia and Openverse report every
+              // file as `attributable`, so the licence LINE decides: a wordmark
+              // is usually `PD-textlogo`, and a mark under CC BY would need a
+              // credit this slide has no room to carry, so it is skipped.
+              const freeOfCredit = (c: { licenseConfidence?: string; description: string }): boolean =>
+                c.licenseConfidence === "blanket" || /\[licence:\s*(?:public domain|pd|cc0)/iu.test(c.description);
+              const mark = (outcome.result as { candidates: Array<{ path: string; description: string; licenseConfidence?: string }> }).candidates.find(freeOfCredit);
+              if (mark === undefined) continue;
+              let uri: string | undefined;
+              if (stage !== undefined) {
+                const staged = await stage.execute({ repoRoot: options.repoRoot, runId: wf.runId, path: mark.path }, { ctx });
+                if (staged.status === "success") uri = (staged.result as { gcsUri: string }).gcsUri;
+              }
+              out.push({ n: slide.n, side, path: mark.path, ...(uri !== undefined ? { uri } : {}) });
+            } catch (error) {
+              // A mark is furniture: a failed search leaves the column without
+              // a badge, never the post without its slide.
+              console.error(`06e3-source-comparison-logos: "${entity.name}" failed`, error);
+            }
+          }
+        }
+        return out;
+      });
+      // Inline, not a step, for the reason 06f above is: it observes the CURRENT
+      // disk. A mark missing after a resume is re-fetched from the bucket, and
+      // one that cannot be is dropped, so the render never opens a dead path.
+      const sideLogos = new Map<number, { left?: string; right?: string }>();
+      for (const logo of comparisonLogos) {
+        let usable: string | undefined = logo.path;
+        try {
+          await fs.access(path.resolve(options.repoRoot, logo.path));
+        } catch {
+          usable = undefined;
+          const ingest = tools["media.ingestAssets"];
+          if (logo.uri !== undefined && ingest !== undefined) {
+            try {
+              const back = await ingest.execute({ repoRoot: options.repoRoot, runId: wf.runId, assets: [{ uri: logo.uri, slot: logo.n }] }, { ctx });
+              if (back.status === "success") usable = (back.result as { candidates: ImageCandidate[] }).candidates[0]?.path;
+            } catch {
+              /* a mark is furniture */
+            }
+          }
+        }
+        if (usable !== undefined) sideLogos.set(logo.n, { ...sideLogos.get(logo.n), [logo.side]: usable });
+      }
+      // Both columns or neither: one badge over one column throws the two
+      // columns out of line, and a comparison reads as two EQUAL things.
+      for (const [n, pair] of [...sideLogos]) if (pair.left === undefined || pair.right === undefined) sideLogos.delete(n);
+
       // ── THE SAME PICTURE MAY NOT APPEAR TWICE IN ONE POST. ──
       //
       // Every slide is vetted INDEPENDENTLY against one shared pool, so the
@@ -11084,6 +11161,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // 2026-09-23 (stage 5): a photo-led client's carousel runs one
           // photograph across the edge between two slides, as the Deel recaps do.
           carryStrip: runClaim.pictureDensity === "photo-first",
+          // 2026-09-23: each comparison column under its own mark (06e3).
+          sideLogos,
           // IGSTYLE-7, §7a — wires `paletteForSlide`'s already-built, already-
           // seeded rotation into the render path for the first time. Seeded
           // from `wf.runId` per the ticket; a ring of length ≤ 1 (or absent)

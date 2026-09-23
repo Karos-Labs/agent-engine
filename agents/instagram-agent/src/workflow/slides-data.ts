@@ -2544,6 +2544,12 @@ export function assembleSlidesData(params: {
    * Absent, every band keeps its rotation placement.
    */
   carryStrip?: boolean | undefined;
+  /**
+   * 2026-09-23: each comparison slide's two marks, by slide number, as
+   * repo-relative paths the workflow has verified on disk. A column without
+   * one simply has no badge.
+   */
+  sideLogos?: ReadonlyMap<number, { left?: string; right?: string }> | undefined;
   /** Reviewer typography per slide number (Phase 2 in-place edits). Absent slides keep the defaults. */
   slideStyleOverrides?: ReadonlyMap<number, SlideStyleOverride>;
   /**
@@ -2915,7 +2921,11 @@ export function assembleSlidesData(params: {
         ...(photoCredit !== undefined ? { photoCredit } : {}),
         ...(itemOrdinal !== undefined && itemOrdinal !== "00" ? { itemOrdinal } : {}),
       },
-      images: imagePath ? { hero: imagePath } : {},
+      images: {
+        ...(imagePath ? { hero: imagePath } : {}),
+        ...(layout === "comparison_card" && params.sideLogos?.get(slide.n)?.left !== undefined ? { logoLeft: params.sideLogos.get(slide.n)!.left! } : {}),
+        ...(layout === "comparison_card" && params.sideLogos?.get(slide.n)?.right !== undefined ? { logoRight: params.sideLogos.get(slide.n)!.right! } : {}),
+      },
       htmlFragments,
     };
   });

@@ -1141,6 +1141,22 @@ body:not(:has(#head:not(:empty))) .cmp-cols { background-image: none; }
   flex-direction: column;
   gap: var(--sp);
 }
+/* EACH SIDE UNDER ITS OWN MARK (2026-09-23). The Karos Labs reference sets
+   Pepsi and Coca-Cola each in a white disc above its column: a reader knows
+   which side is which before reading a word. A column the workflow found no
+   mark for has no badge at all, never an empty disc. */
+.cmp-logo {
+  inline-size: 112px;
+  block-size: 112px;
+  border-radius: 50%;
+  background: #ffffff;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  flex: none;
+}
+.cmp-logo img { max-inline-size: 100%; max-block-size: 100%; object-fit: contain; display: block; }
+.cmp-logo:not(:has(img[src]:not([src=""]))) { display: none; }
 </style>
 </head>
 <body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-hero-scrim="{{heroScrimStrength}}" data-ground="{{groundStyle}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}" data-anchor="{{compositionAnchor}}" data-figure="{{figurePlacement}}">
@@ -1159,10 +1175,12 @@ body:not(:has(#head:not(:empty))) .cmp-cols { background-image: none; }
     </div>
     <div class="cmp-cols">
       <div class="cmp-col">
+        <div class="cmp-logo"><img src="{{image:logoLeft}}" onerror="this.remove()" alt="" /></div>
         <div class="cmp-label note">{{leftLabel}}</div>
         <div class="cmp-body body-text r-label" data-fitted="secondary">{{leftBody}}</div>
       </div>
       <div class="cmp-col">
+        <div class="cmp-logo"><img src="{{image:logoRight}}" onerror="this.remove()" alt="" /></div>
         <div class="cmp-label note">{{rightLabel}}</div>
         <div class="cmp-body body-text r-label" data-fitted="secondary">{{rightBody}}</div>
       </div>
