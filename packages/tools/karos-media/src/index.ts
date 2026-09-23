@@ -53,6 +53,7 @@ export * from "./inspect-images.js";
 export * from "./harvest-article-images.js";
 export * from "./screenshot-page.js";
 export * from "./cutout.js";
+export * from "./reference-fidelity.js";
 export * from "./stage-asset.js";
 export * from "./media-library.js";
 export * from "./resilient-genai-client.js";
