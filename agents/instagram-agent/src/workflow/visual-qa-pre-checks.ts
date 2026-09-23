@@ -469,6 +469,8 @@ export const LAYOUT_FIELD_KEYS: ReadonlySet<string> = new Set([
   // 2026-09-23: whether the closer's call to action is set as a button.
   // Layout metadata: code decides it from the words, nobody writes it.
   "ctaForm",
+  // 2026-09-23: whether the slide's ground is light or dark, for the marks.
+  "groundTone",
   // 2026-09-23: a list item's number, code-derived from its position.
   "itemOrdinal",
 ]);

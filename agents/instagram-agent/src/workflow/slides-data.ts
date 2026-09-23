@@ -14,6 +14,7 @@ import {
   resolveSlideMarks,
   ringIndexesFor,
   slideMarkKinds,
+  groundIsLighterThanInk,
   slideMarkSeed,
   type EmphasisIssue,
   type MarkDrop,
@@ -2797,6 +2798,10 @@ export function assembleSlidesData(params: {
     const { used: inverted } = decideGroundFgInversion(params.paletteSeed, carouselAccents, params.groundFgInversion);
     const effectiveGround = inverted ? params.foregroundHex : params.groundHex;
     const effectiveFg = inverted ? params.groundHex : params.foregroundHex;
+    // 2026-09-23: which way the slide's ground runs, for the plate's
+    // `data-tone`. A dark slide draws a highlighter as a full slab with the run
+    // in the ground colour (emphasis-marks.ts). Absent when the pair is unknown.
+    const groundTone = effectiveGround !== undefined && effectiveFg !== undefined ? (groundIsLighterThanInk(effectiveGround, effectiveFg) ? "light" : "dark") : undefined;
     // RFC-20 — `refuseBlock` is resolved HERE, where `layout` already is, and
     // travels on the plan. It narrows `ringIndexesFor` as well as the kind
     // sets: on a paper kit a highlighter yellow's only capability is `block`,
@@ -2934,6 +2939,7 @@ export function assembleSlidesData(params: {
         ...imageTreatmentFields({ treatment: params.imageTreatment ?? "none" }),
         figurePlacement: figurePlacementFor(layout, slide.n, imagePath !== undefined),
         ...(photoCredit !== undefined ? { photoCredit } : {}),
+        ...(groundTone !== undefined ? { groundTone } : {}),
         ...(itemOrdinal !== undefined && itemOrdinal !== "00" ? { itemOrdinal } : {}),
       },
       images: {

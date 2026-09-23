@@ -177,7 +177,7 @@ function effectiveInkOnMark(fgHex: string, markHex: string): string {
  * shows the correct answer is a gradient IN the glyphs, and `block` is
  * refused by computation rather than by taste.
  */
-function groundIsLighterThanInk(groundHex: string, fgHex: string): boolean {
+export function groundIsLighterThanInk(groundHex: string, fgHex: string): boolean {
   // `contrastRatio(x, "#FFFFFF")` is monotonically DECREASING in x's
   // luminance, so the lighter colour is the one with the smaller ratio.
   return contrastRatio(groundHex, "#FFFFFF") < contrastRatio(fgHex, "#FFFFFF");
@@ -281,7 +281,14 @@ function capabilitiesWithMisses(
   if (options?.refuseBlock === true) {
     misses.push({ kinds: "block", why: "this archetype refuses block outright — an italic run's background box is a parallelogram the CSS cannot follow" });
   } else if (!groundIsLighterThanInk(groundHex, fgHex)) {
-    misses.push({ kinds: "block", why: `the ground ${groundHex} is not lighter than the ink ${fgHex}, so a swatch behind the glyphs cannot read as a highlighter` });
+    // A DARK GROUND FLIPS THE RUN'S INK (2026-09-23). The Karos Labs feed's
+    // signature is exactly this case: a #1a1a1a ground, an orange block over
+    // the phrase that carries the surprise, and the phrase itself in the
+    // GROUND colour on the block. `body[data-tone="dark"] .mk-k-block` sets
+    // the run's colour to `--bg`, so what must read is the ground on the mark.
+    const groundOnMark = contrastRatio(groundHex, hex);
+    if (groundOnMark >= MARK_TEXT_CONTRAST_FLOOR) kinds.push("block");
+    else misses.push({ kinds: "block", why: `on the dark ground ${groundHex} the run's ink flips to the ground, which reads at only ${groundOnMark.toFixed(2)}:1 on ${hex}, below the ${MARK_TEXT_CONTRAST_FLOOR}:1 text floor` });
   } else if (onMark < MARK_TEXT_CONTRAST_FLOOR) {
     misses.push({
       kinds: "block",
@@ -1531,6 +1538,14 @@ ${colourClasses}
   background-image: linear-gradient(var(--mk-c), var(--mk-c));
   background-size: 100% var(--mk-block-h);
   background-position-y: var(--mk-block-y);
+}
+/* On a DARK ground the block is the whole run and the run's ink is the
+   ground: the Karos Labs feed's orange slab with the phrase in black. The
+   admission check measures exactly this pair (the ground on the mark). */
+body[data-tone="dark"] .mk-k-block {
+  color: var(--bg);
+  background-size: 100% 92%;
+  background-position-y: 55%;
 }
 /* underline — one pencil rule. */
 .mk-k-underline {

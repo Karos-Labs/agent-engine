@@ -89,6 +89,7 @@ export const KNOWN_SLOT_NAMES: ReadonlySet<string> = new Set([
   "photoCredit",
   // 2026-09-23: the closer's call-to-action form, code-derived by `ctaFormFor`.
   "ctaForm",
+  "groundTone",
   // 2026-09-23: a list item's number, code-derived from its position.
   "itemOrdinal",
   // The two fields every slide always has.
