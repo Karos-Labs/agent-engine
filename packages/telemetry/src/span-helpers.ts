@@ -43,6 +43,16 @@ export interface CostAndTokenAttributes {
   costUsd: number;
   inputTokensCached: number;
   inputTokensUncached: number;
+  /**
+   * Tokens spent WRITING the cache, billed at 1.25x the base rate and already
+   * folded into `inputTokensUncached` for costing.
+   *
+   * Reported separately because the three numbers answer different questions:
+   * `cached` is what the cache saved, `cacheWrite` is what it cost to fill,
+   * and only both together say whether caching is paying for itself on a given
+   * agent. Absent when the turn wrote no cache.
+   */
+  inputTokensCacheWrite?: number;
   outputTokens: number;
   durationMs: number;
   status: string;
@@ -117,6 +127,9 @@ export function recordCostAndTokens(span: Span, attrs: CostAndTokenAttributes): 
   span.setAttribute("cost_usd", attrs.costUsd);
   span.setAttribute("input_tokens_cached", attrs.inputTokensCached);
   span.setAttribute("input_tokens_uncached", attrs.inputTokensUncached);
+  if (attrs.inputTokensCacheWrite !== undefined) {
+    span.setAttribute("input_tokens_cache_write", attrs.inputTokensCacheWrite);
+  }
   span.setAttribute("output_tokens", attrs.outputTokens);
   // Traces get the same discriminator BigQuery does — a trace showing an
   // expensive step is not interpretable without knowing who served it.
@@ -144,7 +157,20 @@ async function insertAgentRunRow(attrs: CostAndTokenAttributes): Promise<void> {
           clientId: attrs.clientId,
           agentId: attrs.agentId,
           model: attrs.model,
+          // THE SUM STAYS, and the split joins it. `inputTokens` is what every
+          // existing query reads, so it keeps meaning the same thing; the three
+          // columns beside it have existed in the table since the schema was
+          // written and nothing has ever filled them.
+          //
+          // That is why "is prompt caching paying for itself" could not be
+          // asked of this table at all: the one call that answers it sums the
+          // two halves and discards which was which. `cached` is what the cache
+          // saved, `cacheWrite` is what filling it cost at 1.25x, and only both
+          // together answer the question.
           inputTokens: attrs.inputTokensCached + attrs.inputTokensUncached,
+          inputTokensCached: attrs.inputTokensCached,
+          inputTokensUncached: attrs.inputTokensUncached,
+          inputTokensCacheWrite: attrs.inputTokensCacheWrite ?? null,
           outputTokens: attrs.outputTokens,
           costUsd: attrs.costUsd,
           durationMs: attrs.durationMs,

@@ -56,6 +56,13 @@ async function legacyEncodedRow(): Promise<AgentRunsBiRow> {
     agentId: score.agentId,
     model: score.judge.modelUsed,
     inputTokens: score.judge.inputTokens.cached + score.judge.inputTokens.uncached,
+    // Present and null, the same way `evalScore` is above: the migration
+    // re-inserts this row, and the fake requires every column the engine
+    // writes. A genuinely old row in BigQuery has these as NULL too — a column
+    // added later reads null on every row that predates it, never absent.
+    inputTokensCached: null,
+    inputTokensUncached: null,
+    inputTokensCacheWrite: null,
     outputTokens: score.judge.outputTokens,
     costUsd: score.judge.costUsd,
     durationMs: score.judge.durationMs,
