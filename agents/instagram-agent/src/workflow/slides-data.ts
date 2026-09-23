@@ -218,8 +218,14 @@ const DEVICE_SLOT_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<Instagram
  * just a repeated slide.
  */
 export const MIN_RECAP_PLATES = 2;
-/** The most plates the strip holds — four 240px plates across a 952px content column, which is where they stop being readable. */
-export const MAX_RECAP_PLATES = 4;
+/**
+ * The most plates the strip holds. THREE, the number of columns `closer.html`'s
+ * strip actually has (2026-09-23). It said four, and the fourth plate always
+ * wrapped alone onto a second row (the Deel closer of prep
+ * `pubsub-21763480460410206`); four in one row is too narrow for a long word
+ * under the humanist-serif register (`visual-system-axes-render.test.ts`).
+ */
+export const MAX_RECAP_PLATES = 3;
 /** Where a recap plate's title is cut. Longer than this and the plate stops being a glance. */
 export const MAX_RECAP_PLATE_CHARS = 40;
 /**
