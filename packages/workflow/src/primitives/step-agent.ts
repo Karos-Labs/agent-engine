@@ -342,6 +342,11 @@ export async function runStepAgent<TOutput>(
       // (RFC-01 §5.1) — recover the split from the per-turn telemetry for the span.
       const inputTokensCached = result.steps.reduce((sum, step) => sum + step.inputTokens.cached, 0);
       const inputTokensUncached = result.steps.reduce((sum, step) => sum + step.inputTokens.uncached, 0);
+      // Already inside `uncached` for costing — the adapter folds it there at
+      // the base rate and `computeStepCostUsd` adds the 1.25x premium — and
+      // reported separately so the BI table can say what filling the cache
+      // cost against what reading it saved.
+      const inputTokensCacheWrite = result.steps.reduce((sum, step) => sum + (step.inputTokens.cacheWrite ?? 0), 0);
       // SCRUM-361 item 3, precondition 1. `servedBy` is per-TURN
       // (AgentStepTelemetry.servedBy, AU61/SCRUM-360) and is present only when
       // a turn was NOT primary-served. A step is attributed to the fallback if
@@ -364,6 +369,7 @@ export async function runStepAgent<TOutput>(
         costUsd,
         inputTokensCached,
         inputTokensUncached,
+        ...(inputTokensCacheWrite > 0 ? { inputTokensCacheWrite } : {}),
         outputTokens: result.totalTokens.output,
         durationMs: completedAt - startedAt,
         status: result.status,
