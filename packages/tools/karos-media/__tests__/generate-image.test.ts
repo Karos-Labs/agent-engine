@@ -33,7 +33,7 @@ afterEach(async () => {
 });
 
 function fakeClient(
-  handler: (req: { model: string; contents: string; config?: Record<string, unknown> }) => unknown,
+  handler: (req: Parameters<ImageGenerationClient["models"]["generateContent"]>[0]) => unknown,
 ): ImageGenerationClient {
   return { models: { generateContent: async (req) => handler(req) as never } };
 }
@@ -89,7 +89,7 @@ describe("image.generate", () => {
   it("carries the slide's brief into the prompt, forbids baked-in text, and sets the aspect ratio", async () => {
     let seen: { model: string; contents: string; config?: Record<string, unknown> } | undefined;
     const client = fakeClient((req) => {
-      seen = req;
+      seen = req as typeof seen & object;
       return imageResponse();
     });
 
@@ -110,7 +110,7 @@ describe("image.generate", () => {
   it("builds a rich brief from the client's art direction rather than a flat query", async () => {
     let seen: { contents: string } | undefined;
     const client = fakeClient((req) => {
-      seen = req;
+      seen = req as typeof seen & object;
       return imageResponse();
     });
 
@@ -150,7 +150,7 @@ describe("image.generate", () => {
   it("falls back to the neutral brief when the client declared no direction", async () => {
     let seen: { contents: string } | undefined;
     const client = fakeClient((req) => {
-      seen = req;
+      seen = req as typeof seen & object;
       return imageResponse();
     });
 
@@ -165,7 +165,7 @@ describe("image.generate", () => {
   it("omits an art field the client left unset instead of writing an empty line", async () => {
     let seen: { contents: string } | undefined;
     const client = fakeClient((req) => {
-      seen = req;
+      seen = req as typeof seen & object;
       return imageResponse();
     });
 
@@ -182,7 +182,7 @@ describe("image.generate", () => {
   it("honours IMAGE_GEN_MODEL when set", async () => {
     let seen: { model: string } | undefined;
     const client = fakeClient((req) => {
-      seen = req;
+      seen = req as typeof seen & object;
       return imageResponse();
     });
 
@@ -196,7 +196,7 @@ describe("image.generate", () => {
 
   it("fills the needs it can when one of them fails, rather than abandoning all of them", async () => {
     const client = fakeClient((req) => {
-      if (req.contents.includes("bad")) throw new Error("quota exhausted");
+      if (String(req.contents).includes("bad")) throw new Error("quota exhausted");
       return imageResponse();
     });
 
@@ -326,13 +326,13 @@ describe("image.generate", () => {
     // The tool-version gate on main diffs this against the merge base; a
     // prompt change that keeps its version is exactly what that gate exists
     // to catch (PR #95 is the precedent).
-    expect(tool(null).version).toBe("2.2.0");
+    expect(tool(null).version).toBe("2.3.0");
   });
 
   it("emits the style lock and the 'Do not include:' block in the documented order: direction, lock, negatives, constraints", async () => {
     let seen: { contents: string } | undefined;
     const client = fakeClient((req) => {
-      seen = req;
+      seen = req as typeof seen & object;
       return imageResponse();
     });
 
@@ -370,7 +370,7 @@ describe("image.generate", () => {
     // is the claim.
     let seen: { contents: string } | undefined;
     const client = fakeClient((req) => {
-      seen = req;
+      seen = req as typeof seen & object;
       return imageResponse();
     });
 
@@ -390,7 +390,7 @@ describe("image.generate", () => {
   it("drops the neutral style line when the only thing supplied is a style lock, rather than stating two styles", async () => {
     let seen: { contents: string } | undefined;
     const client = fakeClient((req) => {
-      seen = req;
+      seen = req as typeof seen & object;
       return imageResponse();
     });
 

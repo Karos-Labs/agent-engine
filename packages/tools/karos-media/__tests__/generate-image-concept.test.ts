@@ -56,7 +56,7 @@ function recordingTool() {
   const client: ImageGenerationClient = {
     models: {
       async generateContent(req) {
-        briefs.push(req.contents);
+        briefs.push(String(req.contents));
         return imageResponse() as never;
       },
     },
@@ -112,7 +112,7 @@ const DESCRIPTION_1_1_0_TAIL = "no third-party copyright, no watermark, no ident
 
 describe("image.generate 2.2.0 — the permit is absent for the whole fleet", () => {
   it("declares 2.2.0: the brief changes shape when a permit names something, and the model is now laddered", () => {
-    expect(schemaOnly().version).toBe("2.2.0");
+    expect(schemaOnly().version).toBe("2.3.0");
   });
 
   it("buildBrief is BYTE-IDENTICAL to 1.1.0 when no permit names anything", async () => {
