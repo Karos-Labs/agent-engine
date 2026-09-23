@@ -65,6 +65,9 @@ import { ArtDirectorOutputSchema, type ArtDirectorOutput } from "../workflow/vis
  * is weaker but never absent and the neutral one-liner still never ships.
  * Setup never blocks a run.
  */
+/** What a derived direction's `generatedBy` records: the prompt version that wrote it. Kept equal to this agent's `skillRef` by `art-direction.test.ts`. */
+export const ART_DIRECTOR_SKILL_REF = "instagram-art-director@3";
+
 export class InstagramArtDirectorAgent extends BaseAgent<ArtDirectorOutput> {
   protected readonly config: AgentStepConfig<ArtDirectorOutput> = {
     id: "instagram-art-director",

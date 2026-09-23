@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { InstagramArtDirectorAgent } from "../src/agent/instagram-art-director-agent.js";
+import { ART_DIRECTOR_SKILL_REF, InstagramArtDirectorAgent } from "../src/agent/instagram-art-director-agent.js";
 import type { BrandTokens } from "../src/workflow/types.js";
 import { buildArtDirection, checkVisualDirection, CLICHE_SCENE_FORBID, prescribesClicheScene, VISUAL_DIRECTION_BELIEF_KEY, type VisualDirection } from "../src/workflow/visual-direction.js";
 
@@ -223,5 +223,23 @@ describe("a stored direction that prescribes the cliché heals itself (2026-09-2
     const clean = direction({ generatedAt: fresh, generatedBy: "instagram-art-director@2", subject: ["practitioners at work in a clinic"], lines: [{ line: "Photograph the work where it happens, never posed.", basis: "https://instagram.com/p/abc", confidence: "high" }, ...direction().lines.slice(1)] });
     expect(checkVisualDirection(beliefs(clean), { now: NOW, allowDerive: true }).action).toBe("reuse");
     expect(checkVisualDirection(beliefs(cliche), { now: NOW, allowDerive: false }).action).toBe("reuse");
+  });
+});
+
+describe("the cliché scrubber reads negation, and a direction records who wrote it (2026-09-23)", () => {
+  it("keeps lines that BAN the scene, and still drops the ones that ask for it", () => {
+    // The first v3 direction for karoslabs, verbatim where it matters.
+    expect(prescribesClicheScene("One warm directional source off-axis; no fill, no ring, no screen glow.")).toBe(false);
+    expect(prescribesClicheScene("Close detail of hands mid-gesture, turning a page, pausing, never touching a keyboard")).toBe(false);
+    expect(prescribesClicheScene("Available light only, no studio flash, no ring light, no illuminated screen as a source")).toBe(false);
+    expect(prescribesClicheScene("Show one person at work alone, a founder mid-task at a laptop in a dim room.")).toBe(true);
+    expect(prescribesClicheScene("Cool blue-grey screen glow from front-left as the primary source")).toBe(true);
+  });
+
+  it("records the art director version that wrote a direction, the same one its agent pins", () => {
+    const agent = new InstagramArtDirectorAgent({ router: {} as never, tools: {}, promptStore: {} as never });
+    expect((agent as unknown as { config: { skillRef: string } }).config.skillRef).toBe(ART_DIRECTOR_SKILL_REF);
+    expect(readFileSync(WORKFLOW_SOURCE, "utf8")).toContain("generatedBy: ART_DIRECTOR_SKILL_REF");
+    expect(readFileSync(WORKFLOW_SOURCE, "utf8")).not.toContain('generatedBy: "instagram-art-director@1"');
   });
 });
