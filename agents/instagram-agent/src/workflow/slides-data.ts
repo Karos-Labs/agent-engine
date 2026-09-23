@@ -1005,6 +1005,26 @@ export function buildListRows(items: readonly { title: string; note?: string | u
 const FIGURE_ROTATION = ["tall", "foot", "bleed", "band"] as const;
 export type FigurePlacement = (typeof FIGURE_ROTATION)[number] | "side" | "side-end";
 
+/**
+ * Whether a closer's call to action is short enough to be set as a BUTTON
+ * (2026-09-23). The Deel reference closes on a pill reading "Join the 2027
+ * waitlist": an action, a few words, nothing after it. A closing sentence is
+ * not a button, and setting one in a pill is the kind of furniture the owner
+ * rejects, so the form is decided here on the words and a long line keeps the
+ * text treatment every closer had before.
+ */
+export const CTA_PILL_MAX_WORDS = 6;
+export const CTA_PILL_MAX_CHARS = 40;
+
+export function ctaFormFor(text: string): "pill" | "line" {
+  const trimmed = text.trim();
+  const words = trimmed.split(/\s+/u).filter((w) => w.length > 0).length;
+  // One clause only: a full stop, colon or dash inside the line means it is
+  // a sentence with a second thought, not a label on a button.
+  const oneClause = !/[.:;!\u2014\u2013](?=.)/u.test(trimmed.replace(/[.!]$/u, ""));
+  return trimmed.length > 0 && words <= CTA_PILL_MAX_WORDS && trimmed.length <= CTA_PILL_MAX_CHARS && oneClause ? "pill" : "line";
+}
+
 export function figurePlacementFor(layout: InstagramSlideLayout, n: number, hasPicture: boolean): FigurePlacement {
   if (!hasPicture) return "band";
   if (FULL_BLEED_IMAGE_LAYOUTS.has(layout)) return "band";
@@ -1997,7 +2017,7 @@ function contentFor(
           // The question/CTA branch reads the RAW body — the isolate characters
           // are `\p{Cf}` and would not defeat this test, but a routing decision
           // made on composed bytes is a decision made on the wrong value.
-          ...(closes && /[?؟]/u.test(slide.body) ? { question: iso(slide.body) } : { cta: iso(slide.body) }),
+          ...(closes && /[?؟]/u.test(slide.body) ? { question: iso(slide.body) } : { cta: iso(slide.body), ctaForm: ctaFormFor(slide.body) }),
           ...(built !== undefined && fragment === built.device ? { deviceFigures: built.deviceFigures, deviceKind: built.deviceKind } : {}),
         },
         htmlFragments: {

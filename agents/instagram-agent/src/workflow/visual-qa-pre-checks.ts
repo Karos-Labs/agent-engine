@@ -466,6 +466,9 @@ export const LAYOUT_FIELD_KEYS: ReadonlySet<string> = new Set([
   // reader can see but not a content element: counted, it would hand every
   // credited photo slide a free element on the two-elements rule.
   "photoCredit",
+  // 2026-09-23: whether the closer's call to action is set as a button.
+  // Layout metadata: code decides it from the words, nobody writes it.
+  "ctaForm",
 ]);
 
 /**
