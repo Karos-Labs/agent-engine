@@ -222,6 +222,15 @@ export const MIN_RECAP_PLATES = 2;
 export const MAX_RECAP_PLATES = 4;
 /** Where a recap plate's title is cut. Longer than this and the plate stops being a glance. */
 export const MAX_RECAP_PLATE_CHARS = 40;
+/**
+ * 2026-09-23: a headline's FIRST SENTENCE is kept whole up to this length, so
+ * "Your AI agents keep failing. The prompt is not the problem." recaps as
+ * "Your AI agents keep failing." rather than "Your AI agents keep failing. The
+ * prompt…" (the karoslabs closer of prep `pubsub-21703550620756189`).
+ */
+export const MAX_RECAP_SENTENCE_CHARS = 48;
+/** 2026-09-23: where a figure plate's label (the stat's own sub-label) is cut. */
+export const MAX_RECAP_LABEL_CHARS = 44;
 
 /**
  * The ground treatment a token-driven archetype paints behind its copy
@@ -1065,9 +1074,30 @@ function recapTextFor(slide: InstagramSlideCopy): string {
   if (figure !== undefined) return figure;
   const headline = slide.headline.trim();
   if (headline.length <= MAX_RECAP_PLATE_CHARS) return headline;
-  const cut = headline.slice(0, MAX_RECAP_PLATE_CHARS);
-  const lastSpace = cut.lastIndexOf(" ");
-  return `${(lastSpace > MAX_RECAP_PLATE_CHARS / 2 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+  // A whole first sentence reads as a thought; a cut one reads as a bug.
+  const sentence = /^(.+?[.!?])\s/u.exec(headline)?.[1];
+  if (sentence !== undefined && sentence.length <= MAX_RECAP_SENTENCE_CHARS) return sentence;
+  return cutAtWord(headline, MAX_RECAP_PLATE_CHARS);
+}
+
+function cutAtWord(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  // A cut that lands exactly on a word boundary keeps its last word.
+  const lastSpace = text[max] === " " ? max : cut.lastIndexOf(" ");
+  return `${(lastSpace > max / 2 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+}
+
+/**
+ * 2026-09-23: what a figure plate's number COUNTS. The Deel closer of prep
+ * `pubsub-21701595488488186` recapped as `84 / 1M+ / 20%`, three numbers a
+ * reader had to scroll back to decode. The stat's own sub-label ("startups
+ * reached the Grand Finale") says it, verbatim, so the plate carries it.
+ */
+function recapLabelFor(slide: InstagramSlideCopy): string | undefined {
+  if (figureOn(slide) === undefined) return undefined;
+  const label = slide.stat?.subLabel?.trim();
+  return label !== undefined && label.length > 0 ? cutAtWord(label, MAX_RECAP_LABEL_CHARS) : undefined;
 }
 
 /**
@@ -1134,13 +1164,16 @@ export function buildRecapFragment(earlier: readonly InstagramSlideCopy[]): stri
   const sources = recapSourceSlides(earlier);
   if (sources.length < MIN_RECAP_PLATES) return "";
   const plates = sources
-    .map(
-      (slide, index) =>
-        `<div class="rc-plate">` +
+    .map((slide, index) => {
+      const label = recapLabelFor(slide);
+      return (
+        `<div class="rc-plate${figureOn(slide) !== undefined ? " rc-fig" : ""}">` +
         `<div class="rc-n">${esc(String(index + 1).padStart(2, "0"))}</div>` +
         `<div class="item-title">${esc(recapTextFor(slide))}</div>` +
-        `</div>`,
-    )
+        (label !== undefined ? `<div class="rc-label">${esc(label)}</div>` : "") +
+        `</div>`
+      );
+    })
     .join("");
   return `<div class="rc-strip">${plates}</div>`;
 }
