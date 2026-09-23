@@ -392,7 +392,7 @@ import {
 import { gradePictureSet, heroScrimCssBlock, imageTreatmentCssBlock, resolveGenerationStyle, type GenerationStyle } from "./style-lock.js";
 import { literalIllustrationOf, planImageBackfill, registerFor, resolveRescuedSelection } from "./image-density.js";
 import { describeRepairs, repairMechanicalTells } from "./mechanical-repair.js";
-import { entitiesInCards, entitiesInDraft, entityPictureBrief } from "./draft-entities.js";
+import { anchorEntityPictures, entitiesInCards, entitiesInDraft, entityPictureBrief } from "./draft-entities.js";
 import { addressableFields, applyCopyEdits, describeRevision, type CopyRevision } from "./copy-revision.js";
 
 /** One slide the picture floor wants filled, and whether it is a slide that ASKED and failed or one that never asked. */
@@ -7680,6 +7680,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             } as typeof slide;
           }),
         };
+      }
+      // 2026-09-23: and when the writer pictured none of the names it cited,
+      // a panel slide that names one gets a band picture of it. See
+      // `anchorEntityPictures` for the carousel that shipped with no picture.
+      if (draftEntities.length > 0) {
+        const anchoredPictures = anchorEntityPictures(copy, draftEntities, { taken: entityTakenBySlide, layoutOf: (s) => resolveLayout(s, availableTemplates).layout });
+        copy = anchoredPictures.copy;
+        if (anchoredPictures.promoted.length > 0) {
+          await wf.step.code(rev(`05n-anchor-entity-pictures-attempt-${attempt}`), () => ({ promoted: anchoredPictures.promoted }));
+        }
       }
 
       // ── THE SCENE-BRIEF GUARDS (Phase 5.5, item A3) ──

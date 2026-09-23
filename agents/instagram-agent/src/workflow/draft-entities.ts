@@ -41,7 +41,8 @@
  * slide.**
  */
 
-import type { InstagramCopyOutput, InstagramSlideCopy } from "./types.js";
+import { normaliseVisualNeed } from "./scene-brief.js";
+import type { InstagramCopyOutput, InstagramSlideCopy, InstagramSlideLayout } from "./types.js";
 
 /**
  * Words that are capitalised mid-sentence and are not a thing a picture can
@@ -126,6 +127,97 @@ function latinNamesIn(text: string): string[] {
   return out;
 }
 
+/** A credit segment that names a document rather than who made it. */
+const CREDIT_DOCUMENT_WORDS = /\b(post|blog|report|survey|study|newsletter|podcast|episode|document|documents|terms|knowledge|website|site|page|deck|data)\b/iu;
+
+/**
+ * The names in a credit line (`stat.source`, `quote.attribution`): each
+ * comma- or dash-separated segment of one to three capitalised words, so
+ * "Dr. Sangeethsivan Sivakumar, CEO, ARDHANN" gives the person and the
+ * company, "Vestbee, 2026-05-28" gives Vestbee, and a document title
+ * ("Angel Investment Network Blog", "The 2026 State of Agentic Marketing")
+ * gives nothing, because a document is not a thing to photograph.
+ */
+function creditNamesIn(text: string): string[] {
+  const out: string[] = [];
+  for (const raw of text.split(/[,;|()–—]+/u)) {
+    const segment = raw.replace(/[^\p{L}\p{N} .&'-]/gu, "").trim();
+    const words = segment.split(/\s+/u).filter((w) => w.length > 0);
+    if (words.length === 0 || words.length > 3) continue;
+    if (CREDIT_DOCUMENT_WORDS.test(segment)) continue;
+    if (!words.every((w) => /^\p{Lu}/u.test(w) || /^(of|de|la|van|von|and|&)$/iu.test(w))) continue;
+    if (NOT_AN_ENTITY.has(segment.toLowerCase()) || segment.length < 3) continue;
+    out.push(segment);
+  }
+  return out;
+}
+
+/** How many picture slides a post should have pointed at something it names, when it names anything. */
+export const ENTITY_PICTURE_TARGET = 2;
+
+/**
+ * The panel archetypes that carry a bounded picture band beside their type
+ * and are worth giving one of a named subject. `comparison_card` is not here:
+ * its columns already get their own marks (`06e3`).
+ */
+export const ENTITY_PANEL_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<InstagramSlideLayout>(["stat_callout", "quote_card", "list_takeaway"]);
+
+/**
+ * THE WRITER NAMED REAL THINGS AND PICTURED NONE OF THEM (2026-09-23).
+ *
+ * The karoslabs carousel of prep `pubsub-21763996983218796` cited Qualified's
+ * 7.2% on a stat slide and briefed its three pictures as a spreadsheet on a
+ * laptop, a paper planner and hands on a monitor. Every one was refused (the
+ * vet could not find the on-screen grid the briefs demanded) and the post
+ * shipped with no picture at all, while Qualified's mark and press pictures
+ * were one search away. `instagram-copy@30` asks the writer for two picture
+ * slides OF a named entity; this is the code that makes sure, the way
+ * `enforceImageryBand` backs the prompt's picture floor.
+ *
+ * When fewer than `ENTITY_PICTURE_TARGET` picture slides already point at an
+ * entity, a PANEL slide (see `ENTITY_PANEL_LAYOUTS`) that names an entity no
+ * other slide has taken, and that the writer left without a picture, gets a
+ * band picture of that entity. Never the cover (it has its own concept and
+ * hero path), never the closer, never a slide that already has a brief, and
+ * never an entity already pictured, so two slides do not show one subject.
+ */
+export function anchorEntityPictures(
+  copy: InstagramCopyOutput,
+  entities: readonly DraftEntity[],
+  opts: { taken: Set<string>; layoutOf: (slide: InstagramSlideCopy) => InstagramSlideLayout },
+): { copy: InstagramCopyOutput; promoted: Array<{ slide: number; entity: string }> } {
+  const anchored = copy.slides.filter((slide) => {
+    const need = normaliseVisualNeed(slide);
+    return need.source !== "none" && need.subject.entityRef !== undefined;
+  }).length;
+  let wanted = ENTITY_PICTURE_TARGET - anchored;
+  const promoted: Array<{ slide: number; entity: string }> = [];
+  if (wanted <= 0 || entities.length === 0) return { copy, promoted };
+  const lastIndex = copy.slides.length - 1;
+  const slides = copy.slides.map((slide, index) => {
+    if (wanted <= 0 || index === 0 || index === lastIndex) return slide;
+    const need = normaliseVisualNeed(slide);
+    if (need.source !== "none") return slide;
+    if (!ENTITY_PANEL_LAYOUTS.has(opts.layoutOf(slide))) return slide;
+    const named = entities.find((e) => e.slides.includes(slide.n) && !opts.taken.has(e.name.toLowerCase()));
+    if (named === undefined) return slide;
+    opts.taken.add(named.name.toLowerCase());
+    wanted -= 1;
+    promoted.push({ slide: slide.n, entity: named.name });
+    return {
+      ...slide,
+      visualNeed: {
+        ...(typeof slide.visualNeed === "string" ? { scene: slide.visualNeed } : slide.visualNeed),
+        scene: entityPictureBrief(named),
+        why: `the slide cites ${named.name}; a recognisable picture of it says whose claim this is before the reader reads the credit`,
+        source: "stock",
+        subject: { noun: named.name, entityRef: named.name, mustShow: [] },
+      },
+    } as InstagramSlideCopy;
+  });
+  return { copy: { ...copy, slides }, promoted };
+}
+
 /**
  * The recognisable things this draft names, strongest first.
  *
@@ -138,8 +230,18 @@ export function entitiesInDraft(copy: InstagramCopyOutput, exclude: readonly str
   const byKey = new Map<string, { name: string; slides: Set<number>; mentions: number; inHeadline: boolean }>();
 
   for (const slide of copy.slides) {
-    for (const part of slideText(slide)) {
-      for (const name of latinNamesIn(part.text)) {
+    const parts = slideText(slide).map((part) => ({ ...part, names: latinNamesIn(part.text) }));
+    // 2026-09-23: the CREDIT lines too. A stat's source and a quote's
+    // attribution are where a slide says whose number or whose words these
+    // are, and the sentence scanner skips a name in first position, which is
+    // where a credit puts it ("Qualified, The 2026 State of Agentic
+    // Marketing"). The karoslabs carousel of prep `pubsub-21763996983218796`
+    // named Qualified only there, and its picture slides never saw it.
+    for (const credit of [slide.stat?.source, slide.quote?.attribution]) {
+      if (credit !== undefined) parts.push({ text: credit, isHeadline: false, names: creditNamesIn(credit) });
+    }
+    for (const part of parts) {
+      for (const name of part.names) {
         const key = name.toLowerCase();
         if (skip.has(key) || key.split(/\s+/u).every((w) => skip.has(w))) continue;
         const row = byKey.get(key) ?? { name, slides: new Set<number>(), mentions: 0, inHeadline: false };
