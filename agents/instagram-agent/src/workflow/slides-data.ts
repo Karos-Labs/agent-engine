@@ -2623,6 +2623,11 @@ export function assembleSlidesData(params: {
    * whole on a white card instead of cropping it to fill the frame.
    */
   markImagePaths?: ReadonlySet<string> | undefined;
+  /**
+   * 2026-09-23: per slide number, the credit-free mark of the entity the
+   * slide pictures. Shown as a small badge beside a real photograph.
+   */
+  markBadges?: ReadonlyMap<number, string> | undefined;
   /** Reviewer typography per slide number (Phase 2 in-place edits). Absent slides keep the defaults. */
   slideStyleOverrides?: ReadonlyMap<number, SlideStyleOverride>;
   /**
@@ -2967,12 +2972,24 @@ export function assembleSlidesData(params: {
     // either be ignored by its template or — worse, for a template that did
     // grow a background slot later — quietly reintroduce the "every slide
     // needs a picture" coupling this set exists to break.
-    const imagePath = HERO_IMAGE_LAYOUTS.has(layout) ? (selection?.imagePath ?? undefined) : undefined;
+    const chosenPath = HERO_IMAGE_LAYOUTS.has(layout) ? (selection?.imagePath ?? undefined) : undefined;
+    // ── A MARK IS A BADGE, NEVER THE WHOLE PICTURE (2026-09-23). ──
+    //
+    // The owner, on the white panel this code first drew: a logo does not
+    // have to sit in a fixed place or take everything; it can be a small part
+    // of the post, to the side, with no copy over it, and where it sits can
+    // vary. So a mark the vet chose as the slide's picture becomes the badge
+    // and the slide goes typographic around it, and a slide with a real
+    // photograph also carries its entity's mark (05b1) when one is
+    // credit-free.
+    const heroIsMark = chosenPath !== undefined && params.markImagePaths?.has(chosenPath) === true;
+    const imagePath = heroIsMark ? undefined : chosenPath;
+    const badgePath = heroIsMark ? chosenPath : imagePath !== undefined ? params.markBadges?.get(slide.n) : undefined;
     // 2026-09-23: an `attributable` picture (most CC, every Wikimedia file)
     // must carry its credit, and none ever did — `creditLineFor` existed and
     // nothing called it. Only when the picture actually renders on this slide:
     // a credit under no picture would be a caption for nothing.
-    const photoCredit = imagePath !== undefined && selection !== undefined ? params.photoCreditFor?.(selection) : undefined;
+    const photoCredit = (imagePath !== undefined || heroIsMark) && selection !== undefined ? params.photoCreditFor?.(selection) : undefined;
     // The item's number among the item slides, not the slide's position: the
     // cover is not item one.
     const itemOrdinal =
@@ -2997,11 +3014,13 @@ export function assembleSlidesData(params: {
         figurePlacement: figurePlacementFor(layout, slide.n, imagePath !== undefined),
         ...(photoCredit !== undefined ? { photoCredit } : {}),
         ...(groundTone !== undefined ? { groundTone } : {}),
-        ...(imagePath !== undefined && params.markImagePaths?.has(imagePath) === true ? { heroKind: "mark" } : {}),
+        // `auto`: the renderer looks at the slide and places it (publish.renderCarousel 1.11.0).
+        ...(badgePath !== undefined ? { markAt: "auto" } : {}),
         ...(itemOrdinal !== undefined && itemOrdinal !== "00" ? { itemOrdinal } : {}),
       },
       images: {
         ...(imagePath ? { hero: imagePath } : {}),
+        ...(badgePath !== undefined ? { mark: badgePath } : {}),
         ...(layout === "comparison_card" && params.sideLogos?.get(slide.n)?.left !== undefined ? { logoLeft: params.sideLogos.get(slide.n)!.left! } : {}),
         ...(layout === "comparison_card" && params.sideLogos?.get(slide.n)?.right !== undefined ? { logoRight: params.sideLogos.get(slide.n)!.right! } : {}),
       },

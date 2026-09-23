@@ -437,6 +437,8 @@ export const LAYOUT_FIELD_KEYS: ReadonlySet<string> = new Set([
   "figurePlacement",
   // 2026-09-23: whether the picture is a brand mark shown on a card.
   "heroKind",
+  // 2026-09-23: where a mark badge sits (`markPlacementFor`).
+  "markAt",
   // Phase 4, RFC-15 §7.2. The document's BCP-47 `lang` attribute — layout
   // metadata in the strictest sense: it is read by Chromium's font fallback
   // and by nothing else. It must not be counted by the two-elements rule (a
@@ -678,6 +680,8 @@ export function countContentElements(slide: Slide, isCover: boolean): number {
   let count = prose.length;
   if (isCover && templateBasename(slide.template) === HEADLINE_FOCUS_BASENAME && keys.has("headline") && keys.has("body")) count -= 1;
   if (slide.images?.["hero"]) count += 1;
+  // 2026-09-23: a brand mark badge is a picture of the subject, small.
+  if (slide.images?.["mark"]) count += 1;
   if (slide.htmlFragments?.["itemRows"]) count += 1;
   // Phase 2, item M: a rendered number device and a closer's recap strip are
   // content elements in exactly the way a list's rows are — a designed block
@@ -725,6 +729,7 @@ export function weighContentElements(slide: Slide, isCover: boolean): ContentWei
     parts.push({ part: "headline_focus cover lockup (headline and sub-line are one object)", weight: -CONTENT_WEIGHTS.prose });
   }
   if (slide.images?.["hero"]) parts.push({ part: "hero", weight: CONTENT_WEIGHTS.hero });
+  if (slide.images?.["mark"]) parts.push({ part: "mark badge", weight: CONTENT_WEIGHTS.prose });
   if (slide.htmlFragments?.["itemRows"]) parts.push({ part: "itemRows", weight: CONTENT_WEIGHTS.itemRows });
   if (slide.htmlFragments?.["device"]) parts.push({ part: "device", weight: CONTENT_WEIGHTS.device });
   // ── THE CLOSER'S MIDDLE IS WEIGHED BY WHAT IS IN IT, NOT BY WHICH SLOT IT
@@ -856,7 +861,7 @@ export function checkDefaultRenderRules(slidesData: RenderCarouselInput, copy: I
   const cover = slides[0]!;
   const coverBase = templateBasename(cover.template);
   const coverCarriesDevice = (cover.htmlFragments?.["device"] ?? "").trim().length > 0;
-  if (!cover.images?.["hero"] && !DEVICE_TEMPLATE_BASENAMES.has(coverBase) && !coverCarriesDevice) {
+  if (!cover.images?.["hero"] && !cover.images?.["mark"] && !DEVICE_TEMPLATE_BASENAMES.has(coverBase) && !coverCarriesDevice) {
     if (coverBase.startsWith(CUSTOM_TEMPLATE_PREFIX)) {
       residue.push(withNote(rule("default:cover-carries-device"), "slide 1 is a model-authored custom archetype with no photograph; judge whether its markup carries a figure device"));
     } else {

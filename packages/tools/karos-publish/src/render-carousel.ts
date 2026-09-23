@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { z } from "zod";
 import { defineTool, success, contentFail, toolingError, type GcsArtifactStoreLike } from "@agent-engine/tool-common";
 import { measureSlidePng, type SlideMetrics, type SlideProbe } from "./slide-metrics.js";
+import { placeAutoMarkBadge } from "./mark-placement.js";
 
 /**
  * 1.1.0 — `measure` and `probe`. Both default off, so every existing caller
@@ -161,7 +162,13 @@ import { measureSlidePng, type SlideMetrics, type SlideProbe } from "./slide-met
  * Hebrew letters), so a run whose computed `text-decoration-line` includes
  * `underline` counts as painted. Every other field is unchanged.
  */
-const TOOL_VERSION = "1.10.0";
+/*
+ * 1.11.0 (2026-09-23): before the screenshot, a `.mark-badge[data-at="auto"]`
+ * is placed by `placeAutoMarkBadge` (one extra low-quality screenshot per slide
+ * that carries one). Nothing else moves; a slide without a badge renders
+ * exactly as before.
+ */
+const TOOL_VERSION = "1.11.0";
 
 // n/template/fields/images have no existing TSDoc to transcribe (SCRUM-293 flag) — descriptions
 // below synthesized from fillTemplate's/validateRenderInputs' usage of each field.
@@ -259,6 +266,8 @@ export interface RenderCarouselResult {
     metrics?: SlideMetrics;
     /** Why measurement produced nothing, when it was asked for and did not. A fact for the caller's ledger, never a render failure: an unreadable PNG is a tooling oddity, not an editorial verdict. */
     measureFailure?: string;
+    /** 1.11.0: where an auto-placed brand mark badge went, and every candidate's cost or refusal. Absent on a slide with no badge. */
+    markPlacement?: { chosen: string; costs: Record<string, number | string> };
     /** Present only when the input asked for `probe` and the page answered. */
     probe?: SlideProbe;
     /**
@@ -1351,6 +1360,11 @@ export function createRenderCarousel(mediaStore?: GcsArtifactStoreLike) {
           await page.waitForFunction(readyFlagCheck, input.readyFlag);
           await page.evaluate(fontsReady);
 
+          // 1.11.0: a brand mark badge marked `data-at="auto"` is placed where
+          // the rendered slide is quietest and no copy is near it. Furniture:
+          // it cannot fail the render. See `mark-placement.ts`.
+          const markPlacement = await placeAutoMarkBadge(page as never, { w: input.canvas.w, h: input.canvas.h }, `${input.postId}:${slide.n}`);
+
           const buffer = await page.screenshot();
 
           /*
@@ -1433,6 +1447,7 @@ export function createRenderCarousel(mediaStore?: GcsArtifactStoreLike) {
             ...(measureFailure !== undefined ? { measureFailure } : {}),
             ...(probe !== undefined ? { probe } : {}),
             ...(geometry !== undefined ? { geometry } : {}),
+            ...(markPlacement !== undefined ? { markPlacement } : {}),
           });
         }
 

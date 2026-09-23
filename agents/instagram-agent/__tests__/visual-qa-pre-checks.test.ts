@@ -154,6 +154,8 @@ describe("DEFAULT_RENDER_RULES + resolveRenderRules — Phase 0 item D's rule so
       // 2026-09-23: a list item's number (the_list series).
       "itemOrdinal",
       "lang",
+      // 2026-09-23: where a mark badge sits.
+      "markAt",
       // 2026-09-23: the credit line an attributable picture prints. Visible,
       // but attribution: counted, every credited photo slide would get a free
       // element on the two-elements rule.

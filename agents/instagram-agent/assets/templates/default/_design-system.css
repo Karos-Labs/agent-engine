@@ -1086,49 +1086,48 @@ body.ta-start .plate, body.ta-start .zone-mark, body.ta-start .zone-foot { text-
 body.ta-center .plate { text-align: center; }
 body.ta-center .plate > * { margin-inline: auto; }
 body.ta-center .acc { margin-inline: auto; }
-/* ---- A BRAND MARK AS THE PICTURE (2026-09-23) ---------------------------
-   A logo is not a photograph. Cropped to fill the frame it loses its edges, and
-   a dark wordmark on a transparent ground laid full-bleed over a dark plate is
-   no picture at all: prep `pubsub-21947180423151342` (karoslabs) shipped the
-   Anthropic wordmark exactly that way and the reader saw an empty slide.
-   `heroKind: "mark"` (slides-data.ts) arrives as `data-kind` on the element
-   that holds the picture, and the mark is then shown WHOLE, contained on a
-   white panel, the way a trade publication sets a company's mark.
-
-   On the two full-bleed plates the panel is the top 700px (49% of the frame,
-   above the cover's 45% subject floor, `COVER_HERO_BOX_SHARE`) and the copy
-   takes the field below it; the plate's top padding reserves the panel, so a
-   lockup that does not fit overflows downward where the fit ladder sees it.
-   The news frame keeps its own box and only changes the fit. */
-body img.hero[data-kind="mark"],
-body .bg[data-kind="mark"] img,
-body .sc-figure-band[data-kind="mark"] img {
-  object-fit: contain;
-  background: var(--mark-panel, #ffffff);
+/* ---- A BRAND MARK AS A SMALL BADGE (2026-09-23) --------------------------
+   The owner, on the white panel that came first: a logo does not have to sit
+   in a fixed place or take the whole slide. It is a small part of the post,
+   to the side, with no copy over it, and where it sits varies. So the mark is
+   the plate's first FLOW child (never absolute: text cannot land on it, and
+   the fit ladder sees its height), a white chip sized to the mark, and
+   `data-at` (`markPlacementFor`) moves it with `order` above the copy or
+   after it, at the start edge or the end. Hidden when no mark arrived. */
+/* Placement on the plain selector, so `data-at` (same class plus an attribute) outranks it;
+   the `:has()` rule below only switches the chip on. */
+.mark-badge { display: none; order: -1; align-self: flex-start; justify-self: start; }
+.mark-badge:has(img[src]:not([src=""])) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
   box-sizing: border-box;
-  filter: none;
-  mix-blend-mode: normal;
+  block-size: 104px;
+  min-inline-size: 104px;
+  max-inline-size: 320px;
+  padding: 18px 26px;
+  border-radius: 22px;
+  background: var(--mark-panel, #ffffff);
+  margin-block: var(--sp);
+  position: relative;
+  z-index: 4;
 }
-body:not([data-cover="news-frame"]) img.hero[data-kind="mark"],
-body .bg[data-kind="mark"] img {
-  inset: 0 0 auto 0;
-  block-size: 700px;
-  padding: 150px 190px;
-}
-body[data-cover="news-frame"] img.hero[data-kind="mark"] { padding: 72px 120px; }
-body .sc-figure-band[data-kind="mark"] { background: var(--mark-panel, #ffffff); }
-body .sc-figure-band[data-kind="mark"] img { padding: 36px 64px; }
-body:has(img.hero[data-kind="mark"]):not([data-cover="news-frame"]) .plate,
-body:has(.bg[data-kind="mark"]) .plate { padding-block-start: calc(700px + var(--sp-3)); }
-body:has(img.hero[data-kind="mark"]) .scrim,
-body:has(.bg[data-kind="mark"]) .scrim { display: none; }
-/* The label over the panel is on WHITE, not on the plate's ground: dark ink,
-   and no chip (the chip is a local scrim for a photograph). */
-body:has(img.hero[data-kind="mark"]):not([data-cover="news-frame"]) .zone-mark :is(.eyebrow, .kicker),
-body:has(.bg[data-kind="mark"]) .zone-mark :is(.eyebrow, .kicker) {
-  color: var(--mark-panel-ink, #111111);
-  background: none;
-  box-shadow: none;
-}
+.mark-badge img { max-block-size: 100%; max-inline-size: 100%; object-fit: contain; display: block; }
+.mark-badge[data-at^="tail"] { order: 99; }
+.mark-badge[data-at$="-end"] { align-self: flex-end; justify-self: end; }
+/* OVER THE PICTURE, AT THE SIDE OR IN A CORNER. Absolute, so the renderer
+   (`mark-placement.ts`) only keeps one of these after checking that no copy
+   is within 14px of it and that the pixels under it are the quietest on the
+   slide; with no renderer choice, `auto` is the flow placement above. */
+.mark-badge[data-at^="corner-"],
+.mark-badge[data-at^="side-"] { position: absolute; margin: 0; }
+.mark-badge[data-at="corner-top-end"] { inset-block-start: calc(var(--zone-mark) + var(--sp)); inset-inline-end: var(--mx); }
+.mark-badge[data-at="corner-top-start"] { inset-block-start: calc(var(--zone-mark) + var(--sp)); inset-inline-start: var(--mx); }
+.mark-badge[data-at="side-end"] { inset-block-start: 36%; inset-inline-end: var(--mx); }
+.mark-badge[data-at="side-start"] { inset-block-start: 36%; inset-inline-start: var(--mx); }
+body.ta-center .plate > .mark-badge { margin-inline: auto; }
+[data-fit="1"] .mark-badge:has(img[src]:not([src=""])) { block-size: 92px; }
+[data-fit="2"] .mark-badge:has(img[src]:not([src=""])) { block-size: 80px; padding: 14px 20px; }
 
 /* @ds:end-of-source */

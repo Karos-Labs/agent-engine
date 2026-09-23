@@ -370,6 +370,16 @@ export const ENTITY_CANDIDATES_WANTED = 2;
  */
 export const MARK_CANDIDATE_TAG = "[kind: brand mark — a logo or wordmark, not a photograph]";
 
+/**
+ * A mark that may ship with no credit line: blanket-licensed, or a licence
+ * line that says public domain / CC0 (Wikimedia and Openverse file most
+ * wordmarks as `attributable` while their licence line reads PD-textlogo).
+ * A badge is furniture, and furniture carries no caption.
+ */
+export function isCreditFreeMark(c: { licenseConfidence?: string; description: string }): boolean {
+  return c.licenseConfidence === "blanket" || /\[licence:\s*(?:public domain|pd|cc0)/iu.test(c.description);
+}
+
 export interface EntitySourcingInput {
   entity: RecognisedEntity;
   /** The URLs this slide's own fact cards already cite. Tier 2's whole input, and it costs nothing — the run has them. */

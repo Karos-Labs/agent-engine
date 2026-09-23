@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { MARK_CANDIDATE_TAG, planEntitySourcing, type RecognisedEntity } from "../src/workflow/entity-imagery.js";
+import { MARK_AUTO_CANDIDATES, rotatedCandidates } from "@agent-engine/tool-karos-publish";
 import { assembleSlidesData } from "../src/workflow/slides-data.js";
 import type { ImageSelection, InstagramCopyOutput } from "../src/workflow/types.js";
 
@@ -40,7 +41,7 @@ describe("assembleSlidesData with markImagePaths", () => {
     ],
   } as InstagramCopyOutput;
   const sel = (n: number, imagePath: string): ImageSelection => ({ n, imagePath, reason: "r", license: "CC0", rightsUsable: true, watermarkFree: true, claimMatch: 5, claimMatchReason: "r" });
-  const run = (marks?: Set<string>) =>
+  const run = (marks?: Set<string>, badges?: Map<number, string>) =>
     assembleSlidesData({
       clientSlug: "k",
       postId: "p",
@@ -49,36 +50,64 @@ describe("assembleSlidesData with markImagePaths", () => {
       copy,
       selections: [sel(1, "media/anthropic-logo.webp"), sel(2, "media/speaker.jpg")],
       canvas: { w: 1080, h: 1440, scale: 2, slides_min: 1, slides_max: 8 },
+      paletteSeed: "pubsub-21773753139346000",
       ...(marks !== undefined ? { markImagePaths: marks } : {}),
+      ...(badges !== undefined ? { markBadges: badges } : {}),
     });
 
-  it("marks the slide whose hero IS a mark, and only that one", () => {
+  // 2026-09-23, the owner on the first version's white panel: a logo does
+  // not have to fill the slide or stand alone; it can be small, to the side.
+  it("turns a mark the vet chose as the picture into a badge, and the slide goes typographic around it", () => {
     const data = run(new Set(["media/anthropic-logo.webp"]));
     const byN = new Map(data.slides.map((s) => [s.n, s]));
-    expect(byN.get(1)!.images.hero).toBe("media/anthropic-logo.webp");
-    expect(byN.get(1)!.fields.heroKind).toBe("mark");
+    expect(byN.get(1)!.images.hero).toBeUndefined();
+    expect(byN.get(1)!.images.mark).toBe("media/anthropic-logo.webp");
+    // The renderer looks at the slide and places it (`mark-placement.ts`).
+    expect(byN.get(1)!.fields.markAt).toBe("auto");
     expect(byN.get(2)!.images.hero).toBe("media/speaker.jpg");
-    expect(byN.get(2)!.fields.heroKind).toBeUndefined();
+    expect(byN.get(2)!.images.mark).toBeUndefined();
+    expect(byN.get(2)!.fields.markAt).toBeUndefined();
+  });
+
+  it("puts the entity's mark beside a real photograph, never on a slide with no picture", () => {
+    const data = run(new Set(), new Map([[2, "media/anthropic-cc0.svg"], [1, "media/unused.svg"]]));
+    const byN = new Map(data.slides.map((s) => [s.n, s]));
+    expect(byN.get(2)!.images).toEqual({ hero: "media/speaker.jpg", mark: "media/anthropic-cc0.svg" });
+    // Slide 1's hero is not a mark here, so it is a photo and gets its badge too.
+    expect(byN.get(1)!.images.mark).toBe("media/unused.svg");
   });
 
   it("emits nothing when the run supplied no marks (byte-identical to before)", () => {
-    for (const s of run().slides) expect(s.fields.heroKind).toBeUndefined();
+    for (const s of run().slides) {
+      expect(s.images.mark).toBeUndefined();
+      expect(s.fields.markAt).toBeUndefined();
+    }
   });
 });
 
-describe("every picture slot says what it holds", () => {
-  it("each plate that carries a hero tags its holder with data-kind, and the stylesheet selects on it", () => {
-    let slots = 0;
+describe("where the badge sits varies", () => {
+  it("offers eight placements, including the sides and corners, and rotates the tie-break by slide", () => {
+    expect(MARK_AUTO_CANDIDATES).toEqual(expect.arrayContaining(["side-start", "side-end", "corner-top-start", "corner-top-end", "lead-start", "tail-end"]));
+    const firsts = new Set<string>();
+    for (let n = 1; n <= 40; n++) firsts.add(rotatedCandidates(`pubsub-21773753139346000:${n}`)[0]!);
+    expect(firsts.size).toBeGreaterThanOrEqual(6);
+    expect(rotatedCandidates("p:3")).toEqual(rotatedCandidates("p:3"));
+    expect(new Set(rotatedCandidates("p:3"))).toEqual(new Set(MARK_AUTO_CANDIDATES));
+  });
+});
+
+describe("every picture plate carries the badge slot, in flow", () => {
+  it("each of the six plates has exactly one badge as a child of its plate, positioned absolutely only for the side and corner placements", () => {
     for (const file of ["cover.html", "slide.html", "stat-callout.html", "quote-card.html", "comparison-card.html", "list-takeaway.html"]) {
       const html = readFileSync(path.join(TEMPLATES, file), "utf8");
-      const heroes = html.match(/<[^>]*\{\{image:hero\}\}[^>]*>/gu) ?? [];
-      const holders = html.match(/data-kind="\{\{heroKind\}\}"/gu) ?? [];
-      expect(holders.length, file).toBe(1);
-      expect(heroes.length, file).toBeGreaterThan(0);
-      slots += holders.length;
+      expect(html.match(/<div class="mark-badge" data-at="\{\{markAt\}\}"><img src="\{\{image:mark\}\}"/gu)?.length, file).toBe(1);
+      expect(html).toMatch(/<div class="plate [a-z]+">\s*<div class="mark-badge"/u);
     }
-    expect(slots).toBe(6);
     const css = readFileSync(path.join(TEMPLATES, "_design-system.css"), "utf8");
-    expect(css).toMatch(/img\.hero\[data-kind="mark"\][^{]*\{[^}]*object-fit: contain/u);
+    const rules = css.match(/\.mark-badge[^{]*\{[^}]*\}/gu) ?? [];
+    expect(rules.length).toBeGreaterThan(3);
+    for (const rule of rules) if (/position:\s*absolute/u.test(rule)) expect(rule).toMatch(/data-at\^="(corner|side)-"/u);
+    // The first version's 700px panel is gone.
+    expect(css).not.toContain('img.hero[data-kind="mark"]');
   });
 });
