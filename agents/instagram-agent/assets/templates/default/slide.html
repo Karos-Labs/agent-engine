@@ -621,6 +621,18 @@ body:not(:has(.hero)):not([data-cover="typographic-poster"]) .plate:has(.cov-fie
    never meet. */
 .zone-mark .eyebrow { margin-inline-start: auto; }
 
+/* INSTAGRAM'S SLIDE COUNTER SITS ON THIS CORNER (2026-09-23). The app lays a
+   "2/5" pill over the top reading-end corner of every carousel slide, and the
+   eyebrow above is pushed to exactly that end. Measured off the owner's own
+   screenshots and scaled to this 1080px canvas, the pill covers 38-107px from
+   the top and 38-130px in from the side, and it cut the label in half on the
+   reference posts ("THE S 2/5"). The end side of the band therefore stops
+   136px short of the edge instead of `--mx`: the pill lands on the reading-end
+   corner of the viewer's UI, which is the inline END for a slide written in the
+   viewer's own language. The start side keeps the plate's margin, so the label
+   still lines up with nothing new. */
+.zone-mark { padding-inline-end: max(0px, calc(var(--ig-counter-clear, 136px) - var(--mx))); }
+
 /* OVER A PHOTOGRAPH THE EYEBROW IS AT FULL INK. The scrim is transparent across
    the top third by design — that is what leaves a picture its colour — so a
    62% eyebrow sits on bare photograph and measured 2.16:1 against a 4.5 floor.
@@ -728,6 +740,30 @@ body:has(.hero) .kicker {
   font-size: var(--t-micro);
   letter-spacing: 0.16em;
   color: color-mix(in srgb, var(--fg) 34%, transparent);
+}
+
+/* THE PICTURE'S CREDIT (2026-09-23). An `attributable` photograph (most CC,
+   every Wikimedia file) must print its credit, and until now none did. It sits
+   in the foot band, between the handle and the numeral, because that band is
+   already reserved furniture: the fit ladder sizes type against the FIELD, so a
+   line here can never collide with the copy or push it. Body face rather than
+   mono, because a credit is up to 90 characters and mono at this step would
+   truncate the licence off its end; two lines at most, then an ellipsis. */
+.ds-credit:empty,
+.ds-credit:has( > bdi:empty) { display: none; }
+.ds-credit {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  margin-inline: 24px;
+  text-align: center;
+  font-family: var(--f-body, system-ui, sans-serif);
+  font-size: var(--t-micro);
+  line-height: 1.25;
+  color: color-mix(in srgb, var(--fg) 52%, transparent);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 
 /* ---- THE ACCENT — the only mark in the set ------------------------------ */
@@ -1041,6 +1077,7 @@ body.ta-center .acc { margin-inline: auto; }
 
   <div class="zone-foot">
     <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
+    <div class="ds-credit"><bdi>{{photoCredit}}</bdi></div>
     <span class="pg-index" aria-hidden="true">{{slideIndex}}</span>
   </div>
 

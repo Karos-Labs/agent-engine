@@ -145,6 +145,25 @@ export async function promoteTemplate(options: PromoteOptions): Promise<Template
  * verdicts move the score through `reviewTemplate` as they always have.
  * Adding a delta here would double-count one human action.
  *
+ * ## `atLeastScore`: approval is the verification the studio score waited for
+ *
+ * (2026-09-23.) A studio row opens at `DEFAULT_QUALITY_STUDIO` (65), below the
+ * bundled floor (70), on the stated grounds that it has to EARN its way past a
+ * verified design through approvals. But an enabled row at 65 still loses to
+ * the bundled row of the same archetype, so it never renders, so nobody ever
+ * reviews it, so it never earns anything: the approval gate was decorative and
+ * every client kept rendering the shared set. The owner reads that as "the
+ * posts look generic", and he is right about the cause.
+ *
+ * A caller that knows the row it is enabling was verified by a person (the
+ * Instagram workflow's studio approval) passes `atLeastScore`, and an
+ * approval lifts a lower score up to it — to the bundled floor, where
+ * `beats()` gives the tie to the client-scoped row. The lift rides on the
+ * approval's own feedback entry as its `qualityDelta`, so it is one recorded
+ * human action moving the score once, never a second write. A row that a
+ * reviewer later asks to revise still falls below the floor on the ordinary
+ * `QUALITY_DELTA.revise`, exactly as before. Omitted, nothing changes.
+ *
  * **Idempotent.** A row already in the requested state is returned unchanged,
  * with no second feedback entry and no `updatedAt` churn — a resumed run
  * replaying the review step must not stack five identical "approved for use"
@@ -157,6 +176,7 @@ export async function setTemplateEnabled(
   actor: string,
   note: string,
   now: number,
+  options: { atLeastScore?: number } = {},
 ): Promise<{ changed: boolean; definition: TemplateDefinition }> {
   const existing = await store.get(templateId);
   if (existing === undefined) {
@@ -170,10 +190,11 @@ export async function setTemplateEnabled(
   // is. The reverse order would have the feedback write's own copy of the row
   // overwrite the flag.
   await store.save({ ...existing, enabled, updatedAt: now });
+  const lift = enabled && options.atLeastScore !== undefined ? Math.max(0, options.atLeastScore - existing.qualityScore) : 0;
   await store.recordFeedback(
     templateId,
     { at: now, actor, verdict: enabled ? "approved" : "revise", note },
-    0,
+    lift,
   );
   return { changed: true, definition: (await store.get(templateId)) ?? { ...existing, enabled, updatedAt: now } };
 }

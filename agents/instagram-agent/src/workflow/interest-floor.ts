@@ -1822,6 +1822,9 @@ export const CONTENT_FIELD_WEIGHTS: Readonly<Record<string, number>> = {
   kicker: CONTENT_WEIGHTS.furniture,
   eyebrow: CONTENT_WEIGHTS.furniture,
   sourceLine: CONTENT_WEIGHTS.furniture,
+  // 2026-09-23: a picture's credit line. Attribution, not content: a slide
+  // must not clear the floor on the strength of a photographer's name.
+  photoCredit: CONTENT_WEIGHTS.furniture,
   subLabel: CONTENT_WEIGHTS.furniture,
 };
 

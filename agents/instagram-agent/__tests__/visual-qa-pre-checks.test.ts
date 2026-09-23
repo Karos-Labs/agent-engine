@@ -146,6 +146,10 @@ describe("DEFAULT_RENDER_RULES + resolveRenderRules — Phase 0 item D's rule so
       "heroTreatment",
       "imageTreatment",
       "lang",
+      // 2026-09-23: the credit line an attributable picture prints. Visible,
+      // but attribution: counted, every credited photo slide would get a free
+      // element on the two-elements rule.
+      "photoCredit",
       "seriesBadge",
       "slideIndex",
       "textAlign",

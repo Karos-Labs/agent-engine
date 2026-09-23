@@ -85,6 +85,8 @@ export const KNOWN_SLOT_NAMES: ReadonlySet<string> = new Set([
   // eight templates started reading it, because this set has to stay the
   // superset its doc comment promises: without it every run holds.
   "figurePlacement",
+  // 2026-09-23: the picture's credit line, code-derived by `creditLineFor`.
+  "photoCredit",
   // The two fields every slide always has.
   "headline",
   "body",

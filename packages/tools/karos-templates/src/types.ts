@@ -191,8 +191,12 @@ export const DEFAULT_QUALITY_BY_SOURCE: Record<TemplateSource, number> = {
  * pickable — and it also puts it head-to-head with the bundled row of the
  * same id inside `resolveBest`. At 65 a per-client generated design never
  * silently displaces a design whose rendering has been verified across the
- * whole fleet; a human approval (`enabled`) plus `QUALITY_DELTA.approved`
- * reviews are how it earns the right to.
+ * whole fleet. A person's approval is how it earns the right to: the
+ * Instagram workflow enables the row with `setTemplateEnabled(...,
+ * { atLeastScore: 70 })`, which lifts it to the floor where the client-scoped
+ * row wins the tie. (Until 2026-09-23 approval only flipped `enabled`, so an
+ * approved row at 65 still lost, never rendered, and never got the reviews it
+ * was meant to earn its way up with.)
  *
  * Above `DEFAULT_QUALITY_BY_SOURCE.ai_generated` (40) for an equally precise
  * reason: 40 prices an UNVALIDATED fragment a run invented mid-draft, while a
