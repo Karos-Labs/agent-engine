@@ -37,6 +37,9 @@ export const AGENT_RUNS_BI_COLUMNS = [
   "agentId",
   "model",
   "inputTokens",
+  "inputTokensCached",
+  "inputTokensUncached",
+  "inputTokensCacheWrite",
   "outputTokens",
   "costUsd",
   "durationMs",
@@ -78,6 +81,30 @@ export const AgentRunsBiRowSchema = z
     agentId: z.string().min(1),
     model: z.string().min(1),
     inputTokens: z.number().int().nonnegative(),
+    /**
+     * The cache split beside the total (2026-09-23).
+     *
+     * `inputTokens` is still the sum and still means what it always meant —
+     * these joined it rather than replacing it. The three columns had existed
+     * in the table since the schema was written with nothing writing them,
+     * which is why "is prompt caching paying for itself" could not be asked of
+     * this table at all: `cached` is what the cache saved and `cacheWrite` is
+     * what filling it cost at 1.25x, and the sum discards which was which.
+     *
+     * Nullable because the engine writes `?? null` rather than omitting the
+     * key, and OPTIONAL because a row written before 2026-09-23 does not have
+     * them at all — the migration fixtures are exactly such rows, and a parser
+     * that refused them would make the history unreadable to fix a column that
+     * did not exist when it was written.
+     *
+     * Completeness of the ENGINE's insert is not this schema's job and is not
+     * weakened by the `optional`: `InMemoryAgentRunsBiTable` rejects a row
+     * missing any of `AGENT_RUNS_BI_COLUMNS`, which is where a dropped column
+     * is caught.
+     */
+    inputTokensCached: z.number().int().nonnegative().nullable().optional(),
+    inputTokensUncached: z.number().int().nonnegative().nullable().optional(),
+    inputTokensCacheWrite: z.number().int().nonnegative().nullable().optional(),
     outputTokens: z.number().int().nonnegative(),
     costUsd: z.number().nonnegative(),
     durationMs: z.number().int().nonnegative(),
@@ -190,6 +217,13 @@ export function evalScoreToAgentRunsBiRow(score: EvalScore): AgentRunsBiRow {
     agentId: score.agentId,
     model: score.judge.modelUsed,
     inputTokens: score.judge.inputTokens.cached + score.judge.inputTokens.uncached,
+    // The same split the engine's own rows carry, from the judge's usage.
+    // `cacheWrite` is null and not 0: the judge's usage type does not carry it
+    // at all, so this row has nothing to say about it, and 0 would assert that
+    // the judge wrote no cache — a measurement nobody took.
+    inputTokensCached: score.judge.inputTokens.cached,
+    inputTokensUncached: score.judge.inputTokens.uncached,
+    inputTokensCacheWrite: null,
     outputTokens: score.judge.outputTokens,
     costUsd: score.judge.costUsd,
     durationMs: score.judge.durationMs,
