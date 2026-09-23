@@ -266,11 +266,32 @@ export function licenceAdmissible(licenceClass: LicenceClass, usage: PostUsage):
  */
 export const CREDIT_LINE_MAX_CHARS = 90;
 
-export function creditLineFor(selection: { licenceClass?: LicenceClass; license?: string; credit?: string }): string | undefined {
+export function creditLineFor(selection: { licenceClass?: LicenceClass | undefined; license?: string | undefined; credit?: string | undefined }): string | undefined {
   if (selection.licenceClass !== "attributable") return undefined;
-  const basis = (selection.credit ?? selection.license ?? "").replace(/\s+/gu, " ").trim();
+  const basis = (selection.credit ?? readableCredit(selection.license ?? "") ?? selection.license ?? "").replace(/\s+/gu, " ").trim();
   if (basis.length === 0) return undefined;
   return basis.length <= CREDIT_LINE_MAX_CHARS ? basis : `${basis.slice(0, CREDIT_LINE_MAX_CHARS - 1).replace(/\s+\S*$/u, "")}…`;
+}
+
+/**
+ * The provider's licence record, rewritten as the line a reader expects under
+ * a photograph: `Photo: Chris Rand · CC BY-SA 4.0`.
+ *
+ * Wikimedia and Openverse both record `<licence> — <note>, credit "<name>"`
+ * (`karos-media/src/providers/{wikimedia,openverse}.ts`), and the vet copies
+ * that string into `license`. Printed raw it reads as a database row
+ * (`CC BY-ND 2.0 — commercial use permitted, credit "…"`); the reference
+ * accounts print the name and the licence and nothing else. `undefined` when
+ * the record is not in that shape, so the caller falls back to the raw text
+ * rather than guessing.
+ */
+function readableCredit(license: string): string | undefined {
+  const text = license.replace(/\s+/gu, " ").trim();
+  const credit = /credit\s+["“]([^"”]+)["”]/iu.exec(text)?.[1]?.trim();
+  if (credit === undefined || credit.length === 0) return undefined;
+  const licence = /\b(CC0|CC[\s-]?BY(?:[\s-](?:NC-SA|NC-ND|SA|ND|NC))?(?:\s+\d(?:\.\d)?)?|Public domain)\b/iu.exec(text)?.[1];
+  const normalisedLicence = licence?.replace(/^CC[\s-]?BY/iu, "CC BY").replace(/\s+/gu, " ");
+  return normalisedLicence ? `Photo: ${credit} · ${normalisedLicence}` : `Photo: ${credit}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

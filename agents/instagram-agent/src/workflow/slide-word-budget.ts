@@ -177,7 +177,7 @@ export const MAX_WORDS_PER_SLIDE_TOTAL = 60;
  * requires of it ("a large unattributed number is exactly the kind of claim a
  * reader should distrust").
  */
-export const WORD_BUDGET_EXEMPT_FIELDS: ReadonlySet<string> = new Set(["sourceLine", "figure", "attribution", "handle", "seriesBadge"]);
+export const WORD_BUDGET_EXEMPT_FIELDS: ReadonlySet<string> = new Set(["sourceLine", "photoCredit", "figure", "attribution", "handle", "seriesBadge"]);
 
 /** Structured rendered fields counted PER BLOCK against `MAX_WORDS_PER_BLOCK`, never summed into the statement. */
 const BLOCK_FIELD_PAIRS: ReadonlyArray<readonly [label: string, fields: readonly string[]]> = [

@@ -257,6 +257,8 @@ describe("the weighted content floor reproduces the owner's own verdicts (2026-0
       kicker: 0.25,
       eyebrow: 0.25,
       sourceLine: 0.25,
+      // 2026-09-23: a picture's credit line is attribution, never content.
+      photoCredit: 0.25,
       subLabel: 0.25,
     });
     expect(CONTENT_FIELD_WEIGHTS["headline"]).toBeUndefined();

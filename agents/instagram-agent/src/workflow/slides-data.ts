@@ -2472,6 +2472,14 @@ export function assembleSlidesData(params: {
   brandAccentFallback?: string | undefined;
   /** The client's normalized `@handle` watermark, from the frozen brand kit. Rendered by the templates' `.brand-handle` component; absent means the slot strips clean. */
   brandHandle?: string | undefined;
+  /**
+   * The credit line a slide's picture obliges us to print, or `undefined`
+   * when it needs none. The workflow passes `creditLineFor` from
+   * `entity-imagery.ts`, which owns the rights policy and cannot be imported
+   * here (it would close a cycle through the workflow). Absent leaves every
+   * `{{photoCredit}}` slot empty, exactly as before this field existed.
+   */
+  photoCreditFor?: ((selection: ImageSelection) => string | undefined) | undefined;
   /** Reviewer typography per slide number (Phase 2 in-place edits). Absent slides keep the defaults. */
   slideStyleOverrides?: ReadonlyMap<number, SlideStyleOverride>;
   /**
@@ -2810,6 +2818,11 @@ export function assembleSlidesData(params: {
     // grow a background slot later — quietly reintroduce the "every slide
     // needs a picture" coupling this set exists to break.
     const imagePath = HERO_IMAGE_LAYOUTS.has(layout) ? (selection?.imagePath ?? undefined) : undefined;
+    // 2026-09-23: an `attributable` picture (most CC, every Wikimedia file)
+    // must carry its credit, and none ever did — `creditLineFor` existed and
+    // nothing called it. Only when the picture actually renders on this slide:
+    // a credit under no picture would be a caption for nothing.
+    const photoCredit = imagePath !== undefined && selection !== undefined ? params.photoCreditFor?.(selection) : undefined;
     const primaryTemplate = templateForLayout(layout, slide, params.brandTokens.slideTemplate);
     // `inverted` was resolved above, before `contentFor`, because the mark
     // kind set is computed from the ground this slide actually renders on.
@@ -2826,6 +2839,7 @@ export function assembleSlidesData(params: {
         ...fields,
         ...imageTreatmentFields({ treatment: params.imageTreatment ?? "none" }),
         figurePlacement: figurePlacementFor(layout, slide.n, imagePath !== undefined),
+        ...(photoCredit !== undefined ? { photoCredit } : {}),
       },
       images: imagePath ? { hero: imagePath } : {},
       htmlFragments,

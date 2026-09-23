@@ -12,6 +12,7 @@ import { createCrawlTechnicalSeo } from "./crawl-technical-seo.js";
 import { createAuditOnPage } from "./audit-on-page.js";
 import { createFetchCoreWebVitals } from "./core-web-vitals.js";
 import { createLookupEntity } from "./entity-lookup.js";
+import { createSearchWeb } from "./search-web.js";
 import { createScraperProvider, type ScraperProvider } from "@agent-engine/tool-karos-scraper";
 
 export * from "./runs.js";
@@ -27,6 +28,7 @@ export * from "./crawl-technical-seo.js";
 export * from "./audit-on-page.js";
 export * from "./core-web-vitals.js";
 export * from "./entity-lookup.js";
+export * from "./search-web.js";
 export * from "./html-signals.js";
 export * from "./payload.js";
 
@@ -122,5 +124,10 @@ export function createKarosResearchTools(
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
     }),
     "research.lookupEntity": createLookupEntity(store, { ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}) }),
+    // 2026-09-23: a search that returns URLs and nothing else. Instagram's
+    // entity-imagery route asked for `web.search_web` to find a company's real
+    // press page, no registry provided it, and the tier fell back to guessed
+    // `/press` paths on every run. Same scraper seam, cached per query.
+    "web.search_web": createSearchWeb(store, scraper),
   };
 }

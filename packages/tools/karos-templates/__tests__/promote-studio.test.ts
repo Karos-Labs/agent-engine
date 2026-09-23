@@ -12,6 +12,7 @@ import {
   materializeTemplates,
   promoteTemplate,
   resolveBest,
+  reviewTemplate,
   setTemplateEnabled,
   TemplateDefinitionSchema,
   TemplateStoreError,
@@ -92,6 +93,43 @@ describe("the studio score: 65, and why not 70", () => {
       source: "legacy",
     });
     expect(resolveBest([bundled, row]).get("stat_callout")!.id).toBe("bundled:stat_callout");
+  });
+
+  it("WINS once a person approves it: the approval lifts it to the bundled floor and the client-scoped row takes the tie", async () => {
+    // 2026-09-23. Enabled at 65 (the test above) it lost, so it never
+    // rendered, so it never got a review to climb with: the approval gate was
+    // decorative. The workflow now enables with `atLeastScore: 70`.
+    const store = new MemoryTemplateStore();
+    await studioRow(store);
+    const entriesBefore = (await store.get("studio:acme:stat_callout"))!.feedback.length;
+    const bundled = TemplateDefinitionSchema.parse({
+      id: "bundled:stat_callout",
+      archetypeId: "stat_callout",
+      name: "Stat callout",
+      layoutType: "typographic",
+      htmlTemplate: "<html><head></head><body>{{figure}}</body></html>",
+      qualityScore: DEFAULT_QUALITY_BY_SOURCE.legacy,
+      source: "legacy",
+    });
+    await setTemplateEnabled(store, "studio:acme:stat_callout", true, "owner@karoslabs.com", "approved", 1_700_000_100_000, {
+      atLeastScore: DEFAULT_QUALITY_BY_SOURCE.legacy,
+    });
+    const approved = (await store.get("studio:acme:stat_callout"))!;
+    expect(approved.qualityScore).toBe(DEFAULT_QUALITY_BY_SOURCE.legacy);
+    // One human action, one feedback entry: the lift rides on the approval.
+    expect(approved.feedback).toHaveLength(entriesBefore + 1);
+    expect(resolveBest([bundled, approved]).get("stat_callout")!.id).toBe("studio:acme:stat_callout");
+
+    // And a later request for changes still drops it below the floor.
+    await reviewTemplate({ store, templateId: "studio:acme:stat_callout", actor: "owner@karoslabs.com", verdict: "revise", note: "too dark", now: 1_700_000_200_000 });
+    expect(resolveBest([bundled, (await store.get("studio:acme:stat_callout"))!]).get("stat_callout")!.id).toBe("bundled:stat_callout");
+  });
+
+  it("never LOWERS a score: an approval with atLeastScore below the row's own score moves nothing", async () => {
+    const store = new MemoryTemplateStore();
+    await studioRow(store, { qualityScore: 90 });
+    await setTemplateEnabled(store, "studio:acme:stat_callout", true, "owner@karoslabs.com", "approved", 1_700_000_100_000, { atLeastScore: 70 });
+    expect((await store.get("studio:acme:stat_callout"))!.qualityScore).toBe(90);
   });
 
   it("WINS when the bundled file for that archetype is absent — the studio adds reach, it does not fight the floor", async () => {

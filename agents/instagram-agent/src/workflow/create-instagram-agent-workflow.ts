@@ -56,6 +56,7 @@ import {
   buildStudioTemplateDocument,
   composeDocument,
   composeRawDocument,
+  DEFAULT_QUALITY_BY_SOURCE,
   DEFAULT_QUALITY_STUDIO,
   extractSupportedFields,
   LEGACY_ARCHETYPE_IDS,
@@ -820,12 +821,17 @@ async function persistReviewFeedback(
         // over: `promoteTemplate` would blind-overwrite the row's markup and
         // reset its score, and `reviewTemplate` would move the score without
         // ever making the row eligible. `setTemplateEnabled` writes the flag
-        // and appends the reviewer's own feedback entry, moves no score, and
-        // is idempotent — so a second approval in a later revision round is a
+        // and appends the reviewer's own feedback entry, lifts the score to
+        // the bundled floor (see below), and is idempotent — so a second approval in a later revision round is a
         // no-op rather than a double count. A `revise` verdict on a studio id
         // keeps going to `reviewTemplate` below, exactly as today: −15, the
         // row stays disabled, two revises and it stops being picked at all.
         if (entry.promote && entry.verdict === "approved" && isStudioTemplateId(entry.templateId)) {
+          // 2026-09-23: and the approval lifts the row to the bundled floor,
+          // where the client-scoped row wins the tie. At the studio's opening
+          // 65 an approved row still lost to the shared template, never
+          // rendered, and so could never earn the reviews it was told to earn:
+          // every client kept the shared set. See `setTemplateEnabled`.
           const flipped = await setTemplateEnabled(
             store,
             entry.templateId,
@@ -833,6 +839,7 @@ async function persistReviewFeedback(
             input.response.actor,
             entry.note,
             Date.now(),
+            { atLeastScore: DEFAULT_QUALITY_BY_SOURCE.legacy },
           );
           return { templateId: entry.templateId, verdict: entry.verdict, enabled: true, changed: flipped.changed };
         }
@@ -11001,6 +11008,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           slideStyleOverrides: overridesForAssembly,
           ...(effectiveKit?.brandAccent !== undefined ? { brandAccentFallback: effectiveKit.brandAccent } : {}),
           ...(effectiveKit?.handle !== undefined ? { brandHandle: effectiveKit.handle } : {}),
+          // 2026-09-23: the credit an attributable picture obliges us to print.
+          // `creditLineFor` was imported for exactly this and never called.
+          photoCreditFor: creditLineFor,
           // IGSTYLE-7, §7a — wires `paletteForSlide`'s already-built, already-
           // seeded rotation into the render path for the first time. Seeded
           // from `wf.runId` per the ticket; a ring of length ≤ 1 (or absent)

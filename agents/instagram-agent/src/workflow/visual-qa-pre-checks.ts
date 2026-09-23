@@ -462,6 +462,10 @@ export const LAYOUT_FIELD_KEYS: ReadonlySet<string> = new Set([
   // and `style-lock.test.ts` pins that list against `gradePictureSet`'s real
   // output, so this set cannot drift from what is actually written.
   ...HERO_GRADE_FIELD_KEYS,
+  // 2026-09-23: the credit an attributable picture prints. Attribution a
+  // reader can see but not a content element: counted, it would hand every
+  // credited photo slide a free element on the two-elements rule.
+  "photoCredit",
 ]);
 
 /**
@@ -552,7 +556,7 @@ function canCarryDevice(slide: Slide, base: string): boolean {
  * a misquote — and `sourceLine` is a citation, where a year or a sample size
  * leading the line is correct.
  */
-const FIGURE_RULE_EXEMPT_FIELDS: ReadonlySet<string> = new Set(["quoteText", "attribution", "sourceLine"]);
+const FIGURE_RULE_EXEMPT_FIELDS: ReadonlySet<string> = new Set(["quoteText", "attribution", "sourceLine", "photoCredit"]);
 
 /** The six device shapes, as the copy schema names them — quoted verbatim in the steer so the writer can act on it without opening the prompt. */
 const DEVICE_KINDS_SENTENCE = "figure, figure_pair, bars, timeline, versus, unit_grid";

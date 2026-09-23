@@ -248,9 +248,15 @@ describe("licence classes — carried, not refused", () => {
   });
 
   it("an attributable selection produces the credit that nothing has ever printed", () => {
-    // The real Openverse line from the karoslabs pool, which fits whole.
+    // The real Openverse line from the karoslabs pool, printed the way the
+    // reference accounts credit a photograph (name, then licence) rather
+    // than as the provider's database row.
     expect(creditLineFor({ licenceClass: "attributable", license: 'CC BY-ND 2.0 — commercial use permitted, credit "THE Holy Hand Grenade!"' })).toBe(
-      'CC BY-ND 2.0 — commercial use permitted, credit "THE Holy Hand Grenade!"',
+      "Photo: THE Holy Hand Grenade! · CC BY-ND 2.0",
+    );
+    // Wikimedia's shape (`karos-media/src/providers/wikimedia.ts`).
+    expect(creditLineFor({ licenceClass: "attributable", license: 'CC BY-SA 4.0 — via Wikimedia Commons, credit "Chris Rand"' })).toBe(
+      "Photo: Chris Rand · CC BY-SA 4.0",
     );
     // `sourceLine` is one line of 22px type and a CC record can carry a
     // paragraph, so a long one is cut at a word boundary rather than dropped.

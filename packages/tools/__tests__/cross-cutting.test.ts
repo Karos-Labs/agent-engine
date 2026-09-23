@@ -43,7 +43,7 @@ describe("Layer 3 tool registry — cross-cutting", () => {
   });
 
   it("merges all ten servers' tools into one registry with no name collisions", () => {
-    const expectedPrefixes = ["client.", "gate.", "intel.", "ledger.", "memory.", "publish.", "reputation.", "research.", "seoGeo.", "topics."];
+    const expectedPrefixes = ["client.", "gate.", "intel.", "ledger.", "memory.", "publish.", "reputation.", "research.", "seoGeo.", "topics.", "web."];
     const names = Object.keys(tools);
     // 12 client + 6 gates + 2 intel + 8 ledger + 7 memory + 4 publish + 5 reputation + 11 research + 2 seoGeo + 5 topics = 62
     // (topics grew from 4 to 5: topics.list, 2026-09-09 — the read-only catalog view a
@@ -150,7 +150,11 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // the `gbp` capture leg it fed is gone too, since Google Business Profile
     // API access is unapproved for this project (quota 0) and could never
     // produce real data. reputation shrinks from 5 to 4.)
-    expect(names.length).toBe(65);
+    // (65 -> 66, 2026-09-23: `web.search_web` joins the research registry --
+    // a search that returns URLs, which Instagram's entity-imagery route had
+    // requested since RFC-24 and no registry provided. It carries the `web.`
+    // prefix the caller asks for, so that prefix joins the expected list.)
+    expect(names.length).toBe(66);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }
