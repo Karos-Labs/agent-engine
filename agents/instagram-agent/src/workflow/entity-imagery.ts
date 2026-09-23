@@ -298,6 +298,25 @@ function readableCredit(license: string): string | undefined {
 // The sourcing plan — order matters more than any single source
 // ─────────────────────────────────────────────────────────────────────────
 
+/**
+ * Which recognised entity a comparison column is about, when it names one
+ * (2026-09-23: the Karos Labs reference's Pepsi vs Coca-Cola, each column under
+ * its own mark). Only kinds that HAVE a mark, and only a whole-word match: a
+ * column labelled "In-house" is nobody, and "Coke" is not "Coca-Cola" unless
+ * the evidence named it "Coke". Longest name first, so "OpenAI Codex" beats
+ * "OpenAI" for a column that says the former.
+ */
+export function markEntityForLabel(label: string, entities: readonly RecognisedEntity[]): RecognisedEntity | undefined {
+  const text = ` ${fold(label).replace(/[^\p{L}\p{N}]+/gu, " ")} `;
+  return [...entities]
+    .filter((e) => e.kind === "company" || e.kind === "product" || e.kind === "work")
+    .sort((a, b) => b.name.length - a.name.length)
+    .find((e) => {
+      const name = fold(e.name).replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+      return name.length > 0 && text.includes(` ${name} `);
+    });
+}
+
 /** The paths an entity's own public assets actually live behind. Ordered by how likely each is to hold a usable image rather than a PDF. */
 export const ENTITY_PRESS_PATHS: readonly string[] = ["/press", "/newsroom", "/media", "/brand"];
 
