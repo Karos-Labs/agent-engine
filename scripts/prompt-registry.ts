@@ -410,7 +410,7 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   { promptId: "seo-geo-fix-draft", agent: "seo-geo-agent", versions: ["1", "2"], latestVersion: "2" },
   // v3: the summary now states the measured-basis score and coverage side by
   // side and may quote the run's own measured facts — never a number outside them.
-  { promptId: "seo-geo-narrative", agent: "seo-geo-agent", versions: ["1", "2", "3"], latestVersion: "3", requires: { numbersSourced: true } },
+  { promptId: "seo-geo-narrative", agent: "seo-geo-agent", versions: ["1", "2", "3", "4"], latestVersion: "4", requires: { numbersSourced: true } },
   // RFC-04 §2 Phase 1 as the source skill described it: a bounded drafting
   // pass writing the prompt set in the buyer's language and market, replacing
   // the industry-string templates that asked every client's buyers the same
