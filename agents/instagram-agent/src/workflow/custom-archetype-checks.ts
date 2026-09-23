@@ -86,6 +86,7 @@ export const KNOWN_SLOT_NAMES: ReadonlySet<string> = new Set([
   // superset its doc comment promises: without it every run holds.
   "figurePlacement",
   "heroKind",
+  "markAt",
   // 2026-09-23: the picture's credit line, code-derived by `creditLineFor`.
   "photoCredit",
   // 2026-09-23: the closer's call-to-action form, code-derived by `ctaFormFor`.

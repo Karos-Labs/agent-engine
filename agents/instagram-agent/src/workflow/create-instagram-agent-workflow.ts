@@ -381,6 +381,7 @@ import {
   needsLikenessConsent,
   markEntityForLabel,
   MARK_CANDIDATE_TAG,
+  isCreditFreeMark,
   planEntitySourcing,
   sceneDeclaresIllustration,
   screenLegibleText,
@@ -7083,6 +7084,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       let entitySourcingForGate: Array<{ slide: number; entity: string; tiers: Array<{ tier: string; why: string; got: number }> }> = [];
       /** 2026-09-23: candidate paths that are an entity's MARK (05b1's logo rung), so the render shows them whole on a card. */
       const markImagePaths = new Set<string>();
+      /** 2026-09-23: per slide, the credit-free mark of the entity it pictures (05b1), shown as a small badge. */
+      const markBadgeBySlide = new Map<number, string>();
       /** Records why this attempt failed AND hands that finding to the next draft. */
       const returnToCopyWith = (reason: string): void => {
         lastSelfCheckReason = reason;
@@ -8143,6 +8146,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         const entitySourced = await wf.step.code(rev(`05b1-source-entity-images-attempt-${attempt}`), async () => {
           const found: ImageCandidate[] = [];
           const marks: string[] = [];
+          const badges: Array<{ n: number; path: string }> = [];
           const report: typeof entitySourcingReport = [];
           for (const slide of slidesNeedingSource) {
             const need = normaliseVisualNeed(slide);
@@ -8249,14 +8253,22 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               if (step.mark === true) {
                 gained = gained.map((c) => ({ ...c, description: `${c.description} ${MARK_CANDIDATE_TAG}` }));
                 for (const c of gained) marks.push(c.path);
+                // 2026-09-23: the owner, on the white panel: a logo does not
+                // have to fill the slide or stand alone; it can be a small part
+                // of the post, beside a real photograph. The slide's first
+                // credit-free mark rides as a badge next to whatever picture
+                // the vet chooses.
+                const badge = (gained as Array<ImageCandidate & { licenseConfidence?: string }>).find(isCreditFreeMark);
+                if (badge !== undefined && !badges.some((b) => b.n === slide.n)) badges.push({ n: slide.n, path: badge.path });
               }
               found.push(...gained);
               got += gained.length;
             }
             report.push({ slide: slide.n, entity: entity.name, tiers: tiersRun });
           }
-          return { candidates: found, report, marks };
+          return { candidates: found, report, marks, badges };
         });
+        for (const b of (entitySourced as { badges?: Array<{ n: number; path: string }> }).badges ?? []) markBadgeBySlide.set(b.n, b.path);
         // `?? []`: a checkpoint written before 2026-09-23 has no `marks`.
         for (const p of (entitySourced as { marks?: string[] }).marks ?? []) markImagePaths.add(p);
         // PREPENDED, not appended: the entity route's candidates are the ones
@@ -11199,6 +11211,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           sideLogos,
           // 2026-09-23: a slide whose picture is a mark shows it on a card.
           markImagePaths,
+          markBadges: markBadgeBySlide,
           // IGSTYLE-7, §7a — wires `paletteForSlide`'s already-built, already-
           // seeded rotation into the render path for the first time. Seeded
           // from `wf.runId` per the ticket; a ring of length ≤ 1 (or absent)

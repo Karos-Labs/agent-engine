@@ -370,6 +370,23 @@ const GOLDEN_RATIO_CONJUGATE = 0.6180339887498949;
  * list does not include `brand-render-tokens.ts`). Pure, no clock, no
  * randomness — the seed is the only input, same contract as the original.
  */
+/**
+ * Where a slide's mark badge sits (2026-09-23): above the copy or after it,
+ * at the start edge or the end edge. Seeded per run and slide, and mixed with
+ * murmur3's finalizer because raw FNV-1a high bits barely move across
+ * `pubsub-<digits>` run ids.
+ */
+export const MARK_PLACEMENTS = ["lead-start", "tail-end", "lead-end", "tail-start"] as const;
+export function markPlacementFor(seed: string | undefined, n: number): (typeof MARK_PLACEMENTS)[number] {
+  let h = fnv1a32ForVariation(`${seed ?? ""}:mark:${n}`);
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b) >>> 0;
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35) >>> 0;
+  h ^= h >>> 16;
+  return MARK_PLACEMENTS[(h >>> 0) % MARK_PLACEMENTS.length]!;
+}
+
 function fnv1a32ForVariation(input: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < input.length; i++) {
@@ -2623,6 +2640,11 @@ export function assembleSlidesData(params: {
    * whole on a white card instead of cropping it to fill the frame.
    */
   markImagePaths?: ReadonlySet<string> | undefined;
+  /**
+   * 2026-09-23: per slide number, the credit-free mark of the entity the
+   * slide pictures. Shown as a small badge beside a real photograph.
+   */
+  markBadges?: ReadonlyMap<number, string> | undefined;
   /** Reviewer typography per slide number (Phase 2 in-place edits). Absent slides keep the defaults. */
   slideStyleOverrides?: ReadonlyMap<number, SlideStyleOverride>;
   /**
@@ -2967,12 +2989,24 @@ export function assembleSlidesData(params: {
     // either be ignored by its template or — worse, for a template that did
     // grow a background slot later — quietly reintroduce the "every slide
     // needs a picture" coupling this set exists to break.
-    const imagePath = HERO_IMAGE_LAYOUTS.has(layout) ? (selection?.imagePath ?? undefined) : undefined;
+    const chosenPath = HERO_IMAGE_LAYOUTS.has(layout) ? (selection?.imagePath ?? undefined) : undefined;
+    // ── A MARK IS A BADGE, NEVER THE WHOLE PICTURE (2026-09-23). ──
+    //
+    // The owner, on the white panel this code first drew: a logo does not
+    // have to sit in a fixed place or take everything; it can be a small part
+    // of the post, to the side, with no copy over it, and where it sits can
+    // vary. So a mark the vet chose as the slide's picture becomes the badge
+    // and the slide goes typographic around it, and a slide with a real
+    // photograph also carries its entity's mark (05b1) when one is
+    // credit-free.
+    const heroIsMark = chosenPath !== undefined && params.markImagePaths?.has(chosenPath) === true;
+    const imagePath = heroIsMark ? undefined : chosenPath;
+    const badgePath = heroIsMark ? chosenPath : imagePath !== undefined ? params.markBadges?.get(slide.n) : undefined;
     // 2026-09-23: an `attributable` picture (most CC, every Wikimedia file)
     // must carry its credit, and none ever did — `creditLineFor` existed and
     // nothing called it. Only when the picture actually renders on this slide:
     // a credit under no picture would be a caption for nothing.
-    const photoCredit = imagePath !== undefined && selection !== undefined ? params.photoCreditFor?.(selection) : undefined;
+    const photoCredit = (imagePath !== undefined || heroIsMark) && selection !== undefined ? params.photoCreditFor?.(selection) : undefined;
     // The item's number among the item slides, not the slide's position: the
     // cover is not item one.
     const itemOrdinal =
@@ -2997,11 +3031,12 @@ export function assembleSlidesData(params: {
         figurePlacement: figurePlacementFor(layout, slide.n, imagePath !== undefined),
         ...(photoCredit !== undefined ? { photoCredit } : {}),
         ...(groundTone !== undefined ? { groundTone } : {}),
-        ...(imagePath !== undefined && params.markImagePaths?.has(imagePath) === true ? { heroKind: "mark" } : {}),
+        ...(badgePath !== undefined ? { markAt: markPlacementFor(params.paletteSeed, slide.n) } : {}),
         ...(itemOrdinal !== undefined && itemOrdinal !== "00" ? { itemOrdinal } : {}),
       },
       images: {
         ...(imagePath ? { hero: imagePath } : {}),
+        ...(badgePath !== undefined ? { mark: badgePath } : {}),
         ...(layout === "comparison_card" && params.sideLogos?.get(slide.n)?.left !== undefined ? { logoLeft: params.sideLogos.get(slide.n)!.left! } : {}),
         ...(layout === "comparison_card" && params.sideLogos?.get(slide.n)?.right !== undefined ? { logoRight: params.sideLogos.get(slide.n)!.right! } : {}),
       },
