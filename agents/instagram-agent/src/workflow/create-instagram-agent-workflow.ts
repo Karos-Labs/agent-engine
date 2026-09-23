@@ -3191,7 +3191,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             );
             setupSpend(`00c4-design-template-${planned.archetypeId}`, designExec.totalCostUsd, SETUP_STEP_COST_ESTIMATES_USD.templateDesign);
             if (designExec.status !== "completed" || designExec.finalOutput === undefined || designExec.finalOutput === null) {
-              const reason = `the designer turn resolved to "${designExec.status}"`;
+              // 2026-09-23: WHY, not only the status. Three karoslabs setups in a
+              // row dropped the cover on a bare "tooling_error", and nothing a
+              // reader of the ledger could see said whether it was a timeout, a
+              // schema refusal or a provider error. The turn's own `error` says.
+              // A step that crossed its time bound returns a synthetic result with
+              // no turns at all (`runStepAgent`), so that case is named here.
+              const designError =
+                [...designExec.steps].reverse().find((row) => row.error !== undefined)?.error ??
+                (designExec.steps.length === 0 ? `no model turn was recorded, which is what a turn that crossed the ${Math.round(STUDIO_DESIGN_STEP_TIMEOUT_MS / 60_000)}-minute step bound returns` : undefined);
+              const reason = `the designer turn resolved to "${designExec.status}"${designError !== undefined ? `: ${designError.replace(/\s+/gu, " ").slice(0, 300)}` : ""}`;
               // Phase 5.5 (spec §5 D1): counted apart from `dropped`, because a
               // turn that never completed is a TOOLING failure and a candidate
               // the battery measured and refused is a JUDGEMENT. Only the
