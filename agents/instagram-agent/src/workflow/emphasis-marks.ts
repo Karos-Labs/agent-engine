@@ -1547,11 +1547,19 @@ body[data-tone="dark"] .mk-k-block {
   background-size: 100% 92%;
   background-position-y: 55%;
 }
-/* underline — one pencil rule. */
+/* underline — one pencil rule, UNDER THE BASELINE OF WHATEVER FACE DREW IT.
+   2026-09-23: it used to be a background band at \`--mk-rule-y\` below the
+   inline box's top, calibrated on Fraunces and Heebo. On Geektime's Inter
+   heading with Hebrew falling back to Heebo (prep \`pubsub-21770129683022110\`)
+   the same offset landed 80% of the way down the letters, and "נעלמו"
+   ("disappeared") read as struck through, which says the opposite. A text
+   decoration is placed from the BASELINE by the browser, in every face. */
 .mk-k-underline {
-  background-image: linear-gradient(var(--mk-c), var(--mk-c));
-  background-size: 100% .07em;
-  background-position-y: var(--mk-rule-y);
+  text-decoration-line: underline;
+  text-decoration-color: var(--mk-c);
+  text-decoration-thickness: .07em;
+  text-underline-offset: .12em;
+  text-decoration-skip-ink: none;
 }
 /* swish — a marker stroke, thick in the middle, TAPERING at both ends.
    Centred on both axes so it mirrors under dir="rtl" without a second rule.
@@ -1564,11 +1572,14 @@ body[data-tone="dark"] .mk-k-block {
   background-size: 100% .20em;
   background-position: center var(--mk-swish-y);
 }
-/* double — two rules of different weight. */
+/* double — two rules, baseline-relative for the reason underline is. */
 .mk-k-double {
-  background-image: linear-gradient(var(--mk-c), var(--mk-c)), linear-gradient(var(--mk-c), var(--mk-c));
-  background-size: 100% .09em, 100% .04em;
-  background-position-y: var(--mk-rule-y), calc(var(--mk-rule-y) + .17em);
+  text-decoration-line: underline;
+  text-decoration-style: double;
+  text-decoration-color: var(--mk-c);
+  text-decoration-thickness: .05em;
+  text-underline-offset: .12em;
+  text-decoration-skip-ink: none;
 }
 /* ink — the run's GLYPHS take the mark colour, as a two-stop gradient.
    This is rf-6's mechanism and our default #17181C ground's answer: a pastel

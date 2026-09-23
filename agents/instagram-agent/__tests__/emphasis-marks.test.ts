@@ -1725,8 +1725,27 @@ describe("markCssBlock — the source contract", () => {
     expect(body).toMatch(/background-size:\s*[^;]*\.\d+em/);
   });
 
-  it("never uses text-decoration — its skip-ink differs across scripts and it cannot draw a swish", () => {
-    expect(declarations(latin)).not.toContain("text-decoration");
+  it("uses text-decoration ONLY for the two rules, placed from the baseline, with skip-ink off (2026-09-23)", () => {
+    // The rules were background bands at a fixed offset below the inline box's
+    // top, and on Geektime's Inter + Heebo stack (prep pubsub-21770129683022110)
+    // that offset put the underline through the Hebrew letters: it read as a
+    // strikethrough. A decoration is placed from the baseline in every face.
+    // Skip-ink is OFF because it differs across scripts, which was the old
+    // guard's reason; the swish, block and ink still cannot be a decoration.
+    const ruleFor = (kind: string) => {
+      const rule = latin.slice(latin.indexOf(`.mk-k-${kind} {`));
+      return rule.slice(0, rule.indexOf("}"));
+    };
+    for (const kind of MARK_KINDS) {
+      if (kind === "underline" || kind === "double") {
+        expect(ruleFor(kind), kind).toContain("text-decoration-line: underline");
+        expect(ruleFor(kind), kind).toContain("text-decoration-skip-ink: none");
+        expect(ruleFor(kind), kind).toContain("text-underline-offset:");
+        expect(ruleFor(kind), kind).not.toContain("--mk-rule-y");
+      } else {
+        expect(ruleFor(kind), kind).not.toContain("text-decoration");
+      }
+    }
   });
 
   it("never emits an inline style attribute — assertSafeMarkup refuses it, correctly", () => {
@@ -1744,10 +1763,11 @@ describe("markCssBlock — the source contract", () => {
     expect(latin).toContain(".mk-t");
   });
 
-  it("gives every kind a background IMAGE, because that is the limb the probe reads as `painted`", () => {
+  it("gives every kind a limb the probe reads as `painted`: a background image, or (the two rules) an underline decoration", () => {
     for (const kind of MARK_KINDS) {
       const rule = latin.slice(latin.indexOf(`.mk-k-${kind}`));
-      expect(rule.slice(0, rule.indexOf("}"))).toContain("background-image:");
+      const body = rule.slice(0, rule.indexOf("}"));
+      expect(body, kind).toContain(kind === "underline" || kind === "double" ? "text-decoration-line: underline" : "background-image:");
     }
   });
 

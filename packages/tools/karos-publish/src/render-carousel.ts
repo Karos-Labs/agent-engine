@@ -154,7 +154,14 @@ import { measureSlidePng, type SlideMetrics, type SlideProbe } from "./slide-met
  * a version left at 1.7.0 while the judgement under it changed, which is the
  * gate doing exactly its job.
  */
-const TOOL_VERSION = "1.9.0";
+/*
+ * 1.10.0 (2026-09-23): `markRunsPainted` gains a third limb. The emphasis
+ * `underline` and `double` marks are now a text decoration placed from the
+ * baseline (on Inter + Heebo the old fixed-offset band struck through the
+ * Hebrew letters), so a run whose computed `text-decoration-line` includes
+ * `underline` counts as painted. Every other field is unchanged.
+ */
+const TOOL_VERSION = "1.10.0";
 
 // n/template/fields/images have no existing TSDoc to transcribe (SCRUM-293 flag) — descriptions
 // below synthesized from fillTemplate's/validateRenderInputs' usage of each field.
@@ -476,6 +483,8 @@ declare function getComputedStyle(element: ProbeElement): {
   // exactly the environment it was exported to be testable in.
   fontSize?: string;
   backgroundImage?: string;
+  /** 2026-09-23: the underline and double marks draw as a text decoration. */
+  textDecorationLine?: string;
   backgroundClip?: string;
   webkitBackgroundClip?: string;
   color?: string;
@@ -672,7 +681,10 @@ export function probePage(canvas: { n: number; w: number; h: number }): {
       const clip = String(style.backgroundClip ?? style.webkitBackgroundClip ?? "border-box");
       const colour = String(style.color ?? "").replace(/\s+/g, "");
       const seeThrough = colour === "transparent" || colour === "rgba(0,0,0,0)";
-      if ((image !== "" && image !== "none") || (clip === "text" && seeThrough)) markRunsPainted += 1;
+      // 2026-09-23: the rules (`underline`, `double`) are a text decoration,
+      // placed from the baseline, so the third limb reads that.
+      const decorated = String(style.textDecorationLine ?? "none").includes("underline");
+      if ((image !== "" && image !== "none") || (clip === "text" && seeThrough) || decorated) markRunsPainted += 1;
     }
 
     const rect = element.getBoundingClientRect();
