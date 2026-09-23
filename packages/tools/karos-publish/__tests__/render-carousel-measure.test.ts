@@ -192,6 +192,8 @@ interface FakeElement {
   overflow?: string;
   /** This element's own computed `position`; defaults to "static". */
   position?: string;
+  /** Computed `text-decoration-line`; defaults to "none". */
+  textDecorationLine?: string;
 }
 
 function withFakeDom<T>(elements: FakeElement[], body: () => T): T {
@@ -222,6 +224,7 @@ function withFakeDom<T>(elements: FakeElement[], body: () => T): T {
       __fontFamily: e.fontFamily ?? "Inter, sans-serif",
       __overflow: e.overflow ?? "visible",
       __position: e.position ?? "static",
+      __textDecorationLine: e.textDecorationLine ?? "none",
     };
   });
   // Wired AFTER the map so a child may name a parent declared later.
@@ -229,10 +232,11 @@ function withFakeDom<T>(elements: FakeElement[], body: () => T): T {
     if (e.parent !== undefined) built[i]!.parentElement = built[e.parent] ?? null;
   });
   global["document"] = { querySelectorAll: () => built };
-  global["getComputedStyle"] = (element: { __fontFamily: string; __overflow: string; __position: string }) => ({
+  global["getComputedStyle"] = (element: { __fontFamily: string; __overflow: string; __position: string; __textDecorationLine: string }) => ({
     fontFamily: element.__fontFamily,
     overflow: element.__overflow,
     position: element.__position,
+    textDecorationLine: element.__textDecorationLine,
   });
   try {
     return body();
@@ -241,6 +245,19 @@ function withFakeDom<T>(elements: FakeElement[], body: () => T): T {
     global["getComputedStyle"] = priorComputed;
   }
 }
+
+describe("probePage: a mark drawn as an underline decoration counts as painted (2026-09-23)", () => {
+  const canvas = { n: 1, w: 1080, h: 1440 };
+  const run = (textDecorationLine: string) =>
+    withFakeDom([{ tagName: "SPAN", className: "mk mk-k-underline mk-c1", text: "doing the work", box: { left: 100, top: 400, width: 300, height: 90 }, textDecorationLine }], () => probePage(canvas));
+  it("reads the underline, and only the underline", () => {
+    expect(run("underline").markRuns).toBe(1);
+    expect(run("underline").markRunsPainted).toBe(1);
+    // The premise: with no decoration (and no image, no clip) nothing paints.
+    expect(run("none").markRunsPainted).toBe(0);
+    expect(run("line-through").markRunsPainted).toBe(0);
+  });
+});
 
 /**
  * The same fake DOM, plus the `document.body` the real one has.
