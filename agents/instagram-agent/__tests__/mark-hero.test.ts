@@ -3,7 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { MARK_CANDIDATE_TAG, planEntitySourcing, type RecognisedEntity } from "../src/workflow/entity-imagery.js";
-import { assembleSlidesData, MARK_PLACEMENTS, markPlacementFor } from "../src/workflow/slides-data.js";
+import { MARK_AUTO_CANDIDATES, rotatedCandidates } from "@agent-engine/tool-karos-publish";
+import { assembleSlidesData } from "../src/workflow/slides-data.js";
 import type { ImageSelection, InstagramCopyOutput } from "../src/workflow/types.js";
 
 // 2026-09-23: prep `pubsub-21947180423151342` (karoslabs) laid the Anthropic
@@ -61,7 +62,8 @@ describe("assembleSlidesData with markImagePaths", () => {
     const byN = new Map(data.slides.map((s) => [s.n, s]));
     expect(byN.get(1)!.images.hero).toBeUndefined();
     expect(byN.get(1)!.images.mark).toBe("media/anthropic-logo.webp");
-    expect(MARK_PLACEMENTS).toContain(byN.get(1)!.fields.markAt);
+    // The renderer looks at the slide and places it (`mark-placement.ts`).
+    expect(byN.get(1)!.fields.markAt).toBe("auto");
     expect(byN.get(2)!.images.hero).toBe("media/speaker.jpg");
     expect(byN.get(2)!.images.mark).toBeUndefined();
     expect(byN.get(2)!.fields.markAt).toBeUndefined();
@@ -84,16 +86,18 @@ describe("assembleSlidesData with markImagePaths", () => {
 });
 
 describe("where the badge sits varies", () => {
-  it("uses all four placements across slides and runs, and is stable for one slide of one run", () => {
-    const seen = new Set<string>();
-    for (let r = 0; r < 12; r++) for (let n = 1; n <= 8; n++) seen.add(markPlacementFor(`pubsub-2177${r}3753139346000`, n));
-    expect(seen).toEqual(new Set(MARK_PLACEMENTS));
-    expect(markPlacementFor("pubsub-1", 3)).toBe(markPlacementFor("pubsub-1", 3));
+  it("offers eight placements, including the sides and corners, and rotates the tie-break by slide", () => {
+    expect(MARK_AUTO_CANDIDATES).toEqual(expect.arrayContaining(["side-start", "side-end", "corner-top-start", "corner-top-end", "lead-start", "tail-end"]));
+    const firsts = new Set<string>();
+    for (let n = 1; n <= 40; n++) firsts.add(rotatedCandidates(`pubsub-21773753139346000:${n}`)[0]!);
+    expect(firsts.size).toBeGreaterThanOrEqual(6);
+    expect(rotatedCandidates("p:3")).toEqual(rotatedCandidates("p:3"));
+    expect(new Set(rotatedCandidates("p:3"))).toEqual(new Set(MARK_AUTO_CANDIDATES));
   });
 });
 
 describe("every picture plate carries the badge slot, in flow", () => {
-  it("each of the six plates has exactly one badge as a child of its plate, and the stylesheet never positions it absolutely", () => {
+  it("each of the six plates has exactly one badge as a child of its plate, positioned absolutely only for the side and corner placements", () => {
     for (const file of ["cover.html", "slide.html", "stat-callout.html", "quote-card.html", "comparison-card.html", "list-takeaway.html"]) {
       const html = readFileSync(path.join(TEMPLATES, file), "utf8");
       expect(html.match(/<div class="mark-badge" data-at="\{\{markAt\}\}"><img src="\{\{image:mark\}\}"/gu)?.length, file).toBe(1);
@@ -102,7 +106,7 @@ describe("every picture plate carries the badge slot, in flow", () => {
     const css = readFileSync(path.join(TEMPLATES, "_design-system.css"), "utf8");
     const rules = css.match(/\.mark-badge[^{]*\{[^}]*\}/gu) ?? [];
     expect(rules.length).toBeGreaterThan(3);
-    for (const rule of rules) expect(rule).not.toMatch(/position:\s*absolute/u);
+    for (const rule of rules) if (/position:\s*absolute/u.test(rule)) expect(rule).toMatch(/data-at\^="(corner|side)-"/u);
     // The first version's 700px panel is gone.
     expect(css).not.toContain('img.hero[data-kind="mark"]');
   });

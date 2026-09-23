@@ -10,6 +10,7 @@ export * from "./draft.js";
 export * from "./schedule.js";
 export * from "./status.js";
 export * from "./render-carousel.js";
+export { MARK_AUTO_CANDIDATES, rotatedCandidates } from "./mark-placement.js";
 export * from "./slide-metrics.js";
 
 /**

@@ -370,23 +370,6 @@ const GOLDEN_RATIO_CONJUGATE = 0.6180339887498949;
  * list does not include `brand-render-tokens.ts`). Pure, no clock, no
  * randomness — the seed is the only input, same contract as the original.
  */
-/**
- * Where a slide's mark badge sits (2026-09-23): above the copy or after it,
- * at the start edge or the end edge. Seeded per run and slide, and mixed with
- * murmur3's finalizer because raw FNV-1a high bits barely move across
- * `pubsub-<digits>` run ids.
- */
-export const MARK_PLACEMENTS = ["lead-start", "tail-end", "lead-end", "tail-start"] as const;
-export function markPlacementFor(seed: string | undefined, n: number): (typeof MARK_PLACEMENTS)[number] {
-  let h = fnv1a32ForVariation(`${seed ?? ""}:mark:${n}`);
-  h ^= h >>> 16;
-  h = Math.imul(h, 0x85ebca6b) >>> 0;
-  h ^= h >>> 13;
-  h = Math.imul(h, 0xc2b2ae35) >>> 0;
-  h ^= h >>> 16;
-  return MARK_PLACEMENTS[(h >>> 0) % MARK_PLACEMENTS.length]!;
-}
-
 function fnv1a32ForVariation(input: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < input.length; i++) {
@@ -3031,7 +3014,8 @@ export function assembleSlidesData(params: {
         figurePlacement: figurePlacementFor(layout, slide.n, imagePath !== undefined),
         ...(photoCredit !== undefined ? { photoCredit } : {}),
         ...(groundTone !== undefined ? { groundTone } : {}),
-        ...(badgePath !== undefined ? { markAt: markPlacementFor(params.paletteSeed, slide.n) } : {}),
+        // `auto`: the renderer looks at the slide and places it (publish.renderCarousel 1.11.0).
+        ...(badgePath !== undefined ? { markAt: "auto" } : {}),
         ...(itemOrdinal !== undefined && itemOrdinal !== "00" ? { itemOrdinal } : {}),
       },
       images: {

@@ -1116,6 +1116,16 @@ body.ta-center .acc { margin-inline: auto; }
 .mark-badge img { max-block-size: 100%; max-inline-size: 100%; object-fit: contain; display: block; }
 .mark-badge[data-at^="tail"] { order: 99; }
 .mark-badge[data-at$="-end"] { align-self: flex-end; justify-self: end; }
+/* OVER THE PICTURE, AT THE SIDE OR IN A CORNER. Absolute, so the renderer
+   (`mark-placement.ts`) only keeps one of these after checking that no copy
+   is within 14px of it and that the pixels under it are the quietest on the
+   slide; with no renderer choice, `auto` is the flow placement above. */
+.mark-badge[data-at^="corner-"],
+.mark-badge[data-at^="side-"] { position: absolute; margin: 0; }
+.mark-badge[data-at="corner-top-end"] { inset-block-start: calc(var(--zone-mark) + var(--sp)); inset-inline-end: var(--mx); }
+.mark-badge[data-at="corner-top-start"] { inset-block-start: calc(var(--zone-mark) + var(--sp)); inset-inline-start: var(--mx); }
+.mark-badge[data-at="side-end"] { inset-block-start: 36%; inset-inline-end: var(--mx); }
+.mark-badge[data-at="side-start"] { inset-block-start: 36%; inset-inline-start: var(--mx); }
 body.ta-center .plate > .mark-badge { margin-inline: auto; }
 [data-fit="1"] .mark-badge:has(img[src]:not([src=""])) { block-size: 92px; }
 [data-fit="2"] .mark-badge:has(img[src]:not([src=""])) { block-size: 80px; padding: 14px 20px; }
