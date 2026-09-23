@@ -279,7 +279,10 @@ describe("buildBrandHeadHtml", () => {
   it("stamps the badge variant css from brand vars only", () => {
     const tokens = deriveBrandRenderTokens(geektimeishBrand(), { ...baseTokens, renderTokens: { badgeStyle: "brackets" } })!;
     const head = buildBrandHeadHtml(tokens);
-    expect(head).toContain('content: "{ "');
+    // The outlined tag, and (2026-09-23) no literal braces around the label:
+    // the owner read "{ THE PRODUCT }" as an artefact, twice.
+    expect(head).toContain("border: 1px solid var(--accent)");
+    expect(head).not.toContain('content: "{ "');
     expect(head).toContain("var(--accent)");
     expect(head).not.toMatch(/#(?!272A35|F4F2EC)[0-9a-fA-F]{6}/); // no foreign hardcoded hexes
   });
