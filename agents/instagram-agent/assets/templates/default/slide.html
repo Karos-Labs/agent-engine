@@ -1109,6 +1109,51 @@ body.ta-start .plate, body.ta-start .zone-mark, body.ta-start .zone-foot { text-
 body.ta-center .plate { text-align: center; }
 body.ta-center .plate > * { margin-inline: auto; }
 body.ta-center .acc { margin-inline: auto; }
+/* ---- A BRAND MARK AS THE PICTURE (2026-09-23) ---------------------------
+   A logo is not a photograph. Cropped to fill the frame it loses its edges, and
+   a dark wordmark on a transparent ground laid full-bleed over a dark plate is
+   no picture at all: prep `pubsub-21947180423151342` (karoslabs) shipped the
+   Anthropic wordmark exactly that way and the reader saw an empty slide.
+   `heroKind: "mark"` (slides-data.ts) arrives as `data-kind` on the element
+   that holds the picture, and the mark is then shown WHOLE, contained on a
+   white panel, the way a trade publication sets a company's mark.
+
+   On the two full-bleed plates the panel is the top 700px (49% of the frame,
+   above the cover's 45% subject floor, `COVER_HERO_BOX_SHARE`) and the copy
+   takes the field below it; the plate's top padding reserves the panel, so a
+   lockup that does not fit overflows downward where the fit ladder sees it.
+   The news frame keeps its own box and only changes the fit. */
+body img.hero[data-kind="mark"],
+body .bg[data-kind="mark"] img,
+body .sc-figure-band[data-kind="mark"] img {
+  object-fit: contain;
+  background: var(--mark-panel, #ffffff);
+  box-sizing: border-box;
+  filter: none;
+  mix-blend-mode: normal;
+}
+body:not([data-cover="news-frame"]) img.hero[data-kind="mark"],
+body .bg[data-kind="mark"] img {
+  inset: 0 0 auto 0;
+  block-size: 700px;
+  padding: 150px 190px;
+}
+body[data-cover="news-frame"] img.hero[data-kind="mark"] { padding: 72px 120px; }
+body .sc-figure-band[data-kind="mark"] { background: var(--mark-panel, #ffffff); }
+body .sc-figure-band[data-kind="mark"] img { padding: 36px 64px; }
+body:has(img.hero[data-kind="mark"]):not([data-cover="news-frame"]) .plate,
+body:has(.bg[data-kind="mark"]) .plate { padding-block-start: calc(700px + var(--sp-3)); }
+body:has(img.hero[data-kind="mark"]) .scrim,
+body:has(.bg[data-kind="mark"]) .scrim { display: none; }
+/* The label over the panel is on WHITE, not on the plate's ground: dark ink,
+   and no chip (the chip is a local scrim for a photograph). */
+body:has(img.hero[data-kind="mark"]):not([data-cover="news-frame"]) .zone-mark :is(.eyebrow, .kicker),
+body:has(.bg[data-kind="mark"]) .zone-mark :is(.eyebrow, .kicker) {
+  color: var(--mark-panel-ink, #17181c);
+  background: none;
+  box-shadow: none;
+}
+
 /* @ds:end-of-source */
 /* @ds:end */
 
@@ -1126,7 +1171,7 @@ body.ta-center .acc { margin-inline: auto; }
 </head>
 <body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-hero-scrim="{{heroScrimStrength}}" data-ground="{{groundStyle}}" data-tone="{{groundTone}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}" data-anchor="{{compositionAnchor}}" data-figure="{{figurePlacement}}">
   <div class="ground" aria-hidden="true"></div>
-  <div class="bg"><img src="{{image:hero}}" onerror="this.remove()" alt="" /></div>
+  <div class="bg" data-kind="{{heroKind}}"><img src="{{image:hero}}" onerror="this.remove()" alt="" /></div>
   <div class="scrim" aria-hidden="true"></div>
 
   <div class="zone-mark">

@@ -519,7 +519,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect(registry).toContain(`{ promptId: "instagram-native-editor", agent: "instagram-agent", versions: ["1", "2", "3", "4"], latestVersion: "4" }`);
     // Phase 3 (items Q and R). Phase 5.5 item A3 bumps the vet to @6: the
     // SUBJECT is separated from the scene, and `scene` is declared decorative.
-    expect(registry).toContain(`{ promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5", "6", "7", "8"], latestVersion: "8" }`);
+    expect(registry).toContain(`{ promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9"], latestVersion: "9" }`);
     // Phase 5.5 item A2: `04b3-extract-entities`, the prompt this package added.
     expect(registry).toContain(`{ promptId: "instagram-entities", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
     // Phase 5.5 items C/D bump the director to @2: it now also derives the six
@@ -546,7 +546,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     const qa = new InstagramVisualQaAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((qa as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-visual-qa@5");
     const vet = new InstagramImageVettingAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((vet as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-image-vet@8");
+    expect((vet as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-image-vet@9");
     const entities = new InstagramEntityAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((entities as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-entities@1");
     const director = new InstagramArtDirectorAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
@@ -564,7 +564,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     for (const [promptId, version, h1] of [
       ["instagram-copy", "29", "# Instagram Copy Craft Guide, v29"],
       ["instagram-post-package", "2", "# Instagram Post Package Guide, v2"],
-      ["instagram-image-vet", "8", "# Instagram Image Vetting Craft Guide — v8"],
+      ["instagram-image-vet", "9", "# Instagram Image Vetting Craft Guide — v9"],
       ["instagram-entities", "1", "# Instagram Entity Extraction — v1"],
       ["instagram-art-director", "2", "# Instagram Art Direction Guide — v2"],
       ["instagram-concept", "1", "# Instagram Concept Direction Guide — v1"],

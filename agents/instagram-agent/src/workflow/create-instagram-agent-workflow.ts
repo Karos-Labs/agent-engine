@@ -380,6 +380,7 @@ import {
   licenceClassFor,
   needsLikenessConsent,
   markEntityForLabel,
+  MARK_CANDIDATE_TAG,
   planEntitySourcing,
   sceneDeclaresIllustration,
   screenLegibleText,
@@ -7071,6 +7072,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       let textScreenVerdict: { refused: number; keptAsLastResort: boolean; texts: string[] } | undefined;
       /** Phase 5.5, item A2 — what the entity route did on the attempt that shipped: which entity, which tiers ran, and what each returned. */
       let entitySourcingForGate: Array<{ slide: number; entity: string; tiers: Array<{ tier: string; why: string; got: number }> }> = [];
+      /** 2026-09-23: candidate paths that are an entity's MARK (05b1's logo rung), so the render shows them whole on a card. */
+      const markImagePaths = new Set<string>();
       /** Records why this attempt failed AND hands that finding to the next draft. */
       const returnToCopyWith = (reason: string): void => {
         lastSelfCheckReason = reason;
@@ -8120,6 +8123,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         const peopleByEntity = new Map<string, Array<{ name: string; role: string }>>();
         const entitySourced = await wf.step.code(rev(`05b1-source-entity-images-attempt-${attempt}`), async () => {
           const found: ImageCandidate[] = [];
+          const marks: string[] = [];
           const report: typeof entitySourcingReport = [];
           for (const slide of slidesNeedingSource) {
             const need = normaliseVisualNeed(slide);
@@ -8219,13 +8223,23 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 gained = [];
               }
               tiersRun.push({ tier: step.tier, why: step.why, got: gained.length });
+              // 2026-09-23: a mark is labelled in the description the vet reads
+              // (`instagram-image-vet@9` §1b: a real photograph of the subject
+              // beats its mark for the slide's picture) and its path is kept, so
+              // the render can show it whole on a card instead of cropping it.
+              if (step.mark === true) {
+                gained = gained.map((c) => ({ ...c, description: `${c.description} ${MARK_CANDIDATE_TAG}` }));
+                for (const c of gained) marks.push(c.path);
+              }
               found.push(...gained);
               got += gained.length;
             }
             report.push({ slide: slide.n, entity: entity.name, tiers: tiersRun });
           }
-          return { candidates: found, report };
+          return { candidates: found, report, marks };
         });
+        // `?? []`: a checkpoint written before 2026-09-23 has no `marks`.
+        for (const p of (entitySourced as { marks?: string[] }).marks ?? []) markImagePaths.add(p);
         // PREPENDED, not appended: the entity route's candidates are the ones
         // that are OF the thing the slide names, and the vet reads the pool in
         // order. A stock frame that got there first would be the first thing
@@ -9272,6 +9286,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // recovered frame has a NEW repo-relative path. Re-point the
           // selection at it rather than at the address the bytes used to have.
           selections = selections.map((row) => (row.n === sel.n ? { ...row, imagePath: back.path } : row));
+          if (markImagePaths.has(sel.imagePath)) markImagePaths.add(back.path);
           rehydrated.push(sel.n);
         } catch {
           gone.push(sel.n);
@@ -11163,6 +11178,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           carryStrip: runClaim.pictureDensity === "photo-first",
           // 2026-09-23: each comparison column under its own mark (06e3).
           sideLogos,
+          // 2026-09-23: a slide whose picture is a mark shows it on a card.
+          markImagePaths,
           // IGSTYLE-7, §7a — wires `paletteForSlide`'s already-built, already-
           // seeded rotation into the render path for the first time. Seeded
           // from `wf.runId` per the ticket; a ring of length ≤ 1 (or absent)

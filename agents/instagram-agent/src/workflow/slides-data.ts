@@ -2566,6 +2566,12 @@ export function assembleSlidesData(params: {
    * one simply has no badge.
    */
   sideLogos?: ReadonlyMap<number, { left?: string; right?: string }> | undefined;
+  /**
+   * 2026-09-23: picture paths that are a brand MARK, not a photograph. A slide
+   * whose hero is one carries `heroKind: "mark"` and the plate shows the mark
+   * whole on a white card instead of cropping it to fill the frame.
+   */
+  markImagePaths?: ReadonlySet<string> | undefined;
   /** Reviewer typography per slide number (Phase 2 in-place edits). Absent slides keep the defaults. */
   slideStyleOverrides?: ReadonlyMap<number, SlideStyleOverride>;
   /**
@@ -2940,6 +2946,7 @@ export function assembleSlidesData(params: {
         figurePlacement: figurePlacementFor(layout, slide.n, imagePath !== undefined),
         ...(photoCredit !== undefined ? { photoCredit } : {}),
         ...(groundTone !== undefined ? { groundTone } : {}),
+        ...(imagePath !== undefined && params.markImagePaths?.has(imagePath) === true ? { heroKind: "mark" } : {}),
         ...(itemOrdinal !== undefined && itemOrdinal !== "00" ? { itemOrdinal } : {}),
       },
       images: {

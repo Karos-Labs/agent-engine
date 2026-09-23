@@ -289,7 +289,7 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   // `scene` decorative — on 2026-09-16 @5 refused five correct photographs of
   // server infrastructure for not having been shot with a long exposure, and
   // the post shipped with no pictures in it.
-  { promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5", "6", "7", "8"], latestVersion: "8" },
+  { promptId: "instagram-image-vet", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9"], latestVersion: "9" },
   // Phase 5.5 (item A2): `04b3-extract-entities`. No `requires` flags — the
   // step writes nothing a reader sees and carries no statistics; its output is
   // re-checked against the evidence by `groundEntities` in code, which is a

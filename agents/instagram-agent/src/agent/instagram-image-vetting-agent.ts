@@ -183,6 +183,6 @@ export class InstagramImageVettingAgent extends BaseAgent<ImageVettingOutput> {
     // Bumped for the release-history move only: the body is byte-identical to
     // the previous version, with the stacked "what changed at vNN" block
     // relocated to CHANGELOG.md beside the prompt. No rule changed.
-    skillRef: "instagram-image-vet@8",
+    skillRef: "instagram-image-vet@9",
   };
 }
