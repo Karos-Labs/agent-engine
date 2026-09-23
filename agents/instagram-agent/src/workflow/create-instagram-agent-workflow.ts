@@ -6753,7 +6753,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // all, so a concept would be authored and then discarded unspent.
           mediaSource: runDirection.mediaSource,
           ...(frozen.conceptMode !== undefined ? { clientMode: frozen.conceptMode } : {}),
-          ...(runConceptMode !== undefined ? { runMode: runConceptMode } : {}),
+          // 2026-09-23: news mode turns the concept ON for its single cover
+          // (the Geektime flash is a picture that IS the headline). It is a
+          // run-level "on", so a client-level "off" still wins, and "on" never
+          // bypasses grounding, safety or budget.
+          ...(runConceptMode !== undefined ? { runMode: runConceptMode } : newsCover ? { runMode: "on" as const } : {}),
         }),
       );
 
