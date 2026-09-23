@@ -475,7 +475,8 @@ export abstract class BaseAgent<TOutput> {
   private describeResponseContract(): Record<string, unknown> {
     const hasTools = this.config.allowedTools.length > 0;
     const wrapped = this.turnSchemaIsWrapped(hasTools);
-    const finalShape = '{"type":"final","thought":"<optional>","output":{…}}';
+    const noThought = !hasTools && this.config.omitThought === true;
+    const finalShape = noThought ? '{"type":"final","output":{…}}' : '{"type":"final","thought":"<optional>","output":{…}}';
     const toolShape = '{"type":"tool_call","thought":"<optional>","tool":"<one of allowedTools>","args":{…}}';
 
     return {
@@ -492,8 +493,10 @@ export abstract class BaseAgent<TOutput> {
         // Said in words as well as in `maxLength`, because the failure this
         // closes was not the model disobeying a limit — it was the model
         // never being told the field had a purpose. See `THOUGHT_MAX_CHARS`.
-        `"thought" is an optional one-paragraph note about this turn, at most ${THOUGHT_MAX_CHARS} characters. ` +
-          "It is not where the work goes and nothing downstream reads it: put every word the step is being asked for in \"output\", and do not draft, restate or critique it in \"thought\".",
+        noThought
+          ? 'There is no "thought" field: write the answer straight into "output".'
+          : `"thought" is an optional one-paragraph note about this turn, at most ${THOUGHT_MAX_CHARS} characters. ` +
+            "It is not where the work goes and nothing downstream reads it: put every word the step is being asked for in \"output\", and do not draft, restate or critique it in \"thought\".",
         ...(hasTools ? ['"tool" must be exactly one of the advertised allowedTools names.'] : []),
       ],
     };
@@ -586,11 +589,15 @@ export abstract class BaseAgent<TOutput> {
   private buildTurnSchema(): ZodSchema<ReActTurn<TOutput>> {
     const thought = z.string().max(THOUGHT_MAX_CHARS).optional();
     if (this.config.allowedTools.length === 0) {
-      const bareFinal = z.object({
-        type: z.literal("final").default("final"),
-        thought,
-        output: this.config.outputSchema,
-      });
+      // `omitThought`: see the config field. Not in the schema, so not written.
+      const bareFinal =
+        this.config.omitThought === true
+          ? z.object({ type: z.literal("final").default("final"), output: this.config.outputSchema })
+          : z.object({
+              type: z.literal("final").default("final"),
+              thought,
+              output: this.config.outputSchema,
+            });
       return bareFinal as unknown as ZodSchema<ReActTurn<TOutput>>;
     }
     const finalVariant = z.object({ type: z.literal("final"), thought, output: this.config.outputSchema });
