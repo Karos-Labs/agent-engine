@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import { defineTool, success } from "@agent-engine/tool-common";
 
-const TOOL_VERSION = "1.1.0"; // 1.1.0: falls back to state/<platform>/strategy-map.json (SCRUM-464)
+const TOOL_VERSION = "1.2.0"; // 1.2.0: types the preferences doc's per-platform `formats` (passed through unchanged, 2026-09-23); 1.1.0: falls back to state/<platform>/strategy-map.json (SCRUM-464)
 
 /**
  * C7 (`docs/contracts/C7-run-context.md`, SCRUM-458): the platform keys a
