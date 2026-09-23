@@ -387,6 +387,9 @@ export const MARK_CANDIDATE_TAG = "[kind: brand mark — a logo or wordmark, not
 export function looksLikeMark(c: { path: string; description: string }): boolean {
   if (/\.svg$/iu.test(c.path)) return true;
   const title = c.description.split("[")[0] ?? "";
+  // A PHOTOGRAPH of a logo is not a logo: the 2026-09-23 karoslabs cover's
+  // badge was a Google Places "photo of 'ChatGPT logo'", a street sign.
+  if (/photo of|google places|geo-verified/iu.test(title)) return false;
   return /\b(logo|logos|logotype|wordmark|emblem|brand ?mark|icon|symbol)\b/iu.test(title);
 }
 

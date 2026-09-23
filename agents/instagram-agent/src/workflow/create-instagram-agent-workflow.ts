@@ -337,7 +337,7 @@ import {
   type StudioValidationDeps,
 } from "./template-studio.js";
 // ── Phase 3 (RFC-14 items Q-T) — the four modules the integrator wires ──
-import { InstagramArtDirectorAgent } from "../agent/instagram-art-director-agent.js";
+import { ART_DIRECTOR_SKILL_REF, InstagramArtDirectorAgent } from "../agent/instagram-art-director-agent.js";
 import {
   buildArtDirection,
   // Phase 4 (RFC-16 §4.3): `buildArtDirection` with the anti-metaphor line
@@ -3734,7 +3734,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             directionExec.status === "completed" && directionExec.finalOutput !== undefined && directionExec.finalOutput !== null
               ? finaliseVisualDirection(directionExec.finalOutput, {
                   source: assembled.source,
-                  generatedBy: "instagram-art-director@1",
+                  // 2026-09-23: the version that WROTE it. A constant "@1" here
+                  // made every direction look pre-v3 to `checkVisualDirection`.
+                  generatedBy: ART_DIRECTOR_SKILL_REF,
                   now,
                   gaps: assembled.gaps,
                   evidenceUrls: assembled.evidenceUrls,

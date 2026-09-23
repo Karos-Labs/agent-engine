@@ -624,7 +624,18 @@ export function directionPrescribesCliche(direction: Pick<VisualDirection, "subj
   return [...direction.subject, ...direction.light, ...direction.lines.map((l) => l.line), direction.styleLock.line].some((t) => prescribesClicheScene(t));
 }
 export function prescribesClicheScene(text: string): boolean {
-  return CLICHE_SCENE_PATTERN.test(text);
+  // A match PRESCRIBES the scene only when its own clause does not negate it.
+  // The first v3 direction for karoslabs (2026-09-23) said "no screen glow"
+  // and "never touching a keyboard": read without this, the lines that ban
+  // the scene were dropped as if they asked for it, and the direction was
+  // judged cliché again on every run.
+  const all = new RegExp(CLICHE_SCENE_PATTERN.source, "giu");
+  for (const match of text.matchAll(all)) {
+    const before = text.slice(Math.max(0, (match.index ?? 0) - 48), match.index ?? 0);
+    const clause = before.split(/[.;:,–—]\s*|\s-\s/u).pop() ?? before;
+    if (!/\b(no|never|not|without|avoid|nor)\b/iu.test(clause)) return true;
+  }
+  return false;
 }
 /** Added to every direction's negatives for generation. */
 export const CLICHE_SCENE_FORBID: readonly string[] = [

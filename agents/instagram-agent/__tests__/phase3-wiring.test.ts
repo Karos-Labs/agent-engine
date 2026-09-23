@@ -1,3 +1,4 @@
+import { ART_DIRECTOR_SKILL_REF } from "../src/agent/instagram-art-director-agent.js";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
@@ -118,7 +119,8 @@ describe("00d* — a client with no visual direction derives one, once", () => {
     const stored = VisualDirectionSchema.safeParse(beliefs?.[VISUAL_DIRECTION_BELIEF_KEY]);
     expect(stored.success).toBe(true);
     if (!stored.success) throw new Error("unreachable");
-    expect(stored.data.generatedBy).toBe("instagram-art-director@1");
+    // 2026-09-23: the version that wrote it, not a constant "@1".
+    expect(stored.data.generatedBy).toBe(ART_DIRECTOR_SKILL_REF);
     expect(stored.data.lines).toHaveLength(4);
     expect(stored.data.styleLock.id).toBe("documentary-warm");
     // Consent for the client's own feed is absent in this fixture, as it is
