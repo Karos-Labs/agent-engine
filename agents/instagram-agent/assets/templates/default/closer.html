@@ -1221,7 +1221,10 @@ body:not(:has(#takeaway > span:not(:empty))) .cl-panel { background-image: none;
 .cl-recap:empty { display: none; }
 .rc-strip {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* 2026-09-23: ONE ROW, however many plates (2 to MAX_RECAP_PLATES). A fixed
+     three-column grid put a fourth plate alone on a second row. */
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: var(--sp-2);
   align-items: start;
 }
