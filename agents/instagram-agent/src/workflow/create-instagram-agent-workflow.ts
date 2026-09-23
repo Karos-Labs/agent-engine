@@ -11071,6 +11071,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // 2026-09-23: the credit an attributable picture obliges us to print.
           // `creditLineFor` was imported for exactly this and never called.
           photoCreditFor: creditLineFor,
+          // 2026-09-23: a list series numbers its item slides.
+          numberedItems: series?.series.id === "the_list",
           // IGSTYLE-7, §7a — wires `paletteForSlide`'s already-built, already-
           // seeded rotation into the render path for the first time. Seeded
           // from `wf.runId` per the ticket; a ring of length ≤ 1 (or absent)

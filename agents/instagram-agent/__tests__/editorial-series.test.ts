@@ -65,8 +65,12 @@ describe("the bundled series are built from validated blocks, and nothing else",
   });
 
   it("gives every series a DIFFERENT opening archetype, which is what makes a rotation look like a different post", () => {
-    const openers = BUNDLED_SERIES.map((s) => s.middle[0]);
-    expect(new Set(openers).size, `two series open on the same archetype: ${openers.join(", ")}`).toBe(BUNDLED_SERIES.length);
+    // `the_list` (2026-09-23) is the one exception, and on purpose: every item
+    // slide is a headline_focus, because a list's rhythm IS its repetition.
+    // Its item numbers are what make it read as a different post.
+    const rotating = BUNDLED_SERIES.filter((s) => s.id !== "the_list");
+    const openers = rotating.map((s) => s.middle[0]);
+    expect(new Set(openers).size, `two series open on the same archetype: ${openers.join(", ")}`).toBe(rotating.length);
   });
 
   it("declares every id in EDITORIAL_SERIES_IDS exactly once, and a middle long enough for the widest canvas", () => {
@@ -289,5 +293,19 @@ const CUSTOM: EditorialSeries = {
 describe("the catalogue is a parameter", () => {
   it("selects from the catalogue it is handed, so a per-client set can replace the bundled one without touching this module", () => {
     expect(selectSeries({ restsOnKinds: ["event"] }, [CUSTOM]).series.badge).toBe("custom");
+  });
+});
+
+// 2026-09-23 (stage 6 of the reference-looks plan): the list people save.
+describe("the_list", () => {
+  it("wins a story built on three or more definitions, and leaves one or two to the playbook", () => {
+    expect(selectSeries({ restsOnKinds: ["definition", "definition", "definition"], angleId: "what-it-means" }).series.id).toBe("the_list");
+    expect(selectSeries({ restsOnKinds: ["definition", "definition"], angleId: "what-it-means" }).series.id).toBe("the_playbook");
+  });
+
+  it("is one item per slide: every interior is a headline_focus, and the register asks for the count to match", () => {
+    const list = BUNDLED_SERIES.find((s) => s.id === "the_list")!;
+    expect(new Set(list.middle)).toEqual(new Set(["headline_focus"]));
+    expect(list.register).toContain("the count equals the number of item slides");
   });
 });

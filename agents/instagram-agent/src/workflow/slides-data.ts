@@ -2513,6 +2513,12 @@ export function assembleSlidesData(params: {
    * `{{photoCredit}}` slot empty, exactly as before this field existed.
    */
   photoCreditFor?: ((selection: ImageSelection) => string | undefined) | undefined;
+  /**
+   * 2026-09-23: the run's series numbers its item slides (`the_list`). Each
+   * interior `headline_focus` then carries `itemOrdinal` ("01", "02", ...),
+   * which the plate sets as the item's big number. Absent, nothing changes.
+   */
+  numberedItems?: boolean | undefined;
   /** Reviewer typography per slide number (Phase 2 in-place edits). Absent slides keep the defaults. */
   slideStyleOverrides?: ReadonlyMap<number, SlideStyleOverride>;
   /**
@@ -2856,6 +2862,12 @@ export function assembleSlidesData(params: {
     // nothing called it. Only when the picture actually renders on this slide:
     // a credit under no picture would be a caption for nothing.
     const photoCredit = imagePath !== undefined && selection !== undefined ? params.photoCreditFor?.(selection) : undefined;
+    // The item's number among the item slides, not the slide's position: the
+    // cover is not item one.
+    const itemOrdinal =
+      params.numberedItems === true && layout === "headline_focus"
+        ? String(params.copy.slides.filter((s, i) => i > 0 && i < params.copy.slides.length - 1 && s.n <= slide.n && resolveLayout(s, params.availableTemplates).layout === "headline_focus").length).padStart(2, "0")
+        : undefined;
     const primaryTemplate = templateForLayout(layout, slide, params.brandTokens.slideTemplate);
     // `inverted` was resolved above, before `contentFor`, because the mark
     // kind set is computed from the ground this slide actually renders on.
@@ -2873,6 +2885,7 @@ export function assembleSlidesData(params: {
         ...imageTreatmentFields({ treatment: params.imageTreatment ?? "none" }),
         figurePlacement: figurePlacementFor(layout, slide.n, imagePath !== undefined),
         ...(photoCredit !== undefined ? { photoCredit } : {}),
+        ...(itemOrdinal !== undefined && itemOrdinal !== "00" ? { itemOrdinal } : {}),
       },
       images: imagePath ? { hero: imagePath } : {},
       htmlFragments,

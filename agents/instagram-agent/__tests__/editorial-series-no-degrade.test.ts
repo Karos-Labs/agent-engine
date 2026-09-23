@@ -175,7 +175,9 @@ describe("a series-directed layout repeats on purpose", () => {
    */
   it("...and WITHOUT the exemption the four repeat-bearing series degrade, exactly as they did on 2026-09-16", () => {
     const degradedSeries = BUNDLED_SERIES.filter((series) => walk(copyForSeries(series, 8)).some((slide) => slide.downgradedFrom !== undefined)).map((s) => s.id);
-    expect(degradedSeries).toEqual(["by_the_numbers", "head_to_head", "the_playbook", "in_their_words"]);
+    // `the_list` (2026-09-23) repeats headline_focus on every item slide, so it
+    // needs the exemption as much as the four that repeat a panel.
+    expect(degradedSeries).toEqual(["by_the_numbers", "head_to_head", "the_playbook", "in_their_words", "the_list"]);
   });
 
   /**

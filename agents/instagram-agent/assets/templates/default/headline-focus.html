@@ -1064,6 +1064,20 @@ body.ta-center .acc { margin-inline: auto; }
 }
 .hf-headline { max-inline-size: min(16ch, 100%); }
 .hf-lockup .body-text { max-inline-size: min(26em, 100%); }
+/* A LIST ITEM'S NUMBER (2026-09-23, the_list series). The item is the slide,
+   and its number is how a reader keeps their place in a countable promise, so
+   it is set big, in the display face and the ink, never the accent (the
+   accent is the run's one mark). Empty on every other series, and gone. */
+.hf-ordinal {
+  font-family: var(--f-display, var(--f-body, system-ui, sans-serif));
+  font-weight: 700;
+  font-size: calc(400px * var(--ts, 1));
+  line-height: 1.06;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--fg) 88%, transparent);
+}
+.hf-ordinal:empty { display: none; }
 </style>
 </head>
 <body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-ground="{{groundStyle}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}" data-anchor="{{compositionAnchor}}" data-figure="{{figurePlacement}}">
@@ -1076,6 +1090,7 @@ body.ta-center .acc { margin-inline: auto; }
   <div class="plate focus">
     <div class="device hf-device" data-fitted="secondary">{{html:device}}</div>
     <div class="hf-lockup">
+      <div class="hf-ordinal" aria-hidden="true">{{itemOrdinal}}</div>
       <div class="acc" aria-hidden="true"></div>
       <div class="hf-headline headline r-display" id="headline" data-fitted="primary"><span class="mk-runs">{{html:headlineRuns}}</span><span class="mk-plain">{{headline}}</span></div>
       <div class="body-text r-lead" data-fitted="secondary"><span class="mk-runs">{{html:bodyRuns}}</span><span class="mk-plain">{{body}}</span></div>
