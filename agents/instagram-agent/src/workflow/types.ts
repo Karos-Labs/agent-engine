@@ -274,6 +274,14 @@ export interface InstagramRunClaim {
    * post in news mode renders on the `news-frame` cover.
    */
   newsFlash?: boolean;
+  /**
+   * 2026-09-23: an editorial series the run asked for (`the_list`,
+   * `by_the_numbers`, ...), from the run input's `requestedSeries`, then the
+   * client's learned preference. Honoured by `04i2` when the catalogue has it.
+   */
+  requestedSeries?: string;
+  /** Which source decided the post type this run, for the trace: the run input, the client config, or the client's learned preference. */
+  postTypeSource?: "run-input" | "client-config" | "client-preference";
 }
 
 // ─────────────────────────────────────────────────────────────────────────

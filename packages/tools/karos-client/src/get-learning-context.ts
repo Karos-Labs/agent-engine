@@ -89,6 +89,8 @@ export interface PreferencesDoc {
   standingInstructions?: string[];
   derivedAt?: string;
   derivedFromCount?: number;
+  /** 2026-09-23: per-platform post-type preferences (C7 §2.4 extension), passed through as projected. */
+  formats?: Record<string, { format?: string; postModes?: string[]; pictureDensity?: string; series?: string } | undefined>;
 }
 
 /** C7 §2.5 */

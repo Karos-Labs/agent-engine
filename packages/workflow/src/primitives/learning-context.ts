@@ -54,6 +54,22 @@ export interface LearningPreferences {
   standingInstructions?: string[];
   derivedAt?: string;
   derivedFromCount?: number;
+  /**
+   * 2026-09-23: the post types a client prefers, per platform, set by a person
+   * in the feedback loop (agent-middleware `client_preferences.format_preferences`)
+   * and projected here. The owner: Geektime posts news flashes, Deel's feed is
+   * photo-led; these are facts about the client, kept with what the loop has
+   * learned about it, and a run input still overrides them.
+   */
+  formats?: Record<string, LearningFormatPreference | undefined>;
+}
+
+/** One platform's post-type preference. Every field optional; an unknown value is ignored by the reader. */
+export interface LearningFormatPreference {
+  format?: string;
+  postModes?: string[];
+  pictureDensity?: string;
+  series?: string;
 }
 
 export interface LearningStrategyRow {
