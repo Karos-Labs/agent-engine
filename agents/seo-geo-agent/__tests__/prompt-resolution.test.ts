@@ -83,8 +83,8 @@ describe("PromptStore resolution (RFC-01 §16.1)", () => {
 
     await agent.run(ctx, { seoScore: 0 });
 
-    // The agent is pinned to `seo-geo-narrative@3` (measured-basis score + measured facts, 2026-09-07).
-    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "seo-geo-narrative", "3.md"), "utf8");
+    // The agent is pinned to `seo-geo-narrative@4` (opens on what moved since the previous run, 2026-09-23).
+    const expectedPrompt = readFileSync(path.join(PROMPTS_ROOT, "seo-geo-narrative", "4.md"), "utf8");
     // SCRUM-298: `system` now also carries the response contract, appended
     // after the resolved skill body — assert the prefix, not exact equality.
     const call = (router.complete as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;

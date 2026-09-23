@@ -52,6 +52,13 @@ import { SeoGeoNarrativeAgent } from "../agent/seo-geo-narrative-agent.js";
 import { SeoGeoPromptSetAgent } from "../agent/seo-geo-prompt-set-agent.js";
 import { buildConnectorOverlay } from "./connector-overlay.js";
 import { buildTechnicalMeasurements, describeMeasuredFacts, type MeasurementSources } from "./measurements.js";
+import {
+  movementDirective,
+  movementSources,
+  readPreviousRun,
+  scoreMovement,
+  type SeoGeoMovement,
+} from "./previous-run.js";
 import { PROMPT_TEMPLATE_VERSION, buildIntentPromptSet, deriveDefaultPromptSet, sha256Hex } from "./prompt-set.js";
 import {
   DESIRED_OUTCOME_NEUTRAL_PREFILL,
@@ -219,7 +226,7 @@ function toSeoGeoCell(cell: {
 const NARRATIVE_WITHHELD =
   "This summary is not reported: every figure it rested on was one the model derived rather than measured, and derived figures are withheld rather than published.";
 
-function buildNarrativeSources(scoring: SeoGeoScoringResult, firedCount: number, measuredFacts: readonly string[] = []): string[] {
+function buildNarrativeSources(scoring: SeoGeoScoringResult, firedCount: number, measuredFacts: readonly string[] = [], movement?: SeoGeoMovement): string[] {
   const sources: string[] = [
     `${scoring.seoScore.score}`,
     `${scoring.seoScore.score}%`,
@@ -245,6 +252,11 @@ function buildNarrativeSources(scoring: SeoGeoScoringResult, firedCount: number,
   if (scoring.visibilityByNe) {
     sources.push(`${scoring.visibilityByNe.index}`, `${scoring.visibilityByNe.index}%`);
   }
+  // The previous run's scores and this run's movement away from them. Without
+  // these the gate refuses the one sentence the comparison exists to produce:
+  // a delta is a number the summary was HANDED, but it appears in no other
+  // source, and the gate cannot tell a value given from a value invented.
+  sources.push(...movementSources(movement));
   return sources;
 }
 
@@ -1011,6 +1023,25 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       };
     });
 
+    // ── 09b: what moved since the previous run ───────────────────────────
+    // Its own step, and read BEFORE step 20 overwrites the belief. A step's
+    // result is checkpointed, so a resumed run replays the value this run read
+    // the first time rather than the one it went on to write — which is the
+    // whole reason this is a step and not an inline read.
+    const movement = await wf.step.code("09b-read-previous-run", async (): Promise<SeoGeoMovement | null> => {
+      const beliefsOutcome = await tools["memory.read"]!.execute({ scope: "beliefs" }, { ctx });
+      const beliefs = beliefsOutcome.status === "success" ? (beliefsOutcome.result as { beliefs: Record<string, unknown> }).beliefs : {};
+      const previous = readPreviousRun(beliefs, wf.runId);
+      if (previous === undefined) return null;
+      return scoreMovement(previous, {
+        seoScore: scoring.seoScore.score,
+        seoDataCoveragePct: scoring.seoScore.dataCoveragePct,
+        geoReadinessScore: scoring.geoReadiness.score,
+        geoDataCoveragePct: scoring.geoReadiness.dataCoveragePct,
+        visibilityIndex: scoring.visibilityByN?.index ?? null,
+      });
+    });
+
     // ── 10: connector overlay (RFC-04 §2 Phase 5 / §4) — honest "not connected", gated edit referenced only ──
     const connectorOverlay = await wf.step.code("10-connector-overlay", () => buildConnectorOverlay());
 
@@ -1147,6 +1178,27 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
                 "AI visibility was NOT MEASURED for this run. Do not describe, score, rank or characterise the client's AI visibility in any way, including calling it low, weak or absent — say only that it was not measured this cycle, and write the rest of the summary about the technical findings, which were measured.",
             }
           : {}),
+        // What moved since the previous run, computed in `09b` because the
+        // narrative's first rule forbids it doing the arithmetic itself. The
+        // directive is a finished sentence rather than a description of one:
+        // handed "SEO up 4" a model writes "a meaningful improvement", and the
+        // whole point is a report that says what happened.
+        ...(movement !== null
+          ? {
+              previousRun: {
+                recordedAt: movement.previous.recordedAt,
+                seoScore: movement.previous.seoScore,
+                geoReadinessScore: movement.previous.geoReadinessScore,
+                ...(movement.previous.visibilityIndex !== null ? { visibilityIndex: movement.previous.visibilityIndex } : {}),
+              },
+              seoScoreDelta: movement.seoDelta,
+              geoReadinessScoreDelta: movement.geoDelta,
+              ...(movement.visibilityDelta !== null ? { visibilityIndexDelta: movement.visibilityDelta } : {}),
+              scoresUnchangedSinceLastRun: movement.unchanged,
+              comparisonIsLikeForLike: !movement.coverageChanged,
+            }
+          : { firstMeasuredRun: true }),
+        movementDirective: movementDirective(movement ?? undefined),
         ...(directive !== undefined ? { revisionRequest: directive } : {}),
       };
       const firstNarrative = await wf.step.agent(rev("14-draft-narrative"), narrativeAgent, narrativeInput);
@@ -1170,7 +1222,7 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
         throw new WorkflowToolingFailure(`narrative step resolved to "${narrativeResult.status}"`);
       }
       let narrative = narrativeResult.finalOutput!;
-      const sources = buildNarrativeSources(scoring, recommendations.length, technicalPhase.measuredFacts);
+      const sources = buildNarrativeSources(scoring, recommendations.length, technicalPhase.measuredFacts, movement ?? undefined);
 
       // ── 14b: self-correction BEFORE the gate, never instead of it ──
       //

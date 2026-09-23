@@ -15,6 +15,11 @@ const NON_FANOUT_STEP_IDS = [
   "06-derive-technical-measurements",
   "08-assemble-visibility-cells",
   "09-compute-scores",
+  // Reads the previous run's snapshot BEFORE step 20 overwrites it, so the
+  // summary can open on what moved. A step rather than an inline read because
+  // a step's result is checkpointed: a resume replays what this run saw the
+  // first time, not what it went on to write.
+  "09b-read-previous-run",
   "10-connector-overlay",
   "11-fire-recommendations",
   "12-fix-generation-review",
