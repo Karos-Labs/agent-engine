@@ -2596,8 +2596,23 @@ export function planSetupBudget(
     reprice();
     adaptations.push(`${plan.templates} templates instead of ${plan.templates + 1}`);
   }
-  // 4. Repairs.
-  while (!fitsTarget() && plan.repairsAllowed > 0) {
+  // 5. Visual direction (item Q) deferred to the next setup.
+  if (!fitsTarget() && plan.visualDirection) {
+    plan = { ...plan, visualDirection: false };
+    reprice();
+    adaptations.push("visual direction deferred to the next setup — generated images keep the brand-kit fallback direction until then");
+  }
+  // 5b. Repairs, past the hard max only, and AFTER the visual direction: NOT at the target (2026-09-23).
+  //
+  // A repair is a quality attempt, the one turn that tells the designer which
+  // gate refused its template and by how much. The owner's 2026-09-14 ruling
+  // is that the target never cuts a quality attempt (overrun and record), and
+  // RFC-21 Part 1 already deleted the rung that did it to drafting attempts;
+  // this rung was the same defect in the setup budget. Measured on karoslabs
+  // 2026-09-23: templates refused on a fixable overflow were DROPPED with "no
+  // repair turn left in this setup's budget" and the client kept the bundled
+  // set. Repairs are now cut only past the hard max.
+  while (!fitsMax() && plan.repairsAllowed > 0) {
     plan = { ...plan, repairsAllowed: plan.repairsAllowed - 1 };
     reprice();
     adaptations.push(
@@ -2605,12 +2620,6 @@ export function planSetupBudget(
         ? "no repair turns — a template that fails a gate is dropped rather than repaired"
         : `${plan.repairsAllowed} repair turn instead of ${plan.repairsAllowed + 1}`,
     );
-  }
-  // 5. Visual direction (item Q) deferred to the next setup.
-  if (!fitsTarget() && plan.visualDirection) {
-    plan = { ...plan, visualDirection: false };
-    reprice();
-    adaptations.push("visual direction deferred to the next setup — generated images keep the brand-kit fallback direction until then");
   }
   // 6. Past the HARD MAX only: below the template floor, on the cheapest
   //    complete path. This is the branch that replaces the refusal the owner's

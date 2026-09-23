@@ -76,6 +76,29 @@ describe("the setup estimate table", () => {
   });
 });
 
+describe("repairs are a quality attempt: the target never cuts them (2026-09-23)", () => {
+  // karoslabs' 2026-09-23 setup dropped templates refused on a fixable
+  // overflow with "no repair turn left in this setup's budget". The owner's
+  // rule is that the target adapts optional work and records an overrun; a
+  // repair is not optional work. Only the hard max cuts one.
+  it("cuts a repair only when the plan would otherwise pass the hard max, never to reach the target", () => {
+    let overTargetKept = 0;
+    for (let sitePages = 0; sitePages <= 400; sitePages += 5) {
+      const shape = { ...DEFAULT_SETUP_SHAPE, sitePages };
+      const decision = planSetupBudget(shape, EXPENSIVE_HISTORY);
+      if (decision.plan.repairsAllowed < shape.repairs) {
+        // Every repair that was cut had to be: one more would pass the max.
+        const withOneMore = estimateSetupCost({ ...decision.plan, repairsAllowed: decision.plan.repairsAllowed + 1 }, shape, decision.calibration.ratio);
+        expect(withOneMore.estimatedUsd, `sitePages=${sitePages}`).toBeGreaterThan(MAX_SETUP_SPEND_USD);
+      } else if (decision.estimate.estimatedUsd > TARGET_SETUP_SPEND_USD) {
+        overTargetKept += 1;
+      }
+    }
+    // The premise: some plan sat over the target and kept all its repairs.
+    expect(overTargetKept).toBeGreaterThan(0);
+  });
+});
+
 describe("planSetupBudget: the six levers, in the owner's order", () => {
   /**
    * A deliberately unaffordable shape, at the calibration ceiling.
@@ -89,7 +112,7 @@ describe("planSetupBudget: the six levers, in the owner's order", () => {
    */
   const impossible: SetupShape = { templates: 6, repairs: 4, referenceAccounts: 90, sitePages: 20, referenceImages: 60, setReview: true, visualDirection: true };
 
-  it("pulls them in order: images, set review, templates to four, repairs, visual direction, then below four only past the hard max", () => {
+  it("pulls them in order: images, set review, templates to four, visual direction, then repairs and below four only past the hard max", () => {
     const decision = planSetupBudget(impossible, EXPENSIVE_HISTORY);
     const order = decision.adaptations.join(" | ");
 
@@ -98,9 +121,12 @@ describe("planSetupBudget: the six levers, in the owner's order", () => {
     expect(order.indexOf("reference-post images")).toBeGreaterThanOrEqual(0);
     expect(order.indexOf("no set review")).toBeGreaterThan(order.indexOf("reference-post images"));
     expect(order.indexOf("templates instead of")).toBeGreaterThan(order.indexOf("no set review"));
-    expect(order.indexOf("repair turn")).toBeGreaterThan(order.indexOf("templates instead of"));
-    expect(order.indexOf("visual direction deferred")).toBeGreaterThan(order.indexOf("repair turn"));
-    expect(order.indexOf("cheapest complete path")).toBeGreaterThan(order.indexOf("visual direction deferred"));
+    // 2026-09-23: repairs moved AFTER the visual direction. A repair is a
+    // quality attempt, so the target never cuts one; only the hard max does,
+    // and every optional lever (the direction is one) goes first.
+    expect(order.indexOf("visual direction deferred")).toBeGreaterThan(order.indexOf("templates instead of"));
+    expect(order.indexOf("repair turn")).toBeGreaterThan(order.indexOf("visual direction deferred"));
+    expect(order.indexOf("cheapest complete path")).toBeGreaterThan(order.indexOf("repair turn"));
 
     expect(decision.plan.referenceImages).toBe(0);
     expect(decision.plan.setReview).toBe(false);
