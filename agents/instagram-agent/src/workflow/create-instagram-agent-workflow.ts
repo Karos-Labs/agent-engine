@@ -2689,8 +2689,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      * are the same budget decision with a different `shape`. `planSetupBudget`
      * never refuses (owner's standing amendment applied to setup): it fits the
      * plan by dropping the reference-image pass, then the set review, then
-     * templates down to four, then repairs, then the visual direction, then —
-     * past the hard max only — below four templates with the reason recorded.
+     * templates down to four, then the visual direction, then, past the hard
+     * max only, repairs (a quality attempt the target never cuts, 2026-09-23)
+     * and below four templates with the reason recorded.
      */
     let setupDecision: SetupBudgetDecision | undefined;
     const planSetup = async (shape: SetupShape): Promise<SetupBudgetDecision> =>
@@ -3264,7 +3265,14 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             if (candidate.dropReason !== undefined) continue;
             const needsRepair = !candidate.validation.ok || candidate.reviewRepair !== undefined;
             if (!needsRepair) continue;
-            if (repairsSpent >= setupPlan.repairsAllowed) {
+            // Past the plan's count, a repair still runs while the setup's
+            // actual spend leaves room for one under the HARD max (2026-09-23):
+            // the target never cuts a quality attempt, it records the overrun
+            // (the meter's crossing note does). Two repairs for a set of six
+            // dropped every template past the second that failed a fixable
+            // gate; karoslabs lost four that way on 2026-09-23.
+            const roomUnderMax = setupMeter.totalUsd + SETUP_STEP_COST_ESTIMATES_USD.templateRepair <= MAX_SETUP_SPEND_USD;
+            if (repairsSpent >= setupPlan.repairsAllowed && !roomUnderMax) {
               if (!candidate.validation.ok) {
                 candidate.dropReason = `${formatStudioFailures(candidate.validation).join("; ") || "the validation battery refused it"} (no repair turn left in this setups budget)`;
               }

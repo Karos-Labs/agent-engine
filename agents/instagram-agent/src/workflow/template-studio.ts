@@ -344,6 +344,19 @@ export const STUDIO_EMPTY_SETUP_COOLDOWN_DAYS = 30;
  */
 export const STUDIO_DESIGN_STEP_TIMEOUT_MS = 20 * 60_000;
 
+/**
+ * Slots of which a sample must fill ONE, not all (2026-09-23). A closer's
+ * body renders as a `question` or as a `cta`, and its marked twin follows it;
+ * `contentFor` never fills both, so a sample that did would be demonstrating
+ * a slide the pipeline cannot produce.
+ */
+export const SAMPLE_ALTERNATES: Readonly<Record<string, ReadonlyArray<readonly string[]>>> = {
+  closer: [
+    ["question", "cta"],
+    ["questionRuns", "ctaRuns"],
+  ],
+};
+
 export const STUDIO_ACTOR = "studio";
 
 /**
@@ -2208,13 +2221,31 @@ export async function validateStudioTemplate(
       );
     }
   }
+  const filled = (name: string): boolean => {
+    const value = draft.sample[name];
+    return typeof value === "string" && value.trim().length > 0;
+  };
   for (const name of declared) {
     if (!extracted.includes(name)) {
       failures.push(fail(2, `slot "${name}" is declared but the markup never reads {{${name}}} — a declared slot nothing reads is content thrown away`));
     }
-    const sampleValue = draft.sample[name];
-    if (typeof sampleValue !== "string" || sampleValue.trim().length === 0) {
-      failures.push(fail(2, `the sample does not fill declared slot "${name}" — a template that cannot demonstrate its own slots has not been shown to work`));
+    // A slot with ALTERNATES is demonstrated when any one of them is: a
+    // closer's body is a question OR a call to action, never both, because
+    // `contentFor` routes it to one and collapses the other. Asking the
+    // sample to fill both refused every closer the studio ever authored
+    // (karoslabs, 2026-09-23: "does not fill declared slot questionRuns ...
+    // ctaRuns").
+    const alternates = SAMPLE_ALTERNATES[draft.archetypeId]?.find((group) => group.includes(name));
+    const demonstrated = alternates === undefined ? filled(name) : alternates.some((alt) => declared.includes(alt) && filled(alt));
+    if (!demonstrated) {
+      failures.push(
+        fail(
+          2,
+          alternates === undefined
+            ? `the sample does not fill declared slot "${name}" — a template that cannot demonstrate its own slots has not been shown to work`
+            : `the sample fills none of the alternate slots ${alternates.map((a) => `"${a}"`).join(" / ")} — one of them has to be shown working`,
+        ),
+      );
     }
   }
   // ── Gate 2, RFC-17: A `*Runs` SLOT IS HALF A PAIR, NEVER A SLOT. ──

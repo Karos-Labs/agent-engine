@@ -224,6 +224,34 @@ const validate = (draft: StudioTemplateDraft, deps: StudioValidationDeps, extra:
 
 // ─────────────────────────────────────────────────────────────────────────
 
+describe("a closer demonstrates its question OR its call to action, never both (2026-09-23)", () => {
+  // karoslabs' 2026-09-23 setup dropped its closer on "the sample does not
+  // fill declared slot questionRuns ... ctaRuns": `contentFor` routes a
+  // closer's body to one of the two and collapses the other, so a sample
+  // filling both would demonstrate a slide the pipeline cannot produce.
+  const closer = (sample: Record<string, string>) =>
+    statDraft({
+      archetypeId: "closer",
+      name: "Acme closer",
+      role: "closer",
+      slots: ["takeaway", "question", "cta"],
+      bodyHtml: `<div class="cl"><h1 class="t">{{takeaway}}</h1><p class="q">{{question}}</p><p class="c">{{cta}}</p></div>`,
+      css: `.cl { position: absolute; inset: 120px 84px; } .t { font-family: var(--f-display); font-size: calc(88px * var(--ts, 1)); }`,
+      sample,
+    });
+
+  it("accepts a sample that fills the cta alone", async () => {
+    const result = await validate(closer({ takeaway: "The next cohort is forming.", cta: "Join the 2027 waitlist" }), makeDeps());
+    expect(result.failures.filter((f) => f.gate === 2 && /question|cta/.test(f.reason))).toEqual([]);
+  });
+
+  it("still refuses a sample that fills neither, naming the pair", async () => {
+    const result = await validate(closer({ takeaway: "The next cohort is forming." }), makeDeps());
+    const refusal = result.failures.find((f) => f.gate === 2 && /alternate slots/.test(f.reason));
+    expect(refusal?.reason).toContain('"question" / "cta"');
+  });
+});
+
 describe("the standing furniture the designer was told it may use", () => {
   /**
    * ── THE ONE ARGUMENT THAT COST karoslabs ITS WHOLE TEMPLATE SET. ──
