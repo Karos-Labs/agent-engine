@@ -7348,6 +7348,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // 2026-09-23: a photo-led client (prompt section 12). Absent on the
         // standard band, so every other client's input is unchanged.
         ...(runClaim.pictureDensity === "photo-first" ? { pictureDensity: "photo-first" } : {}),
+        // 2026-09-23: the one slide will be forced to the news-frame cover
+        // (04m2 below), so the writer is told, and briefs its photograph
+        // (prompt section 12, copy@31).
+        ...(newsCover ? { newsFlash: true } : {}),
         // The scouted story, when one took the slot: angle, hook, why-now, the
         // brand-fit bridge, and the source URLs it rests on.
         ...(topicClaim.trend !== undefined ? { trendCandidate: trendCandidateForDrafting(topicClaim.trend) } : {}),
