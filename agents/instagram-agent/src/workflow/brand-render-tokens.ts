@@ -911,8 +911,11 @@ const BADGE_VARIANT_CSS: Record<BadgeStyle, string> = {
     // template declares the token, both fall back to the accent and the
     // variant is unchanged.
     ".brand-badge { border-color: var(--badge-ink, var(--accent)); color: var(--badge-ink, var(--accent)); }",
-    '.eyebrow::before, .kicker::before, .brand-badge::before { content: "{ "; }',
-    '.eyebrow::after, .kicker::after, .brand-badge::after { content: " }"; }',
+    // NO literal braces (2026-09-23). The variant used to print "{ " and " }"
+    // around the label, and the owner asked twice what they were ("{ FIELD
+    // NOTES }", then "{ THE PRODUCT }" on thepitchbydeel): a code-editor glyph
+    // on a brand's slide reads as a template artefact, not as a style. The
+    // outlined tag stays; the characters go.
   ].join("\n"),
   underline: [
     ".eyebrow, .kicker, .brand-badge {",
