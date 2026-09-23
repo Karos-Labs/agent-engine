@@ -1131,7 +1131,9 @@ body.ta-center .acc { margin-inline: auto; }
 .hf-ordinal {
   font-family: var(--f-display, var(--f-body, system-ui, sans-serif));
   font-weight: 700;
-  font-size: calc(400px * var(--ts, 1));
+  /* The scale's top step, which is also a stat's figure: a list number is
+     that kind of object, and an off-scale literal is what the set forbids. */
+  font-size: var(--t-figure);
   line-height: 1.06;
   letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;

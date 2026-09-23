@@ -135,7 +135,12 @@ describe("the rules the set cannot break", () => {
        old set carried them on `.me-row`, `.cl-recap`, `.cl-ask`, `.rc-plate`
        and `.cmp-col`, and the probe counted eleven distinct rule widths in one
        carousel against an accent that is a single block. */
-    const body = decomment(read(plate).split("/* @ds:end */")[1] ?? "");
+    // ONE declared exception (2026-09-23): the news-frame cover's frame and
+    // headline box. They are the Geektime news flash's signature, not a
+    // hairline, and the form is reachable only for a client in news mode on a
+    // single-image post (`pickVisualSystem`'s `forcedCoverForm`). Removed by
+    // SELECTOR, so a border anywhere else on the cover still fails.
+    const body = decomment(read(plate).split("/* @ds:end */")[1] ?? "").replace(/body\[data-cover="news-frame"\][^{]*\{[^}]*\}/g, "");
     const borders = (body.match(/border(-block|-inline)?(-top|-bottom|-left|-right|-start|-end)?:\s*([^;]+);/g) ?? []).filter(
       (declaration) => !/\b(none|0)\b/.test(declaration),
     );
