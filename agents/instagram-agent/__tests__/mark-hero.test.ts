@@ -117,6 +117,7 @@ describe("a badge must be a mark (2026-09-23)", () => {
     expect(looksLikeMark({ path: "a.png", description: "slide 3 candidate — Anthropic logo (Wikimedia) [licence: public domain]" })).toBe(true);
     expect(looksLikeMark({ path: "a.svg", description: "slide 3 candidate — Sagum (Wikimedia) [licence: CC0]" })).toBe(true);
     expect(looksLikeMark({ path: "a.jpg", description: "slide 3 candidate — Sagum team at the office (Openverse) [licence: CC0]" })).toBe(false);
+    expect(looksLikeMark({ path: "b.jpg", description: 'slide 1 candidate — geo-verified photo of "ChatGPT logo" from Google Places (contributed by M.) [licence: Google Places photo]' })).toBe(false);
     // The engine's own tag says "logo"; the check reads the provider's title, not the tag.
     expect(looksLikeMark({ path: "a.jpg", description: "slide 3 candidate — a desk [licence: CC0] [kind: brand mark — a logo or wordmark, not a photograph]" })).toBe(false);
   });
