@@ -243,6 +243,11 @@ describe.skipIf(!STUDIO_WIRED)("the Template Studio in a real run", () => {
     // a later resume re-attempts it once the provider recovers.
     expect(wedged?.status).toBe("failed");
     expect(wedged?.error).toContain("did not complete within");
+    // 2026-09-23: and the ledger note a reviewer reads says WHY. Three
+    // karoslabs setups dropped their cover on a bare "tooling_error".
+    const events = await env.store.listJson<{ level: string; message: string }>("acme", ["ledger", "events", "studio_timeout"]);
+    const dropNote = events.find((event) => event.data.message.includes("dropped stat_callout"));
+    expect(dropNote?.data.message).toContain("step bound");
 
     // ...and the other three are authored, validated and stored. Before the
     // fix this list was empty, because there was no run left to store them.
