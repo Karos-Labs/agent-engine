@@ -211,6 +211,9 @@ const HAPPY_PATH_STEP_IDS = [
   // a step: a checkpointed guard replays its verdict instead of looking at
   // the disk, which is how a post shipped with no pictures at all.
   "06e2-stage-images-durably-attempt-1",
+  // 2026-09-23: each comparison column under its own mark (06e3). Always
+  // runs; it returns nothing when no column names a marked entity.
+  "06e3-source-comparison-logos-attempt-1",
   // ONE PICTURE, ONE SLIDE. Every slide is vetted independently against one
   // shared pool, so the best picture in it wins every slide it is offered to,
   // and `usedImagesSet` only ever stopped a repeat ACROSS runs. This clears a
