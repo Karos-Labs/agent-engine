@@ -269,7 +269,7 @@ import {
   withPost,
   type PostArm,
 } from "./post-performance.js";
-import { countComparedEntities, selectSeries, seriesDirectedSlides, seriesDirective, seriesLibraryFor, SERIES_DIRECTIVE_SLIDES } from "./editorial-series.js";
+import { BUNDLED_SERIES, countComparedEntities, selectSeries, seriesDirectedSlides, seriesDirective, seriesLibraryFor, SERIES_DIRECTIVE_SLIDES } from "./editorial-series.js";
 import {
   buildGateVerdict,
   gateTimeoutFor,
@@ -1176,17 +1176,57 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // client's standing setting. Anything but the three known values is
       // ignored so a typo cannot switch a client's whole feed to single images.
       const isFormatChoice = (v: unknown): v is "carousel" | "single" | "auto" => v === "carousel" || v === "single" || v === "auto";
+      // 2026-09-23: the client's LEARNED post-type preference, from the
+      // feedback loop's projected preferences doc (agent-middleware
+      // `client_preferences.format_preferences`). The owner: a client's
+      // preferences live with what the loop knows about it, and every
+      // capability stays available to every client. Lowest precedence: the
+      // run input and an operator's config both override it. A missing tool,
+      // doc or field is simply no preference.
+      let learned: { format?: unknown; postModes?: unknown; pictureDensity?: unknown; series?: unknown } = {};
+      try {
+        const lc = await tools["client.getLearningContext"]?.execute({ platform: "instagram" }, { ctx });
+        const formats = lc?.status === "success" ? (lc.result as { preferences?: { formats?: Record<string, unknown> } }).preferences?.formats : undefined;
+        const instagram = formats?.["instagram"];
+        if (instagram !== null && typeof instagram === "object") learned = instagram as typeof learned;
+      } catch {
+        learned = {};
+      }
       const runFormat = (wf.input ?? {})["requestedFormat"];
-      const requestedFormat = isFormatChoice(runFormat) ? runFormat : isFormatChoice(runConfig["instagramFormat"]) ? runConfig["instagramFormat"] : undefined;
+      const requestedFormat = isFormatChoice(runFormat)
+        ? runFormat
+        : isFormatChoice(runConfig["instagramFormat"])
+          ? runConfig["instagramFormat"]
+          : isFormatChoice(learned.format)
+            ? learned.format
+            : undefined;
       // 2026-09-23: how picture-led the carousel is, the same precedence as
       // the format. Anything but a known value is ignored, so a typo keeps the
       // standard band rather than switching a client's feed.
       const runDensity = (wf.input ?? {})["pictureDensity"];
-      const pictureDensity = isPictureDensity(runDensity) ? runDensity : isPictureDensity(runConfig["instagramPictureDensity"]) ? runConfig["instagramPictureDensity"] : undefined;
+      const pictureDensity = isPictureDensity(runDensity)
+        ? runDensity
+        : isPictureDensity(runConfig["instagramPictureDensity"])
+          ? runConfig["instagramPictureDensity"]
+          : isPictureDensity(learned.pictureDensity)
+            ? learned.pictureDensity
+            : undefined;
       // 2026-09-23: news mode, the same precedence. A config value that is not
       // a list of strings is ignored rather than guessed at.
       const configModes = Array.isArray(runConfig["instagramPostModes"]) ? (runConfig["instagramPostModes"] as unknown[]).filter((m): m is string => typeof m === "string") : [];
-      const newsFlash = (wf.input ?? {})["requestedMode"] === "news_flash" || configModes.includes("news_flash");
+      const learnedModes = Array.isArray(learned.postModes) ? learned.postModes.filter((m): m is string => typeof m === "string") : [];
+      const newsFlash = (wf.input ?? {})["requestedMode"] === "news_flash" || configModes.includes("news_flash") || learnedModes.includes("news_flash");
+      const runSeries = (wf.input ?? {})["requestedSeries"];
+      const requestedSeries = typeof runSeries === "string" && runSeries.length > 0 ? runSeries : typeof learned.series === "string" && learned.series.length > 0 ? learned.series : undefined;
+      const inputKeys = ["requestedFormat", "pictureDensity", "requestedMode", "requestedSeries"].filter((k) => (wf.input ?? {})[k] !== undefined);
+      const postTypeSource =
+        inputKeys.length > 0
+          ? ("run-input" as const)
+          : runConfig["instagramFormat"] !== undefined || runConfig["instagramPictureDensity"] !== undefined || configModes.length > 0
+            ? ("client-config" as const)
+            : Object.keys(learned).length > 0
+              ? ("client-preference" as const)
+              : undefined;
       // `wf.runId` is already a caller-supplied, globally-unique idempotency
       // key (RFC-01 §9.1 rule 2), so it doubles as `postId` directly — a
       // dedicated sequential-counter tool (RFC-03 §3's suggested
@@ -1202,6 +1242,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         ...(requestedFormat !== undefined ? { requestedFormat } : {}),
         ...(pictureDensity !== undefined ? { pictureDensity } : {}),
         ...(newsFlash ? { newsFlash: true } : {}),
+        ...(requestedSeries !== undefined ? { requestedSeries } : {}),
+        ...(postTypeSource !== undefined ? { postTypeSource } : {}),
       };
     });
     // The picture band in force for this run. `standard` is the band every run
@@ -6504,6 +6546,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // derived from the brief the run already loaded — the same cost
         // profile `selectSeries` itself has, and for the same reason.
         clientLibrary.series);
+        // 2026-09-23: a series the run or the client asked for, when this
+        // client's catalogue (or the bundled one) carries it. The scores stay
+        // on the trace, so "what the evidence would have chosen" is still
+        // answerable.
+        const wantedSeries = runClaim.requestedSeries !== undefined ? (clientLibrary.series.find((s) => s.id === runClaim.requestedSeries) ?? BUNDLED_SERIES.find((s) => s.id === runClaim.requestedSeries)) : undefined;
+        if (wantedSeries !== undefined && wantedSeries.id !== choice.series.id) {
+          choice.series = wantedSeries;
+          choice.reason = `series "${wantedSeries.id}": requested (${runClaim.postTypeSource ?? "run input"}); the evidence alone chose ${Object.entries(choice.scores).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "another"}`;
+        }
         // INSIDE the step, and the resume guard is why. A ledger write outside
         // a `wf.step.code` re-fires on every resume, which
         // `resume-idempotency.test.ts` counts and refuses - it caught this one
@@ -6552,7 +6603,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // publishing a single image gets the news-frame cover, the Geektime news
       // flash. Only a single post: a news frame on slide 1 of a carousel would
       // be a signature on one slide of eight.
-      const newsCover = runClaim.newsFlash === true && format.format === "single";
+      //
+      // 2026-09-23, GENERIC: and any client's HOT-NEWS story posted as a single
+      // is a news flash too. The owner: every capability is for every client,
+      // a new one included; Geektime's config was how it started, not who it
+      // is for. The writer is told (`newsFlash`, copy@31) and briefs the photo.
+      const newsCover = format.format === "single" && (runClaim.newsFlash === true || modeSelection.mode === "hot-news");
       // ── 04p: THE RUN'S VISUAL SYSTEM (Phase 5.5, item C) ──
       //
       // `wf.step.code`, $0, no model call and no tool call. The whole of item C
