@@ -42,3 +42,17 @@ describe("the closer's recap plates", () => {
     expect(html).not.toContain("rc-fig");
   });
 });
+
+describe("one plate per figure (2026-09-23)", () => {
+  it("drops a figure an earlier slide already stated, so the strip never repeats a number", () => {
+    const stat = (n: number, figure: string) => slide({ n, layout: "stat_callout", stat: { figure, subLabel: `label ${n}`, source: "s" } });
+    const html = buildRecapFragment([stat(1, "£500K"), stat(3, "£500K"), stat(5, ">50,000"), stat(6, "92%")]);
+    // The premise: four figures, one repeated. Without the fold the strip
+    // would hold three plates with £500K twice (spread over four sources).
+    expect(titles(html)).toEqual(["£500K", "&gt;50,000", "92%"]);
+    // The first slide to state it keeps it, with its own label.
+    expect(labels(html)[0]).toBe("label 1");
+    // Whitespace and case are not a different figure.
+    expect(titles(buildRecapFragment([stat(1, "1M +"), stat(2, "1m+"), stat(3, "20%")]))).toEqual(["1M +", "20%"]);
+  });
+});

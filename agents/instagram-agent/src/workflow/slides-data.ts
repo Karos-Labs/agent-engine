@@ -218,8 +218,14 @@ const DEVICE_SLOT_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<Instagram
  * just a repeated slide.
  */
 export const MIN_RECAP_PLATES = 2;
-/** The most plates the strip holds — four 240px plates across a 952px content column, which is where they stop being readable. */
-export const MAX_RECAP_PLATES = 4;
+/**
+ * The most plates the strip holds. THREE, the number of columns `closer.html`'s
+ * strip actually has (2026-09-23). It said four, and the fourth plate always
+ * wrapped alone onto a second row (the Deel closer of prep
+ * `pubsub-21763480460410206`); four in one row is too narrow for a long word
+ * under the humanist-serif register (`visual-system-axes-render.test.ts`).
+ */
+export const MAX_RECAP_PLATES = 3;
 /** Where a recap plate's title is cut. Longer than this and the plate stops being a glance. */
 export const MAX_RECAP_PLATE_CHARS = 40;
 /**
@@ -1136,7 +1142,19 @@ function spreadEvenly(slides: readonly InstagramSlideCopy[]): InstagramSlideCopy
 }
 
 export function recapSourceSlides(earlier: readonly InstagramSlideCopy[]): InstagramSlideCopy[] {
-  const numeric = earlier.filter((slide) => figureOn(slide) !== undefined);
+  // 2026-09-23: ONE plate per figure. The Deel closer of prep
+  // `pubsub-21763480460410206` recapped `£500K / £500K / >50,000 / 92%`
+  // because the cover and slide 3 led with the same stat; a repeated number
+  // reads as a mistake, not a recap. The first slide to state it keeps it.
+  const seenFigures = new Set<string>();
+  const numeric = earlier.filter((slide) => {
+    const figure = figureOn(slide);
+    if (figure === undefined) return false;
+    const key = figure.replace(/\s+/gu, "").toLowerCase();
+    if (seenFigures.has(key)) return false;
+    seenFigures.add(key);
+    return true;
+  });
   return spreadEvenly(numeric.length >= MIN_RECAP_PLATES ? numeric : earlier);
 }
 

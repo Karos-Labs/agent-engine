@@ -1221,6 +1221,7 @@ body:not(:has(#takeaway > span:not(:empty))) .cl-panel { background-image: none;
 .cl-recap:empty { display: none; }
 .rc-strip {
   display: grid;
+  /* Three columns = MAX_RECAP_PLATES (slides-data.ts). */
   grid-template-columns: repeat(3, 1fr);
   gap: var(--sp-2);
   align-items: start;
