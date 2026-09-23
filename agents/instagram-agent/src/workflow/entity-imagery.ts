@@ -376,6 +376,20 @@ export const MARK_CANDIDATE_TAG = "[kind: brand mark — a logo or wordmark, not
  * wordmarks as `attributable` while their licence line reads PD-textlogo).
  * A badge is furniture, and furniture carries no caption.
  */
+/**
+ * Whether a "<name> logo" search result IS a mark (2026-09-23). The search
+ * matches the name, not the kind of picture: on the karoslabs carousel of
+ * prep `pubsub-21248870282578044` the badge for a named source held a small
+ * photograph, because the first credit-free hit was a photo whose page
+ * mentioned the name. A badge needs the provider's own title to call it a
+ * logo, wordmark, emblem or icon, or the file to be a vector.
+ */
+export function looksLikeMark(c: { path: string; description: string }): boolean {
+  if (/\.svg$/iu.test(c.path)) return true;
+  const title = c.description.split("[")[0] ?? "";
+  return /\b(logo|logos|logotype|wordmark|emblem|brand ?mark|icon|symbol)\b/iu.test(title);
+}
+
 export function isCreditFreeMark(c: { licenseConfidence?: string; description: string }): boolean {
   return c.licenseConfidence === "blanket" || /\[licence:\s*(?:public domain|pd|cc0)/iu.test(c.description);
 }

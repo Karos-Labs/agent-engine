@@ -382,6 +382,7 @@ import {
   markEntityForLabel,
   MARK_CANDIDATE_TAG,
   isCreditFreeMark,
+  looksLikeMark,
   planEntitySourcing,
   sceneDeclaresIllustration,
   screenLegibleText,
@@ -8311,6 +8312,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               // beats its mark for the slide's picture) and its path is kept, so
               // the render can show it whole on a card instead of cropping it.
               if (step.mark === true) {
+                // Chosen BEFORE the tag is appended: the tag itself says "logo",
+                // and `looksLikeMark` reads the provider's own title.
+                const badgeCandidate = (gained as Array<ImageCandidate & { licenseConfidence?: string }>).find((c) => isCreditFreeMark(c) && looksLikeMark(c));
                 gained = gained.map((c) => ({ ...c, description: `${c.description} ${MARK_CANDIDATE_TAG}` }));
                 for (const c of gained) marks.push(c.path);
                 // 2026-09-23: the owner, on the white panel: a logo does not
@@ -8318,8 +8322,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 // of the post, beside a real photograph. The slide's first
                 // credit-free mark rides as a badge next to whatever picture
                 // the vet chooses.
-                const badge = (gained as Array<ImageCandidate & { licenseConfidence?: string }>).find(isCreditFreeMark);
-                if (badge !== undefined && !badges.some((b) => b.n === slide.n)) badges.push({ n: slide.n, path: badge.path });
+                if (badgeCandidate !== undefined && !badges.some((b) => b.n === slide.n)) badges.push({ n: slide.n, path: badgeCandidate.path });
               }
               found.push(...gained);
               got += gained.length;
