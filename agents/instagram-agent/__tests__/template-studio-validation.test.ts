@@ -381,9 +381,17 @@ describe("gate 2 — the slot contract", () => {
     expect(failure.reason).toContain("nothing in the pipeline would ever fill it");
   });
 
-  it("refuses a sample that does not demonstrate every declared slot", async () => {
+  it("refuses a sample that does not demonstrate every declared TEXT slot", async () => {
+    const result = await validate(statDraft({ sample: { figure: "63%", subLabel: "s", body: "b", sourceLine: "  ", device: "a figure device" } }), makeDeps());
+    expect(result.failures.find((f) => f.gate === 2)!.reason).toContain('the sample does not fill declared slot "sourceLine"');
+  });
+
+  it("never asks the sample for a slot CODE fills (device, recap, itemRows, the *Runs twins), 2026-09-23", async () => {
+    // karoslabs' second setup lost three templates to "does not fill declared
+    // slot headlineRuns / device / recap": the validation render fills those
+    // from the seed, so the designer's text sample never had to.
     const result = await validate(statDraft({ sample: { figure: "63%", subLabel: "s", body: "b", sourceLine: "src", device: "  " } }), makeDeps());
-    expect(result.failures.find((f) => f.gate === 2)!.reason).toContain('the sample does not fill declared slot "device"');
+    expect(result.failures.filter((f) => f.gate === 2 && /device/.test(f.reason))).toEqual([]);
   });
 
   it("refuses a derivedFrom.why citing a number the evidence never had", async () => {

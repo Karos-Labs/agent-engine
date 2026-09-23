@@ -614,8 +614,10 @@ describe("cover and closer (item M)", () => {
       slide({ n: 4, layout: "closer", body: "And which one last?" }),
     ];
     const data = assemble(slides, [hero(1), hero(2), noHero(3), noHero(4)]);
-    expect(data.slides[2]!.template).toBe("closer.html");
-    expect(data.slides[3]!.template).not.toBe("closer.html");
+    // 2026-09-23: the closer is the LAST slide's job (`one-closer.test.ts`).
+    // The first of two degrades; the one in the closing position keeps it.
+    expect(data.slides[2]!.template).not.toBe("closer.html");
+    expect(data.slides[3]!.template).toBe("closer.html");
   });
 
   it("fallbackArchetypeFor: the whole table, content shape first, then position", () => {

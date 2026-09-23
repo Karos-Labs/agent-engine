@@ -351,10 +351,9 @@ export const STUDIO_DESIGN_STEP_TIMEOUT_MS = 20 * 60_000;
  * a slide the pipeline cannot produce.
  */
 export const SAMPLE_ALTERNATES: Readonly<Record<string, ReadonlyArray<readonly string[]>>> = {
-  closer: [
-    ["question", "cta"],
-    ["questionRuns", "ctaRuns"],
-  ],
+  // The marked twins (`questionRuns` / `ctaRuns`) are not listed: code builds
+  // them, and gate 2 never asks the sample for a slot code fills.
+  closer: [["question", "cta"]],
 };
 
 export const STUDIO_ACTOR = "studio";
@@ -2229,6 +2228,15 @@ export async function validateStudioTemplate(
     if (!extracted.includes(name)) {
       failures.push(fail(2, `slot "${name}" is declared but the markup never reads {{${name}}} — a declared slot nothing reads is content thrown away`));
     }
+    // A slot CODE fills is never the sample's to demonstrate (2026-09-23).
+    // `device`, `recap`, `itemRows` and every `*Runs` twin are built by code
+    // and the validation render fills them from the seed (`sampleDeviceFragment`,
+    // `sampleMarkedRuns`, ...), so asking the designer's text sample to fill
+    // them refused templates at random: karoslabs' second setup lost
+    // headline_focus, stat_callout and the closer to "does not fill declared
+    // slot headlineRuns / device / recap" on a run where the first setup's
+    // designer had happened to fill them.
+    if (PRIVILEGED_HTML_SLOTS.includes(name)) continue;
     // A slot with ALTERNATES is demonstrated when any one of them is: a
     // closer's body is a question OR a call to action, never both, because
     // `contentFor` routes it to one and collapses the other. Asking the
