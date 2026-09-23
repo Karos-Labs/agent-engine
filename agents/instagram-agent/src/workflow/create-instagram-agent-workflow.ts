@@ -8083,6 +8083,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       if (attemptEntities.length > 0 && imageCandidatePool.length === 0 && !clientMediaOnly && slidesNeedingSource.length > 0) {
         const harvestTool = tools["media.harvestArticleImages"];
         const searchTool = tools["web.search_web"];
+        const peopleTool = tools["research.entityPeople"];
+        const peopleByEntity = new Map<string, Array<{ name: string; role: string }>>();
         const entitySourced = await wf.step.code(rev(`05b1-source-entity-images-attempt-${attempt}`), async () => {
           const found: ImageCandidate[] = [];
           const report: typeof entitySourcingReport = [];
@@ -8098,16 +8100,38 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               .filter((f) => f.claim === slide.sourceRef)
               .map((f) => f.url)
               .filter((url): url is string => typeof url === "string" && url.length > 0);
+            // 2026-09-23: who this company (or this product's maker) is
+            // recognised by, from Wikidata, once per entity per attempt. A
+            // missing tool, an outage or an unplaceable name is no people and
+            // the ladder it always ran.
+            let associatedPeople: Array<{ name: string; role: string }> = [];
+            if ((entity.kind === "company" || entity.kind === "product") && peopleTool !== undefined) {
+              if (!peopleByEntity.has(entity.name)) {
+                let people: Array<{ name: string; role: string }> = [];
+                try {
+                  const answer = await peopleTool.execute(
+                    { name: entity.name, kind: entity.kind, ...(entity.officialDomain !== undefined ? { officialDomain: entity.officialDomain } : {}) },
+                    { ctx },
+                  );
+                  if (answer.status === "success") people = (answer.result as { people?: Array<{ name: string; role: string }> }).people ?? [];
+                } catch (error) {
+                  console.error(`05b1-source-entity-images: research.entityPeople for "${entity.name}" failed`, error);
+                }
+                peopleByEntity.set(entity.name, people);
+              }
+              associatedPeople = peopleByEntity.get(entity.name) ?? [];
+            }
             const steps = planEntitySourcing({
               entity,
               citedUrls,
               hasMediaLibrary: libraryRead.candidates.length > 0,
               sceneTerms: need.searchTerms,
+              associatedPeople,
             });
             const tiersRun: Array<{ tier: string; why: string; got: number }> = [];
             let got = 0;
             for (const step of steps) {
-              if (got >= ENTITY_CANDIDATES_WANTED) break;
+              if (got >= ENTITY_CANDIDATES_WANTED && step.always !== true) continue;
               let gained: ImageCandidate[] = [];
               try {
                 if (step.tier === "media-library") {

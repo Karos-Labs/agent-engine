@@ -13,6 +13,7 @@ import { createAuditOnPage } from "./audit-on-page.js";
 import { createFetchCoreWebVitals } from "./core-web-vitals.js";
 import { createLookupEntity } from "./entity-lookup.js";
 import { createSearchWeb } from "./search-web.js";
+import { createEntityPeople } from "./entity-people.js";
 import { createScraperProvider, type ScraperProvider } from "@agent-engine/tool-karos-scraper";
 
 export * from "./runs.js";
@@ -29,6 +30,7 @@ export * from "./audit-on-page.js";
 export * from "./core-web-vitals.js";
 export * from "./entity-lookup.js";
 export * from "./search-web.js";
+export * from "./entity-people.js";
 export * from "./html-signals.js";
 export * from "./payload.js";
 
@@ -129,5 +131,8 @@ export function createKarosResearchTools(
     // press page, no registry provided it, and the tier fell back to guessed
     // `/press` paths on every run. Same scraper seam, cached per query.
     "web.search_web": createSearchWeb(store, scraper),
+    // 2026-09-23: the people a company is recognised by (CEO, founders), from
+    // Wikidata, for Instagram's entity route. Public API, no credential.
+    "research.entityPeople": createEntityPeople(store, { ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}) }),
   };
 }

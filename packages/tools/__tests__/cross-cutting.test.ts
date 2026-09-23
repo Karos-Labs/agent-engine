@@ -154,7 +154,9 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // a search that returns URLs, which Instagram's entity-imagery route had
     // requested since RFC-24 and no registry provided. It carries the `web.`
     // prefix the caller asks for, so that prefix joins the expected list.)
-    expect(names.length).toBe(66);
+    // (66 -> 67, 2026-09-23: `research.entityPeople`, the people a company
+    // is recognised by, from Wikidata, for Instagram's entity route.)
+    expect(names.length).toBe(67);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }

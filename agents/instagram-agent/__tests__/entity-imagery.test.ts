@@ -157,6 +157,24 @@ describe("the sourcing ladder — the entity route is consulted before ordinary 
     expect(logo!.order).toBeLessThan(commons.find((s) => s.query === "Coca-Cola")!.order);
   });
 
+  it("asks for the face the company is known by after its mark, and runs it even when the mark filled the quota", () => {
+    // 2026-09-23. The owner: a post about ChatGPT can show ChatGPT, or Sam
+    // Altman. The name comes from Wikidata (research.entityPeople), never
+    // from a model's memory, and only one face is searched per slide.
+    const chatgpt = entity({ name: "ChatGPT", kind: "product", cardIds: ["k1"], salience: 5 });
+    const plan = planEntitySourcing({ entity: chatgpt, associatedPeople: [{ name: "Sam Altman", role: "ceo" }, { name: "Greg Brockman", role: "founder" }] });
+    const face = plan.find((s) => s.query === "Sam Altman");
+    expect(face).toMatchObject({ tier: "commons", requireTerm: "Sam Altman", always: true, allowUnknownLicence: true });
+    expect(face!.order).toBeGreaterThan(plan.find((s) => s.query === "ChatGPT logo")!.order);
+    expect(plan.some((s) => s.query === "Greg Brockman")).toBe(false);
+    expect(plan.map((s) => s.order)).toEqual(plan.map((_, i) => i));
+
+    // No people, or a person entity: exactly the ladder it planned before.
+    expect(planEntitySourcing({ entity: chatgpt }).some((s) => s.always === true)).toBe(false);
+    const person = entity({ name: "Sam Altman", kind: "person", cardIds: ["k2"], salience: 5, isPublicFigure: true });
+    expect(planEntitySourcing({ entity: person, associatedPeople: [{ name: "X", role: "ceo" }] }).some((s) => s.query === "X")).toBe(false);
+  });
+
   it("does not ask a person for a logo", () => {
     // "Andrej Karpathy logo" returns noise, ranked above the press photograph
     // the next rung would have found.
