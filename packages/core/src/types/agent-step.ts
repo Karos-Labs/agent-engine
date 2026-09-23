@@ -90,6 +90,17 @@ export interface AgentStepConfig<TOutput> {
    * answer this much".
    */
   thinkingBudget?: number;
+  /**
+   * Drop the optional `thought` field from this step's turn schema entirely
+   * (2026-09-23). For a single-shot step with no tools, nothing reads it and
+   * the model can still spend its whole output budget on it: the Instagram
+   * template designer's turns that SUCCEEDED all hit the 8,000-character
+   * thought clamp and one spent 23,313 output tokens on a 4,558-character
+   * template, while the ones that failed hit the raised 24,000-token ceiling
+   * having written no answer at all. A property that is not in the schema
+   * cannot be written. Only meaningful with no `allowedTools`.
+   */
+  omitThought?: boolean;
   /** Bounded repair budget for malformed model turns. Default 1, `0` to fail on the first. See `AgentStepConfigSchema`. */
   maxMalformedTurns?: number;
   modelPolicy: ModelPolicy;

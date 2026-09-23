@@ -169,3 +169,37 @@ describe("BaseAgent — the `thought` field is a note, not a workspace", () => {
     expect(handedSchema!.safeParse({ type: "final", thought: "a paragraph", output: { body: "ok" } }).success).toBe(true);
   });
 });
+
+describe("BaseAgent: `omitThought` takes the field out of the schema (2026-09-23)", () => {
+  it("hands the model a schema with no `thought` and a contract that says so, and the answer still parses", async () => {
+    let handedSchema: z.ZodTypeAny | undefined;
+    const systems: string[] = [];
+    const complete = vi.fn(async (_p: string, schema: z.ZodTypeAny, _pol: unknown, opts?: { system?: string }) => {
+      handedSchema = schema;
+      systems.push(opts?.system ?? "");
+      return finalTurn({ body: "ok" })();
+    });
+    const router = { complete, completeAlias: vi.fn() } as unknown as ModelRouter;
+    const result = await new MockAgent(runtimeFor(router), config({ omitThought: true })).run(ctx, { topic: "ai" });
+    expect(result.status).toBe("completed");
+    // zod strips an unknown key, so the proof is the parsed value: a thought
+    // the model tried to write does not survive, and the shape has no such key.
+    const parsed = handedSchema!.parse({ type: "final", thought: "a paragraph", output: { body: "ok" } }) as Record<string, unknown>;
+    expect("thought" in parsed).toBe(false);
+    expect(Object.keys((handedSchema as unknown as z.ZodObject<z.ZodRawShape>).shape)).toEqual(["type", "output"]);
+    // The contract reaches the model as JSON, so the quotes arrive escaped.
+    expect(systems[0]).toContain('There is no \\"thought\\" field');
+    expect(systems[0]).not.toContain("nothing downstream reads it");
+  });
+
+  it("leaves every other agent exactly as it was (the premise)", async () => {
+    let handedSchema: z.ZodTypeAny | undefined;
+    const complete = vi.fn(async (_p: string, schema: z.ZodTypeAny) => {
+      handedSchema = schema;
+      return finalTurn({ body: "ok" })();
+    });
+    const router = { complete, completeAlias: vi.fn() } as unknown as ModelRouter;
+    await new MockAgent(runtimeFor(router), config()).run(ctx, { topic: "ai" });
+    expect(Object.keys((handedSchema as unknown as z.ZodObject<z.ZodRawShape>).shape)).toEqual(["type", "thought", "output"]);
+  });
+});

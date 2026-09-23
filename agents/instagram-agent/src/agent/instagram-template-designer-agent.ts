@@ -85,6 +85,9 @@ export class InstagramTemplateDesignerAgent extends BaseAgent<StudioTemplateDraf
     // that authors a real layout and then cannot close its stylesheet
     // returns an unparseable turn and costs the client a template.
     maxTokens: 12_000,
+    // 2026-09-23: the thought field was eating this step's output budget
+    // (three karoslabs setups of 0/6); see `omitThought`.
+    omitThought: true,
     modelPolicy: resolveModelPolicy("instagram-template-designer", { policy: "pinned", model: "claude-sonnet-4-6", contentLanguageSensitive: true }),
     skillRef: "instagram-template-designer@1",
   };
