@@ -16,6 +16,25 @@ to hold five obsolete descriptions of them as well.
 
 ---
 
+**What changed at v30.** Everything v29 says still stands. Section 22 gains
+"Named before anonymous, real before drawn", and four examples change.
+
+The owner on the 2026-09-23 karoslabs carousel (prep
+`pubsub-21703550620756189`): every picture looked AI-generated and generic,
+and the real ones were missing. Two of its three pictures were a woman lit by
+a laptop in a dark room, one sourced and one generated. The guide had been
+teaching exactly that scene: section 6's ChatGPT example offered "a laptop in
+a dark room with a cursor blinking", and section 22's examples were
+`["a laptop", "a dark room"]`, `["laptop", "wooden desk", "morning light"]`
+and "someone at a desk with two tabs open". Those four examples are replaced
+by scenes that are not the feed's cliché, and the new paragraph asks for two
+picture slides OF a named entity when `namedEntities` has any (the route that
+returns real, licensed photographs: the mark, press pictures, the founder),
+names the cliché scenes to avoid, and makes `generate` the last resort.
+
+**Cost.** INPUT: about +1,650 prompt characters, about +410 tokens, about
++$0.0012 an attempt. OUTPUT: unchanged, $0.000.
+
 **What changed at v29.** Everything v28 says still stands. Three additions,
 from stage 1 of the owner's reference-looks plan (2026-09-23).
 
