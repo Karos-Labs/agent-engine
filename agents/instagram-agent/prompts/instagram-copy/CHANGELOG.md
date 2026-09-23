@@ -16,6 +16,19 @@ to hold five obsolete descriptions of them as well.
 
 ---
 
+**What changed at v31.** Everything v30 says still stands. Section 12 gains
+one paragraph for the new optional input `newsFlash`: a news cover always
+briefs a real photograph of the story's subject.
+
+On 2026-09-23 a Geektime news flash (prep `pubsub-21774958982236888`) was a
+numbers story; the writer chose a `stat_callout` with `source: "none"`, the
+workflow forced the news-frame cover as news mode does, and the frame shipped
+with no photograph in it. The writer had not been told the slide would be a
+news cover. Now it is, and what that cover needs.
+
+**Cost.** INPUT: about +700 prompt characters, about +175 tokens, about
++$0.0005 an attempt. OUTPUT: unchanged, $0.000.
+
 **What changed at v30.** Everything v29 says still stands. Section 22 gains
 "Named before anonymous, real before drawn", and four examples change.
 
