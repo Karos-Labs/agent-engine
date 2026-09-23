@@ -778,13 +778,18 @@ describe("markKindsFor — the ground decides, and #17181C is our case", () => {
    * redundant on a dark ground with light ink — which is why the separate test
    * below exists to hold that clause on its own.
    */
-  it("refuses `block` on the default #17181C ground, leaving {underline, swish, double, ink}", () => {
+  it("draws `block` on the default #17181C ground as a SLAB, the run in the ground colour (2026-09-23)", () => {
+    // The Karos Labs feed's signature: a dark ground, an orange block, the
+    // phrase in the ground colour. The light ink would NOT read on these
+    // marks (the old refusal's premise, still true below), which is exactly
+    // why the run's ink flips to the ground instead.
     const ring = buildMarkRing(DARK_KIT, DARK_GROUND, LIGHT_INK, []);
     const kinds = markKindsFor(DARK_GROUND, LIGHT_INK, ring.hexes);
-    expect(kinds).not.toContain("block");
-    expect(new Set(kinds)).toEqual(new Set<MarkKind>(["underline", "swish", "double", "ink"]));
-    // The premise, asserted: it is the ink-on-mark contrast that fails here.
-    for (const hex of ring.hexes) expect(contrastRatio(LIGHT_INK, hex)).toBeLessThan(4.5);
+    expect(new Set(kinds)).toEqual(new Set<MarkKind>(["block", "underline", "swish", "double", "ink"]));
+    for (const hex of ring.hexes) {
+      expect(contrastRatio(LIGHT_INK, hex)).toBeLessThan(4.5);
+      expect(contrastRatio(DARK_GROUND, hex)).toBeGreaterThanOrEqual(MARK_TEXT_CONTRAST_FLOOR);
+    }
   });
 
   /**
@@ -802,13 +807,17 @@ describe("markKindsFor — the ground decides, and #17181C is our case", () => {
    * BREAK IT: drop the `groundIsLighter` conjunct. `block` appears here and
    * nowhere else in this file.
    */
-  it("refuses `block` whenever the ground is DARKER than the ink, even when the ink reads perfectly on every mark", () => {
+  it("on a ground DARKER than its ink, decides `block` by the GROUND on the mark, never by the ink", () => {
+    // 2026-09-23: the run's ink flips to the ground there, so the ink's own
+    // contrast on the mark is irrelevant. A bright mark carries the slab; a
+    // mark too close to the ground to read the ground on it does not, however
+    // well the ink would have read on it.
     const ground = "#000000";
     const ink = "#555555";
-    const ring = buildMarkRing({ brandAccent: "#00EECC", palette: ["#00FF00", "#00FF66"] }, ground, ink, []);
-    expect(ring.rotation).toBe("hue");
-    for (const hex of ring.hexes) expect(contrastRatio(ink, hex)).toBeGreaterThanOrEqual(4.5);
-    expect(markKindsFor(ground, ink, ring.hexes)).not.toContain("block");
+    expect(markCapabilitiesFor("#00FF66", ground, ink)).toContain("block");
+    expect(contrastRatio(ground, "#00FF66")).toBeGreaterThanOrEqual(MARK_TEXT_CONTRAST_FLOOR);
+    expect(markCapabilitiesFor("#3A3A3A", ground, ink)).not.toContain("block");
+    expect(contrastRatio(ground, "#3A3A3A")).toBeLessThan(MARK_TEXT_CONTRAST_FLOOR);
   });
 
   /**
@@ -874,11 +883,10 @@ describe("markKindsFor — the ground decides, and #17181C is our case", () => {
       expect(contrastRatio(hex, PAPER)).toBeLessThan(MARK_GROUND_CONTRAST_FLOOR);
       expect(contrastRatio(DARK_INK, hex)).toBeGreaterThanOrEqual(MARK_TEXT_CONTRAST_FLOOR);
     });
-    // And the dark ground is still the dark ground: `block` is refused there
-    // for every colour there is, because `groundIsLighterThanInk` is false and
-    // no mark colour can make it true.
-    for (const hex of ["#F2ED3A", "#0088CC", "#FFFFFF"]) {
-      expect(markCapabilitiesFor(hex, DARK_GROUND, LIGHT_INK)).not.toContain("block");
+    // And on the dark ground (2026-09-23) `block` is the slab, decided by the
+    // ground on the mark: a bright mark carries it, a dark one does not.
+    for (const hex of ["#F2ED3A", "#0088CC", "#FFFFFF", "#2A2B30"]) {
+      expect(markCapabilitiesFor(hex, DARK_GROUND, LIGHT_INK).includes("block"), hex).toBe(contrastRatio(DARK_GROUND, hex) >= MARK_TEXT_CONTRAST_FLOOR);
     }
   });
 });
@@ -919,10 +927,12 @@ const compositedInk = (ink: string, mark: string): string => {
 const satisfiesOwnFloor = (hex: string, kind: MarkKind, ground: string, ink: string): boolean => {
   if (kind === "block") {
     const groundIsLighter = contrastRatio(ground, "#FFFFFF") < contrastRatio(ink, "#FFFFFF");
-    // The EFFECTIVE ink, not the kit token: no bundled archetype paints its
-    // body ink neat, and over a block swatch the softening composites the
-    // glyphs toward the swatch. See `MARK_HOST_INK_ALPHA`.
-    return groundIsLighter && contrastRatio(compositedInk(ink, hex), hex) >= MARK_TEXT_CONTRAST_FLOOR;
+    // 2026-09-23: on a DARK ground the run's ink flips to the ground
+    // (`body[data-tone="dark"] .mk-k-block`), so the ground on the mark is
+    // what must read. On a light ground the EFFECTIVE ink, not the kit token:
+    // no bundled archetype paints its body ink neat. See `MARK_HOST_INK_ALPHA`.
+    if (!groundIsLighter) return contrastRatio(ground, hex) >= MARK_TEXT_CONTRAST_FLOOR;
+    return contrastRatio(compositedInk(ink, hex), hex) >= MARK_TEXT_CONTRAST_FLOOR;
   }
   if (kind === "ink") return contrastRatio(hex, ground) >= MARK_TEXT_CONTRAST_FLOOR;
   return contrastRatio(hex, ground) >= MARK_GROUND_CONTRAST_FLOOR;
@@ -1126,23 +1136,26 @@ describe("RFC-20 §6.4 — the two-sided pin: the two squeezes are provably inde
    * admitted without the conjunct and asserts there are some — then asserts
    * the module admits none of them.
    */
-  it("BREAK 3: `block` is refused on the #17181C ground for EVERY colour, not merely for this kit", () => {
-    let wouldBeAdmitted = 0;
+  it("BREAK 3: on the #17181C ground `block` is admitted for EXACTLY the colours the ground reads on, over every colour", () => {
+    // 2026-09-23: the dark slab. Both sides are counted so neither a module
+    // that refuses everything nor one that admits everything can pass.
     let admitted = 0;
+    let refused = 0;
     for (let r = 0; r < 256; r += 17) {
       for (let g = 0; g < 256; g += 17) {
         for (let b = 0; b < 256; b += 17) {
           const hex = `#${[r, g, b].map((c) => c.toString(16).padStart(2, "0")).join("")}`;
           if (markColourDistance(hex, DARK_GROUND) <= MARK_TOL || markColourDistance(hex, LIGHT_INK) <= MARK_TOL) continue;
-          // What the code would do with the conjunct removed.
-          if (contrastRatio(LIGHT_INK, hex) >= MARK_TEXT_CONTRAST_FLOOR) wouldBeAdmitted++;
-          if (markCapabilitiesFor(hex, DARK_GROUND, LIGHT_INK).includes("block")) admitted++;
+          const expected = contrastRatio(DARK_GROUND, hex) >= MARK_TEXT_CONTRAST_FLOOR;
+          const got = markCapabilitiesFor(hex, DARK_GROUND, LIGHT_INK).includes("block");
+          expect(got, hex).toBe(expected);
+          if (got) admitted++;
+          else refused++;
         }
       }
     }
-    // The premise, so a zero below cannot mean "the sweep measured nothing".
-    expect(wouldBeAdmitted, "the sweep found no colour the broken conjunct would admit").toBeGreaterThan(100);
-    expect(admitted, "`block` was admitted on a ground darker than its ink").toBe(0);
+    expect(admitted, "the sweep admitted nothing").toBeGreaterThan(100);
+    expect(refused, "the sweep refused nothing").toBeGreaterThan(100);
   });
 
   /**
@@ -1341,14 +1354,14 @@ describe("RFC-20 §6.4 — the two-sided pin: the two squeezes are provably inde
    * RFC-20 §6.1's dark row claims this change is inert on every client we run
    * today, and an inertness claim is worth nothing unless a test holds it.
    */
-  it("is INERT on the bundled #17181C kit — same ring, same absence of `block`", () => {
+  it("keeps the bundled #17181C kit's ring, and (2026-09-23) gives every member the dark slab", () => {
     for (const mayInvert of [false, true]) {
       const ring = buildMarkRing(DARK_KIT, DARK_GROUND, LIGHT_INK, [], { groundMayInvert: mayInvert });
       expect(ring.hexes).toEqual(["#FF6B2C", "#4ADE80", "#38BDF8", "#C084FC"]);
       expect(ring.rotation).toBe("hue");
       const { kinds, kindsByIndex } = slideMarkKinds(ring, DARK_GROUND, LIGHT_INK);
-      expect(kinds).toEqual(["underline", "swish", "double", "ink"]);
-      for (const set of kindsByIndex) expect(set).toEqual(["underline", "swish", "double", "ink"]);
+      expect(kinds).toEqual(["block", "underline", "swish", "double", "ink"]);
+      for (const set of kindsByIndex) expect(set).toEqual(["block", "underline", "swish", "double", "ink"]);
     }
   });
 

@@ -285,6 +285,7 @@ describe("the Hebrew mark stylesheet", () => {
   /** The kind set is decided by the GROUND, not by the script — Hebrew on a dark ground gets the same four kinds English does. */
   it("does not let the script change which kinds are legible", () => {
     expect(markKindsFor("#17181C", "#F5F3EF", ring.hexes)).toEqual(markKindsFor("#17181C", "#F5F3EF", ring.hexes));
-    expect(markKindsFor("#17181C", "#F5F3EF", ring.hexes)).not.toContain("block");
+    // 2026-09-23: the dark slab is a GROUND decision too, identical per script.
+    expect(markKindsFor("#17181C", "#F5F3EF", ring.hexes)).toContain("block");
   });
 });
