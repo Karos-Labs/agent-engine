@@ -6,8 +6,8 @@ import type { InstagramCopyOutput, InstagramSlideCopy, InstagramSlideLayout } fr
 // 2026-09-23: the karoslabs carousel of prep pubsub-21763996983218796 cited
 // Qualified's 7.2% on a stat slide, briefed its three pictures as anonymous
 // laptop scenes, lost all three at the vet and shipped with no picture.
-const none = { scene: "Abstract dark ground, no image required", why: "the stat is the content", source: "none", subject: { noun: "data callout", mustShow: [] } };
-const scene = (noun: string) => ({ scene: `${noun}, editorial`, why: "the slide needs it", source: "stock", subject: { noun, mustShow: [noun] } });
+const none = { scene: "Abstract dark ground, no image required", why: "the stat is the content", source: "none" as const, subject: { noun: "data callout", mustShow: [] } };
+const scene = (noun: string) => ({ scene: `${noun}, editorial`, why: "the slide needs it", source: "stock" as const, subject: { noun, mustShow: [noun] } });
 const slide = (over: Partial<InstagramSlideCopy> & { n: number }): InstagramSlideCopy =>
   ({ headline: "A headline", body: "A body.", visualNeed: none, sourceRef: "c", ...over }) as InstagramSlideCopy;
 const karos = (): InstagramCopyOutput =>
