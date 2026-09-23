@@ -1003,7 +1003,26 @@ export function buildListRows(items: readonly { title: string; note?: string | u
  * the full width and fills the plate by construction.
  */
 const FIGURE_ROTATION = ["tall", "foot", "bleed", "band"] as const;
-export type FigurePlacement = (typeof FIGURE_ROTATION)[number] | "side" | "side-end";
+export type FigurePlacement = (typeof FIGURE_ROTATION)[number] | "side" | "side-end" | "carry-out" | "carry-in";
+
+/** The panel archetypes whose bounded band can run off the edge (`carry-out`) or pick a strip up (`carry-in`). */
+const CARRY_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<InstagramSlideLayout>(["stat_callout", "quote_card", "comparison_card", "list_takeaway"]);
+
+/**
+ * The ONE pair of adjacent slides whose photograph crosses the edge between
+ * them (2026-09-23, stage 5: the Deel event recap). Both must be panel
+ * archetypes that hold a picture; the first such pair in reading order wins,
+ * and there is only one, because a strip that crosses every edge is a
+ * pattern, and one that crosses one edge is a reason to swipe.
+ */
+export function carryPairFor(slides: ReadonlyArray<{ n: number; layout: InstagramSlideLayout; hasPicture: boolean }>): { out: number; in: number } | undefined {
+  for (let i = 0; i + 1 < slides.length; i++) {
+    const a = slides[i]!;
+    const b = slides[i + 1]!;
+    if (b.n === a.n + 1 && a.hasPicture && b.hasPicture && CARRY_LAYOUTS.has(a.layout) && CARRY_LAYOUTS.has(b.layout)) return { out: a.n, in: b.n };
+  }
+  return undefined;
+}
 
 /**
  * Whether a closer's call to action is short enough to be set as a BUTTON
@@ -2519,6 +2538,12 @@ export function assembleSlidesData(params: {
    * which the plate sets as the item's big number. Absent, nothing changes.
    */
   numberedItems?: boolean | undefined;
+  /**
+   * 2026-09-23 (stage 5): a photo-led client's carousel runs one photograph
+   * across the edge between two adjacent panel slides (`carryPairFor`).
+   * Absent, every band keeps its rotation placement.
+   */
+  carryStrip?: boolean | undefined;
   /** Reviewer typography per slide number (Phase 2 in-place edits). Absent slides keep the defaults. */
   slideStyleOverrides?: ReadonlyMap<number, SlideStyleOverride>;
   /**
@@ -2717,6 +2742,8 @@ export function assembleSlidesData(params: {
   const eyebrowSlides: ReadonlySet<number> | undefined =
     params.visualSystem === undefined ? undefined : new Set(params.visualSystem.eyebrow.kind === "topical" ? params.visualSystem.eyebrow.slides : []);
 
+  /** Each slide's RESOLVED layout, kept for the carry pass after the map (resolveLayout is stateful, so it runs once). */
+  const layoutByN = new Map<number, InstagramSlideLayout>();
   const slides: Slide[] = params.copy.slides.map((slide, index) => {
     const selection = selectionByN.get(slide.n);
     // Phase 2, item M: the two positional archetypes need to know where the
@@ -2732,6 +2759,7 @@ export function assembleSlidesData(params: {
       earlier: params.copy.slides.slice(0, index),
     };
     const { layout } = resolveLayout(slide, params.availableTemplates, usedLayouts, params.validatedCustomArchetypeIds, position, params.seriesDirected);
+    layoutByN.set(slide.n, layout);
     if (layout === "custom") usedLayouts.add(slide.customArchetype!.archetypeId);
     else if (layout !== "photo" && layout !== "text_only") usedLayouts.add(layout);
     // IGSTYLE-7, §7a — a slide's accent comes from the ring whenever the kit
@@ -2891,6 +2919,20 @@ export function assembleSlidesData(params: {
       htmlFragments,
     };
   });
+
+  // 2026-09-23 (stage 5): one photograph crosses the edge between two
+  // adjacent panel slides. Done after the map, on what actually resolved:
+  // the layouts `resolveLayout` settled on and the pictures that arrived.
+  if (params.carryStrip === true) {
+    const pair = carryPairFor(slides.map((s) => ({ n: s.n, layout: layoutByN.get(s.n) ?? "text_only", hasPicture: s.images["hero"] !== undefined })));
+    if (pair !== undefined) {
+      const out = slides.find((s) => s.n === pair.out)!;
+      const into = slides.find((s) => s.n === pair.in)!;
+      out.fields = { ...out.fields, figurePlacement: "carry-out" };
+      into.fields = { ...into.fields, figurePlacement: "carry-in" };
+      into.images = { ...into.images, carry: out.images["hero"]! };
+    }
+  }
 
   if (params.markReportOut !== undefined) {
     params.markReportOut.issues.push(...collectEmphasisIssues(markDropsBySlide, markRing?.notes ?? []));

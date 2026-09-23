@@ -11073,6 +11073,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           photoCreditFor: creditLineFor,
           // 2026-09-23: a list series numbers its item slides.
           numberedItems: series?.series.id === "the_list",
+          // 2026-09-23 (stage 5): a photo-led client's carousel runs one
+          // photograph across the edge between two slides, as the Deel recaps do.
+          carryStrip: runClaim.pictureDensity === "photo-first",
           // IGSTYLE-7, §7a — wires `paletteForSlide`'s already-built, already-
           // seeded rotation into the render path for the first time. Seeded
           // from `wf.runId` per the ticket; a ring of length ≤ 1 (or absent)
