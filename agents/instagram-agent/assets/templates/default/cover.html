@@ -1196,6 +1196,68 @@ body[data-cover="typographic-poster"] .lockup { margin-block-start: auto; }
 body[data-cover="typographic-poster"] .lockup .headline { max-inline-size: min(11ch, 100%); }
 body[data-cover="typographic-poster"] .lockup { gap: var(--sp-2); }
 
+/* NEWS-FRAME (2026-09-23, stage 3 of the owner's reference-looks plan). The
+   Geektime news flash: a frame in the brand colour you spot in the feed in
+   half a second, the headline in a light box, the photograph in the lower
+   half, the brand mark top. It is NOT in the rotation catalog: a client gets
+   it only when its config asks for news mode on a single-image post, because
+   a frame is a signature and a signature that appears at random is a tic.
+   The design system's ban on decorative borders stands everywhere else; this
+   frame is not decoration, it is how the account is recognised. */
+body[data-cover="news-frame"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  border: 26px solid var(--accent);
+}
+body[data-cover="news-frame"] .hero {
+  inset-block-start: 47%;
+  block-size: 53%;
+}
+body[data-cover="news-frame"] .scrim,
+body[data-cover="news-frame"] .cov-field,
+body[data-cover="news-frame"] .zone-mark .eyebrow,
+body[data-cover="news-frame"] .lockup .acc,
+body[data-cover="news-frame"] .lockup .body-text { display: none; }
+body[data-cover="news-frame"] .plate {
+  block-size: 47%;
+  padding-block-end: var(--sp-2);
+}
+body[data-cover="news-frame"] .lockup {
+  margin-block: auto;
+  background: #fbfbf8;
+  border: 12px solid var(--accent);
+  border-radius: 6px;
+  padding-block: 38px;
+  padding-inline: 44px;
+  text-align: center;
+  align-items: center;
+}
+body[data-cover="news-frame"] .lockup .headline {
+  color: #121212;
+  font-weight: 800;
+  max-inline-size: 100%;
+}
+/* No photograph: the lower half becomes the brand ground, and the box moves
+   to the middle rather than leaving a hole. */
+body[data-cover="news-frame"]:not(:has(.hero)) .plate { block-size: 100%; }
+/* Over the photograph the foot band has no ground of its own: the frame is the
+   identity, so the handle stands down, and the credit, which must stay legible,
+   carries a dark chip. */
+body[data-cover="news-frame"] .zone-foot .brand-handle { display: none; }
+body[data-cover="news-frame"] .zone-foot { inset-inline: 48px; }
+body[data-cover="news-frame"] .ds-credit {
+  flex: 0 1 auto;
+  margin-inline: 0 auto;
+  background: rgba(0, 0, 0, 0.62);
+  color: #f4f4f4;
+  padding-block: 2px;
+  padding-inline: 10px;
+  border-radius: 3px;
+}
+
 /* ── THE COVER'S BOUNDED OBJECT (RFC-20 §5.5). ──
    On the no-photograph path the subject band becomes an object: a fixed band,
    the run's own `--cover-band` tall, carrying one tonal ramp. It is what gives

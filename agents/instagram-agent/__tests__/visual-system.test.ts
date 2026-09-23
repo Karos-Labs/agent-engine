@@ -395,3 +395,21 @@ describe("the stylesheet says exactly what the system decided", () => {
     expect(editorial).not.toContain(`--t-display: calc(${TYPE_SCALE_PX.display}px`);
   });
 });
+
+// 2026-09-23 (stage 3 of the reference-looks plan): the Geektime news flash.
+describe("the news-frame cover is reachable only through news mode", () => {
+  it("no catalog entry carries it, so rotation can never pick it", () => {
+    expect(VISUAL_SYSTEM_CATALOG.some((entry) => entry.coverForm === "news-frame")).toBe(false);
+    for (const seed of ["a", "b", "c", "d", "e", "f", "g", "h"]) {
+      expect(pickVisualSystem({ clientSlug: "geektime", paletteSeed: seed, slideCount: 1, client: clientWith() }).coverForm).not.toBe("news-frame");
+    }
+  });
+
+  it("forcedCoverForm sets the cover and leaves every other axis as the seed picked it, and says why", () => {
+    const plain = pickVisualSystem({ clientSlug: "geektime", paletteSeed: "run-1", slideCount: 1, client: clientWith() });
+    const news = pickVisualSystem({ clientSlug: "geektime", paletteSeed: "run-1", slideCount: 1, client: clientWith(), forcedCoverForm: "news-frame" });
+    expect(news.coverForm).toBe("news-frame");
+    expect({ ...news, coverForm: plain.coverForm, reason: plain.reason }).toEqual(plain);
+    expect(news.reason).toContain("news mode sets the cover");
+  });
+});
