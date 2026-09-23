@@ -1478,6 +1478,21 @@ export function resolveLayout(
     }
   }
 
+  // ── POSITIONAL ARCHETYPES KEEP THEIR POSITIONS (2026-09-23). ──
+  //
+  // A closer closes and a cover opens, so neither may sit anywhere else. The
+  // singleton rule below could not stop it on its own: on karoslabs'
+  // pubsub-21701979152019948 the writer put a closer on slide 7, which passed
+  // because no closer had been used yet, and slide 8 was the SERIES' closer,
+  // which the series exemption lets through. The post shipped two closers,
+  // same takeaway, two contents-page recaps.
+  if (position !== undefined && slide.layout === "closer" && position.index !== position.lastIndex) {
+    return degradeTo("closer (only the last slide closes a carousel)");
+  }
+  if (position !== undefined && slide.layout === "cover" && position.index !== 0) {
+    return degradeTo("cover (only the first slide opens a carousel)");
+  }
+
   // The singleton rule, and the one exemption from it: a layout the series
   // assigned to THIS slide number is a repeat on purpose (see
   // `seriesDirected`). Read here rather than folded into `usedLayouts` at the
