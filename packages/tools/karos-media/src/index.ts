@@ -19,6 +19,7 @@ import { createVisualQaGate } from "./visual-qa-gate.js";
 import { createInspectImages } from "./inspect-images.js";
 import { createHarvestArticleImages } from "./harvest-article-images.js";
 import { createScreenshotPage, type BrowserLauncher } from "./screenshot-page.js";
+import { createCutout } from "./cutout.js";
 import { createStageAsset } from "./stage-asset.js";
 import { createScraperProvider, type ScraperProvider } from "@agent-engine/tool-karos-scraper";
 import type { ImageSearchProvider } from "./providers.js";
@@ -51,6 +52,7 @@ export * from "./visual-qa-gate.js";
 export * from "./inspect-images.js";
 export * from "./harvest-article-images.js";
 export * from "./screenshot-page.js";
+export * from "./cutout.js";
 export * from "./stage-asset.js";
 export * from "./media-library.js";
 export * from "./resilient-genai-client.js";
@@ -329,6 +331,8 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
     }),
     // ── Tier 1c: a real screenshot of the cited page, the artefact X rewards.
     "media.screenshotPage": createScreenshotPage({ launcher: options.browserLauncher }),
+    // 2026-09-23 (stage 2): a product lifted off a uniform studio background.
+    "media.cutout": createCutout(),
     // ── The hand-off: a chosen cached file becomes a fetchable URL.
     "media.stageAsset": createStageAsset({ mediaStore: options.mediaStore }),
   };
