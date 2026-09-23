@@ -860,13 +860,15 @@ export function goodVisualDirection(overrides: Record<string, unknown> = {}): Re
     version: 1,
     generatedAt: new Date().toISOString(),
     generatedBy: "instagram-art-director@1",
-    subject: ["a founder at their own desk, working, never posed"],
+    subject: ["a founder at their own work, on the floor with the team, never posed"],
     light: ["one soft window source, late afternoon"],
     palette: ["#C4552F", "#17181C", "#F4F2EC"],
     treatment: ["documentary, lightly desaturated, never crushed to monochrome"],
     forbid: ["stock handshakes", "boardroom tables", "politics"],
     lines: [
-      { line: "Shoot the work, not the workplace: a laptop mid-sentence, a whiteboard with real handwriting.", basis: "brief: positioning.oneLiner", confidence: "high" },
+      // 2026-09-23: no laptop in the shared fixture; a direction that prescribes
+      // the cliché scene is re-derived (`checkVisualDirection`).
+      { line: "Shoot the work, not the workplace: a whiteboard with real handwriting, hands on the product.", basis: "brief: positioning.oneLiner", confidence: "high" },
       { line: "One soft window light from the left, late afternoon, no fill.", basis: "brand kit: lighting", confidence: "medium" },
       { line: "Keep the frame inside the brand palette: #C4552F, #17181C, #F4F2EC.", basis: "brand kit: palette", confidence: "high" },
       { line: "Let the brand accent appear once as a real object, never as a colour overlay.", basis: "brand kit: accentColor", confidence: "high" },

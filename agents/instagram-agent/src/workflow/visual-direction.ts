@@ -396,6 +396,14 @@ export function checkVisualDirection(beliefs: unknown, options: { now: Date; all
       : `the last derivation ran and produced nothing usable ${attemptAgeDays ?? "an unknown number of"} day(s) ago (${attempt.failedWith}) and the ${VISUAL_DIRECTION_RETRY_DAYS}-day retry window has not passed`;
   if (stored !== undefined) {
     const ageDays = visualDirectionAgeDays(stored, options.now);
+    // 2026-09-23: a direction derived before art-director@3 that PRESCRIBES the
+    // feed's cliché scene is stale whatever its age, for every client: it is
+    // re-derived once, with v3's rule. A v3 direction is never re-derived for
+    // this reason, so this cannot loop.
+    const clicheDirection = !stored.generatedBy.endsWith("@3") && directionPrescribesCliche(stored);
+    if (clicheDirection && options.allowDerive && !retryHeld) {
+      return { action: "derive", reason: `the stored direction (${stored.generatedBy}) prescribes the laptop-in-a-dark-room scene every AI feed shows; re-deriving with instagram-art-director@3` };
+    }
     if (ageDays !== undefined && ageDays < VISUAL_DIRECTION_TTL_DAYS) {
       return { action: "reuse", direction: stored, ageDays, reason: `a visual direction from ${stored.generatedBy} is ${ageDays} day(s) old, inside the ${VISUAL_DIRECTION_TTL_DAYS}-day TTL (source: ${stored.source})` };
     }
@@ -611,6 +619,10 @@ function clamp(value: string, max: number): string {
  */
 export const CLICHE_SCENE_PATTERN =
   /\b(laptops?|keyboards?|monitors?|workstations?|dashboards?|terminal|desk ?lamps?|screen[- ]?(?:glow|spill|light)|at (?:a|the|his|her|their) desk|(?:dim|dark) room|mid-task at)\b/iu;
+/** Whether a stored direction's subject, lines, light or style lock prescribe the cliché scene. */
+export function directionPrescribesCliche(direction: Pick<VisualDirection, "subject" | "lines" | "light" | "styleLock">): boolean {
+  return [...direction.subject, ...direction.light, ...direction.lines.map((l) => l.line), direction.styleLock.line].some((t) => prescribesClicheScene(t));
+}
 export function prescribesClicheScene(text: string): boolean {
   return CLICHE_SCENE_PATTERN.test(text);
 }

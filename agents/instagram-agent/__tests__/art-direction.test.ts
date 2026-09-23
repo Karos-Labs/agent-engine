@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { InstagramArtDirectorAgent } from "../src/agent/instagram-art-director-agent.js";
 import type { BrandTokens } from "../src/workflow/types.js";
-import { buildArtDirection, CLICHE_SCENE_FORBID, prescribesClicheScene, type VisualDirection } from "../src/workflow/visual-direction.js";
+import { buildArtDirection, checkVisualDirection, CLICHE_SCENE_FORBID, prescribesClicheScene, VISUAL_DIRECTION_BELIEF_KEY, type VisualDirection } from "../src/workflow/visual-direction.js";
 
 /**
  * RFC-13 Phase 3, item Q — the half that finally reads the direction.
@@ -201,5 +201,27 @@ describe("InstagramArtDirectorAgent", () => {
     const source = readFileSync(path.join(HERE, "..", "src", "agent", "instagram-art-director-agent.ts"), "utf8");
 
     expect(source).toContain("contentLanguageSensitive: false");
+  });
+});
+
+
+describe("a stored direction that prescribes the cliché heals itself (2026-09-23)", () => {
+  const NOW = new Date("2026-09-23T22:00:00.000Z");
+  const fresh = "2026-09-18T11:24:45.766Z";
+  const cliche = direction({ generatedAt: fresh, generatedBy: "instagram-art-director@2", subject: ["A founder alone at a cluttered desk, focused on a laptop screen"] });
+  const beliefs = (d: VisualDirection) => ({ [VISUAL_DIRECTION_BELIEF_KEY]: d });
+
+  it("re-derives a pre-v3 direction that prescribes the scene, however fresh", () => {
+    expect(checkVisualDirection(beliefs(cliche), { now: NOW, allowDerive: true }).action).toBe("derive");
+  });
+
+  it("never re-derives a v3 direction for this reason, so it cannot loop", () => {
+    expect(checkVisualDirection(beliefs({ ...cliche, generatedBy: "instagram-art-director@3" }), { now: NOW, allowDerive: true }).action).toBe("reuse");
+  });
+
+  it("reuses a clean pre-v3 direction inside its TTL (the premise), and respects allowDerive", () => {
+    const clean = direction({ generatedAt: fresh, generatedBy: "instagram-art-director@2", subject: ["practitioners at work in a clinic"], lines: [{ line: "Photograph the work where it happens, never posed.", basis: "https://instagram.com/p/abc", confidence: "high" }, ...direction().lines.slice(1)] });
+    expect(checkVisualDirection(beliefs(clean), { now: NOW, allowDerive: true }).action).toBe("reuse");
+    expect(checkVisualDirection(beliefs(cliche), { now: NOW, allowDerive: false }).action).toBe("reuse");
   });
 });
