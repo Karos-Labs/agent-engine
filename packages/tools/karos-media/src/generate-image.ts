@@ -59,7 +59,13 @@ import { buildImageProvenance } from "./image-provenance.js";
 // The push gate caught this, which is the gate doing precisely its job: the
 // version was carried through a conflict resolution unchanged while the
 // constant under it changed value.
-const TOOL_VERSION = "2.2.0";
+// 2.3.0 (2026-09-23, stage 2 of the reference-looks plan): a need may carry
+// `references`, real images the model receives alongside the brief (the
+// client's own product, a logo, an event photograph), so a generated scene
+// can hold the client's actual bottle rather than an invented one. MINOR:
+// optional and additive, and a need without references sends the same string
+// `contents` and the same brief byte for byte.
+const TOOL_VERSION = "2.3.0";
 /**
  * The image-generation call, narrowed to what this tool uses so the package
  * does not take a type dependency on the whole `@google/genai` surface.
@@ -79,7 +85,8 @@ export interface ImageGenerationClient {
   models: {
     generateContent(request: {
       model: string;
-      contents: string;
+      /** A plain brief, or (with references) one user turn carrying the reference images and then the brief. */
+      contents: string | ReferenceContent[];
       config?: Record<string, unknown>;
     }): Promise<{
       candidates?: Array<{
@@ -91,6 +98,28 @@ export interface ImageGenerationClient {
   };
 }
 
+/** One user turn: the reference images first, then the brief. The shape `@google/genai` accepts as `Content[]`. */
+export interface ReferenceContent {
+  role: "user";
+  parts: Array<{ text: string } | { inlineData: { data: string; mimeType: string } }>;
+}
+
+/**
+ * What a reference image IS, which decides what the brief tells the model to
+ * do with it. `product` and `logo` must come back unchanged (their printed
+ * text included); a `subject` is a person or a place the scene is built
+ * around, kept recognisable rather than pixel-identical.
+ */
+export const REFERENCE_ROLES = ["product", "logo", "subject"] as const;
+export type ReferenceRole = (typeof REFERENCE_ROLES)[number];
+
+/** Three at most: past that the model starts averaging the references instead of placing them. */
+export const MAX_REFERENCES = 3;
+/** Per reference. Inline data counts against the request, and a product shot is never this big. */
+export const MAX_REFERENCE_BYTES = 7_000_000;
+
+const REFERENCE_MIME: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" };
+
 export const GenerateImageInputSchema = z.object({
   repoRoot: z.string().min(1).describe("Bounds root. Written paths are relative to this and provably inside it."),
   runId: z.string().min(1).describe("Namespaces the cache directory, exactly as media.findImages does."),
@@ -99,6 +128,18 @@ export const GenerateImageInputSchema = z.object({
       z.object({
         n: z.number().int().positive().describe("This slide's number."),
         prompt: z.string().min(1).describe("The slide's own visualNeed, used as the generation brief."),
+        references: z
+          .array(
+            z.object({
+              path: z.string().min(1).describe("Repo-relative path to a PNG, JPEG or WebP inside repoRoot."),
+              role: z.enum(REFERENCE_ROLES).describe("product/logo: reproduced unchanged, printed text included. subject: kept recognisable."),
+            }),
+          )
+          .max(MAX_REFERENCES)
+          .optional()
+          .describe(
+            "Real images the model receives with the brief: the client's own product, a logo, a photograph of the subject. The scene is generated around them. Omit for a plain text-to-image generation.",
+          ),
       }),
     )
     .min(1)
@@ -460,13 +501,27 @@ export function createGenerateImage(options: {
         let savedForNeed = 0;
         const failures: string[] = [];
 
+        // The references are read ONCE per need and before any billed call:
+        // a reference that cannot be read is this need's failure, named, and
+        // the model is never asked to invent the product it was meant to hold.
+        const references = need.references ?? [];
+        let referenceParts: ReferenceContent["parts"] = [];
+        if (references.length > 0) {
+          const loaded = await loadReferences(references, input.repoRoot);
+          if (!loaded.ok) {
+            unmet.push({ n: need.n, reason: loaded.reason });
+            continue;
+          }
+          referenceParts = loaded.parts;
+        }
+
         for (let attempt = 0; attempt < input.perNeed; attempt++) {
-          const brief = buildBrief(need.prompt, input.art);
+          const brief = buildBrief(need.prompt, input.art, references.map((r) => r.role));
           let response: Awaited<ReturnType<ImageGenerationClient["models"]["generateContent"]>>;
           let servedBy: string;
           try {
             const served = await generateWithBackoff({
-              contents: brief,
+              contents: referenceParts.length > 0 ? [{ role: "user", parts: [...referenceParts, { text: brief }] }] : brief,
               config: {
                 // Both modalities: the model narrates its refusal as text when
                 // it declines, and that text is the only explanation on offer.
@@ -621,8 +676,61 @@ export function createGenerateImage(options: {
  * invite it to weigh the client's "no cityscapes" against "no lettering" as
  * if they were different kinds of rule.
  */
-function buildBrief(visualNeed: string, art?: GenerateImageInputParsed["art"]): string {
-  const lines = [`Create a photographic image for a social media carousel slide: ${visualNeed}`];
+/**
+ * Reads each reference inside `repoRoot` as inline data, or names why not.
+ * Bounds-checked the way every written path in this package is: a reference
+ * outside the root is a refusal, not a read.
+ */
+async function loadReferences(
+  references: ReadonlyArray<{ path: string; role: ReferenceRole }>,
+  repoRoot: string,
+): Promise<{ ok: true; parts: ReferenceContent["parts"] } | { ok: false; reason: string }> {
+  const root = path.resolve(repoRoot);
+  const parts: ReferenceContent["parts"] = [];
+  for (const [index, reference] of references.entries()) {
+    const absolute = path.resolve(root, reference.path);
+    if (absolute !== root && !absolute.startsWith(root + path.sep)) {
+      return { ok: false, reason: `reference ${index + 1} (${reference.path}) is outside repoRoot` };
+    }
+    const mimeType = REFERENCE_MIME[path.extname(absolute).toLowerCase()];
+    if (mimeType === undefined) return { ok: false, reason: `reference ${index + 1} (${reference.path}) is not a PNG, JPEG or WebP` };
+    let bytes: Buffer;
+    try {
+      bytes = await fs.readFile(absolute);
+    } catch (error) {
+      return { ok: false, reason: `reference ${index + 1} (${reference.path}) could not be read: ${(error as Error).message}` };
+    }
+    if (bytes.length === 0 || bytes.length > MAX_REFERENCE_BYTES) {
+      return { ok: false, reason: `reference ${index + 1} (${reference.path}) is ${bytes.length} bytes; a reference is 1 to ${MAX_REFERENCE_BYTES} bytes` };
+    }
+    parts.push({ inlineData: { data: bytes.toString("base64"), mimeType } });
+  }
+  return { ok: true, parts };
+}
+
+/**
+ * What the brief says about the images that arrive before it. One line per
+ * reference, in the order they were attached, because the model reads them by
+ * position ("image 1") and a role stated without its position is ambiguous.
+ */
+function referenceBlock(roles: readonly ReferenceRole[]): string[] {
+  if (roles.length === 0) return [];
+  const line = (role: ReferenceRole, i: number): string => {
+    const n = `Image ${i + 1}`;
+    switch (role) {
+      case "product":
+        return `- ${n} is the client's own product. Place THIS product in the scene exactly as it is: the same shape, proportions, colours, label and printed text. Do not redesign it, re-letter it or invent a different one.`;
+      case "logo":
+        return `- ${n} is the client's own logo. If it appears, reproduce it exactly, flat and undistorted, as a real object in the scene (a sign, a print, a label), never re-drawn.`;
+      case "subject":
+        return `- ${n} shows the subject of the scene. Keep it recognisable; the scene is built around it.`;
+    }
+  };
+  return ["", "Reference images (attached above, in order):", ...roles.map(line)];
+}
+
+function buildBrief(visualNeed: string, art?: GenerateImageInputParsed["art"], referenceRoles: readonly ReferenceRole[] = []): string {
+  const lines = [`Create a photographic image for a social media carousel slide: ${visualNeed}`, ...referenceBlock(referenceRoles)];
 
   const direction: string[] = [];
   if (art?.aesthetic) direction.push(`Aesthetic: ${art.aesthetic}.`);
@@ -663,7 +771,7 @@ function buildBrief(visualNeed: string, art?: GenerateImageInputParsed["art"]): 
     lines.push("", "Do not include:", ...forbid.map((f) => `- ${f}`));
   }
 
-  lines.push("", buildConstraintLine(art?.permittedMarks ?? [], art?.permittedFigures ?? []));
+  lines.push("", buildConstraintLine(art?.permittedMarks ?? [], art?.permittedFigures ?? [], referenceRoles.some((r) => r === "product" || r === "logo")));
 
   return lines.join("\n");
 }
@@ -698,7 +806,16 @@ function buildBrief(visualNeed: string, art?: GenerateImageInputParsed["art"]): 
  * permitted, which is the composition this has to get right: the two permits
  * are independent, and either one alone must leave the other's default intact.
  */
-function buildConstraintLine(permittedMarks: readonly string[], permittedFigures: readonly string[]): string {
+function buildConstraintLine(permittedMarks: readonly string[], permittedFigures: readonly string[], carriesClientMarks = false): string {
+  // A reference product or logo carries its own printed text and mark, which
+  // must survive; every OTHER word and mark stays forbidden. Without a
+  // reference this is the standing line, byte for byte.
+  if (carriesClientMarks) {
+    return (
+      "Constraints: no text, words, lettering or numbers other than what is printed on the reference product or logo itself; " +
+      "no other logos or brand marks; no watermarks, no borders or frames, no collage or split panels."
+    );
+  }
   const marksClause =
     permittedMarks.length > 0
       ? `no logos or brand marks other than: ${permittedMarks.join(", ")} — those may appear only as clean flat ` +
