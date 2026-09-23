@@ -1825,6 +1825,8 @@ export const CONTENT_FIELD_WEIGHTS: Readonly<Record<string, number>> = {
   // 2026-09-23: a picture's credit line. Attribution, not content: a slide
   // must not clear the floor on the strength of a photographer's name.
   photoCredit: CONTENT_WEIGHTS.furniture,
+  // 2026-09-23: a list item's number. The item's words carry the slide.
+  itemOrdinal: CONTENT_WEIGHTS.furniture,
   subLabel: CONTENT_WEIGHTS.furniture,
 };
 

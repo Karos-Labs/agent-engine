@@ -565,7 +565,14 @@ export const ACCENT_FORMS = ["rule", "band", "tint", "field", "none"] as const;
 export type AccentForm = (typeof ACCENT_FORMS)[number];
 
 /** What the cover leads with. Read by the cover template and (W2-C) by the `coverSubject` clause. */
-export const COVER_FORMS = ["portrait", "object", "figure", "typographic-poster"] as const;
+/**
+ * `news-frame` (2026-09-23) is the one form NO catalog entry carries: the
+ * Geektime news flash, a brand-coloured frame and a boxed headline. A frame
+ * is a signature, and a signature that turned up at random would be a tic, so
+ * it is reachable only through `pickVisualSystem`'s `forcedCoverForm`, which
+ * the workflow passes for a client in news mode on a single-image post.
+ */
+export const COVER_FORMS = ["portrait", "object", "figure", "typographic-poster", "news-frame"] as const;
 export type CoverForm = (typeof COVER_FORMS)[number];
 
 /**
@@ -638,6 +645,9 @@ export const COVER_FORM_BAND_PX: Record<CoverForm, number> = {
   figure: 820,
   object: 780,
   portrait: 700,
+  // The news frame hides the band (`cov-field`) outright: the box and the
+  // photograph are the whole composition, so nothing reads this value.
+  "news-frame": 0,
 };
 
 export interface CarouselVisualSystem {
@@ -772,6 +782,12 @@ export interface PickVisualSystemParams {
   recentOwnSystemIds?: readonly string[] | undefined;
   /** Every client's recently shipped `systemId`s, newest first (`CROSS_CLIENT_FORMAT_BELIEF_KEY`). Unreadable means an empty list — never a hold. */
   recentCrossClientSystemIds?: readonly string[] | undefined;
+  /**
+   * A cover form this run MUST use, overriding the catalog entry's (2026-09-23).
+   * Only `news-frame` is ever passed, by a client in news mode on a single
+   * post; everything else about the system is still picked as it always was.
+   */
+  forcedCoverForm?: CoverForm | undefined;
 }
 
 /**
@@ -832,10 +848,12 @@ export function pickVisualSystem(params: PickVisualSystemParams): CarouselVisual
     accentForm: entry.accentForm,
     numeralSlides,
     eyebrow,
-    coverForm: entry.coverForm,
+    coverForm: params.forcedCoverForm ?? entry.coverForm,
     typeScale: entry.typeScale,
     gutter: entry.gutter,
-    reason: `visual system "${entry.id}": ${role} accent, ${entry.ground} ground, ${entry.coverForm} cover${heldNote}`,
+    reason:
+      `visual system "${entry.id}": ${role} accent, ${entry.ground} ground, ${params.forcedCoverForm ?? entry.coverForm} cover` +
+      `${params.forcedCoverForm !== undefined ? ` (the client's news mode sets the cover; the catalog entry's is ${entry.coverForm})` : ""}${heldNote}`,
   };
 }
 

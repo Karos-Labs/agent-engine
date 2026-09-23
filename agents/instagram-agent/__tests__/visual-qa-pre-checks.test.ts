@@ -147,6 +147,8 @@ describe("DEFAULT_RENDER_RULES + resolveRenderRules — Phase 0 item D's rule so
       "heroScrimStrength",
       "heroTreatment",
       "imageTreatment",
+      // 2026-09-23: a list item's number (the_list series).
+      "itemOrdinal",
       "lang",
       // 2026-09-23: the credit line an attributable picture prints. Visible,
       // but attribution: counted, every credited photo slide would get a free

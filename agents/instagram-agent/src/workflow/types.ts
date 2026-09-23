@@ -267,6 +267,13 @@ export interface InstagramRunClaim {
    * band every run used before this existed.
    */
   pictureDensity?: "standard" | "photo-first";
+  /**
+   * 2026-09-23: the client's news mode (stage 3 of the reference-looks plan).
+   * From the run input's `requestedMode: "news_flash"` first, then the
+   * client's `instagramPostModes` config containing `"news_flash"`. A single
+   * post in news mode renders on the `news-frame` cover.
+   */
+  newsFlash?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

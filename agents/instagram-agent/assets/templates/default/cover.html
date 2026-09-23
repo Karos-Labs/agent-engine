@@ -425,6 +425,66 @@ body[data-figure="tall"] .sc-figure-band {
 /* BLEED — the band runs past the field's own gutter to the frame edge. The
    plate keeps its margins; the picture does not. Negative inline margins
    rather than a wider element, so nothing about the flex column changes. */
+/* THE STRIP THAT CROSSES THE SLIDE EDGE (2026-09-23, stage 5 of the owner's
+   reference-looks plan). The Deel event recaps run a photograph off the edge
+   of one slide and pick it up at the edge of the next, which is what makes a
+   reader swipe. `carry-out` runs this slide's band 240px past the edge the
+   next slide arrives from; `carry-in` paints the SAME image at the SAME size
+   on the next slide, shifted by exactly the canvas width, so its first 240px
+   are the tail the previous slide cut off, and its own band starts after it.
+   Both bands are fixed at 300px here, because the tail can only line up with
+   a band that does not yield.
+   The next slide always arrives from the physical RIGHT, whatever the post's
+   language, so the side is the inline END in a left-to-right document and the
+   inline START in a right-to-left one. */
+/* Both bands are PINNED, not stacked: the tail on the next slide can only
+   line up with a band whose top and height are fixed, so the band leaves the
+   flow at the top of the plate and the plate starts its copy below it.
+   The picture is PAINTED, not placed: slide N's band stops at the canvas edge
+   and draws the photograph at the full strip width (`--carry-w`), so the edge
+   cuts the picture; slide N+1 draws the same photograph at the same width in a
+   240px box, shifted left by exactly what slide N showed. Same width, same
+   vertical centring, same crop, and every box stays inside the frame, which is
+   what the render probe measures. `background-position` is physical, which is
+   right here: the next slide arrives from the right in either language. */
+/* On `body`, not `:root`: `--mx` is declared on `body`, and a `:root` calc
+   over it resolves to nothing, which drops the whole background shorthand. */
+body { --carry: 240px; --carry-w: calc(1080px - var(--mx) + var(--carry)); }
+body[data-figure="carry-out"] .plate,
+body[data-figure="carry-in"] .plate { padding-block-start: calc(var(--zone-mark) + 300px + var(--sp-2)); }
+body[data-figure="carry-out"] .sc-figure-band,
+body[data-figure="carry-in"] .sc-figure-band {
+  position: absolute;
+  inset-block-start: var(--zone-mark);
+  block-size: 300px;
+  inline-size: auto;
+  margin: 0;
+}
+body[data-figure="carry-out"] .sc-figure-band {
+  background: var(--hero-src) 0 50% / var(--carry-w) auto no-repeat;
+}
+body[data-figure="carry-out"] .sc-figure-band img { visibility: hidden; }
+html[dir="ltr"] body[data-figure="carry-out"] .sc-figure-band { inset-inline-start: var(--mx); inset-inline-end: 0; border-start-end-radius: 0; border-end-end-radius: 0; }
+html[dir="rtl"] body[data-figure="carry-out"] .sc-figure-band { inset-inline-start: 0; inset-inline-end: var(--mx); border-start-start-radius: 0; border-end-start-radius: 0; }
+html[dir="ltr"] body[data-figure="carry-in"] .sc-figure-band { inset-inline-start: calc(var(--carry) + 24px); inset-inline-end: var(--mx); }
+html[dir="rtl"] body[data-figure="carry-in"] .sc-figure-band { inset-inline-end: calc(var(--carry) + 24px); inset-inline-start: var(--mx); }
+.sc-carry { display: none; }
+body[data-figure="carry-in"] .sc-carry {
+  display: block;
+  position: absolute;
+  z-index: 3;
+  inset-block-start: var(--zone-mark);
+  block-size: 300px;
+  inline-size: var(--carry);
+  background: var(--carry-src) calc(var(--carry) - var(--carry-w)) 50% / var(--carry-w) auto no-repeat;
+}
+/* The hidden image is what makes the page wait: the render screenshots once
+   every IMAGE has loaded, and a CSS background is not one. Without it the
+   strip's tail was captured before its picture arrived. */
+.sc-carry img { visibility: hidden; inline-size: 1px; block-size: 1px; }
+html[dir="ltr"] body[data-figure="carry-in"] .sc-carry { inset-inline-start: 0; }
+html[dir="rtl"] body[data-figure="carry-in"] .sc-carry { inset-inline-end: 0; }
+
 body[data-figure="bleed"] .sc-figure-band {
   margin-inline: calc(var(--mx) * -1);
   inline-size: calc(100% + var(--mx) * 2);
@@ -1195,6 +1255,68 @@ body[data-cover="typographic-poster"] .cov-field { display: none; }
 body[data-cover="typographic-poster"] .lockup { margin-block-start: auto; }
 body[data-cover="typographic-poster"] .lockup .headline { max-inline-size: min(11ch, 100%); }
 body[data-cover="typographic-poster"] .lockup { gap: var(--sp-2); }
+
+/* NEWS-FRAME (2026-09-23, stage 3 of the owner's reference-looks plan). The
+   Geektime news flash: a frame in the brand colour you spot in the feed in
+   half a second, the headline in a light box, the photograph in the lower
+   half, the brand mark top. It is NOT in the rotation catalog: a client gets
+   it only when its config asks for news mode on a single-image post, because
+   a frame is a signature and a signature that appears at random is a tic.
+   The design system's ban on decorative borders stands everywhere else; this
+   frame is not decoration, it is how the account is recognised. */
+body[data-cover="news-frame"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  border: 26px solid var(--accent);
+}
+body[data-cover="news-frame"] .hero {
+  inset-block-start: 47%;
+  block-size: 53%;
+}
+body[data-cover="news-frame"] .scrim,
+body[data-cover="news-frame"] .cov-field,
+body[data-cover="news-frame"] .zone-mark .eyebrow,
+body[data-cover="news-frame"] .lockup .acc,
+body[data-cover="news-frame"] .lockup .body-text { display: none; }
+body[data-cover="news-frame"] .plate {
+  block-size: 47%;
+  padding-block-end: var(--sp-2);
+}
+body[data-cover="news-frame"] .lockup {
+  margin-block: auto;
+  background: #fbfbf8;
+  border: 12px solid var(--accent);
+  border-radius: 6px;
+  padding-block: 38px;
+  padding-inline: 44px;
+  text-align: center;
+  align-items: center;
+}
+body[data-cover="news-frame"] .lockup .headline {
+  color: #121212;
+  font-weight: 800;
+  max-inline-size: 100%;
+}
+/* No photograph: the lower half becomes the brand ground, and the box moves
+   to the middle rather than leaving a hole. */
+body[data-cover="news-frame"]:not(:has(.hero)) .plate { block-size: 100%; }
+/* Over the photograph the foot band has no ground of its own: the frame is the
+   identity, so the handle stands down, and the credit, which must stay legible,
+   carries a dark chip. */
+body[data-cover="news-frame"] .zone-foot .brand-handle { display: none; }
+body[data-cover="news-frame"] .zone-foot { inset-inline: 48px; }
+body[data-cover="news-frame"] .ds-credit {
+  flex: 0 1 auto;
+  margin-inline: 0 auto;
+  background: rgba(0, 0, 0, 0.62);
+  color: #f4f4f4;
+  padding-block: 2px;
+  padding-inline: 10px;
+  border-radius: 3px;
+}
 
 /* ── THE COVER'S BOUNDED OBJECT (RFC-20 §5.5). ──
    On the no-photograph path the subject band becomes an object: a fixed band,

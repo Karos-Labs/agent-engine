@@ -1180,6 +1180,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // standard band rather than switching a client's feed.
       const runDensity = (wf.input ?? {})["pictureDensity"];
       const pictureDensity = isPictureDensity(runDensity) ? runDensity : isPictureDensity(runConfig["instagramPictureDensity"]) ? runConfig["instagramPictureDensity"] : undefined;
+      // 2026-09-23: news mode, the same precedence. A config value that is not
+      // a list of strings is ignored rather than guessed at.
+      const configModes = Array.isArray(runConfig["instagramPostModes"]) ? (runConfig["instagramPostModes"] as unknown[]).filter((m): m is string => typeof m === "string") : [];
+      const newsFlash = (wf.input ?? {})["requestedMode"] === "news_flash" || configModes.includes("news_flash");
       // `wf.runId` is already a caller-supplied, globally-unique idempotency
       // key (RFC-01 §9.1 rule 2), so it doubles as `postId` directly — a
       // dedicated sequential-counter tool (RFC-03 §3's suggested
@@ -1194,6 +1198,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         ...(requestedSubject !== undefined ? { requestedSubject } : {}),
         ...(requestedFormat !== undefined ? { requestedFormat } : {}),
         ...(pictureDensity !== undefined ? { pictureDensity } : {}),
+        ...(newsFlash ? { newsFlash: true } : {}),
       };
     });
     // The picture band in force for this run. `standard` is the band every run
@@ -6523,6 +6528,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       /** The skeleton and the register, as prose for prompt @19 §29. `undefined` on the fail-open path. */
       const seriesDirectiveText = series !== undefined ? seriesDirective(series, SERIES_DIRECTIVE_SLIDES) : undefined;
 
+      // 2026-09-23 (stage 3 of the reference-looks plan): a client in news mode
+      // publishing a single image gets the news-frame cover, the Geektime news
+      // flash. Only a single post: a news frame on slide 1 of a carousel would
+      // be a signature on one slide of eight.
+      const newsCover = runClaim.newsFlash === true && format.format === "single";
       // ── 04p: THE RUN'S VISUAL SYSTEM (Phase 5.5, item C) ──
       //
       // `wf.step.code`, $0, no model call and no tool call. The whole of item C
@@ -6563,6 +6573,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           ...(series !== undefined ? { seriesId: series.series.id } : {}),
           recentOwnSystemIds: recentSystemIds(skeletonHistory),
           recentCrossClientSystemIds: crossClientSystemIds(crossClientFormatHistory, wf.clientSlug, SYSTEM_CROSS_CLIENT_HOLD),
+          ...(newsCover ? { forcedCoverForm: "news-frame" as const } : {}),
         }),
       );
       // Read by `headExtras`, which is defined above `draftOnce` because the
@@ -6587,6 +6598,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               ...(series !== undefined ? { seriesId: series.series.id } : {}),
               recentOwnSystemIds: recentSystemIds(skeletonHistory),
               recentCrossClientSystemIds: crossClientSystemIds(crossClientFormatHistory, wf.clientSlug, SYSTEM_CROSS_CLIENT_HOLD),
+              ...(newsCover ? { forcedCoverForm: "news-frame" as const } : {}),
             });
 
       // ── 04l: the register card, the persona and the few-shot (Phase 4, RFC-15 §3) ──
@@ -6741,7 +6753,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // all, so a concept would be authored and then discarded unspent.
           mediaSource: runDirection.mediaSource,
           ...(frozen.conceptMode !== undefined ? { clientMode: frozen.conceptMode } : {}),
-          ...(runConceptMode !== undefined ? { runMode: runConceptMode } : {}),
+          // 2026-09-23: news mode turns the concept ON for its single cover
+          // (the Geektime flash is a picture that IS the headline). It is a
+          // run-level "on", so a client-level "off" still wins, and "on" never
+          // bypasses grounding, safety or budget.
+          ...(runConceptMode !== undefined ? { runMode: runConceptMode } : newsCover ? { runMode: "on" as const } : {}),
         }),
       );
 
@@ -7826,6 +7842,14 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // *"תבניות גנריות בכל הפוסטים נראה AI"*. Still deterministic within a
       // run, which this step needs: it is pure, it runs before sourcing, and a
       // resume must rebuild the identical `copy`.
+      // 2026-09-23: a news flash is ONE cover. The writer picks a single
+      // post's archetype (a photo, a stat, a quote); in news mode the slide
+      // is always the cover, whose news-frame form is the whole design, and
+      // it sources a picture like any cover. Pure and rebuilt identically on a
+      // resume, like the band below.
+      if (newsCover && copy.slides.length === 1 && copy.slides[0]!.layout !== "cover") {
+        copy = { ...copy, slides: [{ ...copy.slides[0]!, layout: "cover" }] };
+      }
       const imagery = enforceImageryBand(copy, pictureBand.floor, pictureBand.ceiling, wf.runId, pictureBand.quiet);
       if (imagery.promotions.length > 0 || imagery.demotions.length > 0) {
         copy = imagery.copy;
@@ -11047,6 +11071,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // 2026-09-23: the credit an attributable picture obliges us to print.
           // `creditLineFor` was imported for exactly this and never called.
           photoCreditFor: creditLineFor,
+          // 2026-09-23: a list series numbers its item slides.
+          numberedItems: series?.series.id === "the_list",
+          // 2026-09-23 (stage 5): a photo-led client's carousel runs one
+          // photograph across the edge between two slides, as the Deel recaps do.
+          carryStrip: runClaim.pictureDensity === "photo-first",
           // IGSTYLE-7, §7a — wires `paletteForSlide`'s already-built, already-
           // seeded rotation into the render path for the first time. Seeded
           // from `wf.runId` per the ticket; a ring of length ≤ 1 (or absent)

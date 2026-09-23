@@ -412,6 +412,66 @@ body[data-figure="tall"] .sc-figure-band {
 /* BLEED — the band runs past the field's own gutter to the frame edge. The
    plate keeps its margins; the picture does not. Negative inline margins
    rather than a wider element, so nothing about the flex column changes. */
+/* THE STRIP THAT CROSSES THE SLIDE EDGE (2026-09-23, stage 5 of the owner's
+   reference-looks plan). The Deel event recaps run a photograph off the edge
+   of one slide and pick it up at the edge of the next, which is what makes a
+   reader swipe. `carry-out` runs this slide's band 240px past the edge the
+   next slide arrives from; `carry-in` paints the SAME image at the SAME size
+   on the next slide, shifted by exactly the canvas width, so its first 240px
+   are the tail the previous slide cut off, and its own band starts after it.
+   Both bands are fixed at 300px here, because the tail can only line up with
+   a band that does not yield.
+   The next slide always arrives from the physical RIGHT, whatever the post's
+   language, so the side is the inline END in a left-to-right document and the
+   inline START in a right-to-left one. */
+/* Both bands are PINNED, not stacked: the tail on the next slide can only
+   line up with a band whose top and height are fixed, so the band leaves the
+   flow at the top of the plate and the plate starts its copy below it.
+   The picture is PAINTED, not placed: slide N's band stops at the canvas edge
+   and draws the photograph at the full strip width (`--carry-w`), so the edge
+   cuts the picture; slide N+1 draws the same photograph at the same width in a
+   240px box, shifted left by exactly what slide N showed. Same width, same
+   vertical centring, same crop, and every box stays inside the frame, which is
+   what the render probe measures. `background-position` is physical, which is
+   right here: the next slide arrives from the right in either language. */
+/* On `body`, not `:root`: `--mx` is declared on `body`, and a `:root` calc
+   over it resolves to nothing, which drops the whole background shorthand. */
+body { --carry: 240px; --carry-w: calc(1080px - var(--mx) + var(--carry)); }
+body[data-figure="carry-out"] .plate,
+body[data-figure="carry-in"] .plate { padding-block-start: calc(var(--zone-mark) + 300px + var(--sp-2)); }
+body[data-figure="carry-out"] .sc-figure-band,
+body[data-figure="carry-in"] .sc-figure-band {
+  position: absolute;
+  inset-block-start: var(--zone-mark);
+  block-size: 300px;
+  inline-size: auto;
+  margin: 0;
+}
+body[data-figure="carry-out"] .sc-figure-band {
+  background: var(--hero-src) 0 50% / var(--carry-w) auto no-repeat;
+}
+body[data-figure="carry-out"] .sc-figure-band img { visibility: hidden; }
+html[dir="ltr"] body[data-figure="carry-out"] .sc-figure-band { inset-inline-start: var(--mx); inset-inline-end: 0; border-start-end-radius: 0; border-end-end-radius: 0; }
+html[dir="rtl"] body[data-figure="carry-out"] .sc-figure-band { inset-inline-start: 0; inset-inline-end: var(--mx); border-start-start-radius: 0; border-end-start-radius: 0; }
+html[dir="ltr"] body[data-figure="carry-in"] .sc-figure-band { inset-inline-start: calc(var(--carry) + 24px); inset-inline-end: var(--mx); }
+html[dir="rtl"] body[data-figure="carry-in"] .sc-figure-band { inset-inline-end: calc(var(--carry) + 24px); inset-inline-start: var(--mx); }
+.sc-carry { display: none; }
+body[data-figure="carry-in"] .sc-carry {
+  display: block;
+  position: absolute;
+  z-index: 3;
+  inset-block-start: var(--zone-mark);
+  block-size: 300px;
+  inline-size: var(--carry);
+  background: var(--carry-src) calc(var(--carry) - var(--carry-w)) 50% / var(--carry-w) auto no-repeat;
+}
+/* The hidden image is what makes the page wait: the render screenshots once
+   every IMAGE has loaded, and a CSS background is not one. Without it the
+   strip's tail was captured before its picture arrived. */
+.sc-carry img { visibility: hidden; inline-size: 1px; block-size: 1px; }
+html[dir="ltr"] body[data-figure="carry-in"] .sc-carry { inset-inline-start: 0; }
+html[dir="rtl"] body[data-figure="carry-in"] .sc-carry { inset-inline-end: 0; }
+
 body[data-figure="bleed"] .sc-figure-band {
   margin-inline: calc(var(--mx) * -1);
   inline-size: calc(100% + var(--mx) * 2);
@@ -1064,6 +1124,22 @@ body.ta-center .acc { margin-inline: auto; }
 }
 .hf-headline { max-inline-size: min(16ch, 100%); }
 .hf-lockup .body-text { max-inline-size: min(26em, 100%); }
+/* A LIST ITEM'S NUMBER (2026-09-23, the_list series). The item is the slide,
+   and its number is how a reader keeps their place in a countable promise, so
+   it is set big, in the display face and the ink, never the accent (the
+   accent is the run's one mark). Empty on every other series, and gone. */
+.hf-ordinal {
+  font-family: var(--f-display, var(--f-body, system-ui, sans-serif));
+  font-weight: 700;
+  /* The scale's top step, which is also a stat's figure: a list number is
+     that kind of object, and an off-scale literal is what the set forbids. */
+  font-size: var(--t-figure);
+  line-height: 1.06;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--fg) 88%, transparent);
+}
+.hf-ordinal:empty { display: none; }
 </style>
 </head>
 <body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-ground="{{groundStyle}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}" data-anchor="{{compositionAnchor}}" data-figure="{{figurePlacement}}">
@@ -1076,6 +1152,7 @@ body.ta-center .acc { margin-inline: auto; }
   <div class="plate focus">
     <div class="device hf-device" data-fitted="secondary">{{html:device}}</div>
     <div class="hf-lockup">
+      <div class="hf-ordinal" aria-hidden="true">{{itemOrdinal}}</div>
       <div class="acc" aria-hidden="true"></div>
       <div class="hf-headline headline r-display" id="headline" data-fitted="primary"><span class="mk-runs">{{html:headlineRuns}}</span><span class="mk-plain">{{headline}}</span></div>
       <div class="body-text r-lead" data-fitted="secondary"><span class="mk-runs">{{html:bodyRuns}}</span><span class="mk-plain">{{body}}</span></div>

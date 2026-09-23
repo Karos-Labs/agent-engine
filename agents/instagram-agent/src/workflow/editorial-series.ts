@@ -72,7 +72,7 @@ export type SeriesLayout = Extract<
   "photo" | "stat_callout" | "quote_card" | "comparison_card" | "list_takeaway" | "headline_focus" | "text_only"
 >;
 
-export const EDITORIAL_SERIES_IDS = ["by_the_numbers", "head_to_head", "the_breakdown", "the_playbook", "field_notes", "in_their_words"] as const;
+export const EDITORIAL_SERIES_IDS = ["by_the_numbers", "head_to_head", "the_breakdown", "the_playbook", "field_notes", "in_their_words", "the_list"] as const;
 export type EditorialSeriesId = (typeof EDITORIAL_SERIES_IDS)[number];
 
 export interface EditorialSeries {
@@ -157,6 +157,22 @@ export const BUNDLED_SERIES: readonly EditorialSeries[] = [
     middle: ["quote_card", "photo", "quote_card", "headline_focus", "stat_callout", "photo"],
     register:
       "Every quote is verbatim from a card, attributed, and long enough to carry a thought. Your own lines between them are connective tissue and stay short — if your line is more interesting than the quote after it, you have chosen the wrong quote.",
+  },
+  // 2026-09-23, stage 6 of the owner's reference-looks plan: the list people
+  // save. The reference got 6,166 shares on its promise and its cover, and
+  // its eleven-row slides were the part nobody could read on a phone, so the
+  // owner asked for the promise without the rows: ONE item per slide, each
+  // with its big number (`itemOrdinal`), the count on the cover equal to the
+  // item slides, and a closer that asks for the save. Every item slide is a
+  // headline_focus on purpose: the list's rhythm IS the repetition, which is
+  // why this is the one series allowed to share its opening archetype.
+  {
+    id: "the_list",
+    badge: "the list",
+    premise: "A countable promise kept one item at a time: N moves, one per slide, worth saving.",
+    middle: ["headline_focus", "headline_focus", "headline_focus", "headline_focus", "headline_focus", "headline_focus"],
+    register:
+      "The cover states the count, and the count equals the number of item slides after it. Each item slide is ONE item: the item itself as the headline in a few words, then one short line on why it matters as the body, nothing else, no list inside it. The closer asks the reader to save the post or comment, in a few words.",
   },
 ];
 
@@ -364,6 +380,11 @@ export function selectSeries(evidence: SeriesEvidence, catalogue: readonly Edito
       // `what-it-means` is the angle that asks for one.
       case "the_playbook":
         return (definitions >= 1 ? 2 : 0) + (evidence.angleId === "what-it-means" ? 2 : 0) + (definitions >= 2 ? 1 : 0);
+      // A list worth saving: three or more defined things, the shape of "N
+      // moves". It needs MORE definitions than the playbook does, so a story
+      // with one or two rules keeps the playbook's denser form.
+      case "the_list":
+        return (definitions >= 3 ? 4 : 0) + (definitions >= 3 && evidence.angleId === "what-it-means" ? 2 : 0);
       // Something that happened.
       case "field_notes":
         return (events >= 1 ? 3 : 0) + (events >= 2 ? 1 : 0);
