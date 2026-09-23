@@ -435,6 +435,8 @@ export const LAYOUT_FIELD_KEYS: ReadonlySet<string> = new Set([
   // only other field is a headline would otherwise read as two elements and
   // pass the two-elements rule on a word no reader ever sees.
   "figurePlacement",
+  // 2026-09-23: whether the picture is a brand mark shown on a card.
+  "heroKind",
   // Phase 4, RFC-15 §7.2. The document's BCP-47 `lang` attribute — layout
   // metadata in the strictest sense: it is read by Chromium's font fallback
   // and by nothing else. It must not be counted by the two-elements rule (a

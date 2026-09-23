@@ -146,6 +146,8 @@ describe("DEFAULT_RENDER_RULES + resolveRenderRules — Phase 0 item D's rule so
       // satisfiable by GRADING A PICTURE. `imageTreatment` is not new; it got
       // away with being undeclared only because `explainImageTreatment`
       // returned `none` for the whole fleet.
+      // 2026-09-23: a brand mark shown whole on a panel rather than full-bleed.
+      "heroKind",
       "heroScrimStrength",
       "heroTreatment",
       "imageTreatment",

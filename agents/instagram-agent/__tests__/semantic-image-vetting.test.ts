@@ -79,7 +79,7 @@ describe("InstagramImageVettingAgent @6", () => {
     // assertions below run against the version the agent actually reads.
     // `prompt-resolution.test.ts` owns the `N.md === latest.md` byte check.
     const agent = new InstagramImageVettingAgent({ router: fakeRouterSequence([]), tools: {}, promptStore: makePromptStore() });
-    expect((agent as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-image-vet@8");
+    expect((agent as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-image-vet@9");
 
     const v5 = readFileSync(path.join(PROMPTS_ROOT, "instagram-image-vet", "5.md"), "utf8");
     expect(v5.split(/\r?\n/)[0]).toBe("# Instagram Image Vetting Craft Guide — v5");

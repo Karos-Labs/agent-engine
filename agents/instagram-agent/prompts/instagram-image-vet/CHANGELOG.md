@@ -6,6 +6,19 @@ reader was about to reach anyway.
 
 ---
 
+**What changed at v9.** Everything v8 says still stands. Section 1b gains one
+paragraph after its worked cases: a real photograph of the subject beats the
+subject's logo. The entity route now labels its logo-rung candidates
+(`MARK_CANDIDATE_TAG`), and on 2026-09-23 a karoslabs carousel
+(`pubsub-21947180423151342`) showed why the rule was needed: the pool held a
+photograph of an Anthropic speaker and the Anthropic wordmark, and v8's "a logo
+is the least ambiguous possible picture of a company" picked the wordmark. The
+owner: every slide looked AI-generated and generic, and the real pictures were
+missing.
+
+**Cost.** INPUT: about +720 prompt characters, about +180 tokens, about
++$0.0005 a call. OUTPUT: unchanged, $0.000.
+
 **What changed at v8.** Everything v7 says still stands, unchanged. The v7
 release-history block moved out of the prompt and into this file; the guide's
 body is byte-identical.

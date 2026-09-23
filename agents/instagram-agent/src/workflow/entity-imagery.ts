@@ -346,6 +346,14 @@ export interface EntitySourceStep {
    * otherwise never let the vet choose between them.
    */
   always?: boolean;
+  /**
+   * 2026-09-23: this rung searches for the entity's MARK (logo, wordmark),
+   * not for a photograph of it. Its candidates render whole on a card
+   * (`heroKind: "mark"`), never cropped full-bleed: on 2026-09-23 a black
+   * Anthropic wordmark on a transparent ground was picked as a full-bleed hero
+   * on a dark slide and the reader saw an empty plate.
+   */
+  mark?: boolean;
 }
 
 /**
@@ -354,6 +362,13 @@ export interface EntitySourceStep {
  * 2026-09-16 text plates.
  */
 export const ENTITY_CANDIDATES_WANTED = 2;
+
+/**
+ * Appended to a mark-rung candidate's description (2026-09-23). The vet reads
+ * it (`instagram-image-vet@9` §1b); nothing parses it back — the workflow
+ * tracks mark paths itself.
+ */
+export const MARK_CANDIDATE_TAG = "[kind: brand mark — a logo or wordmark, not a photograph]";
 
 export interface EntitySourcingInput {
   entity: RecognisedEntity;
@@ -464,6 +479,7 @@ export function planEntitySourcing(input: EntitySourcingInput): EntitySourceStep
       query: `${entity.name} logo`,
       route: "entity",
       requireTerm: entity.name,
+      mark: true,
       why: `${entity.name}'s own mark — what a reader recognises the company BY, and nominative use as the subject of commentary. Ahead of the bare-name search, which returns photographs of products rather than the brand`,
     });
   }
