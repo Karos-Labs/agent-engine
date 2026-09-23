@@ -1246,10 +1246,17 @@ body:not(:has(#takeaway > span:not(:empty))) .cl-panel { background-image: none;
 /* 2026-09-23: a FIGURE plate sets its number as a number, and says under it
    what the number counts (the stat's own sub-label). */
 .rc-plate.rc-fig .item-title {
-  font-size: var(--t-statement);
+  /* NEVER BROKEN INSIDE A NUMBER (2026-09-23). `overflow-wrap: anywhere` at
+     the statement size split "50,000" into "50,00 / 0" and "$1.05M" into
+     "$1.05 / M" on the Deel closer of prep `pubsub-21775990717903866`: the
+     plate is a third of the panel, narrower than the look render's. The lead
+     size fits a figure there, `nowrap` keeps it whole, and a figure that is
+     still too wide overflows where the probe sees it and the fit ladder
+     steps it down. */
+  font-size: var(--t-lead);
   line-height: 1.05;
   color: var(--fg);
-  overflow-wrap: anywhere;
+  white-space: nowrap;
 }
 .rc-label {
   font-size: var(--t-micro);
@@ -1257,7 +1264,7 @@ body:not(:has(#takeaway > span:not(:empty))) .cl-panel { background-image: none;
   color: color-mix(in srgb, var(--fg) 66%, transparent);
 }
 [data-fit="1"] .rc-plate.rc-fig .item-title,
-[data-fit="2"] .rc-plate.rc-fig .item-title { font-size: var(--t-lead); }
+[data-fit="2"] .rc-plate.rc-fig .item-title { font-size: var(--t-label); }
 
 .cl-ask {
   display: flex;
