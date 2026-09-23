@@ -226,7 +226,7 @@ import {
 } from "./interest-floor.js";
 import { boundedObjectFor, composeBoundedObjects, type BoundedObjectDecision } from "./bounded-object.js";
 import { checkSlideWordBudget, formatWordBudgetFindings, MAX_WORDS_PER_SLIDE } from "./slide-word-budget.js";
-import { ceilingFor, enforceImageryBand, imageryShortfallsFor, MIN_PICTURE_SLIDES, placementMixShortfall, type ImageryDemotion, type ImageryPromotion, type ImageryShortfall } from "./imagery-floor.js";
+import { ceilingFor, enforceImageryBand, imageryShortfallsFor, isPictureDensity, MIN_PICTURE_SLIDES, PICTURE_BANDS, placementMixShortfall, type ImageryDemotion, type ImageryPromotion, type ImageryShortfall } from "./imagery-floor.js";
 // Phase 5.5, spec §2 A1b — the split every optional-spend gate in the generate
 // ladder consults, so the image floor is enforced where it actually binds.
 import { guaranteedGapCount, partitionGaps } from "./image-gap-partition.js";
@@ -1175,6 +1175,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       const isFormatChoice = (v: unknown): v is "carousel" | "single" | "auto" => v === "carousel" || v === "single" || v === "auto";
       const runFormat = (wf.input ?? {})["requestedFormat"];
       const requestedFormat = isFormatChoice(runFormat) ? runFormat : isFormatChoice(runConfig["instagramFormat"]) ? runConfig["instagramFormat"] : undefined;
+      // 2026-09-23: how picture-led the carousel is, the same precedence as
+      // the format. Anything but a known value is ignored, so a typo keeps the
+      // standard band rather than switching a client's feed.
+      const runDensity = (wf.input ?? {})["pictureDensity"];
+      const pictureDensity = isPictureDensity(runDensity) ? runDensity : isPictureDensity(runConfig["instagramPictureDensity"]) ? runConfig["instagramPictureDensity"] : undefined;
       // `wf.runId` is already a caller-supplied, globally-unique idempotency
       // key (RFC-01 §9.1 rule 2), so it doubles as `postId` directly — a
       // dedicated sequential-counter tool (RFC-03 §3's suggested
@@ -1188,8 +1193,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         ...(requestedLane !== undefined ? { requestedLane } : {}),
         ...(requestedSubject !== undefined ? { requestedSubject } : {}),
         ...(requestedFormat !== undefined ? { requestedFormat } : {}),
+        ...(pictureDensity !== undefined ? { pictureDensity } : {}),
       };
     });
+    // The picture band in force for this run. `standard` is the band every run
+    // used before densities existed, so an unset client is byte-identical.
+    const pictureBand = PICTURE_BANDS[runClaim.pictureDensity ?? "standard"];
 
     // ── 02: freeze the small files — style config + brand tokens, parse-check-or-HALT ──
     const frozen = await wf.step.code("02-freeze-style-config", async (): Promise<InstagramFrozenConfig> => {
@@ -7299,6 +7308,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // designed slide and a deep caption). The copy step echoes it back and
         // `checkSlidesData` holds the slide count to it.
         format: format.format,
+        // 2026-09-23: a photo-led client (prompt section 12). Absent on the
+        // standard band, so every other client's input is unchanged.
+        ...(runClaim.pictureDensity === "photo-first" ? { pictureDensity: "photo-first" } : {}),
         // The scouted story, when one took the slot: angle, hook, why-now, the
         // brand-fit bridge, and the source URLs it rests on.
         ...(topicClaim.trend !== undefined ? { trendCandidate: trendCandidateForDrafting(topicClaim.trend) } : {}),
@@ -7814,7 +7826,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // *"תבניות גנריות בכל הפוסטים נראה AI"*. Still deterministic within a
       // run, which this step needs: it is pure, it runs before sourcing, and a
       // resume must rebuild the identical `copy`.
-      const imagery = enforceImageryBand(copy, undefined, undefined, wf.runId);
+      const imagery = enforceImageryBand(copy, pictureBand.floor, pictureBand.ceiling, wf.runId, pictureBand.quiet);
       if (imagery.promotions.length > 0 || imagery.demotions.length > 0) {
         copy = imagery.copy;
         imageryPromotions = imagery.promotions;
@@ -7842,7 +7854,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                   (imagery.promotions.length > 0
                     ? `promoted ${imagery.promotions.length} text_only slide(s) to photo: ${imagery.promotions.map((p) => `slide ${p.slide}`).join(", ")}`
                     : `demoted ${imagery.demotions.length} photo slide(s) to text_only: ${imagery.demotions.map((d) => `slide ${d.slide}`).join(", ")}`) +
-                  ` (${imagery.before} -> ${imagery.after} picture slides, band ${MIN_PICTURE_SLIDES}-${ceilingFor(copy.slides.length)})` +
+                  ` (${imagery.before} -> ${imagery.after} picture slides, band ${pictureBand.floor}-${ceilingFor(copy.slides.length, pictureBand.ceiling, pictureBand.floor, pictureBand.quiet)})` +
                   (imagery.shortfallReason !== undefined ? ` — SHORT: ${imagery.shortfallReason}` : "") +
                   (imagery.excessReason !== undefined ? ` — OVER: ${imagery.excessReason}` : ""),
               },
@@ -8071,6 +8083,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       if (attemptEntities.length > 0 && imageCandidatePool.length === 0 && !clientMediaOnly && slidesNeedingSource.length > 0) {
         const harvestTool = tools["media.harvestArticleImages"];
         const searchTool = tools["web.search_web"];
+        const peopleTool = tools["research.entityPeople"];
+        const peopleByEntity = new Map<string, Array<{ name: string; role: string }>>();
         const entitySourced = await wf.step.code(rev(`05b1-source-entity-images-attempt-${attempt}`), async () => {
           const found: ImageCandidate[] = [];
           const report: typeof entitySourcingReport = [];
@@ -8086,16 +8100,38 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               .filter((f) => f.claim === slide.sourceRef)
               .map((f) => f.url)
               .filter((url): url is string => typeof url === "string" && url.length > 0);
+            // 2026-09-23: who this company (or this product's maker) is
+            // recognised by, from Wikidata, once per entity per attempt. A
+            // missing tool, an outage or an unplaceable name is no people and
+            // the ladder it always ran.
+            let associatedPeople: Array<{ name: string; role: string }> = [];
+            if ((entity.kind === "company" || entity.kind === "product") && peopleTool !== undefined) {
+              if (!peopleByEntity.has(entity.name)) {
+                let people: Array<{ name: string; role: string }> = [];
+                try {
+                  const answer = await peopleTool.execute(
+                    { name: entity.name, kind: entity.kind, ...(entity.officialDomain !== undefined ? { officialDomain: entity.officialDomain } : {}) },
+                    { ctx },
+                  );
+                  if (answer.status === "success") people = (answer.result as { people?: Array<{ name: string; role: string }> }).people ?? [];
+                } catch (error) {
+                  console.error(`05b1-source-entity-images: research.entityPeople for "${entity.name}" failed`, error);
+                }
+                peopleByEntity.set(entity.name, people);
+              }
+              associatedPeople = peopleByEntity.get(entity.name) ?? [];
+            }
             const steps = planEntitySourcing({
               entity,
               citedUrls,
               hasMediaLibrary: libraryRead.candidates.length > 0,
               sceneTerms: need.searchTerms,
+              associatedPeople,
             });
             const tiersRun: Array<{ tier: string; why: string; got: number }> = [];
             let got = 0;
             for (const step of steps) {
-              if (got >= ENTITY_CANDIDATES_WANTED) break;
+              if (got >= ENTITY_CANDIDATES_WANTED && step.always !== true) continue;
               let gained: ImageCandidate[] = [];
               try {
                 if (step.tier === "media-library") {
@@ -9399,7 +9435,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // preference never runs. karoslabs' 2026-09-21 post was exactly that:
         // three pictures, all of them the plate, three picture-capable
         // interior slides left empty. See `placementMixShortfall`.
-        const mixShortfall = placementMixShortfall(copy, withPictureNs);
+        const mixShortfall = placementMixShortfall(copy, withPictureNs, pictureBand.ceiling, pictureBand.quiet);
         const want = Math.min(MIN_PICTURE_SLIDES - withPicture + mixShortfall, guaranteeLeft);
 
         // ── THE FLOOR USED TO SEE ONLY THE SLIDES THAT ASKED. ──

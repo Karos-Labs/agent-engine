@@ -484,6 +484,8 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyDraft> {
     // attempt, three attempts to a run, by the highest-volume agent in the
     // fleet — and it asked a model already holding thirty rulesets to hold
     // five obsolete descriptions of them too.
-    skillRef: "instagram-copy@28",
+    // @29 (2026-09-23): section 19 gains `position_map` and `spec_table`, and
+    // sections 7 and 22 read the optional `pictureDensity` input.
+    skillRef: "instagram-copy@29",
   };
 }

@@ -178,6 +178,38 @@ export const MAX_PICTURE_SLIDES = 5;
 export const MIN_QUIET_SLIDES = 2;
 
 /**
+ * How picture-led a client's carousels are (2026-09-23).
+ *
+ * `standard` is the band above, unchanged, and it is every client's default.
+ * `photo-first` is for a client whose feed IS its photographs: the owner's
+ * Deel reference carousels carry a real event photograph on four slides of
+ * five, and the standard band would demote one of them. It keeps ONE quiet
+ * plate rather than two and lifts the absolute ceiling to the whole post; the
+ * floor does not move, because a floor is a promise about what a post never
+ * falls below, not about how photo-led it is.
+ *
+ * A client opts in through its `instagramPictureDensity` config (the post DNA
+ * will set it later); a run may ask through `pictureDensity` in its input.
+ */
+export const PICTURE_DENSITIES = ["standard", "photo-first"] as const;
+export type PictureDensity = (typeof PICTURE_DENSITIES)[number];
+
+export interface PictureBand {
+  floor: number;
+  ceiling: number;
+  quiet: number;
+}
+
+export const PICTURE_BANDS: Readonly<Record<PictureDensity, PictureBand>> = {
+  standard: { floor: MIN_PICTURE_SLIDES, ceiling: MAX_PICTURE_SLIDES, quiet: MIN_QUIET_SLIDES },
+  "photo-first": { floor: MIN_PICTURE_SLIDES, ceiling: 8, quiet: 1 },
+};
+
+export function isPictureDensity(value: unknown): value is PictureDensity {
+  return typeof value === "string" && (PICTURE_DENSITIES as readonly string[]).includes(value);
+}
+
+/**
  * The ceiling in force for a carousel of this length.
  *
  * `max(floor, min(ceiling, slides - MIN_QUIET_SLIDES))`, and all three terms
@@ -200,8 +232,8 @@ export const MIN_QUIET_SLIDES = 2;
  * halves, so the floor takes ties by construction and a short post is simply
  * never over its ceiling.
  */
-export function ceilingFor(slideCount: number, ceiling: number = MAX_PICTURE_SLIDES, floor: number = MIN_PICTURE_SLIDES): number {
-  return Math.max(floor, Math.min(ceiling, slideCount - MIN_QUIET_SLIDES));
+export function ceilingFor(slideCount: number, ceiling: number = MAX_PICTURE_SLIDES, floor: number = MIN_PICTURE_SLIDES, quiet: number = MIN_QUIET_SLIDES): number {
+  return Math.max(floor, Math.min(ceiling, slideCount - quiet));
 }
 
 /** One promotion, for the trace. A composition change nobody can audit is a composition change nobody can correct. */
@@ -386,9 +418,10 @@ export function placementMixShortfall(
   copy: InstagramCopyOutput,
   withPictureNs: ReadonlySet<number>,
   ceiling: number = MAX_PICTURE_SLIDES,
+  quiet: number = MIN_QUIET_SLIDES,
 ): number {
   if (withPictureNs.size === 0) return 0;
-  if (withPictureNs.size >= ceilingFor(copy.slides.length, ceiling, MIN_PICTURE_SLIDES)) return 0;
+  if (withPictureNs.size >= ceilingFor(copy.slides.length, ceiling, MIN_PICTURE_SLIDES, quiet)) return 0;
   const carrying = copy.slides.filter((slide) => withPictureNs.has(slide.n));
   const anyBounded = carrying.some((slide) => !FULL_BLEED_IMAGE_LAYOUTS.has(slide.layout ?? "photo"));
   if (anyBounded) return 0;
@@ -417,13 +450,15 @@ export function enforceImageryBand(
   ceiling: number = MAX_PICTURE_SLIDES,
   /** Per-RUN seed (the workflow passes `wf.runId`) — see {@link placementOrder}. Omitted keeps strict slide order. */
   seed?: string,
+  /** How many plates stay without a picture — `PICTURE_BANDS[density].quiet`. */
+  quiet: number = MIN_QUIET_SLIDES,
 ): ImageryBandResult {
   const before = copy.slides.filter((s) => carriesPicture(s.layout ?? "photo")).length;
   // The ceiling in force depends on how long this carousel is — see
   // `ceilingFor`. The ARGUMENT is the upper bound a caller asked for; what
   // binds is that bound or the rest, whichever is lower, and never below the
   // floor.
-  const inForce = ceilingFor(copy.slides.length, ceiling, floor);
+  const inForce = ceilingFor(copy.slides.length, ceiling, floor, quiet);
 
   // ── UNDER THE FLOOR: promote `text_only`, lowest slide number first. ──
   if (before < floor) {

@@ -87,6 +87,8 @@ export const KNOWN_SLOT_NAMES: ReadonlySet<string> = new Set([
   "figurePlacement",
   // 2026-09-23: the picture's credit line, code-derived by `creditLineFor`.
   "photoCredit",
+  // 2026-09-23: the closer's call-to-action form, code-derived by `ctaFormFor`.
+  "ctaForm",
   // The two fields every slide always has.
   "headline",
   "body",

@@ -502,7 +502,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // bump most often forgets.
     const registry = readFileSync(path.join(PROMPTS_ROOT, "..", "..", "..", "scripts", "prompt-registry.ts"), "utf8");
     expect(registry).toContain(`"14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28"`);
-    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,700}latestVersion: "28"/);
+    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,700}latestVersion: "29"/);
     // Phase 5 (RFC-18 §6.1). The packager's prompt is the one THIS phase added,
     // and the WIP commit this branch inherited had shipped both prompt files
     // with no registry row at all — which `check:prompts` fails on and which
@@ -540,7 +540,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // by nothing.
     const promptStore = makePromptStore();
     const copy = new InstagramCopyAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@28");
+    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@29");
     const packager = new InstagramPostPackagerAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((packager as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-post-package@2");
     const qa = new InstagramVisualQaAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
@@ -562,7 +562,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // its version pin names.
     const promptStore = makePromptStore();
     for (const [promptId, version, h1] of [
-      ["instagram-copy", "28", "# Instagram Copy Craft Guide, v28"],
+      ["instagram-copy", "29", "# Instagram Copy Craft Guide, v29"],
       ["instagram-post-package", "2", "# Instagram Post Package Guide, v2"],
       ["instagram-image-vet", "8", "# Instagram Image Vetting Craft Guide — v8"],
       ["instagram-entities", "1", "# Instagram Entity Extraction — v1"],
@@ -623,8 +623,18 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     const v25 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "25.md"));
     const v26 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "27.md"));
     const v28 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "28.md"));
+    const v29 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "29.md"));
     const latest = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "latest.md"));
-    expect(latest.equals(v28), "latest.md must be byte-identical to 28.md, not merely equivalent").toBe(true);
+    expect(latest.equals(v29), "latest.md must be byte-identical to 29.md, not merely equivalent").toBe(true);
+    expect(v28.equals(v29), "@28 and @29 are the same file, so the bump changed nothing").toBe(false);
+    // What @29 adds (2026-09-23): the two new device shapes in section 19, and
+    // the photo-first band in sections 7 and 22. Asserted on the live file.
+    const v29Text = v29.toString("utf8");
+    const between = (text: string, from: string, to: string) => text.slice(text.indexOf(from), text.indexOf(to));
+    const s19v29 = between(v29Text, "## 19. ", "## 20. ");
+    for (const kind of ["position_map", "spec_table"]) expect(s19v29).toContain(`- **\`${kind}\`**`);
+    expect(s19v29).toContain("Eight shapes:");
+    expect(between(v29Text, "## 7. ", "## 8. ")).toContain("**Unless `pictureDensity` is `photo-first`.**");
     expect(v26.equals(v28), "@27 and @28 are the same file, so the bump changed nothing").toBe(false);
     expect(v25.equals(v26), "@25 and @26 are the same file, so the bump changed nothing").toBe(false);
     expect(v24.equals(v25), "@24 and @25 are the same file, so the bump changed nothing").toBe(false);

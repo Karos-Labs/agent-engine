@@ -116,6 +116,8 @@ describe("DEFAULT_RENDER_RULES + resolveRenderRules — Phase 0 item D's rule so
       // appear in a selector, so all four grammars put the lockup at the same y.
       "compositionAnchor",
       "coverForm",
+      // 2026-09-23: the closer's call to action as a button or a line.
+      "ctaForm",
       "deviceFigures",
       "deviceKind",
       "dir",

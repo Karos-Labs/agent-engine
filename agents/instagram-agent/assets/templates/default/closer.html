@@ -1038,8 +1038,15 @@ body[data-face-bleed="1"] .mk-runs em { font-family: var(--f-display); }
 [data-fit="1"] .dv-label,
 [data-fit="2"] .dv-label  { font-size: var(--t-micro); }
 
-/* The device never paints a rule of its own. It is a figure and its label. */
-.device .dv-rule, .device .dv-accent { display: none; }
+/* The device never paints a rule of its own. It is a figure and its label.
+   ONLY the rule (2026-09-23). This used to hide `.dv-accent` as well, from the
+   days the rule itself carried that class, and `.dv-accent` is now the marker
+   on the INFORMATION half of a device: the "after" figure of a before/after
+   pair, the winning side of a versus, the largest bar, the last timeline point,
+   the whole filled grid of a unit_grid. Rendered on today's plates, a
+   `figure_pair` of $700m -> $1.4bn painted "$700m -> Series E": the number the
+   slide was about was invisible. */
+.device .dv-rule { display: none; }
 
 /* ---- script direction --------------------------------------------------- */
 body.ta-start .plate, body.ta-start .zone-mark, body.ta-start .zone-foot { text-align: start; }
@@ -1144,10 +1151,25 @@ body:not(:has(#takeaway > span:not(:empty))) .cl-panel { background-image: none;
    SPANS, because `.cl-cta:empty` is permanently false — the host always has two
    element children. */
 .cl-cta:not(:has(> span:not(:empty))) { display: none; }
+/* A SHORT CALL TO ACTION IS A BUTTON (2026-09-23). `ctaFormFor` sets `pill`
+   only for an action of a few words ("Join the 2027 waitlist", the Deel
+   reference's closer); a closing sentence keeps the text line above. Ink and
+   ground swapped rather than the accent, because the accent is the run's one
+   mark and a button is not a second one. */
+body[data-cta="pill"] .cl-cta {
+  align-self: flex-start;
+  inline-size: fit-content;
+  padding-block: 0.55em;
+  padding-inline: 1.2em;
+  border-radius: 999px;
+  background: var(--fg);
+  color: var(--bg);
+  font-weight: 600;
+}
 .cl-question:not(:has(> span:not(:empty))) { display: none; }
 </style>
 </head>
-<body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-ground="{{groundStyle}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}" data-anchor="{{compositionAnchor}}" data-figure="{{figurePlacement}}">
+<body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-ground="{{groundStyle}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}" data-anchor="{{compositionAnchor}}" data-figure="{{figurePlacement}}" data-cta="{{ctaForm}}">
   <div class="ground" aria-hidden="true"></div>
 
   <div class="zone-mark">

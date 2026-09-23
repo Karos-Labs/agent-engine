@@ -280,6 +280,18 @@ export function deviceTextSlots(device: SlideDevice): DeviceTextSlot[] {
       ];
     case "unit_grid":
       return [{ path: "label", text: device.label, max: 80 }];
+    case "position_map":
+      return [
+        { path: "xAxis.low", text: device.xAxis.low, max: 24 },
+        { path: "xAxis.high", text: device.xAxis.high, max: 24 },
+        { path: "yAxis.low", text: device.yAxis.low, max: 24 },
+        { path: "yAxis.high", text: device.yAxis.high, max: 24 },
+        ...device.points.map((point, i) => ({ path: `points.${i}.label`, text: point.label, max: 28 })),
+      ];
+    case "spec_table":
+      // Labels only: a value is a term or a figure carried from the evidence,
+      // the same reason a stat's `source` is never language-gated.
+      return device.rows.map((row, i) => ({ path: `rows.${i}.label`, text: row.label, max: 32 }));
   }
 }
 
@@ -316,6 +328,20 @@ export function withDeviceText(device: SlideDevice, path: string, value: string)
       const index = matchIndexedPath(path, "points", "what");
       if (index === undefined || index >= device.points.length) return undefined;
       return { ...device, points: device.points.map((point, i) => (i === index ? { ...point, what: value } : point)) };
+    }
+    case "position_map": {
+      if (path === "xAxis.low") return { ...device, xAxis: { ...device.xAxis, low: value } };
+      if (path === "xAxis.high") return { ...device, xAxis: { ...device.xAxis, high: value } };
+      if (path === "yAxis.low") return { ...device, yAxis: { ...device.yAxis, low: value } };
+      if (path === "yAxis.high") return { ...device, yAxis: { ...device.yAxis, high: value } };
+      const index = matchIndexedPath(path, "points", "label");
+      if (index === undefined || index >= device.points.length) return undefined;
+      return { ...device, points: device.points.map((point, i) => (i === index ? { ...point, label: value } : point)) };
+    }
+    case "spec_table": {
+      const index = matchIndexedPath(path, "rows", "label");
+      if (index === undefined || index >= device.rows.length) return undefined;
+      return { ...device, rows: device.rows.map((row, i) => (i === index ? { ...row, label: value } : row)) };
     }
   }
 }

@@ -137,12 +137,43 @@ export const SlideDeviceSchema = z.discriminatedUnion("kind", [
     winner: z.enum(["left", "right", "neither"]),
   }),
   z.object({ kind: z.literal("unit_grid"), filled: z.number().int().min(1).max(99), of: z.literal(100), label: z.string().max(80) }),
+  // 2026-09-23 (stage 1 of the reference-looks plan). Where each option sits
+  // on two axes of judgement: the Karos Labs feed's "how a drink asks to be
+  // understood" map. Always illustrative, because a position is an argument
+  // and not a measurement, so it carries no `source` and always prints the note.
+  z.object({
+    kind: z.literal("position_map"),
+    xAxis: z.object({ low: z.string().min(1).max(24), high: z.string().min(1).max(24) }),
+    yAxis: z.object({ low: z.string().min(1).max(24), high: z.string().min(1).max(24) }),
+    /** 0 = the axis's `low` end, 100 = its `high` end. Exactly one point is the subject. */
+    points: z
+      .array(
+        z.object({
+          label: z.string().min(1).max(28),
+          x: z.number().int().min(0).max(100),
+          y: z.number().int().min(0).max(100),
+          subject: z.boolean().default(false),
+        }),
+      )
+      .min(2)
+      .max(5),
+  }),
+  // 2026-09-23. A few named terms and their values: Deel's "What was on the
+  // table". A value may be prose ("two minutes") as much as a number, so the
+  // cap is a short phrase rather than the 12-character figure rule, and
+  // `source` is optional: section 19 of the copy guide requires one when a
+  // value asserts a measurement, like any other figure.
+  z.object({
+    kind: z.literal("spec_table"),
+    rows: z.array(z.object({ label: z.string().min(1).max(32), value: z.string().min(1).max(48) })).min(2).max(4),
+    source: DeviceSource.optional(),
+  }),
 ]);
 export type SlideDevice = z.infer<typeof SlideDeviceSchema>;
 export type SlideDeviceKind = SlideDevice["kind"];
 
 /** Every device kind, for a caller enumerating them (a prompt's menu, a test's table). */
-export const SLIDE_DEVICE_KINDS: readonly SlideDeviceKind[] = ["figure", "figure_pair", "bars", "timeline", "versus", "unit_grid"];
+export const SLIDE_DEVICE_KINDS: readonly SlideDeviceKind[] = ["figure", "figure_pair", "bars", "timeline", "versus", "unit_grid", "position_map", "spec_table"];
 
 /**
  * "Illustrative, not measured", per target language.
@@ -272,6 +303,24 @@ export function validateDevice(device: SlideDevice): { ok: true } | { ok: false;
     }
     case "unit_grid":
       return device.label.trim().length > 0 ? { ok: true } : { ok: false, reason: "a unit grid with no label states a proportion of nothing" };
+    case "position_map": {
+      const subjects = device.points.filter((p) => p.subject).length;
+      if (subjects !== 1) {
+        return {
+          ok: false,
+          reason: `a positioning map marks exactly one point as its subject (it marked ${subjects}); the map exists to show where ONE option sits against the rest`,
+        };
+      }
+      for (const [i, a] of device.points.entries()) {
+        const crowded = device.points.find((b, j) => j > i && Math.abs(a.x - b.x) < 12 && Math.abs(a.y - b.y) < 12);
+        if (crowded !== undefined) return { ok: false, reason: `"${a.label}" and "${crowded.label}" sit on top of each other; spread them at least 12 apart on one axis` };
+      }
+      return { ok: true };
+    }
+    case "spec_table": {
+      const blank = device.rows.find((row) => row.label.trim().length === 0 || row.value.trim().length === 0);
+      return blank === undefined ? { ok: true } : { ok: false, reason: "every table row needs both a label and a value" };
+    }
   }
 }
 
@@ -506,6 +555,12 @@ export function deviceFigureValues(device: SlideDevice): string[] {
       return [];
     case "unit_grid":
       return [String(device.filled)];
+    case "position_map":
+      // Positions are an argument drawn as geometry; no numeral is painted.
+      return [];
+    case "spec_table":
+      // The values that open with a figure are the numbers a reader sees.
+      return device.rows.map((row) => row.value).filter((value) => /^[^\p{L}]*\d/u.test(value));
   }
 }
 
@@ -646,6 +701,41 @@ export function buildDeviceFragment(device: SlideDevice, dir: "ltr" | "rtl", tar
         note +
         `</div>`
       );
+    }
+    case "position_map": {
+      // Geometry from validated integers only (0 to 100), so the inline style
+      // can never carry model text. `inset-inline-start`, not `left`: the map
+      // mirrors with its labels under `dir="rtl"`, like every other device.
+      const points = device.points
+        .map(
+          (point) =>
+            `<div class="dv-pm-point${point.subject ? " dv-accent" : ""}" style="inset-inline-start:${point.x}%;inset-block-end:${point.y}%">` +
+            `<span class="dv-pm-mark"></span>` +
+            `<span class="dv-pm-label">${esc(point.label)}</span>` +
+            `</div>`,
+        )
+        .join("");
+      return (
+        `<div class="dv dv-pm-block">` +
+        `<div class="dv-pm">` +
+        `<div class="dv-pm-axis dv-pm-axis--x"></div><div class="dv-pm-axis dv-pm-axis--y"></div>` +
+        `<span class="dv-pm-end dv-pm-end--x-low">${esc(device.xAxis.low)}</span>` +
+        `<span class="dv-pm-end dv-pm-end--x-high">${esc(device.xAxis.high)}</span>` +
+        `<span class="dv-pm-end dv-pm-end--y-high">${esc(device.yAxis.high)}</span>` +
+        `<span class="dv-pm-end dv-pm-end--y-low">${esc(device.yAxis.low)}</span>` +
+        points +
+        `</div>` +
+        note +
+        `</div>`
+      );
+    }
+    case "spec_table": {
+      const rows = device.rows
+        .map((row) => `<div class="dv-st-row"><span class="dv-st-label">${esc(row.label)}</span><span class="dv-st-value">${esc(row.value)}</span></div>`)
+        .join("");
+      // No accent: a table is information in the ink, and the plate's one
+      // accent is spent by the archetype's own mark.
+      return `<div class="dv dv-st-block"><div class="dv-st">${rows}</div>${device.source !== undefined ? source(device.source) : ""}</div>`;
     }
   }
 }
@@ -891,5 +981,62 @@ export function deviceCssBlock(): string {
   background: color-mix(in srgb, var(--fg) 16%, transparent);
 }
 .dv-unit--on { background: var(--dv-ink, var(--accent)); }
+
+/* position_map (2026-09-23): two crossing hairlines, four end labels and up
+   to five points. A fixed aspect, so the geometry means the same thing on every
+   plate; the subject is the one accented diamond. */
+.dv-pm {
+  position: relative; inline-size: 100%; max-inline-size: calc(820px * var(--ts, 1));
+  aspect-ratio: 4 / 3; margin-block-start: calc(10px * var(--ts, 1));
+}
+.dv-pm-axis { position: absolute; background: color-mix(in srgb, var(--fg) 24%, transparent); }
+.dv-pm-axis--x { inset-inline: 0; inset-block-start: 50%; block-size: 2px; }
+.dv-pm-axis--y { inset-block: calc(34px * var(--ts, 1)); inset-inline-start: 50%; inline-size: 2px; }
+.dv-pm-end {
+  position: absolute; font-family: var(--f-mono); font-size: calc(17px * var(--ts, 1));
+  letter-spacing: 0.12em; text-transform: uppercase; white-space: nowrap;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+.dv-pm-end--x-low { inset-inline-start: 0; inset-block-start: calc(50% + 12px); }
+.dv-pm-end--x-high { inset-inline-end: 0; inset-block-start: calc(50% + 12px); }
+.dv-pm-end--y-high { inset-block-start: 0; inset-inline-start: calc(50% + 14px); }
+.dv-pm-end--y-low { inset-block-end: 0; inset-inline-start: calc(50% + 14px); }
+.dv-pm-point {
+  position: absolute; display: flex; flex-direction: column; align-items: center;
+  gap: calc(8px * var(--ts, 1)); translate: -50% 50%;
+}
+[dir="rtl"] .dv-pm-point { translate: 50% 50%; }
+.dv-pm-mark {
+  display: block; inline-size: calc(20px * var(--ts, 1)); block-size: calc(20px * var(--ts, 1));
+  /* A clipped diamond, not a rotated square: a rotation grows the box by
+     root two and the render probe reads that as the mark overflowing. */
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+  background: var(--dv-ink, color-mix(in srgb, var(--fg) 55%, var(--bg)));
+}
+.dv-pm-point.dv-accent .dv-pm-mark { inline-size: calc(30px * var(--ts, 1)); block-size: calc(30px * var(--ts, 1)); }
+.dv-pm-label {
+  font-family: var(--f-body); font-size: calc(22px * var(--ts, 1)); line-height: 1.2; white-space: nowrap;
+  color: color-mix(in srgb, var(--fg) 80%, transparent);
+}
+.dv-pm-point.dv-accent .dv-pm-label { color: var(--fg); font-weight: 600; }
+
+/* spec_table (2026-09-23): label at the start in the small mono step, value
+   at the end in the display face, one hairline between rows. */
+.dv-st { display: flex; flex-direction: column; max-inline-size: calc(900px * var(--ts, 1)); }
+.dv-st-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: calc(28px * var(--ts, 1));
+  padding-block: calc(20px * var(--ts, 1));
+  border-block-start: 2px solid color-mix(in srgb, var(--fg) 16%, transparent);
+}
+.dv-st-row:last-child { border-block-end: 2px solid color-mix(in srgb, var(--fg) 16%, transparent); }
+.dv-st-label {
+  flex: 0 1 40%; font-family: var(--f-mono); font-size: calc(18px * var(--ts, 1));
+  letter-spacing: 0.12em; text-transform: uppercase; line-height: 1.4;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+}
+.dv-st-value {
+  flex: 1 1 60%; text-align: end; font-family: var(--f-display); font-weight: 600;
+  font-size: calc(34px * var(--ts, 1)); line-height: 1.2; text-wrap: balance;
+}
 </style>`;
 }

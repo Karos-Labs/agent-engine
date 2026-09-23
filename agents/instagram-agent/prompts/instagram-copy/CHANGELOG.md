@@ -16,6 +16,21 @@ to hold five obsolete descriptions of them as well.
 
 ---
 
+**What changed at v29.** Everything v28 says still stands. Three additions,
+from stage 1 of the owner's reference-looks plan (2026-09-23).
+
+Section 19 grows from six device shapes to eight: `position_map` (the Karos
+Labs feed's positioning map, always illustrative) and `spec_table` (Deel's
+"What was on the table": named terms and their values, a figure in a value
+following the figure rules).
+
+Section 7 and section 22 read a new optional input, `pictureDensity`. A client
+set to `photo-first` may carry a photograph on every slide but one; the floor
+of three is unchanged and every other client reads exactly the range it did.
+
+**Cost.** INPUT: about +2,100 prompt characters, about +530 tokens, about
++$0.0016 an attempt. OUTPUT: unchanged unless the writer chooses a new device.
+
 **What changed at v28.** Everything v27 says still stands, unchanged. The
 release history moved out of the prompt and into this file.
 

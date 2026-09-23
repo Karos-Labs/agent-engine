@@ -44,6 +44,16 @@ const EVERY_KIND: SlideDevice[] = [
   { kind: "timeline", points: [{ at: "2024", what: "ידני" }, { at: "2026", what: "אוטומטי" }] },
   { kind: "versus", left: { label: "בתוך הבית", body: "זול, איטי" }, right: { label: "סוכנות", body: "יקר, מהיר" }, winner: "right" },
   { kind: "unit_grid", filled: 72, of: 100, label: "מהתור" },
+  {
+    kind: "position_map",
+    xAxis: { low: "שמרני", high: "מופרע" },
+    yAxis: { low: "פונקציונלי", high: "מבדר" },
+    points: [
+      { label: "המותג", x: 80, y: 85, subject: true },
+      { label: "המתחרים", x: 25, y: 30, subject: false },
+    ],
+  },
+  { kind: "spec_table", rows: [{ label: "משך הפיץ'", value: "שתי דקות" }, { label: "המענק", value: "עד 50,000 דולר" }] },
 ];
 
 function assertNoPhysicalDirection(source: string, what: string): void {

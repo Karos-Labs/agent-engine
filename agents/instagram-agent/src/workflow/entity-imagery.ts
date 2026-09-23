@@ -320,6 +320,13 @@ export interface EntitySourceStep {
   allowUnknownLicence: boolean;
   /** Why this tier sits here. Carried to the gate payload so a sourcing decision is readable without this file. */
   why: string;
+  /**
+   * Runs even when earlier tiers already filled the slide's quota. Set on the
+   * FACE tier only: a company's mark and its leader's photograph are two
+   * different pictures of one subject, and a quota met by three logos would
+   * otherwise never let the vet choose between them.
+   */
+  always?: boolean;
 }
 
 /**
@@ -337,6 +344,12 @@ export interface EntitySourcingInput {
   hasMediaLibrary?: boolean;
   /** The slide's own non-entity search terms, appended to the stock query so the last tier is not the entity name alone. */
   sceneTerms?: readonly string[];
+  /**
+   * The people a company or product is recognised by, from Wikidata's CEO and
+   * founded-by statements (`research.entityPeople`), never from a model's
+   * memory. Absent or empty plans exactly the ladder it did before.
+   */
+  associatedPeople?: ReadonlyArray<{ name: string; role: string }>;
 }
 
 /**
@@ -434,6 +447,31 @@ export function planEntitySourcing(input: EntitySourcingInput): EntitySourceStep
       requireTerm: entity.name,
       why: `${entity.name}'s own mark — what a reader recognises the company BY, and nominative use as the subject of commentary. Ahead of the bare-name search, which returns photographs of products rather than the brand`,
     });
+  }
+
+  // ── AND THE FACE THE COMPANY IS KNOWN BY (2026-09-23). ──
+  //
+  // The owner, on a post about ChatGPT that shipped a desk-lamp stock photo:
+  // *"you can add a picture of them or of Sam Altman"*. A company's mark is
+  // what a reader recognises it BY; its leader is who the story is often
+  // really about. The names come from Wikidata's CEO and founded-by
+  // statements, so this is a record rather than a guess, and it runs even
+  // when the mark already filled the quota: the vet chooses between two
+  // kinds of picture instead of never seeing the second.
+  if (entity.kind === "company" || entity.kind === "product") {
+    for (const person of (input.associatedPeople ?? []).slice(0, 1)) {
+      steps.push({
+        tier: "commons",
+        query: person.name,
+        route: "entity",
+        requireTerm: person.name,
+        // A company's CEO or founder holds a public office by definition.
+        allowUnknownLicence: true,
+        order: steps.length,
+        always: true,
+        why: `${person.name}, ${entity.name}'s ${person.role} (Wikidata), the face the story is recognised by; searched even when ${entity.name}'s mark already filled the slide, so the vet can choose between the two`,
+      });
+    }
   }
 
   push({
