@@ -318,6 +318,51 @@ body:has(img.hero[data-kind="cutout"]) .scrim { display: none; }
 /* The lockup starts under the object: a product is never behind the words. */
 body:has(img.hero[data-kind="cutout"]) .plate { padding-block-start: calc(var(--zone-mark) + var(--sp) + 38% + var(--sp-2)); }
 
+/* —— A PHOTOGRAPH SET AS A BLOCK, NOT AS A WALL (2026-09-24). ——
+   The owner, on two full-bleed covers whose headline and deck ran across a
+   face and a body: *"it would have been nicer if the picture were like slide 3
+   of XO Digital, where the picture is not over the whole screen — it is a bit
+   more aesthetic"*. Slide 3 is the centred block they had already picked out
+   of the rotation (`inset`: copy above, picture, copy below).
+
+   So a photographic hero on a full-bleed plate can be set the same way: the
+   picture bounded in the upper field, the words on the plate's own ground
+   under it. `object-fit: cover` and not `contain`, which is the whole
+   difference from `cutout` above — a product is shown WHOLE, a photograph is
+   cropped to the block it is given.
+
+   The scrim goes with it. A scrim exists to make copy legible over a picture,
+   and here no copy is over the picture; leaving it on would darken a
+   photograph for no reason. */
+/* TWO SHAPES CARRY A FULL-BLEED PICTURE, and they are not the same element.
+   `cover.html` paints `<img class="hero" data-kind>`; `slide.html` (the
+   `photo` archetype) wraps it as `<div class="bg" data-kind><img></div>`, so
+   the kind sits on the WRAPPER there. A rule written only for the first left
+   the `photo` plate painting a wall with the headline across the subject's
+   face — which is the defect this whole change is about, on the other half of
+   the set. Measured on a real render before it was widened. */
+img.hero[data-kind="framed"],
+.bg[data-kind="framed"] > img {
+  inset: auto;
+  inset-block-start: calc(var(--zone-mark) + var(--sp));
+  inset-inline-start: var(--mx);
+  /* MEASURED, not `auto`: on a replaced element `inline-size: auto` resolves
+     from the image's own aspect ratio, so the block came out as wide as a
+     1200x1500 photograph is at 46% height — a column down the middle with the
+     ground either side, which is not the composition. `cutout` above WANTS
+     that behaviour (a product keeps its shape); a framed photograph is a
+     block, and the block spans the measure. */
+  inline-size: calc(100% - (2 * var(--mx)));
+  block-size: 46%;
+  object-fit: cover;
+  border-radius: 10px;
+}
+body:has(img.hero[data-kind="framed"]) .scrim,
+body:has(.bg[data-kind="framed"]) .scrim { display: none; }
+/* The lockup starts under the block: the words are never on the photograph. */
+body:has(img.hero[data-kind="framed"]) .plate,
+body:has(.bg[data-kind="framed"]) .plate { padding-block-start: calc(var(--zone-mark) + var(--sp) + 46% + var(--sp-2)); }
+
 .scrim {
   position: absolute;
   inset: 0;

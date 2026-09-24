@@ -1157,6 +1157,42 @@ function withBodyBudget<T extends { layout?: InstagramSlideLayout | undefined; b
   return body === slide.body ? slide : { ...slide, body };
 }
 
+/**
+ * WHEN A PHOTOGRAPH IS A BLOCK RATHER THAN THE WHOLE PLATE.
+ *
+ * `cover` and `photo` paint their picture as the ground and set the copy on
+ * top of it under a scrim. That is a real composition and it stays — a
+ * headline of a few words over a strong photograph is a poster. What the owner
+ * rejected (2026-09-24) is the OTHER case: a headline AND a deck laid across a
+ * face and a body, on two live posts. *"It would have been nicer if the
+ * picture were like slide 3 of XO Digital, where the picture is not over the
+ * whole screen — it is a bit more aesthetic."*
+ *
+ * So the deck decides. A cover carrying a second block of copy has enough
+ * words that they will sit ON the subject; it gets the picture as a bounded
+ * block with the words underneath, which is the centred composition the owner
+ * had already picked out of the shape rotation. A cover carrying a headline
+ * alone keeps the poster.
+ *
+ * A mark and a cutout are excluded because they already have their own
+ * treatments — a logo at its own size, a product contained whole — and both
+ * already move the lockup below the picture.
+ */
+export function framedHeroFor(params: {
+  layout: InstagramSlideLayout;
+  headline: string;
+  body: string;
+  hasPicture: boolean;
+  heroIsMark: boolean;
+  isCutout: boolean;
+}): boolean {
+  if (!params.hasPicture || params.heroIsMark || params.isCutout) return false;
+  if (!FULL_BLEED_IMAGE_LAYOUTS.has(params.layout)) return false;
+  // The deck, not its length: one word of second-block copy is still a second
+  // block, and it is the block that lands on the subject's face.
+  return params.body.trim().length > 0;
+}
+
 export function ctaFormFor(text: string): "pill" | "line" {
   const trimmed = text.trim();
   const words = trimmed.split(/\s+/u).filter((w) => w.length > 0).length;
@@ -3202,6 +3238,16 @@ export function assembleSlidesData(params: {
               }),
         ...(heroIsMark ? { heroKind: imagePath !== undefined && params.clearMarkPaths?.has(imagePath) === true ? "mark-clear" : "mark" } : {}),
         ...(!heroIsMark && imagePath !== undefined && params.productCutoutPaths?.has(imagePath) === true ? { heroKind: "cutout" } : {}),
+        // A PHOTOGRAPH IS A BLOCK WHEN THERE ARE WORDS TO PUT UNDER IT
+        // (2026-09-24). The owner, on two full-bleed covers whose headline and
+        // deck ran across a face and a body: *"it would have been nicer if the
+        // picture were like slide 3 of XO Digital, where the picture is not
+        // over the whole screen"*. `framedHeroFor` is the rule; the plate CSS
+        // (`img.hero[data-kind="framed"]`) is the composition.
+        // An interior photo already renders as the inset block (`photoAsBlock`); the two compositions never stack on one plate.
+        ...(!photoAsBlock && framedHeroFor({ layout, headline: slide.headline, body: slide.body, hasPicture: imagePath !== undefined, heroIsMark, isCutout: imagePath !== undefined && params.productCutoutPaths?.has(imagePath) === true })
+          ? { heroKind: "framed" as const }
+          : {}),
         // 2026-09-24: which of the three closer forms (`closerFormFor`); only the closer plate reads it.
         ...(layout === "closer" ? { closerForm: closerFormFor(`${params.clientSlug}:${params.paletteSeed ?? ""}`) } : {}),
         ...(photoCredit !== undefined ? { photoCredit } : {}),

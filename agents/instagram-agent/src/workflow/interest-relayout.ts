@@ -830,13 +830,36 @@ function promoteImageRemedy(
   // `assembleSlidesData` attaches a hero only to a `photo` slide, so a vetted
   // image on a slide that ended up typographic is going nowhere. Best claim
   // match first.
+  /**
+   * WHAT "UNUSED" MEANS, AND THE POST IT WAS WRONG IN.
+   *
+   * This read `layoutByN.get(sel.n) !== "photo"`, which is only two of the six
+   * archetypes that PAINT a picture: the four panel archetypes
+   * (`stat_callout`, `quote_card`, `comparison_card`, `list_takeaway`) render
+   * the same photograph in a bounded band, and every one of them looked
+   * "unused" here. So a picture a reader was already going to see on slide 3
+   * could be promoted onto slide 1, and the carousel showed it twice.
+   *
+   * That is the defect the owner reported on the XO Digital post, 2026-09-24:
+   * *"what is on slide 3 looks excellent in placement — it is simply the same
+   * picture as on the first slide"*. Step `06f2` already enforces one picture
+   * per post, and it reads `HERO_IMAGE_LAYOUTS`; it runs BEFORE this remedy,
+   * so the re-layout could reintroduce exactly what it had removed.
+   *
+   * Both halves are needed. A slide can be excluded by its archetype and the
+   * same PATH still arrive through another selection row, so the paths already
+   * on rendering slides are excluded by path as well.
+   */
+  const renderedPaths = new Set(
+    selections
+      .filter(isUsableSelection)
+      .filter((sel) => HERO_IMAGE_LAYOUTS.has((layoutByN.get(sel.n) ?? "photo") as InstagramSlideLayout))
+      .map((sel) => sel.imagePath),
+  );
   const unused = selections
     .filter(isUsableSelection)
-    // 2026-09-24: "no slide is rendering" means no picture-bearing layout at
-    // all, bounded panels included. XO Digital (pubsub-21255292697884248)
-    // promoted slide 3's picture to the cover although slide 3's stat panel
-    // was showing it, and the post carried one photograph twice.
-    .filter((sel) => sel.n !== slideN && !HERO_IMAGE_LAYOUTS.has(layoutByN.get(sel.n) as InstagramSlideLayout))
+    .filter((sel) => sel.n !== slideN && !HERO_IMAGE_LAYOUTS.has((layoutByN.get(sel.n) ?? "photo") as InstagramSlideLayout))
+    .filter((sel) => !renderedPaths.has(sel.imagePath))
     // 2026-09-24: the one slide every reader sees is never given the screen
     // cliche. KAROS pubsub-21255039598063450 promoted a generated "desktop
     // monitor" frame onto its cover.
