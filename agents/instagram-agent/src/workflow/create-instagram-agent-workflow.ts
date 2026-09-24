@@ -8672,6 +8672,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // unreachable. It now ships on a commentary post and is refused on a
         // promotional one, which is the actual rule rather than a proxy for it.
         if (s.licenceClass !== undefined && s.licenceClass !== "unknown" && !licenceAdmissible(s.licenceClass, POST_USAGE)) return true;
+        // 2026-09-24 (owner ruling): a publisher's article photograph runs
+        // ONLY with its credit. No parseable credit, no picture.
+        if (/publisher-owned/iu.test(s.license ?? "") && creditLineFor(s) === undefined) return true;
         return false;
       };
 

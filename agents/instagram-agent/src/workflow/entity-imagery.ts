@@ -216,7 +216,7 @@ export function sceneDeclaresIllustration(need: Pick<NormalisedVisualNeed, "scen
 // ─────────────────────────────────────────────────────────────────────────
 
 /** Licence texts that say "editorial use only" in the several ways the providers write it. */
-const EDITORIAL_ONLY_CUES: readonly string[] = ["editorial use", "editorial only", "editorial-only", "not for commercial use", "non-commercial", "noncommercial", " nc ", "cc by-nc"];
+const EDITORIAL_ONLY_CUES: readonly string[] = ["publisher-owned editorial", "editorial use", "editorial only", "editorial-only", "not for commercial use", "non-commercial", "noncommercial", " nc ", "cc by-nc"];
 
 /**
  * The class for one candidate, from the provider's own `licenseConfidence`
@@ -267,6 +267,14 @@ export function licenceAdmissible(licenceClass: LicenceClass, usage: PostUsage):
 export const CREDIT_LINE_MAX_CHARS = 90;
 
 export function creditLineFor(selection: { licenceClass?: LicenceClass | undefined; license?: string | undefined; credit?: string | undefined }): string | undefined {
+  // 2026-09-24 (owner ruling): a publisher's own article photograph runs WITH
+  // a credit. `instagram-image-vet@10` writes its licence as
+  // `Publisher-owned editorial image, credit "<domain>"`; no credit parsed
+  // means no line, never a guessed one.
+  if (selection.licenceClass === "editorial-only" && /publisher-owned/iu.test(selection.license ?? "")) {
+    const publisher = readableCredit(selection.license ?? "");
+    return publisher !== undefined && publisher.length <= CREDIT_LINE_MAX_CHARS ? publisher : undefined;
+  }
   if (selection.licenceClass !== "attributable") return undefined;
   const basis = (selection.credit ?? readableCredit(selection.license ?? "") ?? selection.license ?? "").replace(/\s+/gu, " ").trim();
   if (basis.length === 0) return undefined;
