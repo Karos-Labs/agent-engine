@@ -619,6 +619,32 @@ function clamp(value: string, max: number): string {
  */
 export const CLICHE_SCENE_PATTERN =
   /\b(laptops?|keyboards?|monitors?|workstations?|dashboards?|terminal|desk ?lamps?|screen[- ]?(?:glow|spill|light)|at (?:a|the|his|her|their) desk|(?:dim|dark) room|mid-task at)\b/iu;
+/**
+ * A brief that asks for a DIAGRAM rather than a picture of something
+ * (2026-09-24). KAROS (pubsub-21254982994413907) briefed "Abstract editorial
+ * graphic suggesting two isolated data silos ... minimal line-weight
+ * illustration" under a documentary-35mm style lock whose direction forbids
+ * "abstract AI visualisation". The generator was handed two contradicting
+ * orders, drew the direction's founder at a doorway three times, and the vet
+ * refused all three against the brief: the carousel shipped two pictures.
+ * The owner has also called generic AI abstraction boring (2026-09-18).
+ */
+export const ABSTRACT_GRAPHIC_PATTERN =
+  /\b(abstract|graphic|diagram|infographic|illustrat\w*|icons?|vector|schematic|flowchart|line[- ](?:art|weight|drawing)|isometric)\b/iu;
+export function prescribesAbstractGraphic(text: string): boolean {
+  const all = new RegExp(ABSTRACT_GRAPHIC_PATTERN.source, "giu");
+  for (const match of text.matchAll(all)) {
+    const before = text.slice(Math.max(0, (match.index ?? 0) - 48), match.index ?? 0);
+    const clause = before.split(/[.;:,–—]\s*|\s-\s/u).pop() ?? before;
+    if (!/\b(no|never|not|without|avoid|nor)\b/iu.test(clause)) return true;
+  }
+  return false;
+}
+/** Whether a client's locked style is itself a drawing, so an illustration brief is ON style and is drawn as written. */
+export function styleIsNonPhotographic(styleLine: string | undefined): boolean {
+  return styleLine !== undefined && /\b(illustrat\w*|vector|diagram|schematic|line[- ]art|flat design|3d[- ]render\w*|isometric|cartoon|collage|typographic)\b/iu.test(styleLine);
+}
+
 /** Whether a stored direction's subject, lines, light or style lock prescribe the cliché scene. */
 export function directionPrescribesCliche(direction: Pick<VisualDirection, "subject" | "lines" | "light" | "styleLock">): boolean {
   return [...direction.subject, ...direction.light, ...direction.lines.map((l) => l.line), direction.styleLock.line].some((t) => prescribesClicheScene(t));
