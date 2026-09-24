@@ -922,6 +922,433 @@ Method: ScrappyCoco scraped about 30 recent posts per account. Engagement is lik
 - Keep the program's own mark small and off any plate, or let the stage signage carry the brand. Never swap in the parent company's logo. No top post in the set stamps a logo on a plate, and the winning posts of a16z, speedrun, techstars, EF and Founders carry little or no logo.
 - Never learn from like counts on accounts with hidden likes. When likes_hidden is true, the counts read 1 to 3 and any ranking built on them is noise. Use views, saves, shares and reach instead.
 
+## research:legibility
+
+```json
+{
+ "findings": [
+  {
+   "claim": "This finding sets the conversion from phone to canvas. Instagram serves photos at up to 1,080 px wide. It keeps any aspect ratio between 1.91:1 and 3:4 at original resolution, so 1080x566 to 1080x1440 is untouched, and 1080x1440 is the tallest frame the feed shows. It sizes wider uploads down to 1,080 px. Feed images fill the full screen width. The most common phone widths are 360 to 414 CSS px (StatCounter, Aug 2026: 414 wide 13.6%, 360 wide 9.3%, 390 wide 6.8%, 393 wide 5.3%, 384 wide 4.4%). So one iOS point or Android dp equals about 2.6 to 3.0 canvas px. The image is about 58 to 71 mm wide on the glass, which puts one canvas px at about 0.06 mm.",
+   "implication_for_our_agent": "Convert with canvas_px = pt x 2.75, using a 393 pt reference phone, and check the worst case at x 3.0 (a 360 dp phone). The skill renders at 2x (2160x2880), which Instagram will resample. Downsample it yourself to exactly 1080x1440 with a good filter (e.g. Lanczos), then run every legibility and contrast gate on that 1080 file, because that is what viewers get. A 1 px hairline at 1080 scale is decoration only. Any rule or stroke that must be seen should be at least 2 px at 1080 scale.",
+   "sources": [
+    "https://help.instagram.com/1631821640426723 (Instagram Help Centre, fetched 2026-09-24)",
+    "https://gs.statcounter.com/screen-resolution-stats/mobile/worldwide (Aug 2026)",
+    "https://en.wikipedia.org/wiki/Instagram (the original 640 px square matched the iPhone display width)",
+    "Derived: device specs and pixel maths"
+   ],
+   "confidence": "high"
+  },
+  {
+   "claim": "Minimum legible size. People read phones closer than paper: 32.2 cm for web pages and 36.2 cm for texts, against 40 cm for print. Typical phone web text measured about 0.8M, which works out to roughly 0.21 degrees of x-height (Bababekova 2011). Reading stays at full speed only when x-height is at least about 0.2 degrees; the fluent range runs from 0.2 to 2 degrees (Legge & Bigelow 2011). On a 6.1-inch phone at 32 cm, 0.2 degrees of x-height equals about 36 px on the 1080 canvas, assuming an x-height of 0.52 em (the same ratio APCA assumes). It is about 40 px on a mini phone or at 36 cm, and about 33 px on a Pro Max. Apple's iOS minimum of 11 pt is about 30 px, and its default Body of 17 pt is about 47 px. Text baked into an image never grows with the viewer's Dynamic Type setting.",
+   "implication_for_our_agent": "Add a MIN-TYPE gate that measures computed font size on the rendered DOM, normalised by the font's x-height. Proposed floors: 30 px for any glyph (labels, source lines, all-caps with tracking), 40 px for any sentence the reader is meant to read (36 px only for secondary lines), and 44-48 px as the default body size. As x-height: at least 16 px for labels, 21 px for body, 23-25 px for comfortable body. Scale fonts with a small x-height up by 0.52 divided by their x-height ratio. Auto-fit must cut words, never shrink below the floor. Several live templates currently put text below these floors: story-carousel.html (.eyebrow 18px, .kicker 22px, .body-text 34px, .quote-attr 16px), verdict-ranking.html (.eyebrow 22px, .rank-take 30px, .rank-take.small 26px), study-fact.html (.fact-kicker 22px, .fact-cite 20px, .sup-cite 18px, .sup-text.small 32px). All are under /Users/albertkattan/Code/karos-agents/products/live/instagram-agent/assets/templates/.",
+   "sources": [
+    "Bababekova et al. 2011, Optom Vis Sci, PMID 21499163 (via Europe PMC)",
+    "Legge & Bigelow 2011, J Vision 11(5):8, https://doi.org/10.1167/11.5.8",
+    "https://developer.apple.com/design/human-interface-guidelines/typography",
+    "https://git.apcacontrast.com/documentation/APCA_in_a_Nutshell.html (x-height 0.52 assumption)",
+    "Derived calculation; local templates"
+   ],
+   "confidence": "medium"
+  },
+  {
+   "claim": "Headline size. The profile grid shows a cover about 130 pt wide on a 393 pt phone, so one canvas px is about 0.12 pt there. A 96 px headline shows at about 11.6 pt, which is iOS's minimum. A 72 px headline shows at about 8.7 pt, and 48 px body at about 5.8 pt. Apple's display sizes convert to about 93 px (Large Title, 34 pt), 77 px (Title 1, 28 pt) and 55-60 px (Title 2/3, 20-22 pt). In eye-tracking of 1,363 print ads, the text element captured attention in direct proportion to its surface area (Pieters & Wedel 2004).",
+   "implication_for_our_agent": "Proposed sizes: cover hook at least 96-100 px (typically 100-140 px) so it still reads on the profile grid; inner-slide headlines 72-96 px; subheads 56-64 px. On the 952 px measure left by 64 px margins, that gives 2-3 words per line at 100-140 px (14-20 characters) and 3-4 words per line at 72-80 px (22-26 characters). So aim for 2-4 words per line and 2-4 lines, with text-wrap: balance. Give the headline real area; a small headline loses attention in proportion.",
+   "sources": [
+    "https://developer.apple.com/design/human-interface-guidelines/typography",
+    "Pieters & Wedel 2004, J Marketing 68(2), https://doi.org/10.1509/jmkg.68.2.36.27794",
+    "Derived: grid tile width and measure maths"
+   ],
+   "confidence": "medium"
+  },
+  {
+   "claim": "The cover hook has to be read in one short look. People spend about 1.7 s on an item in the mobile feed (2.5 s on desktop), and 0.25 s of exposure is already enough for significant recall (Facebook IQ). Most ads get no more than one eye fixation, yet viewers recognise an ad, and the product of a typical ad, after 100 ms (Pieters & Wedel 2012). The gist of an image is detected in 13 ms (Potter et al. 2014). Adults read silently at about 238 words per minute (range 175-300), roughly 4 words per second (Brysbaert 2019). Each reading fixation lasts 200-250 ms and each saccade covers 7-9 characters. Meta recommends ad headlines of 40 characters or fewer.",
+   "implication_for_our_agent": "Keep the cover hook to about 8 words and 45 characters at most (hard cap 12 words). The photo and hook together should give the topic within a quarter-second, and the hook should be fully readable in about 1.5 s. Score hooks by characters, not only words; 40 characters is about 7 English words.",
+   "sources": [
+    "https://www.facebook.com/business/news/insights/capturing-attention-feed-video-creative",
+    "Pieters & Wedel 2012, Marketing Science, https://doi.org/10.1287/mksc.1110.0673",
+    "https://news.mit.edu/2014/in-the-blink-of-an-eye-0116 (Potter et al. 2014)",
+    "Brysbaert 2019, J Memory & Language, https://doi.org/10.1016/j.jml.2019.104047",
+    "https://en.wikipedia.org/wiki/Eye_movement_in_reading",
+    "https://www.facebook.com/business/help/223409425500940"
+   ],
+   "confidence": "medium"
+  },
+  {
+   "claim": "Words per slide on inner slides. No public dataset links words per slide to carousel performance; the sources checked (Socialinsider, Metricool, Hootsuite, Sprout, Buffer, AuthoredUp, ContentDrips) publish none. Practitioner guidance agrees on one idea per slide with big, short text. Users read only about 20% of the words on a web page (28% at most). Slides that state the point as a sentence headline with visual evidence were understood significantly better (p<.01) than topic headlines with bullets. At 238 words per minute, 20 words take about 5 s, 35 words about 9 s and 50 words about 12.6 s. On Instagram, carousels longer than 10 slides get more reach, and the limit is 20.",
+   "implication_for_our_agent": "These are inferred budgets, not measured ones. Headline: 12 words at most, written as a sentence that states the takeaway. Supporting copy: 25 words at most. Total: 35 words on text or device slides, 20 on photo-led slides, 14 on sparse slides (the existing rule), with a hard cap of 50. Split the slide rather than shrink the type. Tag words per slide in the recipe vocabulary so the learning loop can measure the real optimum per client.",
+   "sources": [
+    "https://www.nngroup.com/articles/how-little-do-users-read/",
+    "https://www.assertion-evidence.com/research-papers.html (Garner et al. 2013)",
+    "https://authoredup.com/blog/best-performing-content-on-linkedin",
+    "https://contentdrips.com/blog/2026/06/carousel-hook-examples/",
+    "https://www.socialinsider.io/blog/instagram-carousel/",
+    "Brysbaert 2019"
+   ],
+   "confidence": "low"
+  },
+  {
+   "claim": "How many text sizes. Nielsen Norman Group advises no more than 3 type sizes (small, medium, large) and at most 2 large elements. Material Design warns that too many type sizes and styles at once can wreck any layout. Apple's scale puts Large Title at 2.0x Body and captions at about 0.7x Body.",
+   "implication_for_our_agent": "Allow at most 3 text sizes per slide: label about 32 px, body 44-48 px, headline 96-120 px. A fourth size is allowed only for a hero figure inside a data device. Keep neighbouring sizes at least 1.35x apart, with the headline at least 2x the body. Add a TYPE-SIZES gate that counts distinct computed font sizes per slide. The live templates use about 80 distinct px values between them, which suggests per-template size drift.",
+   "sources": [
+    "https://www.nngroup.com/articles/visual-hierarchy-ux-definition/",
+    "https://m1.material.io/style/typography.html",
+    "https://developer.apple.com/design/human-interface-guidelines/typography"
+   ],
+   "confidence": "medium"
+  },
+  {
+   "claim": "Line length and line spacing. Research on continuous reading puts the best line length at 45-75 characters (66 ideal, Bringhurst). On screens, about 55 characters balanced speed and comprehension (Dyson & Haselgrove 2001). Baymard recommends 50-75, Butterick 45-90, and Material about 60, with 30-40 for condensed layouts; WCAG 1.4.8 caps lines at 80. Recommended line spacing is 120-145% (Butterick); Apple's Body is 17/22 (1.29) and its titles about 1.2.",
+   "implication_for_our_agent": "On a 952 px measure, 44-48 px body gives about 36-43 characters per line, which suits glance reading on a phone. Cap body lines at about 45 characters by narrowing the text box, not by shrinking the type. Set body line height to 1.25-1.35. Set display line height to 1.0-1.15, and at least 1.1 for accented Latin (the Portuguese and French clients) or scripts with tall marks. The story-carousel h1 at 0.92 risks accents colliding with descenders.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Line_length",
+    "https://baymard.com/blog/line-length-readability",
+    "https://practicaltypography.com/summary-of-key-rules.html",
+    "https://m1.material.io/style/typography.html",
+    "https://developer.apple.com/design/human-interface-guidelines/typography"
+   ],
+   "confidence": "medium"
+  },
+  {
+   "claim": "WCAG contrast mapped onto the canvas. WCAG 1.4.3 requires 4.5:1 for normal text and 3:1 for large text: at least 18 pt (24 CSS px) or 14 pt bold (about 18.5 CSS px). The 4.5:1 level compensates for vision of about 20/40, typical at around age 80. WCAG 1.4.11 requires 3:1 for graphic parts needed to understand the content, such as icons and chart marks. At 2.75-3.0 canvas px per pt, large text starts at about 66-72 px regular or 51-56 px bold. APCA sets Lc 75 as the body-text minimum (Lc 90 preferred) and Lc 60 for other content text. It allows Lc 45 at 36 px or 24 px bold (about 99 px or 66 canvas px) and caps large text at Lc 90. Material Design sets 4.5:1 as the minimum and 7:1 as preferred.",
+   "implication_for_our_agent": "Add a CONTRAST gate measured on the rendered pixels. Compare each text box against the worst 5% of background pixels under it, not the CSS colour. Text under 72 px (under 56 px if bold) needs at least 4.5:1. Larger text needs at least 3:1. Aim for 7:1 or APCA Lc 75+ on body copy. Icons and data marks need at least 3:1 against what is next to them.",
+   "sources": [
+    "https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html",
+    "https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html",
+    "https://git.apcacontrast.com/documentation/APCA_in_a_Nutshell.html",
+    "https://readtech.org/ARC/tests/bronze-simple-mode/?tn=criterion",
+    "https://m1.material.io/style/typography.html"
+   ],
+   "confidence": "high"
+  },
+  {
+   "claim": "Contrast in practice: accent colours and dark slides. WCAG 2 and APCA disagree on saturated orange. #FF6B2C on white is 2.84:1, which fails even the 3:1 large-text level (APCA Lc 54). On charcoal #1C1A17 it passes WCAG at 6.11:1, but APCA gives only Lc 47, enough for headlines only. White on that orange is also 2.84:1. Dark text on a light ground reads better at every age (Piepenbrock 2013), mostly because the display is brighter overall (Buchner 2009). In brief glances, light text on dark in a dark room needed the longest viewing time of the conditions tested (Dobres 2017), which is the night-scrolling case.",
+   "implication_for_our_agent": "Restrict text in a brand's accent colour to headline sizes (about 66 px bold or 100 px regular and up) and never set white text on a mid-orange. On dark-ground slides, set body at 44-48 px or more in Regular to Semibold weights, and prefer an off-white over pure white for large display type. Compute WCAG and APCA for every text/colour pair when the brand kit is loaded, and ban failing pairs by size.",
+   "sources": [
+    "Computed with the WCAG 2 and APCA-W3 formulas",
+    "Piepenbrock et al. 2013, Ergonomics, https://doi.org/10.1080/00140139.2013.790485",
+    "Buchner et al. 2009, Ergonomics, https://doi.org/10.1080/00140130802641635",
+    "Dobres et al. 2017, Applied Ergonomics, https://doi.org/10.1016/j.apergo.2016.11.001"
+   ],
+   "confidence": "medium"
+  },
+  {
+   "claim": "Typeface and weight at a glance. A humanist sans cut total glance time by 10.6% against a square grotesque (in men) and gave 3.1% fewer errors (Reimer 2014). Humanist type was also more legible at a glance in both black-on-white and white-on-black (Dobres 2016). Under poor rendering, the lightest weight renders poorly and its glance legibility drops sharply (Dobres, Reimer & Chahine 2016). Apple advises against Ultralight, Thin and Light weights and says thin custom fonts should go larger. Upper case is more legible at small sizes (Arditi & Cho 2007). All caps are fine for under one line, with 5-12% extra letter spacing (Butterick).",
+   "implication_for_our_agent": "Set body and labels in open-aperture sans faces at Regular to Semibold. Use condensed, square or thin display faces only at 96 px and above. Instagram's JPEG re-encode at 1,080 px wide counts as poor rendering, so avoid hairline strokes on must-read text. All-caps labels can sit at the 30 px floor with 5-12% tracking. The current 18-28% tracking on mono labels makes lines longer and pushes the eye harder.",
+   "sources": [
+    "Reimer et al. 2014, Ergonomics, https://doi.org/10.1080/00140139.2014.940000",
+    "Dobres et al. 2016, Ergonomics, https://doi.org/10.1080/00140139.2015.1137637",
+    "Dobres, Reimer & Chahine 2016, AutoUI, https://doi.org/10.1145/3003715.3005454",
+    "https://developer.apple.com/design/human-interface-guidelines/typography",
+    "Arditi & Cho 2007, Vision Research, https://doi.org/10.1016/j.visres.2007.06.010",
+    "https://practicaltypography.com/summary-of-key-rules.html"
+   ],
+   "confidence": "medium"
+  },
+  {
+   "claim": "Scrims and gradients over photos. Material Design says dark scrims should be 20-40% opacity and light scrims 40-60%, with some gradients up to 60%. It describes a gradient about 3x an app bar long, with its midpoint about 3/10 toward the dark end, placed where the text is rather than over the whole image. Nielsen Norman Group found a 30% black overlay too weak for white text over light photos; 50% or more was needed. They advise testing the worst-case image and using a floor fade or blur. By the WCAG formula, white text over a black scrim on a pure-white patch needs 42% opacity for 3:1, 54% for 4.5:1 and 65% for 7:1. If the brightest pixels under the text are sRGB 0.8, 27% and 42% are enough. Background texture hurts reading mainly when text contrast is low, and how much depends on the texture's spatial frequency (Scharff et al. 2000).",
+   "implication_for_our_agent": "Size the scrim from measurement, not a fixed value. For each text box, take the 95th-percentile background luminance and solve for the black opacity that reaches the target ratio: 4.5:1 for body, 3:1 for text of 72 px and up. Hold that opacity behind the text block, feather it over 0.5-1x the block height, and fade to zero by about 50-55% of canvas height (this matches the existing rule). If the required opacity is above about 0.7, move the text, recrop, or add blur or a plate. Blur busy, detailed backgrounds such as foliage, crowds or signage. A drop shadow does not replace the scrim for small text.",
+   "sources": [
+    "https://m1.material.io/style/imagery.html",
+    "https://www.nngroup.com/articles/text-over-images/",
+    "Scharff, Hill & Ahumada 2000, Optics Express, https://doi.org/10.1364/OE.6.000081",
+    "Computed with the WCAG 2 luminance formula",
+    "/Users/albertkattan/Code/karos-agents/products/live/instagram-agent/references/taste-design-rules.md"
+   ],
+   "confidence": "high"
+  },
+  {
+   "claim": "How much of the slide text should take up. Pictures capture attention regardless of their size, while text captures attention in proportion to its area, and the brand element passes attention on to the others (1,363 ads, more than 3,600 consumers). Meta has dropped any limit on text in ad images and retired its text overlay tool. It now says text 'shouldn't obstruct the visuals' and should use large, contrasting type. For 1:1 and 4:5 Instagram feed ads it says to keep the bottom and side edges free of key text.",
+   "implication_for_our_agent": "These are inferred values. On photo-led slides, keep text plus scrim within about 45-55% of the height and leave at least a third of the photo clean (the existing rule); the text boxes themselves come to about 15-30% of the canvas. On type-led slides the headline can act as the picture, filling 40-60% of the live area, with at least 30% left as empty space. Keep must-read text out of the 64 px side margins and about 100 px from the bottom. On a 4:5 cover, keep text at least about 100 px from the sides, because a 3:4 grid tile crops about 34 px off each side.",
+   "sources": [
+    "Pieters & Wedel 2004, https://doi.org/10.1509/jmkg.68.2.36.27794",
+    "https://www.facebook.com/business/help/388369961318508",
+    "https://www.facebook.com/business/help/980593475366490",
+    "Derived: grid-crop maths"
+   ],
+   "confidence": "low"
+  },
+  {
+   "claim": "Instagram draws its own slide counter in the top-right corner of a carousel. Carousels hold up to 20 items. The templates' .eyebrow label sits right there, at top 56-64 px and right 48-56 px in story-carousel.html and verdict-ranking.html.",
+   "implication_for_our_agent": "Keep a top-right zone of about 200x140 px clear of must-read text; the size is an estimate. Move eyebrows to the top-left or into the text block, and add this zone to the gate's collision checks.",
+   "sources": [
+    "https://blog.hootsuite.com/instagram-carousel/",
+    "/Users/albertkattan/Code/karos-agents/products/live/instagram-agent/assets/templates/story-carousel.html",
+    "/Users/albertkattan/Code/karos-agents/products/live/instagram-agent/assets/templates/verdict-ranking.html"
+   ],
+   "confidence": "medium"
+  },
+  {
+   "claim": "Faces and text pull the eye; good photos drive engagement. In free viewing, people fixated faces 16.6x and text 11.1x more often than control regions matched for size and position, and found it hard not to look (Cerf 2009). It is the visual features of text that pull attention, not its meaning (Wang & Pomplun 2012). On Instagram, photos with faces were 38% more likely to get likes and 32% more likely to get comments across 1M photos; the number, age and gender of faces made no difference (Bakhshi 2014). For brand posts, professional high-quality photos raised engagement on both Twitter and Instagram, while faces and image-text fit helped only on Twitter (Li & Xie 2020). Across 46.9K Instagram posts from 59 brands, positive high-arousal images drove engagement and informative appeals did not (Rietveld 2020). In eye-tracking of the Facebook feed, posts with pictures and links drew more attention (Vraga 2016).",
+   "implication_for_our_agent": "On covers, use a real, professional photo of the subject, a face where it fits, and a high-arousal moment. Put the hook next to that focal point, not in the opposite corner. Keep text out of the photos themselves (already a rule), because stray text steals fixations from the hook.",
+   "sources": [
+    "Cerf, Frady & Koch 2009, J Vision, https://doi.org/10.1167/9.12.10",
+    "Wang & Pomplun 2012, J Vision, https://doi.org/10.1167/12.6.26",
+    "Bakhshi, Shamma & Gilbert 2014, CHI, https://doi.org/10.1145/2556288.2557403",
+    "Li & Xie 2020, JMR, https://doi.org/10.1177/0022243719881113",
+    "Rietveld et al. 2020, J Interactive Marketing, https://doi.org/10.1016/j.intmar.2019.06.003",
+    "Vraga, Bode & Troller-Renfree 2016, https://doi.org/10.1080/19312458.2016.1150443"
+   ],
+   "confidence": "medium"
+  },
+  {
+   "claim": "Icons, pictograms and data graphics. Eye-tracking shows users ignore purely decorative images: product images got 4.4 fixations against 0.9 for decorative ones, and real staff photos beat stock. Only a few icons are universally understood, so they need text labels. Decorative SmartArt can mislead. In charts, the title and text should carry the message. Pictograms do not get in the way and can improve recognition, and colour and recognisable objects make a chart more memorable (Borkin 2013, 2015). In ads, dense clutter of small visual detail hurts attention, while a well-designed composition helps it (Pieters, Wedel & Batra 2010).",
+   "implication_for_our_agent": "Treat icons as labelled wayfinding, such as numbered steps, never as the thing that stops the scroll or as content. Give every data device a sentence title that states the takeaway. Use pictograms only when they stand for the data, such as unit icons. Keep icons and data marks at 3:1 contrast or better. Cut small-detail clutter (textures, many small elements) while keeping a deliberate composition.",
+   "sources": [
+    "https://www.nngroup.com/articles/photos-as-web-content/",
+    "https://www.nngroup.com/articles/icon-usability/",
+    "https://www.assertion-evidence.com/research-papers.html (Wolfe et al. 2023)",
+    "Borkin et al. 2013, https://doi.org/10.1109/TVCG.2013.234",
+    "Borkin et al. 2016, https://doi.org/10.1109/TVCG.2015.2467732",
+    "Pieters, Wedel & Batra 2010, https://doi.org/10.1509/jmkg.74.5.048"
+   ],
+   "confidence": "medium"
+  },
+  {
+   "claim": "Where the eye lands first. When a scene appears, viewers first look to the centre of the screen, whatever the image contains (Tatler 2007), and text attracts gaze on its own.",
+   "implication_for_our_agent": "Place the cover hook in the central vertical band or at the top-left reading start, not hugging an edge. A hook anchored at the bottom works only if it is large (96 px or more) and sits on a strong scrim. This is a lower-confidence carry-over from desktop scene-viewing studies to a scrolling phone feed.",
+   "sources": [
+    "Tatler 2007, J Vision, https://doi.org/10.1167/7.14.4",
+    "Cerf et al. 2009"
+   ],
+   "confidence": "low"
+  },
+  {
+   "claim": "How carousels behave in the feed affects layout. Instagram re-serves carousels to users who did not engage the first time. Over 35M posts in 2025, carousels had a 0.55% engagement rate against 0.52% for reels and 0.37% for images (0.50/0.48/0.33 in Q2 2026). Carousels got 9x the saves of single images across 24.3M posts. Carousels longer than 10 slides got more reach. On LinkedIn, documents got 1.39x reach across 3M posts, and 6-8 slides are recommended.",
+   "implication_for_our_agent": "Make slide 2 work as a second cover, using the same size and word-budget rules as the cover. Spread dense material across more slides of 35 words or fewer rather than packing it in. Saves reward slides worth keeping for reference, so denser save slides mid-deck are fine as long as they respect the size floors.",
+   "sources": [
+    "https://sproutsocial.com/insights/instagram-carousel/",
+    "https://www.socialinsider.io/social-media-benchmarks/instagram",
+    "https://www.socialinsider.io/blog/instagram-carousel/",
+    "https://metricool.com/press-release-instagram-study-2026/",
+    "https://authoredup.com/blog/best-performing-content-on-linkedin"
+   ],
+   "confidence": "medium"
+  },
+  {
+   "claim": "The quality gate in karoslabs/skills/instagram-agent/engine/scripts/fit.mjs checks layout only: BROKEN-IMAGE, CLIPPED, COLLISION, DEAD-SPACE, EMPTY, HEADER, MARGIN, OUT-OF-FRAME, SPARSE-ABUSE and SPILL. Nothing checks type size, contrast, line length or word count, even though the skill's pre-flight asks for every figure to be legible at thumbnail size.",
+   "implication_for_our_agent": "Turn these parameters into gates that auto-reject on the rendered 1080 px file: MIN-TYPE (x-height normalised), CONTRAST (worst pixels under each text box, sized by text size), TYPE-SIZES (3 or fewer), LINE-LENGTH (body 45 characters or fewer), WORDS (cover 8 or fewer, slide 35, cap 50), SAFE-ZONE (top-right counter, sides, bottom) and GRID-HOOK (cover hook 96 px or more). These are measurable, so they will not drift the way prose rules do.",
+   "sources": [
+    "/Users/albertkattan/Code/karos-agents/clients/karoslabs/skills/instagram-agent/engine/scripts/fit.mjs",
+    "/Users/albertkattan/Code/karos-agents/products/live/instagram-agent/references/taste-design-rules.md"
+   ],
+   "confidence": "high"
+  }
+ ],
+ "numbers": [
+  {
+   "parameter": "Instagram served width / supported aspect ratios",
+   "value": "Up to 1,080 px wide. 1.91:1 to 3:4 kept at original resolution (1080x566 to 1080x1440). Wider uploads sized down to 1,080 px.",
+   "source": "https://help.instagram.com/1631821640426723"
+  },
+  {
+   "parameter": "Carousel max items; counter position",
+   "value": "20 items; slide counter shown top-right",
+   "source": "https://blog.hootsuite.com/instagram-carousel/ ; https://sproutsocial.com/insights/instagram-carousel/"
+  },
+  {
+   "parameter": "Common phone viewport widths (Aug 2026)",
+   "value": "414 px 13.63%, 360 px 9.25%, 390 px 6.81%, 393 px 5.27%, 384 px 4.35%, 360x780 3.17%",
+   "source": "https://gs.statcounter.com/screen-resolution-stats/mobile/worldwide"
+  },
+  {
+   "parameter": "Canvas px per phone pt/dp (1080 canvas, full-width feed)",
+   "value": "2.61 (414 wide), 2.75 (393 wide, reference), 3.0 (360 wide, worst case)",
+   "source": "Derived"
+  },
+  {
+   "parameter": "Phone viewing distance",
+   "value": "32.2 cm web pages (range 19-60); 36.2 cm texts (range 17.5-58); print reference 40 cm",
+   "source": "Bababekova et al. 2011, PMID 21499163"
+  },
+  {
+   "parameter": "Observed phone text size",
+   "value": "Web 0.8M (range 0.3-1.4M), about 0.21 deg x-height at 32 cm, about 37 canvas px; texts 1.1M, about 0.25 deg, about 51 px",
+   "source": "Bababekova 2011 plus derived conversion (1M = 1.454 mm x-height)"
+  },
+  {
+   "parameter": "Fluent print-size range",
+   "value": "0.2 to 2 deg x-height (1.4 to 14 mm at 40 cm)",
+   "source": "Legge & Bigelow 2011, https://doi.org/10.1167/11.5.8"
+  },
+  {
+   "parameter": "0.2 deg x-height as canvas font size (x-height 0.52 em)",
+   "value": "About 36 px on a 6.1-inch phone at 32 cm; 40 px on a mini phone or at 36 cm; 33 px on a Pro Max",
+   "source": "Derived from Legge & Bigelow, Bababekova and device specs"
+  },
+  {
+   "parameter": "iOS type sizes as canvas px (393 pt reference)",
+   "value": "Min 11 pt = 30 px; Body 17 = 47; Title 3 20 = 55; Title 2 22 = 60; Title 1 28 = 77; Large Title 34 = 93 (x 3.0 on a 360 dp phone: 33 / 51 / 60 / 66 / 84 / 102)",
+   "source": "https://developer.apple.com/design/human-interface-guidelines/typography plus derived"
+  },
+  {
+   "parameter": "Recommended text-size floors (1080 canvas)",
+   "value": "Any text 30 px (x-height about 16); body 40 px (36 px secondary only; x-height about 21); default body 44-48 px",
+   "source": "Synthesis of Apple HIG, Legge & Bigelow, Bababekova"
+  },
+  {
+   "parameter": "Profile-grid legibility",
+   "value": "Tile about 130 pt, so 0.12 pt per canvas px. 96 px = 11.6 pt, 72 px = 8.7 pt, 48 px = 5.8 pt. Cover hook needs 96-100 px or more.",
+   "source": "Derived"
+  },
+  {
+   "parameter": "Headline sizes",
+   "value": "Cover hook 96-140 px; inner headline 72-96 px; subhead 56-64 px; 2-4 words per line",
+   "source": "Synthesis (Apple HIG plus grid and measure maths)"
+  },
+  {
+   "parameter": "Characters per line on a 952 px measure (64 px margins)",
+   "value": "36 px about 48-53; 44 px about 39-43; 48 px about 36-40; 72 px about 24-26; 96 px about 18-20; 120 px about 14-16",
+   "source": "Derived (average glyph width 0.50-0.55 em)"
+  },
+  {
+   "parameter": "Optimal line length (continuous reading)",
+   "value": "45-75 cpl, 66 ideal (Bringhurst); 55 cpl on screen (Dyson & Haselgrove 2001); 50-75 (Baymard); 45-90 (Butterick); about 60, and 30-40 for condensed layouts (Material); 80 or fewer (WCAG 1.4.8)",
+   "source": "https://en.wikipedia.org/wiki/Line_length ; https://baymard.com/blog/line-length-readability ; https://practicaltypography.com/summary-of-key-rules.html ; https://m1.material.io/style/typography.html"
+  },
+  {
+   "parameter": "Line spacing",
+   "value": "120-145% for body (Butterick); iOS Body 17/22 = 1.29; titles about 1.2",
+   "source": "https://practicaltypography.com/summary-of-key-rules.html ; Apple HIG"
+  },
+  {
+   "parameter": "Max type sizes per layout",
+   "value": "3 (small, medium, large); at most 2 large elements",
+   "source": "https://www.nngroup.com/articles/visual-hierarchy-ux-definition/"
+  },
+  {
+   "parameter": "WCAG text contrast",
+   "value": "4.5:1 normal; 3:1 large (18 pt / 24 CSS px, or 14 pt bold / about 18.5 CSS px); 4.5:1 matches about 20/40 vision",
+   "source": "https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html"
+  },
+  {
+   "parameter": "WCAG large-text threshold on a 1080 canvas",
+   "value": "66-72 px regular or more; 51-56 px bold or more",
+   "source": "Derived (x 2.75-3.0)"
+  },
+  {
+   "parameter": "WCAG non-text contrast",
+   "value": "3:1 for graphic parts needed to understand the content (icons, chart marks)",
+   "source": "https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html"
+  },
+  {
+   "parameter": "APCA thresholds",
+   "value": "Body minimum Lc 75 (Lc 90 preferred); other content text Lc 60; large text (36 px or more, or 24 px bold) Lc 45; large text maximum Lc 90",
+   "source": "https://git.apcacontrast.com/documentation/APCA_in_a_Nutshell.html ; https://readtech.org/ARC/tests/bronze-simple-mode/?tn=criterion"
+  },
+  {
+   "parameter": "Material contrast",
+   "value": "Minimum 4.5:1, preferred 7:1",
+   "source": "https://m1.material.io/style/typography.html"
+  },
+  {
+   "parameter": "Example brand-colour contrast",
+   "value": "#FF6B2C on white 2.84:1 (APCA Lc 54); #FF6B2C on #1C1A17 6.11:1 (APCA Lc -47); white on #1C1A17 17.36:1 (Lc -106); #F2EEE6 on #1C1A17 15.0:1",
+   "source": "Computed (WCAG 2 / APCA-W3)"
+  },
+  {
+   "parameter": "Material scrim opacities",
+   "value": "Dark 20-40%; light 40-60%; gradients up to 60%; length about 3x app bar with midpoint 3/10 toward the dark end",
+   "source": "https://m1.material.io/style/imagery.html"
+  },
+  {
+   "parameter": "NN/g overlay opacity",
+   "value": "30% black too weak for white text on light photos; 50% or more needed",
+   "source": "https://www.nngroup.com/articles/text-over-images/"
+  },
+  {
+   "parameter": "Black scrim opacity for white text over worst-case white",
+   "value": "0.42 for 3:1; 0.54 for 4.5:1; 0.65 for 7:1 (if brightest background is sRGB 0.8: 0.27 / 0.42)",
+   "source": "Computed (WCAG luminance)"
+  },
+  {
+   "parameter": "Mobile feed attention",
+   "value": "1.7 s per item on mobile vs 2.5 s on desktop; 0.25 s exposure enough for significant recall",
+   "source": "https://www.facebook.com/business/news/insights/capturing-attention-feed-video-creative"
+  },
+  {
+   "parameter": "Ad gist / image gist",
+   "value": "Most ads get one fixation or none; ad vs editorial and a typical ad's product identified at 100 ms; image gist at 13 ms",
+   "source": "Pieters & Wedel 2012, https://doi.org/10.1287/mksc.1110.0673 ; https://news.mit.edu/2014/in-the-blink-of-an-eye-0116"
+  },
+  {
+   "parameter": "Silent reading rate",
+   "value": "238 wpm non-fiction (range 175-300); 260 wpm fiction",
+   "source": "Brysbaert 2019, https://doi.org/10.1016/j.jml.2019.104047"
+  },
+  {
+   "parameter": "Reading eye movements",
+   "value": "Fixation 200-250 ms; saccade 7-9 characters; saccade 20-40 ms",
+   "source": "https://en.wikipedia.org/wiki/Eye_movement_in_reading"
+  },
+  {
+   "parameter": "Share of words read on a web page",
+   "value": "About 20% on average (28% at most); +4.4 s per extra 100 words",
+   "source": "https://www.nngroup.com/articles/how-little-do-users-read/"
+  },
+  {
+   "parameter": "Meta ad text lengths",
+   "value": "Headline 40 characters; primary text 125 characters (1-3 lines); no limit on text in the image",
+   "source": "https://www.facebook.com/business/help/223409425500940 ; https://www.facebook.com/business/help/388369961318508"
+  },
+  {
+   "parameter": "Word budget per slide",
+   "value": "Cover up to 8 words / 45 characters (cap 12); inner headline up to 12; support up to 25; text or device slide up to 35; photo-led slide up to 20; sparse slide up to 14; hard cap 50",
+   "source": "Derived (reading rate x dwell) plus existing SPARSE-ABUSE rule"
+  },
+  {
+   "parameter": "Faces on Instagram",
+   "value": "+38% likelihood of likes, +32% of comments (1M photos); number, age and gender of faces no effect",
+   "source": "Bakhshi et al. 2014, https://doi.org/10.1145/2556288.2557403"
+  },
+  {
+   "parameter": "Gaze capture by faces and text",
+   "value": "Faces 16.6x, text 11.1x more fixations than matched regions; saliency model with faces and text AUC over 84%",
+   "source": "Cerf et al. 2009, https://doi.org/10.1167/9.12.10"
+  },
+  {
+   "parameter": "Pieters & Wedel eye-tracking corpus",
+   "value": "1,363 print ads, more than 3,600 consumers; pictorial attention independent of size; text attention proportional to its area",
+   "source": "https://doi.org/10.1509/jmkg.68.2.36.27794"
+  },
+  {
+   "parameter": "Decorative vs informative images",
+   "value": "4.4 fixations on product images vs 0.9 on decorative images",
+   "source": "https://www.nngroup.com/articles/photos-as-web-content/"
+  },
+  {
+   "parameter": "Humanist vs square grotesque",
+   "value": "-10.6% total glance time (men); -3.1% errors",
+   "source": "Reimer et al. 2014, https://doi.org/10.1080/00140139.2014.940000"
+  },
+  {
+   "parameter": "Instagram engagement rate by format",
+   "value": "2025: carousels 0.55%, reels 0.52%, images 0.37% (35M posts, 447,613 pages); Q2 2026: 0.50 / 0.48 / 0.33",
+   "source": "https://www.socialinsider.io/social-media-benchmarks/instagram"
+  },
+  {
+   "parameter": "Carousel saves",
+   "value": "9x single-image saves (24.3M posts, 375K accounts)",
+   "source": "https://metricool.com/press-release-instagram-study-2026/"
+  },
+  {
+   "parameter": "Carousel length",
+   "value": "More than 10 slides gets more reach on Instagram; LinkedIn documents 6-8 slides (3M+ posts), Metricool LinkedIn 7-15",
+   "source": "https://www.socialinsider.io/blog/instagram-carousel/ ; https://authoredup.com/blog/best-performing-content-on-linkedin ; https://metricool.com/linkedin-carousel/"
+  },
+  {
+   "parameter": "4:5 cover in a 3:4 grid tile",
+   "value": "About 34 px cropped from each side; keep cover text at least about 100 px from the side edges",
+   "source": "Derived (assumes the 3:4 profile grid the agent's rules already use)"
+  },
+  {
+   "parameter": "Safe zones for organic Instagram carousels",
+   "value": "Sides 64 px (current gate); bottom about 100 px or more; keep the top-right ~200x140 px clear for the counter",
+   "source": "Derived (estimate) plus Hootsuite counter note plus Meta feed safe-zone guidance"
+  }
+ ]
+}
+```
+
 ## research:karos-archive
 
 ```json
