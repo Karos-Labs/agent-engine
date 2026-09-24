@@ -592,6 +592,24 @@ export function vetSubjectFor(need: NormalisedVisualNeed): { subject: string; mu
 }
 
 /**
+ * `vetSubjectFor` for a frame the pipeline DREW (2026-09-24).
+ *
+ * Every generation prompt forbids logos and brand marks, so a generated frame
+ * can never show the named company a slide's `entityRef` points at. Graded
+ * with the `entityRef`, the vet refused it for exactly that: Sitti
+ * (pubsub-21255328593979584) briefed "a phone showing a payment confirmation"
+ * for a Stripe slide, the frame showed that, and the vet wrote "lacks the
+ * required Stripe branding" until the run's whole generation ceiling was spent
+ * and the carousel shipped two pictures against a floor of three. The subject,
+ * the must-shows and the scene still apply; only the brand the generator was
+ * told not to draw is dropped.
+ */
+export function vetSubjectForGenerated(need: NormalisedVisualNeed): { subject: string; mustShow: string[]; scene: string; why?: string } {
+  const { entityRef: _drawnWithoutIt, ...rest } = vetSubjectFor(need);
+  return rest;
+}
+
+/**
  * Whether this slide takes part in image sourcing at all.
  *
  * Only `"none"` opts out. `"client-upload"` and `"generate"` are PREFERENCES

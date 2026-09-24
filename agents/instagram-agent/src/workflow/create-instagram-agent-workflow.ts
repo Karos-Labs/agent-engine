@@ -157,6 +157,7 @@ import {
   DEFAULT_RUN_SHAPE,
   // Phase 5.5, spec §2 A1 — the generated-image floor no lever may cross.
   GENERATED_IMAGES_PER_RUN_CAP,
+  FLOOR_RESERVE_FRAMES,
   MIN_GENERATED_IMAGES_PER_RUN,
   RUN_BUDGET_BELIEF_KEY,
   RunSpendMeter,
@@ -355,7 +356,9 @@ import {
   clientVisualSystemFor,
   fallbackVisualDirection,
   finaliseVisualDirection,
+  prescribesAbstractGraphic,
   prescribesClicheScene,
+  styleIsNonPhotographic,
   // Phase 5.5 (spec §5 D1) — the same vocabulary the studio marker uses; the
   // module asserts the two lists agree at compile time.
   SETUP_FAILURE_STATUSES_FOR_MARKER,
@@ -376,6 +379,7 @@ import {
   resolveEntityRef,
   retrievalQueryFor,
   vetSubjectFor,
+  vetSubjectForGenerated,
   type SceneBriefFinding,
 } from "./scene-brief.js";
 import {
@@ -9459,6 +9463,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * one no re-arming may cross, with `meter.crossedMax` above it.
        */
       const framesAllowance = (): number => Math.max(0, GENERATED_IMAGES_PER_RUN_CAP - generatedSoFar);
+      // 2026-09-24: which briefs a generator is given the slide's world
+      // instead of: the cliche scene, and a diagram asked of a client whose
+      // locked style is photographic (`prescribesAbstractGraphic`).
+      const rewritesScene = (scene: string): boolean =>
+        prescribesClicheScene(scene) || (!styleIsNonPhotographic(frozenStyle.line) && prescribesAbstractGraphic(scene));
 
       if (attemptPool.length === 0) {
         // An empty pool has exactly one possible vetting verdict, so asking a
@@ -9821,7 +9830,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             // interpolates, and it is the field that was starved — a twelve-word
             // keyword string was never a brief for a generator.
             const slide = copy.slides.find((sl) => sl.n === u.n);
-            return { n: u.n, prompt: slide === undefined ? undefined : generationPromptFor(normaliseVisualNeed(slide), slide, { rewrite: prescribesClicheScene }) };
+            return { n: u.n, prompt: slide === undefined ? undefined : generationPromptFor(normaliseVisualNeed(slide), slide, { rewrite: rewritesScene }) };
           })
           .filter((g): g is ImageGap => g.prompt !== undefined);
         // CONCEPT-FIRST ORDERING (§6.4.2). The concept slide goes to the head
@@ -10111,12 +10120,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 n: g.n,
                 headline: slide?.headline ?? "",
                 body: slide?.body ?? "",
-                ...(need !== undefined ? vetSubjectFor(need) : {}),
+                ...(need !== undefined ? (tier.id === "generate" ? vetSubjectForGenerated(need) : vetSubjectFor(need)) : {}),
                 // 2026-09-24: a frame drawn to a REWRITTEN scene (an entity's
                 // picture brief, or a cliche the writer asked for) is judged
                 // against what it was drawn to. Judged against the writer's
                 // subject it is refused by construction.
-                ...(need !== undefined && generationRewrites(need, { rewrite: prescribesClicheScene }) ? { subject: g.prompt.slice(0, 120), mustShow: [] as string[] } : {}),
+                ...(need !== undefined && generationRewrites(need, { rewrite: rewritesScene }) ? { subject: g.prompt.slice(0, 120), mustShow: [] as string[] } : {}),
                 scene: g.prompt,
                 isClientPhotoSlot: tier0Slots.has(g.n),
                 // Metaphor tolerance is DECLARED by the pipeline for exactly
@@ -10594,7 +10603,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // widest plan's frame count for the whole run — `meter.crossedMax`
         // remains the unconditional loop-breaker above it, and
         // `maxSelfCheckAttempts` bounds how many times this point is reached.
-        const guaranteeLeft = Math.min(guaranteedGapCount(generatedLanded()), framesAllowance());
+        // Under the floor the ceiling stretches by `FLOOR_RESERVE_FRAMES`: a
+        // carousel always carries enough pictures (the owner, 2026-09-24).
+        const guaranteeLeft = Math.min(
+          guaranteedGapCount(generatedLanded()),
+          Math.max(0, GENERATED_IMAGES_PER_RUN_CAP + (withPicture < MIN_PICTURE_SLIDES ? FLOOR_RESERVE_FRAMES : 0) - generatedSoFar),
+        );
         // ── THE FLOOR IS A COUNT; THIS ADDS THE ONE THING IT CANNOT SEE. ──
         //
         // `MIN_PICTURE_SLIDES - withPicture` is 0 the moment the post has
@@ -10635,7 +10649,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             // subject, a scene that honestly shows no logo is refused by the
             // unnamed-subject rule every time.
             const need = normaliseVisualNeed(slide);
-            return [{ n, prompt: generationPromptFor(need, slide, { rewrite: prescribesClicheScene }), backfilled: generationRewrites(need, { rewrite: prescribesClicheScene }) }];
+            return [{ n, prompt: generationPromptFor(need, slide, { rewrite: rewritesScene }), backfilled: generationRewrites(need, { rewrite: rewritesScene }) }];
           });
         // ── THE REGISTER, AND THE REAL THINGS THE POST NAMES. ──
         //
@@ -10700,7 +10714,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             : generateTier?.tool === undefined
               ? "image.generate is not registered on this deployment"
               : guaranteeLeft === 0
-                ? `this run has generated ${generatedSoFar} image(s) — the whole per-run ceiling of ${GENERATED_IMAGES_PER_RUN_CAP} — and ${withPicture === 0 ? "none of them" : "not enough of them"} survived vetting, ` +
+                ? `this run has generated ${generatedSoFar} image(s) — the whole per-run ceiling of ${GENERATED_IMAGES_PER_RUN_CAP} plus the floor's reserve of ${FLOOR_RESERVE_FRAMES} — and ${withPicture === 0 ? "none of them" : "not enough of them"} survived vetting, ` +
                   `so there is no generation left to buy and ${withPicture} slide(s) carry a picture against a floor of ${MIN_PICTURE_SLIDES}`
                 : gaps.length === 0
                   ? "every slide already carries a picture or cannot hold one, so there is nothing left to fill"
@@ -10779,7 +10793,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                     ...(brief !== undefined
                       ? { subject: brief.slice(0, 120), mustShow: [] as string[] }
                       : need !== undefined
-                        ? vetSubjectFor(need)
+                        ? vetSubjectForGenerated(need)
                         : {}),
                     scene: g.prompt,
                     isClientPhotoSlot: tier0Slots.has(g.n),

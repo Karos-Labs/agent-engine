@@ -323,7 +323,7 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     expect(next.result.status === "completed" && next.result.output.budget).toBeUndefined();
   });
 
-  it("the image cap is an adaptation, not a hold: 4 gaps x 3 attempts asks image.generate for at most 8 images and the excess ships text-only with the budget named", async () => {
+  it("the image cap is an adaptation, not a hold: 4 gaps x 3 attempts asks image.generate for at most 8 images (+4 under the picture floor) and the excess ships text-only with the budget named", async () => {
     // This proof is about the RUN-scoped cap, so the client is calibrated
     // (past runs at half the cold worst case) and the plan's own cap is the
     // full 8 — a fresh client's cold plan adapts it to 4 before the loop,
@@ -373,11 +373,12 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
       // is POSITIONAL, so an unqueued turn does not fail where it is spent — it
       // shifts every later turn by one and the failure surfaces attempts later.
       finalTurn(copy), finalTurn(vetWithGaps()), finalTurn(revetRejects()), finalTurn(revetRejects()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(failingQa),
-      // attempt 2: the per-run frame ceiling is now spent, so `06h` records
-      // `unfilled` and there is NO floor re-vet turn to queue here.
-      finalTurn(copy), finalTurn(vetWithGaps()), finalTurn(revetRejects()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(failingQa),
-      // attempt 3: no generate re-vet — the cap is spent, the gaps go text-only, QA passes
-      finalTurn(copy), finalTurn(vetWithGaps()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
+      // attempt 2: the per-run frame ceiling is spent, but the post is under the
+      // picture floor, so `06h` spends the floor's reserve (2026-09-24) and
+      // there IS a floor re-vet turn here.
+      finalTurn(copy), finalTurn(vetWithGaps()), finalTurn(revetRejects()), finalTurn(revetRejects()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(failingQa),
+      // attempt 3: no generate re-vet — the cap is spent; the floor reserve buys one more frame (re-vet), the gaps go text-only, QA passes
+      finalTurn(copy), finalTurn(vetWithGaps()), finalTurn(revetRejects()), finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
     const { result, steps, stepIds } = await run(env, "budget_image_cap", router, { tools: testTools(env, { "image.generate": generate }) });
     expect(result.status).toBe("completed");
@@ -390,11 +391,16 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     // pictureless carousels of 2026-09-20 — see `guaranteedGapCount`). Pinning
     // the exact split made a test of "at most 8" fail on a change that never
     // asked for a ninth image.
-    expect(requested.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(8);
+    // 2026-09-24: under the picture floor the ceiling stretches by the floor's
+    // bounded reserve (`FLOOR_RESERVE_FRAMES`, the owner: a carousel always
+    // carries enough pictures). Still a hard bound, never a hold.
+    expect(requested.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(8 + 4);
     expect(requested[0]).toBe(4);
     expect(stepIds).toContain("06d-generate-images-attempt-1");
     expect(stepIds).not.toContain("06d-generate-images-attempt-3");
-    const downgrade = steps.find((s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-3")?.output as { downgraded: number[]; reason: string };
+    // 2026-09-24: the floor reserve lets attempt 2 buy the frame that settles the
+    // run, so the LAST downgrade is read, not attempt 3's by name.
+    const downgrade = [...steps].reverse().find((s) => s.stepId.startsWith("07a-downgrade-unfillable-slides-attempt-"))?.output as { downgraded: number[]; reason: string };
     expect(downgrade.downgraded).toEqual(gaps);
     // Phase 5 (RFC-18 §7.2) moved WHICH budget lever speaks first on this
     // shape, without moving what it does. Four gaps across three attempts with
@@ -422,7 +428,10 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     // under the picture floor — and the frames it buys have to be vetted. It is
     // one turn, on attempt 1 only: attempt 2 finds the per-run frame ceiling
     // spent and buys nothing.
-    expect(router.complete).toHaveBeenCalledTimes(3 + 1 + 6 + 6 + 5 + 1 + 2 + 1);
+    // 2026-09-24: + TWO more `06h2` turns (attempts 2 and 3): past the per-run
+    // ceiling the post is still under the floor, so `FLOOR_RESERVE_FRAMES` buys
+    // one frame per attempt and each is vetted.
+    expect(router.complete).toHaveBeenCalledTimes(3 + 1 + 6 + 6 + 5 + 1 + 2 + 1 + 2);
   });
 
   /**

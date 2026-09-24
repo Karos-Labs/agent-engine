@@ -96,6 +96,15 @@ import { SetupAttemptOutcomeSchema, type SetupAttemptOutcome } from "./template-
 export const GENERATED_IMAGES_PER_RUN_CAP = 8;
 
 /**
+ * Frames the imagery floor may buy PAST `GENERATED_IMAGES_PER_RUN_CAP` while the
+ * carousel is still under `MIN_PICTURE_SLIDES` (2026-09-24). Sitti spent all
+ * eight and shipped two pictures. The owner's rules: a carousel always has
+ * enough pictures, quality before cost, and a ceiling the engine set is one it
+ * may raise. Bounded, so a vet that refuses everything still ends.
+ */
+export const FLOOR_RESERVE_FRAMES = 4;
+
+/**
  * Candidates the harvester returns per photo slide — `media.findImages`'s
  * `maxPerNeed`, which the workflow now passes EXPLICITLY at `05b` from this
  * constant.
