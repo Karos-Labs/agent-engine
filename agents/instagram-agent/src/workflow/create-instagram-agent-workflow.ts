@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { readForbiddenTopics } from "@agent-engine/core";
+import { readForbiddenTopics, UNIT_PRICING } from "@agent-engine/core";
 import type { AgentContext, AgentTool, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore, StyleEdit, TemplateFeedback } from "@agent-engine/core";
 import {
   candidateEngine,
@@ -396,6 +396,36 @@ import {
 import { gradePictureSet, heroScrimCssBlock, imageTreatmentCssBlock, resolveGenerationStyle, type GenerationStyle } from "./style-lock.js";
 import { literalIllustrationOf, planImageBackfill, registerFor, resolveRescuedSelection } from "./image-density.js";
 import { describeRepairs, repairMechanicalTells } from "./mechanical-repair.js";
+import {
+  buildCampaignCopy,
+  buildCampaignSelections,
+  buildCampaignSlidesData,
+  CAMPAIGN_MAX_ROUNDS,
+  CAMPAIGN_MIN_SCENES,
+  CAMPAIGN_PLATE_FILE,
+  campaignCaptionDirection,
+  campaignPlateDir,
+  campaignPlateHtml,
+  campaignProductName,
+  campaignSceneCount,
+  fallbackCampaignCaption,
+  judgeCampaignFrame,
+  pickProductPhoto,
+  PRODUCT_CAMPAIGN_MODE,
+  PRODUCT_PHOTO_BRIEF,
+  PRODUCT_PHOTO_INSPECT_LIMIT,
+  productPhotoCandidates,
+  planCampaignScenes,
+  redrawPrompt,
+  sceneCheckBrief,
+  visionReadingOf,
+  type CampaignFrame,
+  type CampaignFrameVerdict,
+  type CampaignScene,
+  type ProductCampaignReport,
+  type ProductPhotoOrigin,
+  type VisionReading,
+} from "./product-campaign.js";
 import { anchorEntityPictures, entitiesInCards, entitiesInDraft, entityPictureBrief } from "./draft-entities.js";
 import { addressableFields, applyCopyEdits, describeRevision, type CopyRevision } from "./copy-revision.js";
 
@@ -1254,6 +1284,30 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       const configModes = Array.isArray(runConfig["instagramPostModes"]) ? (runConfig["instagramPostModes"] as unknown[]).filter((m): m is string => typeof m === "string") : [];
       const learnedModes = Array.isArray(learned.postModes) ? learned.postModes.filter((m): m is string => typeof m === "string") : [];
       const newsFlash = (wf.input ?? {})["requestedMode"] === "news_flash" || configModes.includes("news_flash") || learnedModes.includes("news_flash");
+      // 2026-09-24: the product campaign (stage 4, `product-campaign.ts`), on
+      // the same three roads as news mode and never on by default. The
+      // client config may carry `instagramProductCampaign: { productName,
+      // slogan }` as overrides; anything that is not a non-empty string is
+      // ignored rather than lettered onto a billboard.
+      const campaignRequestedBy =
+        (wf.input ?? {})["requestedMode"] === PRODUCT_CAMPAIGN_MODE
+          ? ("run-input" as const)
+          : configModes.includes(PRODUCT_CAMPAIGN_MODE)
+            ? ("client-config" as const)
+            : learnedModes.includes(PRODUCT_CAMPAIGN_MODE)
+              ? ("client-preference" as const)
+              : undefined;
+      const campaignConfig = runConfig["instagramProductCampaign"] !== null && typeof runConfig["instagramProductCampaign"] === "object" ? (runConfig["instagramProductCampaign"] as Record<string, unknown>) : {};
+      const campaignOverride = (key: string): string | undefined =>
+        typeof campaignConfig[key] === "string" && (campaignConfig[key] as string).trim().length > 0 ? (campaignConfig[key] as string).trim() : undefined;
+      const productCampaign =
+        campaignRequestedBy === undefined
+          ? undefined
+          : {
+              requestedBy: campaignRequestedBy,
+              ...(campaignOverride("productName") !== undefined ? { productName: campaignOverride("productName")! } : {}),
+              ...(campaignOverride("slogan") !== undefined ? { slogan: campaignOverride("slogan")! } : {}),
+            };
       const runSeries = (wf.input ?? {})["requestedSeries"];
       const requestedSeries = typeof runSeries === "string" && runSeries.length > 0 ? runSeries : typeof learned.series === "string" && learned.series.length > 0 ? learned.series : undefined;
       const inputKeys = ["requestedFormat", "pictureDensity", "requestedMode", "requestedSeries"].filter((k) => (wf.input ?? {})[k] !== undefined);
@@ -1284,6 +1338,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         ...(newsFlash ? { newsFlash: true } : {}),
         ...(requestedSeries !== undefined ? { requestedSeries } : {}),
         ...(postTypeSource !== undefined ? { postTypeSource } : {}),
+        ...(productCampaign !== undefined ? { productCampaign } : {}),
       };
     });
     // The picture band in force for this run. `standard` is the band every run
@@ -5519,6 +5574,173 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     const frozenStyle: GenerationStyle = await wf.step.code("04k-freeze-generation-style", async () =>
       resolveGenerationStyle(visualDirection, effectiveKit, brief),
     );
+
+    // ── 04q: THE PRODUCT CAMPAIGN'S PLAN (2026-09-24, stage 4 of the reference-looks plan) ──
+    //
+    // Runs ONLY on a run that asked for the mode (`runClaim.productCampaign`),
+    // so every other run's trace is byte-identical. Once per RUN, checkpointed:
+    // which of the client's own pictures is the product (one vision call over
+    // at most `PRODUCT_PHOTO_INSPECT_LIMIT` of them — the vision model reads,
+    // `pickProductPhoto` decides), that picture staged to the media bucket so a
+    // resume on a fresh instance still has the reference, what the product is
+    // called, and the scene list (`planCampaignScenes`, deterministic, no
+    // prompt), sized to the run's remaining generation allowance so a tighter
+    // budget makes FEWER scenes rather than failing.
+    //
+    // Never a hold. No product photo, a client-media-only run (which may not
+    // generate), or no generator / no vision pass on this deployment each
+    // record `active: false` with the reason, one ledger warn, and the run
+    // drafts the normal carousel — the reason then rides on the gate payload
+    // and the deliverable as `productCampaign.status: "fell-back"`.
+    type CampaignPlan = {
+      active: boolean;
+      reason?: string;
+      productPhoto?: { path: string; origin: ProductPhotoOrigin; fitScore?: number; durableUri?: string };
+      referenceText: string[];
+      productName?: string;
+      slogan?: string;
+      companyName?: string;
+      scenes: CampaignScene[];
+      considered: Array<{ path: string; origin: ProductPhotoOrigin; fitScore?: number; verdict: string }>;
+      inspected: number;
+      notes: string[];
+    };
+    const campaignPlan: CampaignPlan | undefined =
+      runClaim.productCampaign === undefined
+        ? undefined
+        : await wf.step.code("04q-plan-product-campaign", async (): Promise<CampaignPlan> => {
+            const notes: string[] = [];
+            let inspected = 0;
+            let considered: CampaignPlan["considered"] = [];
+            const fellBack = async (reason: string): Promise<CampaignPlan> => {
+              // INSIDE the step: a ledger write outside one re-fires on every resume.
+              try {
+                await tools["ledger.appendEvent"]?.execute(
+                  { runId: wf.runId, eventId: `${wf.runId}__product-campaign-fell-back`, level: "warn", message: `a product campaign was requested but this post is the normal carousel: ${reason}` },
+                  { ctx },
+                );
+              } catch {
+                /* the ledger is a record, never a gate */
+              }
+              return { active: false, reason, referenceText: [], scenes: [], considered, inspected, notes };
+            };
+            if (clientMediaOnly) return fellBack("this run is set to client-provided media only, and a campaign's scenes are generated");
+            if (tools["image.generate"] === undefined) return fellBack("image.generate is not registered on this deployment, so no scene could be generated");
+            const inspect = tools["media.inspectImages"];
+            if (inspect === undefined) return fellBack("media.inspectImages is not registered, so neither the product photo nor a scene's lettering could be verified");
+
+            // The client's OWN pictures: this run's uploads first, then its library.
+            const usableAssets = runDirection.mediaAssets.filter((a) => a.role === "source" || a.role === "reference");
+            const candidates = productPhotoCandidates(
+              tier0Pool.candidates.map((c) => {
+                const slot = ingestedSlotOf(c.path);
+                const label = slot === undefined ? undefined : usableAssets[slot - 1]?.label;
+                return { path: c.path, description: c.description, ...(label !== undefined ? { label } : {}) };
+              }),
+              libraryRead.candidates,
+            ).slice(0, PRODUCT_PHOTO_INSPECT_LIMIT);
+            if (candidates.length === 0) {
+              return fellBack("no product photo is on hand: this run carries no upload and the client's media library holds no picture of its own (from its website or an earlier upload)");
+            }
+            const readings = new Map<string, VisionReading>();
+            try {
+              const outcome = await inspect.execute(
+                { repoRoot: options.repoRoot, images: candidates.map((c, i) => ({ ref: `product-${i + 1}`, path: c.path })), brief: PRODUCT_PHOTO_BRIEF, purpose: "candidate-vetting" },
+                { ctx },
+              );
+              inspected = candidates.length;
+              if (outcome.status === "success") {
+                for (const row of (outcome.result as { inspections: Array<Record<string, unknown>> }).inspections) {
+                  const index = Number(/^product-(\d+)$/u.exec(String(row["ref"]))?.[1]) - 1;
+                  const candidate = candidates[index];
+                  if (candidate !== undefined) readings.set(candidate.path, visionReadingOf(row));
+                }
+              } else {
+                notes.push(`the vision pass over the client's pictures did not complete (${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""})`);
+              }
+            } catch (error) {
+              notes.push(`the vision pass over the client's pictures did not complete (${(error as Error).message})`);
+            }
+            const choice = pickProductPhoto(candidates, readings);
+            considered = choice.considered;
+            if (choice.chosen === undefined) {
+              return fellBack(`none of the client's ${candidates.length} picture(s) read as a clear product photo`);
+            }
+            const chosen = choice.chosen;
+
+            // Durable, so a resume on a fresh instance can re-fetch the reference.
+            let durableUri: string | undefined;
+            try {
+              const staged = await tools["media.stageAsset"]?.execute({ repoRoot: options.repoRoot, runId: wf.runId, path: chosen.candidate.path }, { ctx });
+              if (staged?.status === "success") durableUri = (staged.result as { gcsUri: string }).gcsUri;
+            } catch {
+              notes.push("the product photo could not be staged to the media bucket; a resume on another instance would lose the reference");
+            }
+
+            const rawTagline = rawBrand !== null && typeof rawBrand === "object" ? (rawBrand as { tagline?: unknown }).tagline : undefined;
+            const slogan = runClaim.productCampaign!.slogan ?? (typeof rawTagline === "string" && rawTagline.trim().length > 0 ? rawTagline.trim() : undefined);
+            const productName = campaignProductName({
+              override: runClaim.productCampaign!.productName,
+              fromPhoto: chosen.candidate.productName,
+              offers: brief.offers,
+              ownAssets: brief.ownAssets,
+            });
+            const companyName = trendProfile.companyName;
+            const count = campaignSceneCount(remainingGenerationBudget(generatedSoFar, budgetPlan.generatedImagesCap));
+            const scenes = planCampaignScenes({
+              count,
+              ...(productName !== undefined ? { productName } : {}),
+              ...(slogan !== undefined ? { slogan } : {}),
+              ...(companyName !== undefined ? { companyName } : {}),
+              audience: brief.icp.summary,
+            });
+            const unlettered = scenes.filter((s) => (s.id === "billboard" || s.id === "street-poster") && s.lettering === undefined);
+            if (unlettered.length > 0) {
+              notes.push(`the ${unlettered.map((s) => s.label).join(" and ")} carr${unlettered.length > 1 ? "y" : "ies"} no words: no slogan or product name short enough, in Latin script, to letter reliably`);
+            }
+            return {
+              active: true,
+              productPhoto: {
+                path: chosen.candidate.path,
+                origin: chosen.candidate.origin,
+                ...(chosen.reading.fitScore !== undefined ? { fitScore: chosen.reading.fitScore } : {}),
+                ...(durableUri !== undefined ? { durableUri } : {}),
+              },
+              referenceText: chosen.reading.textInImage,
+              ...(productName !== undefined ? { productName } : {}),
+              ...(slogan !== undefined ? { slogan } : {}),
+              ...(companyName !== undefined ? { companyName } : {}),
+              scenes,
+              considered,
+              inspected,
+              notes,
+            };
+          });
+    /**
+     * What one campaign scene is booked at: the rate of the model
+     * `image.generate` asks first (`gemini-3.1-flash-image`, $0.067), not the
+     * stale 2.5-era `generatedImage` estimate. A frame a lower rung served
+     * costs less, so this errs high, which is the direction a meter may err.
+     */
+    /**
+     * Ingest slots for the campaign's re-fetches, far above every tier-0 and
+     * library slot: `media.ingestAssets` names a file by its slot, and a
+     * recovered scene must never land on the path of the client's upload.
+     */
+    const CAMPAIGN_REFERENCE_SLOT = 190;
+    const CAMPAIGN_RECOVERY_SLOT_BASE = 200;
+    const CAMPAIGN_IMAGE_USD = UNIT_PRICING["gemini-3.1-flash-image"]?.usdPerUnit ?? STEP_COST_ESTIMATES_USD.generatedImage;
+    // Outside the step, like every meter line: a resume replays the checkpoint and re-adds it.
+    if (campaignPlan !== undefined && campaignPlan.inspected > 0) {
+      spend("04q-plan-product-campaign", undefined, campaignPlan.inspected * STEP_COST_ESTIMATES_USD.visionInspectPerImage);
+    }
+    /**
+     * The campaign scenes a revise round reuses (the per-run generation cap is
+     * spent by round 0), and their durable copies. Filled when round 0's
+     * campaign steps run or replay, so a resumed run rebuilds it from its
+     * checkpoints.
+     */
+    let campaignCarry: { frames: CampaignFrame[]; uris: Record<string, string>; generated: number; scenes: NonNullable<ProductCampaignReport["scenes"]> } | undefined;
     /**
      * The head fragments every rendered document receives: item M's device
      * stylesheet and item S's image-treatment sheet, in that order.
@@ -6370,6 +6592,14 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * attempt's draft when the final attempt's copy came back malformed.
        */
       selfCheck?: { attempt: number; attemptsSpent: number; checks: SelfCheckFinding[] };
+      /**
+       * 2026-09-24 (stage 4) — what the product campaign did, on a run that
+       * asked for one: `shipped` (this post IS the campaign: its scenes, what
+       * each one was lettered with, what was dropped and why) or `fell-back`
+       * (the normal carousel shipped, and `reason` says why). Absent on every
+       * run that did not ask.
+       */
+      productCampaign?: ProductCampaignReport;
     }
 
     /**
@@ -7154,7 +7384,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // outage leaves `concept` undefined and the run proceeds on exactly
       // today's path with the writer's own scene brief. Never a hold.
       let concept: ConceptOutput | undefined;
-      if (conceptVerdict.eligible) {
+      // 2026-09-24: a product campaign is its own picture set; a concept frame
+      // would be authored and never drawn, so the Sonnet call is not bought.
+      if (conceptVerdict.eligible && campaignPlan?.active === true) {
+        conceptReportBase = { ...conceptReportBase, declineReason: "this run is a product campaign: every slide is a scene of the client's product, so no concept frame was designed" };
+      } else if (conceptVerdict.eligible) {
         const conceptExec = await wf.step.agent(rev("04n-design-concept"), conceptAgent, {
           // The client's world, and the only world the concept may be set in.
           clientBrief: briefForPrompt(brief),
@@ -7493,9 +7727,404 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       /** The `08a4` half: the slidesData signature the last rendered-slide inspection ran against, and its result. */
       let renderedInspectionCache: { signature: string; inspections: Array<Record<string, unknown>> } | undefined;
 
+      // ── 05pc-* / 08pc: THE PRODUCT CAMPAIGN (2026-09-24, stage 4 of the reference-looks plan) ──
+      //
+      // Only when `04q` planned one. It REPLACES the attempt loop below for
+      // this round (the loop's header reads `campaignShipped`), and everything
+      // after the loop — the post package, the verdict, the review gate,
+      // delivery — runs on the campaign's copy, selections and render exactly
+      // as it would on a carousel's.
+      //
+      // 1. `05pc-write-campaign-caption`: the normal copy agent writes the
+      //    caption, told on its existing `runDirection` field that the slides
+      //    are pictures and the caption carries the words. No prompt change.
+      // 2. `05pc-generate-scenes-round-N`: every scene is ONE `image.generate`
+      //    need carrying the client's product photo as a `product` reference,
+      //    and, for the billboard and the poster, the exact `lettering`.
+      // 3. `05pc-check-scenes-round-N`: one vision pass reads every frame back;
+      //    `judgeCampaignFrame` compares the lettering LETTER BY LETTER, holds
+      //    every other word to the product's own label, and checks the product
+      //    is recognisably there. A failing frame is redrawn once (round 2,
+      //    within the run's generation allowance) and otherwise DROPPED: a
+      //    misspelled billboard is never shipped.
+      // 4. `05pc-stage-scenes`: the surviving frames go to the media bucket
+      //    (the `.media-cache` is instance RAM), and a missing file is
+      //    re-fetched from there before the render.
+      // 5. `08pc-render-campaign`: one full-bleed plate per scene.
+      //
+      // Fewer than `CAMPAIGN_MIN_SCENES` verified scenes, a failed render, or a
+      // product photo gone from every copy is NOT a hold: the round falls back
+      // to the normal carousel below and says why.
+      let campaignShipped = false;
+      let campaignReport: ProductCampaignReport | undefined =
+        campaignPlan !== undefined && !campaignPlan.active
+          ? { status: "fell-back", reason: campaignPlan.reason ?? "the campaign could not be planned", requestedBy: runClaim.productCampaign!.requestedBy, notes: campaignPlan.notes }
+          : undefined;
+      campaignDraft: if (campaignPlan?.active === true && campaignPlan.productPhoto !== undefined) {
+        const plan = campaignPlan;
+        const photo = campaignPlan.productPhoto;
+        const requestedBy = runClaim.productCampaign!.requestedBy;
+        const notes: string[] = [...plan.notes];
+        const fallBack = async (reason: string, extra: Pick<ProductCampaignReport, "scenes" | "generated"> = {}): Promise<ProductCampaignReport> => {
+          // Inside a step, so a resume does not write the warn twice.
+          await wf.step.code(rev("05pc-record-fallback"), async () => {
+            try {
+              await tools["ledger.appendEvent"]?.execute(
+                { runId: wf.runId, eventId: `${wf.runId}__product-campaign-fell-back-r${revision}`, level: "warn", message: `the product campaign fell back to the normal carousel: ${reason}` },
+                { ctx },
+              );
+            } catch {
+              /* the ledger is a record, never a gate */
+            }
+            return { reason };
+          });
+          return { status: "fell-back", reason, requestedBy, productPhoto: photo, ...(plan.productName !== undefined ? { productName: plan.productName } : {}), ...extra, notes };
+        };
+
+        // ── 1. The caption ──
+        const captionStepId = rev("05pc-write-campaign-caption");
+        const captionExec = await wf.step.agent(captionStepId, copyAgent, {
+          runDirection: campaignCaptionDirection({
+            ...(plan.productName !== undefined ? { productName: plan.productName } : {}),
+            sceneLabels: plan.scenes.map((s) => s.label),
+            ...(runDirection.direction !== undefined ? { personDirection: runDirection.direction } : {}),
+          }),
+          topic: topicClaim.topic,
+          slotStage: stage,
+          clientBrief: briefForPrompt(brief),
+          ...(angleForCopy !== undefined ? { angle: angleForCopy } : {}),
+          // `single` is the copy prompt's form for "one picture and the
+          // argument in the caption" (§12); the one slide it writes is not
+          // rendered, the caption is what the campaign keeps.
+          format: "single",
+          facts: promptFacts,
+          styleConfig: {
+            rules: renderRuleSource === "default" ? [...frozen.styleConfig.rules, ...DEFAULT_RENDER_RULES] : frozen.styleConfig.rules,
+            banned_words: frozen.styleConfig.banned_words,
+            banned_chars: frozen.styleConfig.banned_chars,
+            compliance: frozen.styleConfig.compliance,
+          },
+          brandTokens: frozen.brandTokens,
+          ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
+          ...(languageBriefForCopy !== undefined ? { languageBrief: languageBriefForCopy } : {}),
+          ...(brandingGuidelines !== undefined ? { brandingGuidelines } : {}),
+          ...(recentPostsDirective !== undefined ? { recentPosts: recentPostsDirective } : {}),
+          ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
+          ...(directive !== undefined ? { revisionRequest: directive } : {}),
+        });
+        spend(
+          captionStepId,
+          captionExec.totalCostUsd,
+          STEP_COST_ESTIMATES_USD.copyAttempt + (languageBriefForCopy !== undefined ? STEP_COST_ESTIMATES_USD.copyLanguageBrief : 0),
+        );
+        const captionDraft = captionExec.status === "completed" && captionExec.finalOutput != null ? captionExec.finalOutput : undefined;
+        draftAttemptLog.push({
+          attempt: 1,
+          producedDraft: captionDraft !== undefined,
+          ...(captionExec.status !== "completed" ? { status: captionExec.status as GateStepFailure["status"] } : {}),
+          usdBurned: captionExec.totalCostUsd ?? 0,
+          ...(captionDraft !== undefined ? { draftDigest: draftDigestFor(captionDraft.caption, captionDraft.slides) } : {}),
+        });
+        if (captionDraft === undefined) {
+          notes.push(`the caption writer did not complete (${captionExec.status}), so the caption is the client's own product name and line`);
+        }
+        const caption =
+          captionDraft?.caption ??
+          fallbackCampaignCaption({
+            ...(plan.productName !== undefined ? { productName: plan.productName } : {}),
+            ...(plan.slogan !== undefined ? { slogan: plan.slogan } : {}),
+            oneLiner: brief.positioning.oneLiner,
+          });
+
+        // ── 2-4. The scenes: drawn, read back, staged ──
+        let frames: CampaignFrame[];
+        let uris: Record<string, string>;
+        let generated: number;
+        let sceneRows: NonNullable<ProductCampaignReport["scenes"]>;
+        if (revision > 0 && campaignCarry !== undefined) {
+          // A revise round rewrites the caption and keeps the verified scenes:
+          // round 0 spent the run's generation allowance drawing them.
+          ({ frames, uris, generated, scenes: sceneRows } = campaignCarry);
+          notes.push("a revise round rewrites the caption and keeps the verified scenes, because the run's generation allowance was spent drawing them");
+        } else {
+          // The reference on THIS instance's disk, re-fetched from its durable copy after a recycle.
+          let referencePath: string | undefined = photo.path;
+          try {
+            await fs.access(path.resolve(options.repoRoot, photo.path));
+          } catch {
+            referencePath = undefined;
+            const ingest = tools["media.ingestAssets"];
+            if (photo.durableUri !== undefined && ingest !== undefined) {
+              try {
+                const back = await ingest.execute({ repoRoot: options.repoRoot, runId: wf.runId, assets: [{ uri: photo.durableUri, slot: CAMPAIGN_REFERENCE_SLOT }] }, { ctx });
+                if (back.status === "success") referencePath = (back.result as { candidates: ImageCandidate[] }).candidates[0]?.path;
+              } catch {
+                referencePath = undefined;
+              }
+            }
+          }
+          if (referencePath === undefined) {
+            campaignReport = await fallBack("the product photo is no longer on this instance's disk and no durable copy could be re-read");
+            break campaignDraft;
+          }
+          const reference = referencePath;
+          const inspect = tools["media.inspectImages"]!;
+          const passed = new Map<number, CampaignFrame>();
+          const lastFailure = new Map<number, string>();
+          const draws = new Map<number, number>();
+          let unchecked: Array<{ scene: CampaignScene; path: string; round: number }> = [];
+          let pending: CampaignScene[] = plan.scenes;
+          generated = 0;
+          for (let round = 1; round <= CAMPAIGN_MAX_ROUNDS && (pending.length > 0 || unchecked.length > 0); round++) {
+            // Round 1 draws the plan, which `04q` already sized to the budget;
+            // a redraw is bought only out of what is left of it.
+            const allowance = round === 1 ? pending.length : Math.min(pending.length, remainingGenerationBudget(generatedSoFar, budgetPlan.generatedImagesCap));
+            const toDraw = pending.slice(0, allowance);
+            if (pending.length > toDraw.length) {
+              notes.push(`round ${round}: ${pending.length - toDraw.length} scene(s) were not redrawn because the run's generation allowance is spent`);
+            }
+            // A need number unique to this scene, round and revision, so a
+            // redraw never overwrites the frame it replaces.
+            const needN = (scene: CampaignScene): number => scene.n + 10 * (round - 1) + 100 * revision;
+            const drawn: Array<{ scene: CampaignScene; path: string; round: number }> = [];
+            if (toDraw.length > 0) {
+              const generateStepId = rev(`05pc-generate-scenes-round-${round}`);
+              const outcome = await wf.step.code(generateStepId, async () =>
+                tools["image.generate"]!.execute(
+                  {
+                    repoRoot: options.repoRoot,
+                    runId: wf.runId,
+                    needs: toDraw.map((scene) => ({
+                      n: needN(scene),
+                      prompt: round === 1 ? scene.prompt : redrawPrompt(scene, lastFailure.get(scene.n) ?? "it did not pass its read-back"),
+                      references: [{ path: reference, role: "product" as const }],
+                      ...(scene.lettering !== undefined ? { lettering: scene.lettering } : {}),
+                    })),
+                    perNeed: 1,
+                    aspectRatio: aspectRatioForCanvas(frozen.styleConfig.canvas),
+                    // The same direction and frozen style lock every generated
+                    // frame of this run inherits (`art-direction.test.ts` pins it).
+                    art: {
+                      ...buildArtDirection(frozen.brandTokens, visualDirection),
+                      ...(frozenStyle.line !== undefined ? { styleLock: frozenStyle.line } : {}),
+                    },
+                  },
+                  { ctx },
+                ),
+              );
+              for (const scene of toDraw) draws.set(scene.n, (draws.get(scene.n) ?? 0) + 1);
+              if (outcome.status === "success") {
+                const result = outcome.result as { candidates: ImageCandidate[]; unmet: Array<{ n: number; reason: string }> };
+                generated += result.candidates.length;
+                generatedSoFar += result.candidates.length;
+                spend(generateStepId, undefined, result.candidates.length * CAMPAIGN_IMAGE_USD);
+                for (const candidate of result.candidates) {
+                  const n = Number(/(?:^|\/)n(\d+)-gen/u.exec(candidate.path)?.[1]);
+                  const scene = toDraw.find((s) => needN(s) === n);
+                  if (scene !== undefined) drawn.push({ scene, path: candidate.path, round });
+                }
+                for (const miss of result.unmet) {
+                  const scene = toDraw.find((s) => needN(s) === miss.n);
+                  if (scene !== undefined) lastFailure.set(scene.n, `the generator produced nothing (${miss.reason.slice(0, 200)})`);
+                }
+              } else {
+                const why = `the generator did not complete (${outcome.status}${"reason" in outcome ? `: ${String(outcome.reason).slice(0, 200)}` : ""})`;
+                for (const scene of toDraw) lastFailure.set(scene.n, why);
+              }
+            }
+
+            const toCheck = [...unchecked, ...drawn];
+            unchecked = [];
+            if (toCheck.length > 0) {
+              const checkStepId = rev(`05pc-check-scenes-round-${round}`);
+              const check = await wf.step.code(checkStepId, async () => {
+                const readings: Record<string, VisionReading> = {};
+                let referenceRead: string[] = [];
+                try {
+                  const outcome = await inspect.execute(
+                    {
+                      repoRoot: options.repoRoot,
+                      images: [{ ref: "product", path: reference }, ...toCheck.map((f, i) => ({ ref: `scene-${i + 1}`, path: f.path }))],
+                      brief: sceneCheckBrief(plan.productName),
+                      purpose: "candidate-vetting",
+                    },
+                    { ctx },
+                  );
+                  if (outcome.status !== "success") {
+                    return { readings, referenceRead, note: `the read-back did not complete (${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""})` };
+                  }
+                  for (const row of (outcome.result as { inspections: Array<Record<string, unknown>> }).inspections) {
+                    const ref = String(row["ref"]);
+                    if (ref === "product") {
+                      referenceRead = visionReadingOf(row).textInImage;
+                      continue;
+                    }
+                    const frame = toCheck[Number(/^scene-(\d+)$/u.exec(ref)?.[1]) - 1];
+                    if (frame !== undefined) readings[frame.path] = visionReadingOf(row);
+                  }
+                  return { readings, referenceRead };
+                } catch (error) {
+                  return { readings, referenceRead, note: `the read-back did not complete (${(error as Error).message})` };
+                }
+              });
+              spend(checkStepId, undefined, (toCheck.length + 1) * STEP_COST_ESTIMATES_USD.visionInspectPerImage);
+              if ("note" in check && typeof check.note === "string") notes.push(`round ${round}: ${check.note}`);
+              // The label as read on THIS pass and on the plan's: a word either
+              // pass read on the product is the product's own.
+              const referenceText = [...plan.referenceText, ...check.referenceRead];
+              const readBackFailed = Object.keys(check.readings).length === 0;
+              for (const frame of toCheck) {
+                const reading = check.readings[frame.path];
+                if (reading === undefined && readBackFailed && round < CAMPAIGN_MAX_ROUNDS) {
+                  // Nothing was read at all: an outage, not a verdict. Read it
+                  // again next round rather than paying to redraw it.
+                  unchecked.push(frame);
+                  continue;
+                }
+                const verdict: CampaignFrameVerdict = judgeCampaignFrame(frame.scene, referenceText, reading);
+                if (verdict.ok && reading !== undefined) {
+                  passed.set(frame.scene.n, {
+                    scene: frame.scene,
+                    path: frame.path,
+                    round: frame.round,
+                    ...(reading.fitScore !== undefined ? { fitScore: reading.fitScore } : {}),
+                    ...(reading.fitReason !== undefined ? { fitReason: reading.fitReason } : {}),
+                  });
+                  lastFailure.delete(frame.scene.n);
+                } else {
+                  lastFailure.set(frame.scene.n, verdict.reasons.join("; "));
+                }
+              }
+            }
+            pending = plan.scenes.filter((s) => !passed.has(s.n) && !unchecked.some((u) => u.scene.n === s.n));
+          }
+          sceneRows = plan.scenes.map((scene) => ({
+            n: scene.n,
+            id: scene.id,
+            label: scene.label,
+            ...(scene.lettering !== undefined ? { lettering: scene.lettering } : {}),
+            status: passed.has(scene.n) ? ("shipped" as const) : ("dropped" as const),
+            rounds: draws.get(scene.n) ?? 0,
+            reasons: passed.has(scene.n) ? [] : [lastFailure.get(scene.n) ?? "it was never drawn: the run's generation allowance was spent"],
+          }));
+          frames = plan.scenes.flatMap((scene) => {
+            const frame = passed.get(scene.n);
+            return frame === undefined ? [] : [frame];
+          });
+          if (frames.length < CAMPAIGN_MIN_SCENES) {
+            campaignReport = await fallBack(
+              `only ${frames.length} of ${plan.scenes.length} scene(s) passed the letter-by-letter and product read-back, fewer than the ${CAMPAIGN_MIN_SCENES} a campaign needs`,
+              { scenes: sceneRows, generated },
+            );
+            break campaignDraft;
+          }
+          const shippedFrames = frames;
+          uris = await wf.step.code(rev("05pc-stage-scenes"), async () => {
+            const staged: Record<string, string> = {};
+            const stageTool = tools["media.stageAsset"];
+            if (stageTool === undefined) return staged;
+            for (const frame of shippedFrames) {
+              try {
+                const outcome = await stageTool.execute({ repoRoot: options.repoRoot, runId: wf.runId, path: frame.path }, { ctx });
+                if (outcome.status === "success") staged[frame.path] = (outcome.result as { gcsUri: string }).gcsUri;
+              } catch {
+                /* best effort: an unstaged frame is only lost if the instance dies */
+              }
+            }
+            return staged;
+          });
+          campaignCarry = { frames, uris, generated, scenes: sceneRows };
+        }
+
+        // A frame the instance lost is re-fetched from its durable copy.
+        // Plain code, never a step: it has to look at THIS disk on every run.
+        const onDisk: CampaignFrame[] = [];
+        for (const frame of frames) {
+          try {
+            await fs.access(path.resolve(options.repoRoot, frame.path));
+            onDisk.push(frame);
+            continue;
+          } catch {
+            // missing locally
+          }
+          const uri = uris[frame.path];
+          const ingest = tools["media.ingestAssets"];
+          if (uri === undefined || ingest === undefined) {
+            notes.push(`the ${frame.scene.label} frame was lost with the instance and had no durable copy`);
+            continue;
+          }
+          try {
+            const back = await ingest.execute({ repoRoot: options.repoRoot, runId: wf.runId, assets: [{ uri, slot: CAMPAIGN_RECOVERY_SLOT_BASE + frame.scene.n }] }, { ctx });
+            const recovered = back.status === "success" ? (back.result as { candidates: ImageCandidate[] }).candidates[0]?.path : undefined;
+            if (recovered !== undefined) onDisk.push({ ...frame, path: recovered });
+            else notes.push(`the ${frame.scene.label} frame could not be re-fetched from the media bucket`);
+          } catch {
+            notes.push(`the ${frame.scene.label} frame could not be re-fetched from the media bucket`);
+          }
+        }
+        if (onDisk.length < CAMPAIGN_MIN_SCENES) {
+          campaignReport = await fallBack(`only ${onDisk.length} verified scene(s) are still on disk, fewer than the ${CAMPAIGN_MIN_SCENES} a campaign needs`, { scenes: sceneRows, generated });
+          break campaignDraft;
+        }
+
+        // ── 5. The render: one full-bleed plate per scene ──
+        const plateDir = path.resolve(options.repoRoot, campaignPlateDir(wf.runId));
+        try {
+          await fs.mkdir(plateDir, { recursive: true });
+          await fs.writeFile(path.join(plateDir, CAMPAIGN_PLATE_FILE), campaignPlateHtml(), "utf8");
+        } catch (error) {
+          notes.push(`the campaign plate could not be written (${(error as Error).message})`);
+        }
+        const campaignSlidesData = buildCampaignSlidesData({
+          clientSlug: wf.clientSlug,
+          postId: runClaim.postId,
+          repoRoot: options.repoRoot,
+          runId: wf.runId,
+          canvas: frozen.styleConfig.canvas,
+          frames: onDisk,
+        });
+        const campaignRender = await wf.step.code(rev("08pc-render-campaign"), async () => tools["publish.renderCarousel"]!.execute(campaignSlidesData, { ctx }));
+        if (campaignRender.status !== "success") {
+          campaignReport = await fallBack(
+            `the campaign did not render (${campaignRender.status}${"reason" in campaignRender ? `: ${campaignRender.reason}` : ""})`,
+            { scenes: sceneRows, generated },
+          );
+          break campaignDraft;
+        }
+
+        const campaignCopy = repairMechanicalTells(
+          buildCampaignCopy({
+            frames: onDisk,
+            caption,
+            ...(plan.productName !== undefined ? { productName: plan.productName } : {}),
+            sourceRef: captionDraft?.slides[0]?.sourceRef ?? "the client's own product photo",
+            ...(captionDraft?.hookPattern !== undefined ? { hookPattern: captionDraft.hookPattern } : {}),
+          }),
+        ).copy;
+        finalCopy = campaignCopy;
+        finalSelections = buildCampaignSelections(onDisk, photo.origin);
+        finalSlidesData = campaignSlidesData;
+        finalRendered = campaignRender.result as RenderCarouselResult;
+        finalOutcomeOk = true;
+        shippedAttempt = 1;
+        attemptsSpent = 1;
+        campaignShipped = true;
+        campaignReport = {
+          status: "shipped",
+          requestedBy,
+          productPhoto: photo,
+          ...(plan.productName !== undefined ? { productName: plan.productName } : {}),
+          scenes: sceneRows,
+          generated,
+          notes,
+        };
+      }
+
     /** The draft the LAST attempt finished with, so the next one can EDIT it instead of writing a new post. */
     let previousDraft: InstagramCopyOutput | undefined;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // `campaignShipped`: a product campaign that shipped above IS this round's
+    // draft, so the carousel loop does not run at all.
+    for (let attempt = 1; attempt <= maxAttempts && !campaignShipped; attempt++) {
       /**
        * Is this the last draft this run will ever get?
        *
@@ -13364,8 +13993,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // all — a client with neither an accent ring nor a derived ground/fg
       // pair has nothing either axis could have done, so nothing is reported,
       // matching every other optional field's "absent, not noise" convention.
+      // A shipped product campaign paints no accent and no ground (its plates
+      // are pictures), so there is no variation to report.
       const variationPlan =
-        effectiveKit !== undefined
+        effectiveKit !== undefined && !campaignShipped
           ? buildVariationPlan({
               slideNs: finalSlidesData.slides.map((s) => s.n),
               accentRing: effectiveKit.palette,
@@ -13450,6 +14081,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         ...(finalSelfCheckFindings.length > 0
           ? { selfCheck: { attempt: shippedAttempt, attemptsSpent, checks: finalSelfCheckFindings } }
           : {}),
+        ...(campaignReport !== undefined ? { productCampaign: campaignReport } : {}),
       };
     };
 
@@ -13701,6 +14333,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // Phase 5 (RFC-18 §6.6) — the whole post, so the reviewer approves THE POST — its hashtags, its
           // alt text, its first comment and its timing note — rather than the pixels.
           ...postFor(draft),
+          // 2026-09-24 (stage 4) — the product campaign, when the run asked
+          // for one: the scenes that shipped with what each is lettered with,
+          // the ones dropped and why, or why the normal carousel shipped.
+          ...(draft.productCampaign !== undefined ? { productCampaign: draft.productCampaign } : {}),
           // Phase 0, item E — the subject decision: source, mode, the stories
           // NOT chosen and the rule that decided, so the reviewer sees the
           // road not taken rather than only the destination.
@@ -14047,7 +14683,14 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     const reviewEdits = review.response.edits;
     const hasReviewEdits =
       reviewEdits !== undefined && (reviewEdits.caption !== undefined || (reviewEdits.slides?.length ?? 0) > 0);
-    if (hasReviewEdits) {
+    // 2026-09-24 (stage 4): a shipped product campaign's slides are pictures
+    // whose words are IN the pixels and were verified letter by letter, so
+    // there is no slide text to edit and nothing to re-render: the caption is
+    // the one editable field. Every other post takes the path below unchanged.
+    const campaignDelivered = review.output.productCampaign?.status === "shipped";
+    if (hasReviewEdits && campaignDelivered) {
+      caption = reviewEdits.caption ?? caption;
+    } else if (hasReviewEdits) {
       const applied = await wf.step.code("09c-apply-review-edits", () => {
         const summary: string[] = [];
         const editsBySlide = new Map((reviewEdits.slides ?? []).map((e) => [e.n, e]));
@@ -14484,6 +15127,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             // Phase 5 (RFC-18 §6.6, §12) — the whole post on the PERSISTED record, at the path the portal
             // reads: `deliverable.post`. Identical object to the one the reviewer approved at `09a`.
             ...postFor(review.output),
+            // 2026-09-24 (stage 4) — the same campaign record the reviewer saw.
+            ...(review.output.productCampaign !== undefined ? { productCampaign: review.output.productCampaign } : {}),
             topicDecision: topicDecisionForGate(topicClaim),
             // Phase 1 (items I/J/K): the angle the shipped post argues and
             // what the evidence gathering could read, on the persisted record.

@@ -282,6 +282,17 @@ export interface InstagramRunClaim {
   requestedSeries?: string;
   /** Which source decided the post type this run, for the trace: the run input, the client config, or the client's learned preference. */
   postTypeSource?: "run-input" | "client-config" | "client-preference" | "industry-default";
+  /**
+   * 2026-09-24: this run asked for a PRODUCT CAMPAIGN (stage 4 of the
+   * reference-looks plan, `product-campaign.ts`): the run input's
+   * `requestedMode: "product_campaign"`, else the client's
+   * `instagramPostModes` config, else its learned `postModes`. Present means
+   * requested, never that it will ship: `04q-plan-product-campaign` decides
+   * that, and falls back to the normal carousel with a recorded reason when
+   * no product photo is on hand. `productName` / `slogan` are the client
+   * config's optional `instagramProductCampaign` overrides.
+   */
+  productCampaign?: { requestedBy: "run-input" | "client-config" | "client-preference"; productName?: string; slogan?: string };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
