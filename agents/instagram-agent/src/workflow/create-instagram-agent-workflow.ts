@@ -7653,6 +7653,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       let entitySourcingForGate: Array<{ slide: number; entity: string; tiers: Array<{ tier: string; why: string; got: number }> }> = [];
       /** 2026-09-23: candidate paths that are an entity's MARK (05b1's logo rung), so the render shows them whole on a card. */
       const markImagePaths = new Set<string>();
+      /**
+       * 2026-09-24: every durable copy ANY attempt of this run staged (06e2,
+       * 06h3), by the local path it was staged from. Kindly Yours'
+       * pubsub-21254987551616377 lost a vet-approved picture: by attempt 3 the
+       * file had already left the instance, so that attempt's 06e2 staged
+       * nothing, and the recovery, which only knew that attempt's map, gave
+       * up on a picture attempt 1 had put in the bucket. Rebuilt on a resume,
+       * because the steps that fill it replay their checkpoints.
+       */
+      const runDurableUris: Record<string, string> = {};
       /** 2026-09-24: marks with no backdrop (lifted by 06h25, or vector), set clear on the slide. */
       const clearMarkPaths = new Set<string>();
       /** 2026-09-24: client product photos lifted off their backdrop by 06h26, set as objects. */
@@ -10279,7 +10289,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // of this run lives in) is tried before the picture is given up: Sitti
       // and XO Digital lost vet-approved pictures on 2026-09-23 to a worker
       // restart that the checkpointed map did not cover.
-      const durableUris: Record<string, string> = { ...stagedImageUris };
+      Object.assign(runDurableUris, stagedImageUris);
+      const durableUris: Record<string, string> = { ...runDurableUris };
       const durableUriFor = (imagePath: string): string | undefined => {
         const known = durableUris[imagePath];
         if (known !== undefined) return known;
@@ -10917,6 +10928,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         return uris;
       });
       Object.assign(durableUris, floorStaged);
+      Object.assign(runDurableUris, floorStaged);
       await recoverMissingImages("-floor");
 
       // Guaranteed delivery (2026-08): a slide that survives every tier —
