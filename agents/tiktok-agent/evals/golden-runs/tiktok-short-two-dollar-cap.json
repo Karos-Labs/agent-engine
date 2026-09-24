@@ -1,6 +1,6 @@
 {
   "id": "tiktok-short-two-dollar-cap",
-  "description": "The script prep run pubsub-21156937744383149 shipped on 2026-09-10 (prompt v9, $0.19, 4.5 min to the gate) after one redraft the voice lint asked for (an 18-word hook, a 16-word sentence). Kept as endorsed: a figure the client's own rule states ($2 a short), stated in the hook and on screen, four different places, no pitch in the last beat. Also the regression fixture for numbersSourced: the $2 rests on the one source listed.",
+  "description": "The script prep run pubsub-21156937744383149 shipped on 2026-09-10 (prompt v9, $0.19, 4.5 min to the gate) after one redraft the voice lint asked for (an 18-word hook, a 16-word sentence). Kept as endorsed: a figure the client's own rule states ($2 a short), stated in the hook and on screen, four different places, no pitch in the last beat. Also the regression fixture for numbersSourced: the $2 rests on the one source listed. Endorsed 2026-09-24 by Shlomi after a read for spoken English: the last beat ended on \"a strategy tool\" (deck language); now \"The cap isn't about saving money. It's about deciding first.\"",
   "agentId": "tiktok-agent",
   "language": "en",
   "input": {
@@ -38,7 +38,7 @@
         "seconds": 6
       },
       {
-        "narration": "Most video spend buys production. Not clarity. The two-dollar cap is a strategy tool.",
+        "narration": "Most video spend buys production. Not clarity. The cap isn't about saving money. It's about deciding first.",
         "onScreenText": "Production isn't the point.",
         "visualBrief": "Bare concrete warehouse floor, a single overhead industrial lamp illuminated, the rest of the space in deep shadow. Wide shot, early morning. No people, no text, no machinery in frame.",
         "stockQuery": "warehouse concrete floor industrial lamp",
@@ -55,6 +55,6 @@
     "brandCompliance": { "forbiddenTerms": ["game-changer", "unlock", "seamless", "leverage", "guaranteed", "#1"] },
     "numbersSourced": { "sources": ["Karos Labs production rule (2026-09-09): every original short is capped at $2 to produce, enforced by the workflow's cost ceiling."] }
   },
-  "endorsedBy": "claude-code, from prep run pubsub-21156937744383149 as shipped; awaiting a human endorsement",
-  "endorsedAt": "2026-09-10T13:30:00Z"
+  "endorsedBy": "shlomi@karoslabs.com",
+  "endorsedAt": "2026-09-24T22:55:00Z"
 }
