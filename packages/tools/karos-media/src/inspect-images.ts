@@ -26,7 +26,12 @@ import { DEFAULT_VISION_MODEL, type VisionAnalysisClient, type VisionPart } from
 // comment" would be no gate.
 // 1.2.0: vision analysis moved from gemini-2.5-flash to gemini-3.8-flash, and
 // the billed SKU ids moved with it.
-const TOOL_VERSION = "1.2.0";
+// 1.3.0 (2026-09-25): a Vertex 429 (the shared quota) is retried up to three
+// times with backoff before the call is reported failed. A Hanky Panky product
+// campaign (prep 2026-09-25) fell back to an ordinary post because this one
+// call hit a 429: "none of the client's pictures read as a clear product
+// photo" was really "the look never happened".
+const TOOL_VERSION = "1.3.0";
 
 /** Ceiling on one inspected image. Same bound the visual-pattern ingestion uses; well under the model's inline-data limit. */
 const MAX_IMAGE_BYTES = 4_000_000;
@@ -275,8 +280,22 @@ async function fetchRemoteImage(fetchImpl: typeof fetch, url: string): Promise<{
  * the phase that owns the vision path, and it is named here so the next reader
  * does not mistake the router's failover for cover this tool has.
  */
-export function createInspectImages(options: { client?: VisionAnalysisClient | undefined; model?: string; fetchImpl?: typeof fetch }) {
+/** Retries a call that failed on the shared Vertex quota (429 / RESOURCE_EXHAUSTED), 3 times, backing off 1x, 2x, 3x. Anything else throws at once. */
+export async function generateWithRateLimitRetry<T>(call: () => Promise<T>, backoffMs: number, retries = 3): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await call();
+    } catch (error) {
+      const message = (error as Error).message ?? "";
+      if (attempt >= retries || !/429|RESOURCE_EXHAUSTED|Resource exhausted/iu.test(message)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, backoffMs * (attempt + 1)));
+    }
+  }
+}
+
+export function createInspectImages(options: { client?: VisionAnalysisClient | undefined; model?: string; fetchImpl?: typeof fetch; backoffMs?: number }) {
   const model = options.model ?? DEFAULT_VISION_MODEL;
+  const backoffMs = options.backoffMs ?? 5_000;
   const fetchImpl = options.fetchImpl ?? fetch;
 
   return defineTool<InspectImagesInput, InspectImagesResult>({
@@ -328,11 +347,14 @@ export function createInspectImages(options: { client?: VisionAnalysisClient | u
       let promptTokens = 0;
       let outputTokens = 0;
       try {
-        const response = await options.client.models.generateContent({
-          model,
-          contents: [{ role: "user", parts }],
-          config: { responseMimeType: "application/json" },
-        });
+        const response = await generateWithRateLimitRetry(() =>
+          options.client!.models.generateContent({
+            model,
+            contents: [{ role: "user", parts }],
+            config: { responseMimeType: "application/json" },
+          }),
+          backoffMs,
+        );
         promptTokens = response.usageMetadata?.promptTokenCount ?? 0;
         outputTokens = response.usageMetadata?.candidatesTokenCount ?? 0;
         if (response.promptFeedback?.blockReason) {
