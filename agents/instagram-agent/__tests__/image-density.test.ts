@@ -146,6 +146,15 @@ describe("planImageBackfill", () => {
     expect(plan[0]!.reason).toContain("the writer's own words");
   });
 
+  it("fills a pictureless COVER first, before any interior plate, because the cover is the grid thumbnail (2026-09-24)", () => {
+    const copy = geektimeShaped();
+    copy.slides[0] = slide(1, { layout: "cover", visualNeed: { scene: "why the numbers matter more than the headline", why: "x", source: "none" } });
+    const plan = planImageBackfill(copy, new Set([6]), 1);
+    expect(plan.map((p) => p.n)).toEqual([1]);
+    // Everything after it keeps the bounded-first order.
+    expect(planImageBackfill(copy, new Set([6]), 5).map((p) => p.n)).toEqual([1, 2, 4, 5, 7]);
+  });
+
   it("never touches the closer, because a picture behind the ask competes with the ask", () => {
     expect(planImageBackfill(geektimeShaped(), new Set(), 99).map((p) => p.n)).not.toContain(8);
   });
