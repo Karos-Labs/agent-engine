@@ -4,7 +4,8 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ART_DIRECTOR_SKILL_REF, InstagramArtDirectorAgent } from "../src/agent/instagram-art-director-agent.js";
 import type { BrandTokens } from "../src/workflow/types.js";
-import { buildArtDirection, checkVisualDirection, CLICHE_SCENE_FORBID, prescribesClicheScene, VISUAL_DIRECTION_BELIEF_KEY, type VisualDirection } from "../src/workflow/visual-direction.js";
+import { GenerateImageInputSchema } from "@agent-engine/tool-karos-media";
+import { buildArtDirection, checkVisualDirection, CLICHE_SCENE_FORBID, IMAGE_FORBID_MAX, mergeForbid, prescribesClicheScene, VISUAL_DIRECTION_BELIEF_KEY, type VisualDirection } from "../src/workflow/visual-direction.js";
 
 /**
  * RFC-13 Phase 3, item Q — the half that finally reads the direction.
@@ -241,5 +242,20 @@ describe("the cliché scrubber reads negation, and a direction records who wrote
     expect((agent as unknown as { config: { skillRef: string } }).config.skillRef).toBe(ART_DIRECTOR_SKILL_REF);
     expect(readFileSync(WORKFLOW_SOURCE, "utf8")).toContain("generatedBy: ART_DIRECTOR_SKILL_REF");
     expect(readFileSync(WORKFLOW_SOURCE, "utf8")).not.toContain('generatedBy: "instagram-art-director@1"');
+  });
+});
+
+describe("the forbid list always fits image.generate (2026-09-24)", () => {
+  it("a direction with a full forbid list still produces an art block the tool accepts, with nothing dropped", () => {
+    const own = Array.from({ length: 10 }, (_, i) => `client negative ${i + 1}`);
+    const merged = mergeForbid(own);
+    expect(merged.length).toBeLessThanOrEqual(IMAGE_FORBID_MAX);
+    for (const scene of CLICHE_SCENE_FORBID) expect(merged.join(" | ")).toContain(scene);
+    const parsed = GenerateImageInputSchema.shape.art.safeParse({ forbid: merged });
+    expect(parsed.success, parsed.success ? "" : JSON.stringify(parsed.error.issues)).toBe(true);
+  });
+
+  it("leaves a short list exactly as before", () => {
+    expect(mergeForbid(["logos"])).toEqual(["logos", ...CLICHE_SCENE_FORBID]);
   });
 });

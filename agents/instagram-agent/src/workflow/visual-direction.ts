@@ -644,6 +644,34 @@ export const CLICHE_SCENE_FORBID: readonly string[] = [
   "a face lit by a screen",
 ];
 
+/**
+ * `image.generate`'s own ceiling on `art.forbid` (`GenerateImageInputSchema`).
+ * A longer list is not trimmed by the tool: the call is REFUSED as a
+ * tooling_error before anything is drawn.
+ */
+export const IMAGE_FORBID_MAX = 10;
+
+/**
+ * The client's own negatives plus the cliché scenes, always within
+ * `IMAGE_FORBID_MAX`.
+ *
+ * 2026-09-24: #211 appended the three cliché scenes to a direction's forbid
+ * list, which the art director may already fill to ten. Thirteen entries
+ * failed the tool's schema on every generation call, for every client whose
+ * direction had more than seven, and the imagery floor could generate
+ * nothing: the KAROS and Geektime posts of that morning shipped with no
+ * picture at all. When the union does not fit, the client's own entries keep
+ * their places and the cliché scenes share ONE entry, so nothing is dropped.
+ */
+export function mergeForbid(own: readonly string[]): string[] {
+  const unique = own.filter((f, i) => f.trim().length > 0 && own.indexOf(f) === i);
+  const extra = CLICHE_SCENE_FORBID.filter((f) => !unique.includes(f));
+  const all = [...unique, ...extra];
+  if (all.length <= IMAGE_FORBID_MAX) return all;
+  const folded = extra.length > 0 ? [`stock cliche scenes: ${extra.join("; ")}`] : [];
+  return [...unique.slice(0, IMAGE_FORBID_MAX - folded.length), ...folded];
+}
+
 function nonEmpty(value: string | undefined): string | undefined {
   const tidy = value?.trim();
   return tidy !== undefined && tidy.length > 0 ? tidy : undefined;
@@ -1163,7 +1191,7 @@ export function buildArtDirection(tokens: BrandTokens | undefined, direction?: V
   const notes = lookLines.length > 0 ? lookLines.map((l) => l.line).join(" ") : undefined;
   // The cliché scenes join every direction's negatives: the generator's own
   // default for "a business picture" is exactly them.
-  const forbid = direction !== undefined ? [...direction.forbid, ...CLICHE_SCENE_FORBID.filter((f) => !direction.forbid.includes(f))] : undefined;
+  const forbid = direction !== undefined ? mergeForbid(direction.forbid) : undefined;
   const styleLock = direction !== undefined && !prescribesClicheScene(direction.styleLock.line) ? direction.styleLock.line : undefined;
 
   const art = {
