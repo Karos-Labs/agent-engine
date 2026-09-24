@@ -464,6 +464,14 @@ export function recentSystemIds(history: SkeletonHistory): string[] {
  * the prompt never asked for) is the defect this whole phase keeps finding.
  * Mirrors `instagram-copy@14` §21 verbatim.
  */
+/**
+ * The rule when the list also carries OTHER clients' recent skeletons
+ * (2026-09-24, fleet memory). This client's own come first, so "the first"
+ * is still this client's most recent post.
+ */
+export const SKELETON_RULE_SENTENCE_WITH_FLEET =
+  "These are recent slide skeletons: this client's own last posts first, then the most recent posts of OTHER clients. Do not reproduce any of them. At least two positions must differ from the first one (this client's most recent post), and the cover's archetype must differ from it. Repetition is the single clearest tell that a feed is machine-made, and two brands whose posts share one skeleton read as one template.";
+
 export const SKELETON_RULE_SENTENCE =
   "These are the last five posts' slide skeletons. Do not reproduce any of them. At least two positions must differ from the most recent, and the cover's archetype must differ from last week's. Repetition is the single clearest tell that a feed is machine-made.";
 

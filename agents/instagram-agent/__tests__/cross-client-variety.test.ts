@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { BUNDLED_SERIES, CROSS_CLIENT_SERIES_PENALTY, selectSeries, type SeriesEvidence } from "../src/workflow/editorial-series.js";
 import {
   crossClientSeriesIds,
+  crossClientSkeletons,
+  mergeCrossClientHistories,
   crossClientSystemIds,
   CROSS_CLIENT_FORMAT_BELIEF_KEY,
   CROSS_CLIENT_HISTORY_LIMIT,
@@ -199,5 +201,30 @@ describe("only the shape travels — never a client's subject matter", () => {
     expect(crossClientSeriesIds(history, "karoslabs", 5)).toEqual([]);
     expect(crossClientSystemIds(history, "karoslabs", 5)).toEqual([]);
     expect(crossClientSeriesIds(history, "geektime", 5)).toEqual(["by_the_numbers"]);
+  });
+});
+
+describe("the fleet history finally reaches the cross-client readers (2026-09-24)", () => {
+  const row = (clientSlug: string, at: string, skeleton?: string) => ({ at, clientSlug, seriesId: `s-${clientSlug}`, systemId: `y-${clientSlug}`, ...(skeleton !== undefined ? { skeleton } : {}) });
+
+  it("merges this client's own rows with the fleet's, ordered by time, without double-counting a row both carry", () => {
+    const own = { version: 1 as const, entries: [row("karoslabs", "2026-09-20T00:00:00Z")] };
+    const fleet = { version: 1 as const, entries: [row("geektime", "2026-09-21T00:00:00Z"), row("karoslabs", "2026-09-20T00:00:00Z"), row("sitti", "2026-09-22T00:00:00Z")] };
+    const merged = mergeCrossClientHistories(own, fleet);
+    expect(merged.entries.map((e) => e.clientSlug)).toEqual(["karoslabs", "geektime", "sitti"]);
+    // Before the fleet read, the only rows were the caller's own, and the readers abstained.
+    expect(crossClientSeriesIds(own, "karoslabs", 5)).toEqual([]);
+    expect(crossClientSeriesIds(merged, "karoslabs", 5)).toEqual(["s-sitti", "s-geektime"]);
+  });
+
+  it("offers other clients' most recent skeletons, newest first, distinct, never the caller's own", () => {
+    const history = { version: 1 as const, entries: [row("geektime", "1", "cover|stat|closer"), row("sitti", "2", "cover|list|closer"), row("hankypanky", "3", "cover|list|closer"), row("karoslabs", "4", "cover|quote|closer")] };
+    expect(crossClientSkeletons(history, "karoslabs", 2)).toEqual(["cover|list|closer", "cover|stat|closer"]);
+  });
+
+  it("reads the skeleton a fleet row carries and ignores it when absent", () => {
+    const parsed = readCrossClientFormatHistory({ [CROSS_CLIENT_FORMAT_BELIEF_KEY]: { version: 1, entries: [row("a", "1", "cover|closer"), row("b", "2")] } });
+    expect(parsed.entries[0]!.skeleton).toBe("cover|closer");
+    expect(parsed.entries[1]!.skeleton).toBeUndefined();
   });
 });

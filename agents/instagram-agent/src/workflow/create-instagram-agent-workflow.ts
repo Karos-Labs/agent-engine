@@ -258,6 +258,7 @@ import {
   skeletonGateFacts,
   SKELETON_BELIEF_KEY,
   SKELETON_RULE_SENTENCE,
+  SKELETON_RULE_SENTENCE_WITH_FLEET,
   withMeasuredOccupancy,
   type SkeletonHistory,
   type SkeletonVarietyVerdict,
@@ -284,6 +285,8 @@ import {
   BRAND_MARK_ZONE,
   BRAND_MARK_ZONE_INTRUSION_PX,
   crossClientSeriesIds,
+  crossClientSkeletons,
+  mergeCrossClientHistories,
   crossClientSystemIds,
   CROSS_CLIENT_FORMAT_BELIEF_KEY,
   EMPTY_CROSS_CLIENT_HISTORY,
@@ -1780,6 +1783,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       } catch (error) {
         console.error("02k-read-structural-memory: could not read the beliefs document, planning from an empty history", error);
       }
+      // 2026-09-24: the FLEET's rows, which is what the cross-client limbs
+      // were always meant to read. Fail-open like every read here.
+      let fleetFormats: unknown;
+      try {
+        const fleet = await tools["memory.readFleet"]?.execute({ key: "instagramCrossClientFormats" }, { ctx });
+        if (fleet?.status === "success") fleetFormats = (fleet.result as { document?: unknown }).document;
+      } catch (error) {
+        console.error("02k-read-structural-memory: could not read the fleet history, varying against this client's own only", error);
+      }
       // Phase 5.5, item D — the third parse of the same read. Fail-open by
       // construction: `readCrossClientFormatHistory` returns an empty history
       // for anything it cannot read, and an empty history is no penalty, so a
@@ -1787,7 +1799,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       return {
         skeletons: readSkeletonHistory(beliefs),
         customArchetypes: readCustomArchetypeHistory(beliefs),
-        crossClientFormats: readCrossClientFormatHistory(beliefs),
+        crossClientFormats: mergeCrossClientHistories(
+          readCrossClientFormatHistory(beliefs),
+          readCrossClientFormatHistory({ [CROSS_CLIENT_FORMAT_BELIEF_KEY]: fleetFormats }),
+        ),
         // Phase 5.6, item C2 — a fourth parse of the same read, on the same
         // fail-open contract: `readPerformanceStore` returns an empty store
         // for anything it cannot read, and an empty store decides nothing.
@@ -1850,7 +1865,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      */
     const crossClientFormatHistory = structuralMemory.crossClientFormats ?? EMPTY_CROSS_CLIENT_HISTORY;
     /** The last five shipped layout sequences, newest first — the copy prompt's avoid-list (item P, prompt @14 §21). Empty on a first run. */
-    const recentSkeletons = skeletonAvoidList(skeletonHistory);
+    const ownRecentSkeletons = skeletonAvoidList(skeletonHistory);
+    // 2026-09-24: plus the two most recent skeletons OTHER clients shipped,
+    // after this client's own, so two brands stop sharing one layout.
+    const fleetSkeletons = crossClientSkeletons(crossClientFormatHistory, wf.clientSlug, 2).filter((s) => !ownRecentSkeletons.includes(s));
+    const recentSkeletons = [...ownRecentSkeletons, ...fleetSkeletons];
     /**
      * RFC-21 Part 3 — the editorial series this run drafted in, hoisted out of
      * `draftOnce` for the same reason `languageBeliefForRun` is: it is decided
@@ -7728,7 +7747,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // so the field is omitted and the prompt reads exactly as it did.
         // This is the CHEAP half of "repetition reads as AI" — `07k` is the
         // half that enforces it.
-        ...(recentSkeletons.length > 0 ? { recentSkeletons, skeletonRule: SKELETON_RULE_SENTENCE } : {}),
+        ...(recentSkeletons.length > 0 ? { recentSkeletons, skeletonRule: fleetSkeletons.length > 0 ? SKELETON_RULE_SENTENCE_WITH_FLEET : SKELETON_RULE_SENTENCE } : {}),
         // Phase 5.5, item A2 (prompt @21) — the real-world things this post
         // NAMES, grounded verbatim in its own fact cards by `04b3`. A slide
         // whose subject IS one of these puts its name in `visualNeed.subject.
@@ -14900,6 +14919,24 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           },
           { ctx },
         );
+        // 2026-09-24: the same fleet-variety row, into the FLEET document,
+        // so other clients' runs can see it (the beliefs copy above is only
+        // ever read by this client). Deduplicated on the run id, so a replayed
+        // `09b` cannot count twice.
+        if (shippedSeriesId !== undefined || shippedSystemId !== undefined) {
+          try {
+            await tools["memory.appendFleetRow"]?.execute(
+              {
+                key: "instagramCrossClientFormats",
+                row: { at: new Date().toISOString(), runId: wf.runId, seriesId: shippedSeriesId ?? "", systemId: shippedSystemId ?? "", skeleton: skeletonEntry.signature },
+                dedupeOn: ["clientSlug", "runId"],
+              },
+              { ctx },
+            );
+          } catch (error) {
+            console.error("09b-deliver-and-log: could not record the fleet-variety row", error);
+          }
+        }
         // One operator-visible row carrying the ordered signature VERBATIM, so
         // "are we shipping the same post every week" is answerable from the run
         // trace without a beliefs read.
