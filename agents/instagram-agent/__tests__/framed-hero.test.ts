@@ -115,3 +115,18 @@ describe.skipIf(!isChromiumInstalled())("what the two covers actually paint", ()
     expect(framedShare).toBeLessThan(0.55);
   }, 60_000);
 });
+
+describe("a lockup under a bounded picture starts below it (2026-09-25)", () => {
+  it("never offsets the lockup with a percentage padding, which resolves against the WIDTH", async () => {
+    const { readFileSync } = await import("node:fs");
+    const css = readFileSync(path.resolve(__dirname, "..", "assets", "templates", "default", "_design-system.css"), "utf8");
+    // Hanky Panky's framed cover: picture `block-size: 46%` (662px of 1440),
+    // lockup `padding-block-start: … 46% …` (497px of 1080) — the headline sat
+    // on the photograph. Comments may say "%", rules may not.
+    const rules = css.replace(/\/\*[\s\S]*?\*\//gu, "");
+    expect(rules).not.toMatch(/padding-block-start:[^;]*\d%/u);
+    expect(rules).toContain("block-size: var(--frame-h)");
+    expect(rules).toContain("var(--frame-h) + var(--sp-2)");
+    expect(rules).toContain("block-size: var(--cutout-h)");
+  });
+});

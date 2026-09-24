@@ -308,19 +308,28 @@ body:has(img.hero:is([data-kind="mark"], [data-kind="mark-clear"])) .scrim { dis
   filter: drop-shadow(0 18px 28px color-mix(in srgb, var(--shadow-ink, #000000) 38%, transparent));
   mix-blend-mode: normal;
 }
+/* ONE HEIGHT PER COMPOSITION, used by the picture AND by the lockup under it
+   (2026-09-25). Both used to be percentages, and they are not the same
+   percentage: `block-size: 38%` resolves against the plate's HEIGHT (1440px ->
+   547px) while `padding-block-start: 38%` resolves against its WIDTH (1080px
+   -> 410px), so the headline started 137px up inside the product. The framed
+   cover did the same at 46% (662px picture, 497px padding): Hanky Panky's
+   headline sat on the photograph's lower edge. A length both rules share
+   cannot disagree. */
+body { --cutout-h: 540px; --frame-h: 620px; }
 img.hero[data-kind="cutout"] {
   inset: auto;
   inset-block-start: calc(var(--zone-mark) + var(--sp));
   inset-inline: var(--mx);
   inline-size: auto;
-  block-size: 38%;
+  block-size: var(--cutout-h);
   margin-inline: auto;
   object-fit: contain;
   filter: drop-shadow(0 22px 34px color-mix(in srgb, var(--shadow-ink, #000000) 40%, transparent));
 }
 body:has(img.hero[data-kind="cutout"]) .scrim { display: none; }
 /* The lockup starts under the object: a product is never behind the words. */
-body:has(img.hero[data-kind="cutout"]) .plate { padding-block-start: calc(var(--zone-mark) + var(--sp) + 38% + var(--sp-2)); }
+body:has(img.hero[data-kind="cutout"]) .plate { padding-block-start: calc(var(--zone-mark) + var(--sp) + var(--cutout-h) + var(--sp-2)); }
 
 /* —— A PHOTOGRAPH SET AS A BLOCK, NOT AS A WALL (2026-09-24). ——
    The owner, on two full-bleed covers whose headline and deck ran across a
@@ -357,7 +366,7 @@ img.hero[data-kind="framed"],
      that behaviour (a product keeps its shape); a framed photograph is a
      block, and the block spans the measure. */
   inline-size: calc(100% - (2 * var(--mx)));
-  block-size: 46%;
+  block-size: var(--frame-h);
   object-fit: cover;
   border-radius: 10px;
 }
@@ -365,7 +374,7 @@ body:has(img.hero[data-kind="framed"]) .scrim,
 body:has(.bg[data-kind="framed"]) .scrim { display: none; }
 /* The lockup starts under the block: the words are never on the photograph. */
 body:has(img.hero[data-kind="framed"]) .plate,
-body:has(.bg[data-kind="framed"]) .plate { padding-block-start: calc(var(--zone-mark) + var(--sp) + 46% + var(--sp-2)); }
+body:has(.bg[data-kind="framed"]) .plate { padding-block-start: calc(var(--zone-mark) + var(--sp) + var(--frame-h) + var(--sp-2)); }
 
 .scrim {
   position: absolute;
