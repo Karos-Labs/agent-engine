@@ -16,6 +16,8 @@ import {
   vetSubjectFor,
   type SceneRuleCopyView,
   type SceneRuleSlideView,
+  generationRewrites,
+  isEntityPictureBrief,
 } from "../src/workflow/scene-brief.js";
 import { INVERTED_TEMPLATE_SUFFIX } from "../src/workflow/slides-data.js";
 import { checkDefaultRenderRules, templateBasename } from "../src/workflow/visual-qa-pre-checks.js";
@@ -361,5 +363,30 @@ describe("drift pin — DEVICE_BEARING_ARCHETYPES against visual-qa-pre-checks' 
     expect(DEVICE_BEARING_ARCHETYPES.has("slide")).toBe(false);
     expect(coverFailures("headline-focus.html")).toBe(1);
     expect(coverFailures("slide.html")).toBe(1);
+  });
+});
+
+describe("what a generator is asked to draw (2026-09-24)", () => {
+  const slide = { headline: "Cyber researchers now out-earn AI engineers", body: "A GotFriends salary report puts the average at 57,643 shekels." };
+  const need = (scene: string) => normaliseVisualNeed({ visualNeed: { scene, source: "stock" } } as never);
+
+  it("never hands a generator an entity picture brief: it draws the slide's world, with no logo or real person", () => {
+    const brief = "GotFriends: the brand's own mark, a real product surface, or a press photograph of the person most identified with it. A recognisable picture of GotFriends itself, not a generic scene about the category it is in.";
+    expect(isEntityPictureBrief(brief)).toBe(true);
+    const prompt = generationPromptFor(need(brief), slide);
+    expect(prompt).not.toContain("brand's own mark");
+    expect(prompt).toContain("Cyber researchers now out-earn AI engineers");
+    expect(prompt).toMatch(/No logos/u);
+  });
+
+  it("rewrites a scene the caller refuses (the screen cliche) the same way, and leaves every other scene verbatim", () => {
+    const monitor = "A desktop monitor with multiple disconnected browser tabs";
+    const rewrite = (scene: string) => /monitor|laptop/iu.test(scene);
+    expect(generationRewrites(need(monitor), { rewrite })).toBe(true);
+    expect(generationPromptFor(need(monitor), slide, { rewrite })).toMatch(/no recognisable real people/u);
+    expect(generationPromptFor(need(monitor), slide, { rewrite })).not.toContain("browser tabs");
+    const harbour = "Container cranes at a harbour at dawn";
+    expect(generationPromptFor(need(harbour), slide, { rewrite })).toBe(harbour);
+    expect(generationRewrites(need(harbour), { rewrite })).toBe(false);
   });
 });

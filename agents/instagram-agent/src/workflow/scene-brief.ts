@@ -516,8 +516,59 @@ function containsAllWords(haystack: string, term: string): boolean {
  * weaker without it" becomes objects in the frame). The full scene brief IS
  * the scene; that is the field that was starved.
  */
-export function generationPromptFor(need: NormalisedVisualNeed): string {
-  return need.scene;
+/** The opening every entity picture brief (`draft-entities.ts` `entityPictureBrief`) carries. */
+const ENTITY_BRIEF_SHAPE = /^[^:]{1,120}: the brand's own mark, a real product surface, or a press photograph of the person most identified with it\./u;
+
+/** True when `scene` asks for a picture OF a named thing (its mark, its product, its person): retrieval can find one, a generator can never honestly draw one. */
+export function isEntityPictureBrief(scene: string): boolean {
+  return ENTITY_BRIEF_SHAPE.test(scene);
+}
+
+/**
+ * What `image.generate` is asked to draw for a slide.
+ *
+ * 2026-09-24: an entity picture brief is a RETRIEVAL request. Handed to a
+ * generator verbatim (Geektime, `pubsub-21255162145042672`: "GotFriends: the
+ * brand's own mark, a real product surface, or a press photograph ..."), it
+ * asks for a company's logo or a real person's likeness, which the vet then
+ * correctly refuses, and the run spends its generation allowance on frames
+ * that could never ship. A generator is asked instead for the world the slide
+ * talks about, from the slide's own words, with the named thing kept out.
+ */
+export function generationPromptFor(
+  need: NormalisedVisualNeed,
+  slide?: { headline?: string; body?: string },
+  options: { rewrite?: (scene: string) => boolean } = {},
+): string {
+  return generationRewrites(need, options) ? sceneFromSlideWords(need, slide) : need.scene;
+}
+
+/**
+ * Whether the scene a generator draws for this slide is NOT the writer's
+ * brief: an entity picture brief (never drawable), or a scene the caller's
+ * `rewrite` predicate refuses (the workflow passes `prescribesClicheScene`:
+ * KAROS, `pubsub-21255039598063450`, 2026-09-24, briefed "a desktop monitor
+ * with multiple disconnected browser tabs", was drawn exactly so, and the
+ * frame was then promoted to the cover: the laptop-in-a-dark-room picture the
+ * owner banned, produced by our own generator). A rewritten frame is vetted
+ * against the scene it was drawn to, not the writer's subject.
+ */
+export function generationRewrites(need: NormalisedVisualNeed, options: { rewrite?: (scene: string) => boolean } = {}): boolean {
+  return isEntityPictureBrief(need.scene) || options.rewrite?.(need.scene) === true;
+}
+
+/** A documentary scene built from the slide's own words, with no logo, lettering, screen or recognisable person. */
+export function sceneFromSlideWords(need: NormalisedVisualNeed, slide?: { headline?: string; body?: string }): string {
+  const said = [slide?.headline, slide?.body]
+    .filter((t): t is string => typeof t === "string" && t.trim().length > 0)
+    .join(" ")
+    .replace(/\s+/gu, " ")
+    .slice(0, 220);
+  const about = said.length > 0 ? `a slide that says: "${said}"` : need.why !== undefined ? `a slide about ${need.why}` : "this slide";
+  return (
+    `An editorial photograph of the real-world setting behind ${about}. Show the place, the work or the objects that story is about, as a documentary photographer would. ` +
+    "No logos, brand names, lettering, laptops, monitors, phones or other screens, and no recognisable real people anywhere in the frame."
+  );
 }
 
 /**

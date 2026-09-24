@@ -104,6 +104,20 @@ describe("the ladder's order: merge, picture, archetype, type step, device", () 
     expect(change.record.claimMatchReason).toMatch(/without a re-vet/u);
   });
 
+  it("never promotes a screen-cliche picture, which is how a monitor-in-a-dark-room frame became KAROS's cover (2026-09-24)", () => {
+    const copy = goodCopyOutput();
+    const typographic: InstagramCopyOutput = {
+      ...copy,
+      slides: copy.slides.map((s) => (s.n === 5 ? { ...s, layout: "text_only" as const } : s)),
+    };
+    const selections = goodImageVettingOutput().selections.map((sel) =>
+      sel.n === 5 ? { ...sel, reason: "The generated image shows a desktop monitor with multiple disconnected browser tabs in a dim room." } : sel,
+    );
+    const plan = planInterestRelayout(withoutBlocks(typographic, 3), selections, FACTS, [weightFinding(3, "interior")]);
+    const promoted = plan?.changes.filter((c) => c.kind === "promote-image-to-cover") as Array<Extract<InterestRelayoutChange, { kind: "promote-image-to-cover" }>> | undefined;
+    expect((promoted ?? []).map((c) => c.fromSlide)).not.toContain(5);
+  });
+
   /**
    * The device rung is reached only when every rung above it has declined, and
    * `verbatimDeviceFor` then has to prove the figure came out of this slide's

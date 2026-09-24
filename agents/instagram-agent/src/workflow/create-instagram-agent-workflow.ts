@@ -355,6 +355,7 @@ import {
   clientVisualSystemFor,
   fallbackVisualDirection,
   finaliseVisualDirection,
+  prescribesClicheScene,
   // Phase 5.5 (spec §5 D1) — the same vocabulary the studio marker uses; the
   // module asserts the two lists agree at compile time.
   SETUP_FAILURE_STATUSES_FOR_MARKER,
@@ -369,6 +370,7 @@ import {
 import {
   checkSceneBriefs,
   generationPromptFor,
+  generationRewrites,
   needsImageSourcing,
   normaliseVisualNeed,
   resolveEntityRef,
@@ -9796,7 +9798,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             // interpolates, and it is the field that was starved — a twelve-word
             // keyword string was never a brief for a generator.
             const slide = copy.slides.find((sl) => sl.n === u.n);
-            return { n: u.n, prompt: slide === undefined ? undefined : generationPromptFor(normaliseVisualNeed(slide)) };
+            return { n: u.n, prompt: slide === undefined ? undefined : generationPromptFor(normaliseVisualNeed(slide), slide, { rewrite: prescribesClicheScene }) };
           })
           .filter((g): g is ImageGap => g.prompt !== undefined);
         // CONCEPT-FIRST ORDERING (§6.4.2). The concept slide goes to the head
@@ -10087,6 +10089,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 headline: slide?.headline ?? "",
                 body: slide?.body ?? "",
                 ...(need !== undefined ? vetSubjectFor(need) : {}),
+                // 2026-09-24: a frame drawn to a REWRITTEN scene (an entity's
+                // picture brief, or a cliche the writer asked for) is judged
+                // against what it was drawn to. Judged against the writer's
+                // subject it is refused by construction.
+                ...(need !== undefined && generationRewrites(need, { rewrite: prescribesClicheScene }) ? { subject: g.prompt.slice(0, 120), mustShow: [] as string[] } : {}),
                 scene: g.prompt,
                 isClientPhotoSlot: tier0Slots.has(g.n),
                 // Metaphor tolerance is DECLARED by the pipeline for exactly
@@ -10596,7 +10603,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           .slice(0, want)
           .flatMap((n) => {
             const slide = copy.slides.find((sl) => sl.n === n);
-            return slide === undefined ? [] : [{ n, prompt: generationPromptFor(normaliseVisualNeed(slide)), backfilled: false }];
+            if (slide === undefined) return [];
+            // 2026-09-24: a slide whose brief asks for a named thing's own
+            // picture gets a SCENE drawn (see `generationPromptFor`), so its
+            // frame is vetted as what it is, against the brief it was drawn
+            // to, the way a backfilled slide's is. Vetted against the named
+            // subject, a scene that honestly shows no logo is refused by the
+            // unnamed-subject rule every time.
+            const need = normaliseVisualNeed(slide);
+            return [{ n, prompt: generationPromptFor(need, slide, { rewrite: prescribesClicheScene }), backfilled: generationRewrites(need, { rewrite: prescribesClicheScene }) }];
           });
         // ── THE REGISTER, AND THE REAL THINGS THE POST NAMES. ──
         //
