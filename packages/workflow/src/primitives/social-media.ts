@@ -493,6 +493,88 @@ function rationaleFor(status: SocialMediaStatus, brief: MediaBrief | undefined):
   }
 }
 
+/**
+ * ALT TEXT, FOR THE READER WHO CANNOT SEE THE PICTURE.
+ *
+ * Instagram has carried per-slide alt text since it shipped; X and LinkedIn
+ * attach a picture with nothing at all, and both platforms have a field for it.
+ * The audit of 2026-09-21 listed that as an agent-level gap, and it is the kind
+ * that never surfaces in review because the reviewer can see the image.
+ *
+ * -- IT IS NOT THE DESCRIPTION FIELD, AND THAT IS THE WHOLE CARE HERE. --
+ *
+ * `asset.description` is whatever the tier that produced the candidate said
+ * about it, and half of those strings are PROVENANCE, not description: "an
+ * image the client attached to this run (no vision backend to describe it)", a
+ * stock provider's own search label, "generated as a last resort". Alt text is
+ * client-facing copy on a public post, and this repo has shipped engine
+ * machinery into client-visible text before. So a sentence that describes the
+ * RUN rather than the PICTURE is refused and NO alt text is emitted: an absent
+ * field is honest, and a platform's own "no description" state is better than a
+ * caption that tells a blind reader about our media cache.
+ *
+ * What is emitted, in order of preference:
+ *   1. the vision tool's `description` -- one or two sentences about what is in
+ *      frame, which is exactly what alt text is;
+ *   2. its `subjects`, as a plain list, when the description is missing;
+ *   3. the asset's own description, only when it reads like a description.
+ *
+ * Clamped on a word boundary: X allows 1,000 characters and LinkedIn far
+ * fewer, and one string has to be publishable on both.
+ */
+export const ALT_TEXT_MAX = 300;
+
+/** Phrases that mean the string is about the RUN, not about the picture. */
+const PROVENANCE_MARKERS = [
+  "attached to this run",
+  "no vision backend",
+  "last resort",
+  "the post was written to it",
+  "matching the brief",
+  "cited article",
+  "cited page",
+  "media cache",
+  "no source could honestly supply",
+];
+
+function looksLikeProvenance(text: string): boolean {
+  const lower = text.toLowerCase();
+  return PROVENANCE_MARKERS.some((marker) => lower.includes(marker));
+}
+
+/** One line, no stray quotes, clamped on a word boundary. */
+function tidy(text: string): string | undefined {
+  // TRIMMED BEFORE THE QUOTES ARE STRIPPED, and the order is the bug this
+  // line already had: the strip is anchored to the string's ends, so on
+  // `  "A man holding a bottle."  ` the anchors met SPACES and the quotes
+  // survived into the alt text.
+  const normalised = text
+    .replace(/\s+/gu, " ")
+    .trim()
+    .replace(/^["'“”]+|["'“”]+$/gu, "")
+    .trim();
+  if (normalised.length === 0) return undefined;
+  if (normalised.length <= ALT_TEXT_MAX) return normalised;
+  const cut = normalised.slice(0, ALT_TEXT_MAX);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${(lastSpace > ALT_TEXT_MAX * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+}
+
+export function altTextFor(asset: SocialMediaAsset): string | undefined {
+  const inspection = asset.inspection;
+  const seen = typeof inspection?.["description"] === "string" ? (inspection["description"] as string) : undefined;
+  if (seen !== undefined && !looksLikeProvenance(seen)) {
+    const text = tidy(seen);
+    if (text !== undefined) return text;
+  }
+  const subjects = Array.isArray(inspection?.["subjects"])
+    ? (inspection["subjects"] as unknown[]).filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+    : [];
+  if (subjects.length > 0) return tidy(subjects.join(", "));
+  if (!looksLikeProvenance(asset.description)) return tidy(asset.description);
+  return undefined;
+}
+
 /** The media block a deliverable and a review gate carry. */
 export function mediaForDeliverable(plan: SocialMediaPlan): Record<string, unknown> {
   return {
@@ -505,6 +587,12 @@ export function mediaForDeliverable(plan: SocialMediaPlan): Record<string, unkno
             ...(plan.asset.gcsUri !== undefined ? { gcsUri: plan.asset.gcsUri } : {}),
             path: plan.asset.path,
             description: plan.asset.description,
+            // What a reader who cannot see it is told. Absent when nothing
+            // honest was available — see `altTextFor`.
+            ...((): Record<string, string> => {
+              const alt = altTextFor(plan.asset!);
+              return alt !== undefined ? { altText: alt } : {};
+            })(),
             provider: plan.asset.provider,
             licenseConfidence: plan.asset.licenseConfidence,
             requiresCredit: plan.asset.requiresCredit,
