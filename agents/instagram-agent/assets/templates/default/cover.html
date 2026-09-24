@@ -327,8 +327,10 @@ body:has(img.hero:is([data-kind="mark"], [data-kind="mark-clear"])) .scrim { dis
    -> 410px), so the headline started 137px up inside the product. The framed
    cover did the same at 46% (662px picture, 497px padding): Hanky Panky's
    headline sat on the photograph's lower edge. A length both rules share
-   cannot disagree. */
-body { --cutout-h: 540px; --frame-h: 620px; }
+   cannot disagree. 540px, not 620: at 620 a long deck under the frame
+   overflowed the plate in CI's fonts (interest-floor calibration, slide.html
+   @ long). */
+body { --cutout-h: 540px; --frame-h: 540px; }
 img.hero[data-kind="cutout"] {
   inset: auto;
   inset-block-start: calc(var(--zone-mark) + var(--sp));
