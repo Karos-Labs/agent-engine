@@ -28,7 +28,7 @@ import {
   type LearningContextLike,
   type ResolvedGoalLine,
 } from "@agent-engine/workflow";
-import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientIntelContext, buildClientVoiceContext, readCrossChannelHistory, crossChannelDirective, crossChannelAvoidTopics, socialAccountsFromClient, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext, distillStylePreferences, varyLearnedStyle, buildTrendQueries, hasTopicSignalMaterial, pullTrendResearch, runTrendScout, researchDigestForScout, selectContentMode, trendCandidateForDrafting, type ContentMode, type DistilledStyle, type FeedbackEntryLike, type StyleVariationEntry, type TrendResearch, type TrendScoutOutput } from "@agent-engine/workflow";
+import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, describeToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientIntelContext, buildClientVoiceContext, readCrossChannelHistory, crossChannelDirective, crossChannelAvoidTopics, socialAccountsFromClient, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext, distillStylePreferences, varyLearnedStyle, buildTrendQueries, hasTopicSignalMaterial, pullTrendResearch, runTrendScout, researchDigestForScout, selectContentMode, trendCandidateForDrafting, type ContentMode, type DistilledStyle, type FeedbackEntryLike, type StyleVariationEntry, type TrendResearch, type TrendScoutOutput } from "@agent-engine/workflow";
 import type { ClientBrand, ClientBrief, ClientKnowledge, ClientProfile, VoiceRules } from "@agent-engine/tools";
 import type { ConceptMode, ConceptReport, InstagramFormat, InstagramTopicClaim as InstagramTopicClaimShape } from "./types.js";
 import { readConceptMode } from "./types.js";
@@ -5088,7 +5088,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // reads one vocabulary. Verbatim into `research.reason`, never re-worded (RFC-19 §5.1).
       const reason =
         researchExec.status === "tooling_error"
-          ? "research extraction could not produce a turn this run could read (a malformed model turn)"
+          ? // A STEP TIMEOUT IS NOT A MALFORMED TURN. Both arrive as
+            // `tooling_error`, and this sentence asserted the first of them
+            // unconditionally -- sending a reader to the prompt and the schema
+            // for a step where nothing came back at all.
+            `research extraction ${describeToolingFailure(researchExec)}`
           : researchExec.status === "budget_exceeded"
             ? "research extraction ran out of turns"
             : "research extraction did not produce output that cleared its own schema";
@@ -8653,7 +8657,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       if (copyExec.status !== "completed") {
         const why =
           copyExec.status === "tooling_error"
-            ? "could not produce a turn this run could read (a malformed model turn)"
+            ? // The sentence a real run got wrong. `thepitchbydeel`, 2026-09-22:
+              // a reviewed carousel went back for a revision, and the revision
+              // round's three copy attempts each hit the 600s step timeout --
+              // $0 spent, 0 tokens, 30 minutes of wall clock. The hold reported
+              // "a malformed model turn" three times over. See
+              // `describeToolingFailure`.
+              describeToolingFailure(copyExec)
             : copyExec.status === "budget_exceeded"
               ? "ran out of turns"
               : "failed its own output validation";

@@ -152,6 +152,26 @@ function stepStatusFromAgentStatus(status: AgentExecutionStatus): StepRecordStat
 }
 
 /**
+ * WHAT TO TELL A HUMAN WHEN A STEP RESOLVED TO `tooling_error`.
+ *
+ * `tooling_error` covers two different events and a workflow that prints its
+ * own sentence for it has to choose one. Every one of them chose "the model
+ * answered and its answer was unreadable", because until `timedOutAfterMs`
+ * existed there was nothing else to read. A step that ran out of time got
+ * described as a malformed turn, which points a reader at the prompt and the
+ * schema when the actual fact is that nothing came back inside ten minutes.
+ *
+ * So the sentence lives here, once, and every caller gets the right half of
+ * it. Written as a CLAUSE (no leading capital, no full stop) so it drops into
+ * the sentences agents already build around it.
+ */
+export function describeToolingFailure(result: Pick<AgentExecutionResult<unknown>, "timedOutAfterMs">): string {
+  return result.timedOutAfterMs !== undefined
+    ? `ran out of time after ${Math.round(result.timedOutAfterMs / 1000)}s without answering`
+    : "could not produce a turn this run could read (a malformed model turn)";
+}
+
+/**
  * The agent's own reason for a non-`completed` verdict, promoted onto the
  * record — same argument as `step.code`'s `describeOutcomeReason`. A record
  * that says THAT a step failed but not why makes an auth failure, a schema
@@ -331,7 +351,19 @@ export async function runStepAgent<TOutput>(
           if (absorbed > cap) throw error;
           if (runtime.absorbedStepTimeouts !== undefined) runtime.absorbedStepTimeouts.count = absorbed;
           timedOut = error;
-          return { finalOutput: null, steps: [], totalCostUsd: 0, totalTokens: { input: 0, output: 0 }, status: "tooling_error" };
+          // `timedOutAfterMs` is what makes an absorbed timeout legible to
+          // the WORKFLOW, not only to the step record: the caller branches on
+          // `status`, which says `tooling_error` for a model that answered
+          // unreadably and for one that never answered at all. Those are
+          // different facts and agents were telling clients the wrong one.
+          return {
+            finalOutput: null,
+            steps: [],
+            totalCostUsd: 0,
+            totalTokens: { input: 0, output: 0 },
+            status: "tooling_error",
+            timedOutAfterMs: error.timeoutMs,
+          };
         },
       );
       const toolCostUsd = computeToolCostUsd(consumed);

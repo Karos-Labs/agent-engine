@@ -1,6 +1,6 @@
 import type { AgentContext, AgentToolRegistry, GateResponse, TemplateFeedback } from "@agent-engine/core";
 import type { GateDefinition, WorkflowContext } from "./context.js";
-import { WorkflowToolingFailure } from "./signals.js";
+import { WorkflowHeld, WorkflowToolingFailure } from "./signals.js";
 
 /**
  * One accumulated revision request, in the order a person made them.
@@ -24,7 +24,7 @@ export interface RevisionNote {
  * the deliverable rather than lose it: neither is a reason to end the run with
  * nothing, and both are things a human needs to see ON the output.
  */
-export type ReviewOutcome = "approved" | "revisions_exhausted" | "rejected";
+export type ReviewOutcome = "approved" | "revisions_exhausted" | "rejected" | "revision_undeliverable";
 
 export interface ReviewCycleResult<T> {
   /** How the cycle ended — `approved` unless a reviewer ran it out of rounds or rejected it. */
@@ -133,9 +133,58 @@ export interface ReviewCycleOptions<T> {
  */
 export async function runReviewCycle<T>(wf: WorkflowContext, options: ReviewCycleOptions<T>): Promise<ReviewCycleResult<T>> {
   const notes: RevisionNote[] = [];
+  /**
+   * THE LAST DRAFT A HUMAN ACTUALLY LOOKED AT.
+   *
+   * Recorded the moment a gate returns, because from then on it is a thing
+   * that exists: produced, gated, and judged by a person. It is what a failed
+   * revision round falls back to below.
+   */
+  let reviewed: { output: T; revision: number; response: GateResponse } | undefined;
 
   for (let revision = 0; revision <= options.maxRevisions; revision++) {
-    const output = await options.attempt(revision, notes);
+    let output: T;
+    try {
+      output = await options.attempt(revision, notes);
+    } catch (error) {
+      // ── A REVISION THAT CANNOT BE PRODUCED IS NOT A RUN WITH NOTHING ──
+      //
+      // Round 0 throwing is the honest hold: nothing exists yet, and the
+      // caller's own `WorkflowHeld` message says why. It propagates untouched.
+      //
+      // A LATER round is a different fact entirely. By then a draft has been
+      // produced, rendered, packaged and shown to a person, who read it and
+      // asked for a change. Letting the revision's failure end the run means
+      // the reviewer's feedback DESTROYED the thing they were reviewing --
+      // they are left with a held run where a carousel used to be, and the
+      // only way back is to dispatch a fresh one and pay for all of it again.
+      //
+      // It happened: `thepitchbydeel`, 2026-09-22. A carousel cleared its
+      // gate at 19:04, the reviewer sent it back at 19:52, and the revision
+      // round's three copy attempts each hit the 600s step timeout. The run
+      // held. The carousel was gone.
+      //
+      // Only `WorkflowHeld` is caught, and that is the whole boundary: it is
+      // the class meaning "there is no deliverable from this attempt", which
+      // is precisely the case where an earlier one should stand in.
+      // `WorkflowToolingFailure` is a malfunction and `WorkflowBlockedIntake`
+      // means the run should not have started -- neither is improved by
+      // shipping a stale draft, and both still propagate.
+      if (revision === 0 || reviewed === undefined || !(error instanceof WorkflowHeld)) throw error;
+      return {
+        output: reviewed.output,
+        revision: reviewed.revision,
+        notes,
+        response: reviewed.response,
+        outcome: "revision_undeliverable",
+        // Verbatim, never re-worded: the caller's hold sentence is the only
+        // thing that says WHY, and a paraphrase here would make a wording
+        // change in that sentence invisible to its own test.
+        outcomeDetail:
+          `the requested revision could not be produced (${error.message}) — ` +
+          `the round ${reviewed.revision} draft the reviewer saw is delivered instead, unrevised`,
+      };
+    }
 
     const response: GateResponse = options.autoApprove
       ? await wf.step.code(`${options.gateId}-r${revision}`, () => ({
@@ -144,6 +193,8 @@ export async function runReviewCycle<T>(wf: WorkflowContext, options: ReviewCycl
           at: new Date().toISOString(),
         }))
       : await wf.step.gate(`${options.gateId}-r${revision}`, options.buildGate(output, revision));
+
+    reviewed = { output, revision, response };
 
     const templateFeedback = response.templateFeedback ?? [];
     if (options.onDecision) {
