@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { GateVerdict } from "@agent-engine/core";
 import { defineTool, success } from "@agent-engine/tool-common";
 
-const TOOL_VERSION = "1.4.0"; // 1.4.0: the LinkedIn hashtag cap. linkedin-craft §12 has said "zero to three hashtags" since it was written and nothing counted them; X's identical rule has been enforced since 1.0.0.
+const TOOL_VERSION = "1.5.0"; // 1.5.0: the Hebrew tell bank — the phrase list was English only, on a gate that runs for every client and a roster a third of which publishes in Hebrew. // 1.4.0: the LinkedIn hashtag cap. linkedin-craft §12 has said "zero to three hashtags" since it was written and nothing counted them; X's identical rule has been enforced since 1.0.0.
 
 /**
  * Em dash, en dash, and a literal double ASCII hyphen (the typed stand-in for
@@ -126,6 +126,74 @@ const DEFAULT_BANNED_PHRASES = [
   "let that sink in",
   "read that again",
   "the ultimate guide",
+];
+
+/**
+ * THE SAME TELLS, IN HEBREW.
+ *
+ * The bank above is English, every phrase of it, and this gate runs on every
+ * agent's draft — including the clients that publish natively in Hebrew, who
+ * `numbers-sourced.ts` records as a third of the roster. A Hebrew draft could
+ * open with the exact corporate-enthusiasm opener the English list bans, close
+ * with the exact engagement bait, and the gate would call it clean. That is
+ * the audit's "Hebrew parity in the shared gates": not a missing translation,
+ * a rule that only fires for some of the clients it is written for.
+ *
+ * ## What is in here, and what is deliberately not
+ *
+ * Every phrase below is a MARKETING tell — the Hebrew a brand account reaches
+ * for when it is performing rather than saying something. Each one mirrors an
+ * entry in the English bank above: the announcement opener, the fast-paced
+ * world, the dive, the game-changer, the unpopular opinion, the bait question,
+ * the revolution.
+ *
+ * What is NOT here matters more. `בשורה התחתונה`, `לסיכום` and `למעשה` are
+ * ordinary Hebrew that a good writer uses — the direct counterpart of the
+ * reason "Let's", "Imagine" and "journey" were left out of the English list
+ * above. A bank shared by six agents may only hold phrases that are wrong in
+ * every context, and a rule that fires on correct Hebrew would be worse for
+ * these clients than no rule at all.
+ *
+ * ## Inflection, not stems
+ *
+ * The match is a plain substring, so the common inflections are written out
+ * (`נרגש` / `נרגשת` / `נרגשים`) rather than matched by a stem: Hebrew
+ * morphology is prefix-heavy, and a stem short enough to catch every form
+ * would fire inside unrelated words.
+ */
+const HEBREW_BANNED_PHRASES = [
+  // corporate-enthusiasm openers — "thrilled to announce" and its family
+  "נרגש להודיע",
+  "נרגשת להודיע",
+  "נרגשים להודיע",
+  "נרגש לשתף",
+  "נרגשת לשתף",
+  "נרגשים לשתף",
+  "שמחים להודיע",
+  "גאים להכריז",
+  "גאים להציג",
+  // throat-clearing and filler
+  "בעולם המהיר של ימינו",
+  "בעידן הדיגיטלי של ימינו",
+  "שווה לציין ש",
+  "בסופו של יום",
+  // the dive, the revolution, the game-changer
+  "בואו נצלול",
+  "נצלול לעומק",
+  "משנה את כללי המשחק",
+  "לשנות את כללי המשחק",
+  "פתרון מהפכני",
+  // engagement bait
+  "דעה לא פופולרית",
+  "מה דעתכם?",
+  "מה דעתכן?",
+  "אשמח לשמוע מה אתם חושבים",
+  "תייגו חבר",
+  "שתפו בתגובות",
+  // sales tells
+  "אל תפספסו",
+  "לזמן מוגבל",
+  "קישור בביו",
 ];
 
 /**
@@ -436,7 +504,7 @@ function lintOne(text: string, { platform, checkAntiSlop, maxExclamationMarks, b
     }
 
     const lower = text.toLowerCase();
-    const allBannedPhrases = [...DEFAULT_BANNED_PHRASES, ...bannedPhrases];
+    const allBannedPhrases = [...DEFAULT_BANNED_PHRASES, ...HEBREW_BANNED_PHRASES, ...bannedPhrases];
     const matchedPhrases = allBannedPhrases.filter((phrase) => phrase.length > 0 && lower.includes(phrase.toLowerCase()));
     if (matchedPhrases.length > 0) {
       return {
