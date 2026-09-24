@@ -1,6 +1,6 @@
 {
   "id": "tiktok-short-plan-before-retainer",
-  "description": "The script prep run pubsub-21157235573121560 produced on 2026-09-10 for a typed topic (prompt v8, $0.08, 3.5 min to the gate), with one correction: its last beat sold (\"We show you the plan before anything else\"), which salesPitchIssues now sends back, so the landing beat was rewritten to end on what the viewer should do. Four beats in four different places, a 10-word hook, sentences under a breath.",
+  "description": "The script prep run pubsub-21157235573121560 produced on 2026-09-10 for a typed topic (prompt v8, $0.08, 3.5 min to the gate), with one correction: its last beat sold (\"We show you the plan before anything else\"), which salesPitchIssues now sends back, so the landing beat was rewritten to end on what the viewer should do. Four beats in four different places, a 10-word hook, sentences under a breath. Endorsed 2026-09-24 by Shlomi after a read for spoken English: beats 3 and 4 used uncontracted \"do not\" / \"that is\", which read aloud like written text; now contracted.",
   "agentId": "tiktok-agent",
   "language": "en",
   "input": {
@@ -31,14 +31,14 @@
         "seconds": 8
       },
       {
-        "narration": "When an agency skips the plan, it means one of two things. They do not have one. Or they do not want you to compare it to anyone else's.",
+        "narration": "When an agency skips the plan, it means one of two things. They don't have one. Or they don't want you comparing it to anyone else's.",
         "onScreenText": "No plan is a signal.",
         "visualBrief": "Wide shot of an empty boardroom, chairs pushed in around a long table, grey morning light coming through floor-length windows behind. No people, no screens, no documents on the table. Neutral tones, slightly cold ambient light. The room looks ready for a meeting that has not started yet.",
         "stockQuery": "empty boardroom chairs morning light",
         "seconds": 8
       },
       {
-        "narration": "Ask for the plan in writing before you sign anything. If it never comes, that is your answer.",
+        "narration": "Ask for the plan in writing before you sign anything. If it never comes, that's your answer.",
         "onScreenText": "Ask for the plan first.",
         "visualBrief": "Wide shot of an empty urban intersection at early morning, wet pavement reflecting pale sky light. No pedestrians, no cars in motion. Buildings on both sides, one traffic light visible mid-frame showing green. Clean, still, directional. The mood is readiness, not drama.",
         "stockQuery": "city street intersection early morning wide",
@@ -54,6 +54,6 @@
   "gateArgs": {
     "brandCompliance": { "forbiddenTerms": ["game-changer", "unlock", "seamless", "leverage", "guaranteed", "#1"] }
   },
-  "endorsedBy": "claude-code, from prep run pubsub-21157235573121560 with the last beat rewritten; awaiting a human endorsement",
-  "endorsedAt": "2026-09-10T13:00:00Z"
+  "endorsedBy": "shlomi@karoslabs.com",
+  "endorsedAt": "2026-09-24T22:55:00Z"
 }
