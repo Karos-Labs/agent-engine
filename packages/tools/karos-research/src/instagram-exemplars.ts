@@ -6,7 +6,8 @@ import { fetchHtmlViaFetch, ScraperError, type ScrapedRecord, type ScraperProvid
 // 1.0.0 — new (2026-09-24, RFC-26 Phase 1): the client's, its competitors'
 // and its reference accounts' Instagram posts, hundreds at a time, ranked by
 // how each performed inside its own account.
-const TOOL_VERSION = "1.0.0";
+// 1.0.1: every input property carries a description (the registry test); no behaviour change.
+const TOOL_VERSION = "1.0.1";
 
 /** What one `instagram.account_posts` call bills (ScrappyCoco usage, 2026-09-24, 12 posts per call). */
 export const HARVEST_CALL_COST_USD = 0.0019;
