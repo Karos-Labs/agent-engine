@@ -17,6 +17,7 @@ import { createGetLikenessConsent } from "./get-likeness-consent.js";
 import { createMediaLibraryAdd, createMediaLibraryList } from "./media-library.js";
 import { createVisualQaGate } from "./visual-qa-gate.js";
 import { createInspectImages } from "./inspect-images.js";
+import { createJudgeExemplars } from "./judge-exemplars.js";
 import { createHarvestArticleImages } from "./harvest-article-images.js";
 import { createHarvestSiteImages } from "./harvest-site-images.js";
 import { createScreenshotPage, type BrowserLauncher } from "./screenshot-page.js";
@@ -29,6 +30,7 @@ import { buildProviderRegistry, createImageSource, singleProviderSource, type Im
 export * from "./providers.js";
 export * from "./providers/index.js";
 export * from "./find-images.js";
+export * from "./judge-exemplars.js";
 export * from "./image-floor.js";
 export * from "./image-model-ladder.js";
 export * from "./image-provenance.js";
@@ -326,6 +328,14 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
       ...(visionClient ? { client: visionClient } : {}),
       ...(options.visionModel ? { model: options.visionModel } : {}),
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    }),
+    // ── RFC-26 Phase 2 (2026-09-24): craft grade + design DNA for harvested
+    // Instagram exemplars; frames copied to the media bucket, reference-only.
+    "media.judgeExemplars": createJudgeExemplars({
+      ...(visionClient ? { client: visionClient } : {}),
+      ...(options.visionModel ? { model: options.visionModel } : {}),
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      mediaStore: options.mediaStore,
     }),
     // ── Tier 1b: the cited articles' own lead images. Publisher-owned, so
     // `unknown` provenance with a credit line — the reviewer decides.
