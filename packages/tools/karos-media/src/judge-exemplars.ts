@@ -7,7 +7,8 @@ import { DEFAULT_VISION_MODEL, type VisionAnalysisClient, type VisionPart } from
 // harvested exemplar's frames and grades its CRAFT, separately from its
 // engagement, and records its design DNA. Frames are copied to the media
 // bucket first, because Instagram's CDN links are signed and expire.
-const TOOL_VERSION = "1.0.0";
+// 1.0.1: every input property carries a description (the registry test); no behaviour change.
+const TOOL_VERSION = "1.0.1";
 
 const MAX_IMAGE_BYTES = 4_000_000;
 const RATE_LIMIT_RETRIES = 3;
