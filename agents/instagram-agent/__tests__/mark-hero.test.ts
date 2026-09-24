@@ -176,6 +176,9 @@ describe("an interior photograph is a block, not the whole screen (2026-09-24)",
     expect(data.slides[1]!.fields.figurePlacement).toBe("inset");
     expect(data.slides[1]!.images.hero).toBe("media/b.jpg");
     expect(data.slides[0]!.fields.figurePlacement).not.toBe("inset");
+    // #244 merged over #242: the cover with a deck is `framed`; the interior photo is the inset block, never both.
+    expect(data.slides[0]!.fields.heroKind).toBe("framed");
+    expect(data.slides[1]!.fields.heroKind).not.toBe("framed");
     const css = readFileSync(path.join(TEMPLATES, "_design-system.css"), "utf8");
     expect(css).toContain('body[data-figure="inset"]:has(.plate.slide) .scrim { display: none; }');
   });
