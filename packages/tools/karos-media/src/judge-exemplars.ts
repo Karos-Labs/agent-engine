@@ -31,9 +31,10 @@ export const JudgeExemplarsInputSchema = z.object({
       }),
     )
     .min(1)
-    .max(40),
+    .max(40)
+    .describe("Harvested posts to judge (from research.harvestInstagramExemplars), each with its frames' image URLs."),
   framesPerPost: z.number().int().min(1).max(8).default(5).describe("Cover plus the next frames. A carousel's craft shows by slide 5."),
-  concurrency: z.number().int().min(1).max(8).default(4),
+  concurrency: z.number().int().min(1).max(8).default(4).describe("Posts judged at once; bounded because the Vertex quota is shared."),
   minCraft: z
     .number()
     .int()
