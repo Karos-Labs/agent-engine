@@ -111,6 +111,8 @@ describe("DEFAULT_RENDER_RULES + resolveRenderRules — Phase 0 item D's rule so
       // here: nobody writes them and a slide carrying only these has no prose.
       "accentForm",
       "brandHandle",
+      // 2026-09-24: which of the three closer forms, seeded per client and run.
+      "closerForm",
       // The run's composition grammar as a keyword the CSS can select on. It
       // was published only as `--lockup-anchor`, and a custom property cannot
       // appear in a selector, so all four grammars put the lockup at the same y.

@@ -1095,6 +1095,20 @@ export function carryPairFor(slides: ReadonlyArray<{ n: number; layout: Instagra
 export const CTA_PILL_MAX_WORDS = 6;
 export const CTA_PILL_MAX_CHARS = 40;
 
+/**
+ * The closer's form (2026-09-24, stage 10), seeded per client and run so the
+ * last slide stops being the one most alike across the fleet. `panel` is the
+ * plate as it always was. Stable for one seed: an attempt renders a slide up
+ * to three times, and every render must match the one the floor measured.
+ */
+export const CLOSER_FORMS = ["panel", "block", "split"] as const;
+export type CloserForm = (typeof CLOSER_FORMS)[number];
+
+export function closerFormFor(seed: string | undefined): CloserForm {
+  if (seed === undefined || seed.length === 0) return "panel";
+  return CLOSER_FORMS[mix32(fnv1a32ForVariation(`${seed}:closer`)) % CLOSER_FORMS.length]!;
+}
+
 export function ctaFormFor(text: string): "pill" | "line" {
   const trimmed = text.trim();
   const words = trimmed.split(/\s+/u).filter((w) => w.length > 0).length;
@@ -3114,6 +3128,8 @@ export function assembleSlidesData(params: {
                 edge: index === 0 || index === params.copy.slides.length - 1,
               }),
         ...(heroIsMark ? { heroKind: "mark" } : {}),
+        // 2026-09-24: which of the three closer forms (`closerFormFor`); only the closer plate reads it.
+        ...(layout === "closer" ? { closerForm: closerFormFor(`${params.clientSlug}:${params.paletteSeed ?? ""}`) } : {}),
         ...(photoCredit !== undefined ? { photoCredit } : {}),
         ...(groundTone !== undefined ? { groundTone } : {}),
         // `auto`: the renderer looks at the slide and places it (publish.renderCarousel 1.11.0).
