@@ -110,7 +110,16 @@ export function createServerTools(workspaceStore: WorkspaceStoreLike, env: Recor
     // (2026-09) where `media.stageAsset` uploads a chosen X/LinkedIn image so
     // the deliverable carries a URL the portal can re-host — the same store
     // `publish.renderCarousel` already writes its PNGs to.
-    ...createKarosMediaTools({ env, ...(mediaStore ? { objectReader: mediaStore, mediaStore } : {}) }),
+    //
+    // `store: workspaceStore` (2026-09-24). Without it `createKarosMediaTools`
+    // fell back to `createWorkspaceStore()`, a LOCAL `.karos-workspace` under
+    // the container's cwd: `media.libraryAdd` failed in prep with `EACCES:
+    // permission denied, mkdir '/app/.karos-workspace'`, so no client upload
+    // or client-site picture was ever filed, and `media.libraryList`,
+    // `media.getVisualPatterns` and `media.getLikenessConsent` read an empty
+    // directory instead of the client's real documents. Every other tool
+    // package here already receives this same handle.
+    ...createKarosMediaTools({ env, store: workspaceStore, ...(mediaStore ? { objectReader: mediaStore, mediaStore } : {}) }),
     // The write side of a client's setup documents. Merged in for every
     // product because the registry is shared, but only the setup workflows
     // name it in a step -- a drafting agent that never calls it cannot
