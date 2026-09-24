@@ -240,6 +240,9 @@ const HAPPY_PATH_STEP_IDS = [
   // nothing. The second of the floor's two enforcements; the first is
   // `partitionGaps` at the three optional-spend gates in the rescue ladder.
   "06h-imagery-floor-check-attempt-1",
+  // 2026-09-23: the floor frames staged out of RAM too (runs every attempt;
+  // on the happy path it has nothing new to stage).
+  "06h3-stage-floor-images-attempt-1",
   "07-self-check-attempt-1",
   "07b-craft-hygiene-attempt-1",
   // Phase 0 (RFC-13 §C): the relevance judge — one Flash call per attempt,
