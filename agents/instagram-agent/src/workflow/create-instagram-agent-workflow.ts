@@ -70,6 +70,7 @@ import {
   type TemplateDefinition,
   type TemplateStore,
 } from "@agent-engine/tool-karos-templates";
+import { homepageUrlFor, logoCandidatesFromHtml } from "./logo-discovery.js";
 import { brandLogoDataUri, describeBrandLogoFailure, downloadBrandLogoOutcome, LIKENESS_FAIL_CLOSED, parseBrandLogoDataUri, renderVisualPatternReference, type BrandLogoFailureReason, type BrandLogoPlacement, type GeneratedLikenessDecision, type MediaLibraryEntry, type VisualPatternProfile } from "@agent-engine/tool-karos-media";
 import { buildBrandHeadHtml, buildBrandLogoBodyHtml, deriveBrandRenderTokens, filterLearnedStyleToRing, planBrandLogo, type BrandRenderTokens } from "./brand-render-tokens.js";
 import { buildScriptFontHeadForLanguage } from "./script-fonts.js";
@@ -2480,9 +2481,45 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      * FAILURE is never memoized, so the next attempt tries again and a
      * transient outage costs one attempt's logo, not the run's.
      */
+    /**
+     * 2026-09-24 (stage 9): the logo found on the client's own homepage when
+     * the kit has none, or the kit's one did not download. Set once it
+     * downloads, so every later consumer (placement, the gate) treats it as
+     * this run's logo, and read back by the gate so a reviewer sees where it
+     * came from.
+     */
+    let discoveredLogoUrl: string | undefined;
+    let logoDiscoveryTried = false;
+    const discoverSiteLogo = async (): Promise<string | undefined> => {
+      if (logoDiscoveryTried) return undefined;
+      logoDiscoveryTried = true;
+      try {
+        const profile = await tools["client.getProfile"]?.execute({}, { ctx });
+        const record = profile?.status === "success" ? (profile.result as Record<string, unknown>) : {};
+        const homepage = homepageUrlFor(typeof record["website"] === "string" ? (record["website"] as string) : undefined);
+        if (homepage === undefined) return undefined;
+        const page = await brandFetch(homepage, { signal: AbortSignal.timeout(8000), headers: { "user-agent": "Mozilla/5.0 (compatible; KarosBot/1.0)" } });
+        if (!page.ok) return undefined;
+        const html = (await page.text()).slice(0, 1_500_000);
+        const name = typeof record["name"] === "string" ? (record["name"] as string) : typeof record["companyName"] === "string" ? (record["companyName"] as string) : undefined;
+        for (const candidate of logoCandidatesFromHtml(html, page.url || homepage, name).slice(0, 4)) {
+          const outcome = await downloadBrandLogoOutcome(brandFetch, candidate);
+          if (!outcome.ok) continue;
+          discoveredLogoUrl = candidate;
+          return brandLogoDataUri(outcome.download);
+        }
+      } catch (error) {
+        console.warn(`brand logo discovery failed: ${(error as Error).message}`);
+      }
+      return undefined;
+    };
     const ensureBrandLogoDataUri = async (): Promise<string | undefined> => {
-      if (effectiveKit?.logoUrl === undefined) return undefined;
       if (cachedLogoDataUri !== undefined) return cachedLogoDataUri;
+      if (effectiveKit?.logoUrl === undefined) {
+        const found = await discoverSiteLogo();
+        if (found !== undefined) cachedLogoDataUri = found;
+        return found;
+      }
       const cacheDir = path.resolve(options.repoRoot, ".media-cache", wf.runId, "brand");
       const cacheFile = path.join(cacheDir, "logo.datauri");
       const rootResolved = path.resolve(options.repoRoot);
@@ -2502,7 +2539,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       const outcome = await downloadBrandLogoOutcome(brandFetch, effectiveKit.logoUrl);
       if (!outcome.ok) {
         brandLogoFailure = { reason: outcome.reason, detail: outcome.detail, note: describeBrandLogoFailure(outcome, effectiveKit.logoUrl) };
-        return undefined;
+        // The configured logo is broken: the site's own mark is better than none.
+        const found = await discoverSiteLogo();
+        if (found !== undefined) cachedLogoDataUri = found;
+        return found;
       }
       brandLogoFailure = undefined;
       cachedLogoDataUri = brandLogoDataUri(outcome.download);
@@ -12542,7 +12582,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             ...(styleDirectiveResult.overrides.accent !== undefined ? [styleDirectiveResult.overrides.accent] : []),
           ]),
           brandAsset: assessBrandAssetPresence({
-            configuredLogoUrl: effectiveKit?.logoUrl,
+            configuredLogoUrl: effectiveKit?.logoUrl ?? discoveredLogoUrl,
             rejectedLogoUrlReason: effectiveKit?.rejectedLogoUrlReason,
             hasDownload: placement !== undefined,
             placement,
@@ -13589,12 +13629,17 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 `${finding.threshold.toFixed(2)} — ${finding.waivedReason ?? "waived because no redraft can find a picture"}`,
             })),
           brandAsset: {
-            present: draft.rendered.rendered.length > 0 && brandLogoFailure === undefined && effectiveKit?.logoUrl !== undefined,
-            ...(effectiveKit?.logoUrl === undefined
-              ? { reason: "this client's brand kit carries no logoUrl", remedy: "add a logoUrl to the client's brand record" }
-              : brandLogoFailure !== undefined
-                ? { reason: `${brandLogoFailure.reason}: ${brandLogoFailure.detail}`, remedy: brandLogoFailure.note }
-                : {}),
+            present: draft.rendered.rendered.length > 0 && (discoveredLogoUrl !== undefined || (brandLogoFailure === undefined && effectiveKit?.logoUrl !== undefined)),
+            ...(discoveredLogoUrl !== undefined
+              ? {
+                  reason: `found on the client's own site: ${discoveredLogoUrl}${effectiveKit?.logoUrl === undefined ? " (the brand kit carries no logoUrl)" : " (the brand kit's logoUrl did not download)"}`,
+                  remedy: "add it (or a better file) as the logoUrl on the client's brand record to pin it",
+                }
+              : effectiveKit?.logoUrl === undefined
+                ? { reason: "this client's brand kit carries no logoUrl, and none was found on its site", remedy: "add a logoUrl to the client's brand record" }
+                : brandLogoFailure !== undefined
+                  ? { reason: `${brandLogoFailure.reason}: ${brandLogoFailure.detail}`, remedy: brandLogoFailure.note }
+                  : {}),
           },
         });
         // Read once, put on the payload AND used as the policy, so a reviewer
