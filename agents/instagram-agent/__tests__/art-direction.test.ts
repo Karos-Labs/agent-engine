@@ -147,24 +147,35 @@ describe("the workflow never calls image.generate without art direction", () => 
   it("source-pins the generate rescue tier's buildArgs to an art object", () => {
     const source = readFileSync(WORKFLOW_SOURCE, "utf8");
 
-    const at = source.indexOf('tools["image.generate"]');
-    expect(at).toBeGreaterThan(-1);
-    // The tier literal that follows the tool lookup. Scanned rather than
-    // executed because the alternative — driving the whole rescue path — is a
-    // Chromium-gated end-to-end run, and what is actually at risk here is
-    // someone deleting one property from an object literal.
-    const tier = source.slice(at, at + 1_200);
-    // Integrated form (Phase 3): the direction builds the object and the run's
-    // FROZEN style lock (item S) is spread over it, so a later attempt cannot
-    // hand the generator a different style from the first one. The old
-    // `art: artDirectionFor(` / `art: buildArtDirection(` shapes still match —
-    // what this pin is actually protecting is that SOME art object reaches
-    // every `image.generate` call, never that it is built one particular way.
-    expect(tier).toMatch(/art:\s*(\{\s*\.\.\.)?(artDirectionFor|buildArtDirection)\(/);
+    // Every CALL SITE of the tool: the rescue tier's `tool:` literal and, since
+    // 2026-09-24, the product campaign's `.execute(` (stage 4). A presence
+    // check (`=== undefined`) builds no arguments and is not a call site.
+    const sites: number[] = [];
+    for (let at = source.indexOf('tools["image.generate"]'); at !== -1; at = source.indexOf('tools["image.generate"]', at + 1)) {
+      const after = source.slice(at + 'tools["image.generate"]'.length, at + 'tools["image.generate"]'.length + 24);
+      if (/^\s*===\s*undefined/.test(after)) continue;
+      sites.push(at);
+    }
+    expect(sites.length).toBeGreaterThan(0);
+    for (const at of sites) {
+      // The literal that follows the tool lookup. Scanned rather than
+      // executed because the alternative — driving the whole rescue path — is
+      // a Chromium-gated end-to-end run, and what is actually at risk here is
+      // someone deleting one property from an object literal.
+      const call = source.slice(at, at + 1_200);
+      // Integrated form (Phase 3): the direction builds the object and the
+      // run's FROZEN style lock (item S) is spread over it, so a later attempt
+      // cannot hand the generator a different style from the first one. The
+      // old `art: artDirectionFor(` / `art: buildArtDirection(` shapes still
+      // match — what this pin is actually protecting is that SOME art object
+      // reaches every `image.generate` call, never that it is built one
+      // particular way.
+      expect(call).toMatch(/art:\s*(\{\s*\.\.\.)?(artDirectionFor|buildArtDirection)\(/);
+    }
 
-    // And there is exactly one place that builds generation arguments, so the
-    // scan above cannot be passing while a second call site goes unchecked.
-    expect(source.split('tools["image.generate"]')).toHaveLength(2);
+    // And the call sites are exactly the two known ones, so a third cannot
+    // arrive without this scan being extended to see it.
+    expect(sites).toHaveLength(2);
   });
 });
 

@@ -86,6 +86,37 @@ describe("image.generate with references", () => {
     expect(reason).toContain("slide 3 (reference 1 (client-media/bottle.gif) is not a PNG, JPEG or WebP)");
   });
 
+  // 2.4.0 (2026-09-24, stage 4 — the product campaign): a billboard scene
+  // must carry the client's slogan, which the standing "no text" line forbade.
+  it("a need with `lettering` quotes the exact words once and permits them and nothing else beside the label", async () => {
+    const { client, seen } = capture();
+    await tool(client).execute(
+      {
+        repoRoot,
+        runId: "run_1",
+        needs: [{ n: 3, prompt: "the bottle on a roadside billboard", references: [{ path: "client-media/bottle.png", role: "product" }], lettering: "Drink the rally" }],
+      },
+      { ctx: CTX },
+    );
+    const brief = ((seen[0]!.contents as ReferenceContent[])[0]!.parts[1] as { text: string }).text;
+    expect(brief).toContain('Lettering: the scene carries exactly these words, and no other words: "Drink the rally".');
+    expect(brief).toContain("letter for letter");
+    expect(brief).toContain('other than what is printed on the reference product or logo itself and the exact words "Drink the rally"');
+  });
+
+  it("a need without lettering composes the reference brief byte for byte as 2.3.0 did", async () => {
+    const { client, seen } = capture();
+    await tool(client).execute(
+      { repoRoot, runId: "run_1", needs: [{ n: 2, prompt: "the bottle on a table", references: [{ path: "client-media/bottle.png", role: "product" }] }] },
+      { ctx: CTX },
+    );
+    const brief = ((seen[0]!.contents as ReferenceContent[])[0]!.parts[1] as { text: string }).text;
+    expect(brief).not.toContain("Lettering:");
+    expect(brief).toContain(
+      "Constraints: no text, words, lettering or numbers other than what is printed on the reference product or logo itself; no other logos or brand marks; no watermarks, no borders or frames, no collage or split panels.",
+    );
+  });
+
   it("a need without references sends the same plain string brief it always did", async () => {
     const { client, seen } = capture();
     await tool(client).execute({ repoRoot, runId: "run_1", needs: [{ n: 1, prompt: "a quiet desk at dawn" }] }, { ctx: CTX });

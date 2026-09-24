@@ -65,7 +65,15 @@ import { buildImageProvenance } from "./image-provenance.js";
 // can hold the client's actual bottle rather than an invented one. MINOR:
 // optional and additive, and a need without references sends the same string
 // `contents` and the same brief byte for byte.
-const TOOL_VERSION = "2.3.0";
+// 2.4.0 (2026-09-24, stage 4 of the reference-looks plan, the product
+// campaign): a need may carry `lettering`, the EXACT words a scene must show
+// (the slogan on a billboard, the product name on a street poster). The
+// standing constraint line then permits those words and no others, and the
+// brief quotes them once, verbatim. MINOR: optional and additive, and a need
+// without `lettering` composes the same brief byte for byte. The caller must
+// read the words back off the frame and refuse a frame that misspells them:
+// an image model's lettering is a request, never a guarantee.
+const TOOL_VERSION = "2.4.0";
 /**
  * The image-generation call, narrowed to what this tool uses so the package
  * does not take a type dependency on the whole `@google/genai` surface.
@@ -117,6 +125,8 @@ export type ReferenceRole = (typeof REFERENCE_ROLES)[number];
 export const MAX_REFERENCES = 3;
 /** Per reference. Inline data counts against the request, and a product shot is never this big. */
 export const MAX_REFERENCE_BYTES = 7_000_000;
+/** A slogan or a product name, not a paragraph: past a short line an image model's spelling falls apart. */
+export const MAX_LETTERING_CHARS = 60;
 
 const REFERENCE_MIME: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" };
 
@@ -139,6 +149,14 @@ export const GenerateImageInputSchema = z.object({
           .optional()
           .describe(
             "Real images the model receives with the brief: the client's own product, a logo, a photograph of the subject. The scene is generated around them. Omit for a plain text-to-image generation.",
+          ),
+        lettering: z
+          .string()
+          .min(1)
+          .max(MAX_LETTERING_CHARS)
+          .optional()
+          .describe(
+            "The EXACT words this scene must carry in the frame (a billboard's slogan, a poster's product name), quoted verbatim in the brief and the only words the constraints then permit beyond what is printed on a reference. Omit for a scene with no lettering. The caller must read the words back off the generated frame: lettering is requested, never guaranteed.",
           ),
       }),
     )
@@ -516,7 +534,7 @@ export function createGenerateImage(options: {
         }
 
         for (let attempt = 0; attempt < input.perNeed; attempt++) {
-          const brief = buildBrief(need.prompt, input.art, references.map((r) => r.role));
+          const brief = buildBrief(need.prompt, input.art, references.map((r) => r.role), need.lettering);
           let response: Awaited<ReturnType<ImageGenerationClient["models"]["generateContent"]>>;
           let servedBy: string;
           try {
@@ -729,8 +747,16 @@ function referenceBlock(roles: readonly ReferenceRole[]): string[] {
   return ["", "Reference images (attached above, in order):", ...roles.map(line)];
 }
 
-function buildBrief(visualNeed: string, art?: GenerateImageInputParsed["art"], referenceRoles: readonly ReferenceRole[] = []): string {
+function buildBrief(visualNeed: string, art?: GenerateImageInputParsed["art"], referenceRoles: readonly ReferenceRole[] = [], lettering?: string): string {
   const lines = [`Create a photographic image for a social media carousel slide: ${visualNeed}`, ...referenceBlock(referenceRoles)];
+  // 2.4.0: the words a scene must carry, quoted once and verbatim. Stated as
+  // its own block so the spelling instruction is not diluted by the direction.
+  if (lettering !== undefined) {
+    lines.push(
+      "",
+      `Lettering: the scene carries exactly these words, and no other words: "${lettering}". Spell them exactly as given, letter for letter, in clean, legible, correctly spaced type. Do not add, drop, repeat or change a single letter.`,
+    );
+  }
 
   const direction: string[] = [];
   if (art?.aesthetic) direction.push(`Aesthetic: ${art.aesthetic}.`);
@@ -771,7 +797,7 @@ function buildBrief(visualNeed: string, art?: GenerateImageInputParsed["art"], r
     lines.push("", "Do not include:", ...forbid.map((f) => `- ${f}`));
   }
 
-  lines.push("", buildConstraintLine(art?.permittedMarks ?? [], art?.permittedFigures ?? [], referenceRoles.some((r) => r === "product" || r === "logo")));
+  lines.push("", buildConstraintLine(art?.permittedMarks ?? [], art?.permittedFigures ?? [], referenceRoles.some((r) => r === "product" || r === "logo"), lettering));
 
   return lines.join("\n");
 }
@@ -806,7 +832,17 @@ function buildBrief(visualNeed: string, art?: GenerateImageInputParsed["art"], r
  * permitted, which is the composition this has to get right: the two permits
  * are independent, and either one alone must leave the other's default intact.
  */
-function buildConstraintLine(permittedMarks: readonly string[], permittedFigures: readonly string[], carriesClientMarks = false): string {
+function buildConstraintLine(permittedMarks: readonly string[], permittedFigures: readonly string[], carriesClientMarks = false, lettering?: string): string {
+  // 2.4.0: a scene that must carry words (a billboard's slogan) permits
+  // exactly those words, beside a reference's own printed text when there is
+  // one. Every other word and mark stays forbidden.
+  if (lettering !== undefined) {
+    const source = carriesClientMarks ? "what is printed on the reference product or logo itself and " : "";
+    return (
+      `Constraints: no text, words, lettering or numbers other than ${source}the exact words "${lettering}"; ` +
+      "no other logos or brand marks; no watermarks, no borders or frames, no collage or split panels."
+    );
+  }
   // A reference product or logo carries its own printed text and mark, which
   // must survive; every OTHER word and mark stays forbidden. Without a
   // reference this is the standing line, byte for byte.
