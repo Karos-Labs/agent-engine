@@ -215,4 +215,21 @@ export interface AgentExecutionResult<TOutput> {
   totalCostUsd: number;
   totalTokens: { input: number; output: number };
   status: AgentExecutionStatus;
+  /**
+   * HOW LONG WE WAITED, when waiting is what ended the step.
+   *
+   * Present ONLY on the synthetic result an absorbed `WorkflowStepTimeout`
+   * produces (`step-agent.ts`). Absent on every other result, including every
+   * real `tooling_error` — so its presence is the question "did the model
+   * answer badly, or did it not answer at all", which nothing downstream
+   * could previously ask.
+   *
+   * It mattered on a real run. `thepitchbydeel`'s carousel of 2026-09-22 was
+   * reviewed, sent back for a revision, and then the revision round's three
+   * copy attempts each hit the 600s step timeout. The run held, and it told
+   * whoever read it that the model had produced "a malformed model turn" on
+   * all three -- which would have sent a reader to the copy prompt and the
+   * schema. Nothing was malformed. Nothing arrived.
+   */
+  timedOutAfterMs?: number;
 }
