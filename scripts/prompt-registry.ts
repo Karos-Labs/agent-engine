@@ -456,6 +456,10 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "x-craft",
     agent: "x-agent",
+    // 9: §14 asks for `subject` — the post's topic as one short line. A run
+    // steered by a typed note used to record the note itself as its subject
+    // (prep, 22 Sept 2026: a two-clause Hebrew note with "or something on
+    // costs:" in the client's subject table); the draft now names it.
     // 8: §12b — no relative day words. A draft is reviewed and published
     // later, so "yesterday" is wrong by the time anyone reads it, and every
     // check that existed asked whether a claim was SOURCED rather than
@@ -465,8 +469,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
     // and §5/§11 state the three limits the gate now actually enforces (hook
     // 70 with no @/#/link/emoji, one hashtag, two mentions) rather than
     // describing them as taste.
-    versions: ["1", "2", "3", "4", "5", "6", "7", "8"],
-    latestVersion: "8",
+    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
+    latestVersion: "9",
     requires: { languageDirective: true, numbersSourced: true },
   },
 ];

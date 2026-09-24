@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CONTENT_MODES, MODE_CUES, modeFromDirection, readRunDirection, runDirectionField, selectContentMode } from "../src/index.js";
+import { CONTENT_MODES, MAX_RECORDED_SUBJECT_CHARS, MODE_CUES, modeFromDirection, readRunDirection, recordedSubject, runDirectionField, selectContentMode, topicLineFromNote } from "../src/index.js";
 
 /**
  * `readRunDirection` — one answer, for every agent, to two questions:
@@ -332,5 +332,46 @@ describe("readRunDirection — a typed note that names a kind of post outranks t
         seen.set(cue, mode);
       }
     }
+  });
+});
+
+describe("the subject a run records, when its topic came from a typed note (2026-09-24)", () => {
+  // The prep row this exists for: a two-clause note, typed in Hebrew, landed
+  // in the client's subject table exactly as typed — second thought, colon and all.
+  const note = "משהו על סוכני קניות מבוססי AI\nאו משהו על עלויות:";
+
+  it("marks a promoted instruction as a note, and an explicit requestedTopic as not one", () => {
+    expect(readRunDirection({ customPrompt: note }).topicFromNote).toBe(true);
+    expect(readRunDirection({ requestedTopic: "AI shopping agents" }).topicFromNote).toBeUndefined();
+    expect(readRunDirection({ requestedTopic: "AI shopping agents", customPrompt: note }).topicFromNote).toBeUndefined();
+    expect(readRunDirection({ customPrompt: "Keep it shorter than usual" }).topicFromNote).toBeUndefined();
+    expect(readRunDirection({}).topicFromNote).toBeUndefined();
+  });
+
+  it("leaves every topic that did not come from a note exactly as it is", () => {
+    expect(recordedSubject("remote work", { fromNote: false, stated: "Something else entirely" })).toBe("remote work");
+  });
+
+  it("records the subject the draft named, never the note", () => {
+    expect(recordedSubject(note, { fromNote: true, stated: "  AI shopping agents\n and brand discovery " })).toBe("AI shopping agents and brand discovery");
+  });
+
+  it("falls back to the note's first line, without its trailing colon, when the draft named nothing", () => {
+    expect(recordedSubject(note, { fromNote: true })).toBe("משהו על סוכני קניות מבוססי AI");
+    expect(recordedSubject(note, { fromNote: true, stated: "   " })).toBe("משהו על סוכני קניות מבוססי AI");
+    expect(topicLineFromNote("\n\n  pricing for agents:  \nmore")).toBe("pricing for agents");
+  });
+
+  it("cuts a long line at a word boundary", () => {
+    const long = Array.from({ length: 40 }, (_, i) => `word${i}`).join(" ");
+    const line = topicLineFromNote(long);
+    expect(line.endsWith("…")).toBe(true);
+    expect(line.length).toBeLessThanOrEqual(MAX_RECORDED_SUBJECT_CHARS + 1);
+    expect(long.startsWith(line.slice(0, -1))).toBe(true);
+    expect(line.slice(0, -1).endsWith(" ")).toBe(false);
+  });
+
+  it("never records an empty subject", () => {
+    expect(recordedSubject(":::", { fromNote: true })).toBe(":::");
   });
 });

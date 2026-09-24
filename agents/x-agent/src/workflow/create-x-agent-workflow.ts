@@ -16,6 +16,7 @@ import {
   researchDigestForDrafting,
   researchSourceTexts,
   readRunDirection,
+  recordedSubject,
   runDirectionField,
   buildClientVoiceContext,
   readCrossChannelHistory,
@@ -1316,6 +1317,14 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       },
     });
     const { mediaPlan, ...draft } = review.output;
+    // What this run WRITES DOWN as its subject — the subject table, the
+    // platform state's topics and the decision memory. Equal to the selected
+    // topic for every source but a typed note, which records the subject the
+    // draft named (x-craft@9 §14) rather than the note as it was typed.
+    const subject = recordedSubject(selected.topic, {
+      fromNote: selected.source === "requested" && runDirection.topicFromNote === true && selected.topic === runDirection.topicOverride,
+      stated: draft.subject,
+    });
     /**
      * The repairs made to the round that was APPROVED — not the last round
      * attempted. Omitted from the deliverable when empty, so a clean run
@@ -1423,7 +1432,7 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
           // `(lane: …)` feeds the lane rotation and `(mode: …)` the content-mode
           // rotation on every future run — the summary is the only field that
           // survives the decision schema.
-          summary: `Posted about "${selected.topic}" (lane: ${laneSelection.lane}, angle: ${laneSelection.angle}, mode: ${modeSelection.mode})`,
+          summary: `Posted about "${subject}" (lane: ${laneSelection.lane}, angle: ${laneSelection.angle}, mode: ${modeSelection.mode})`,
         },
         { ctx },
       );
@@ -1450,7 +1459,7 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
         sources: researchSources.map((r) => r.url),
       },
       subjectRow: {
-        subject: selected.topic,
+        subject,
         angle: draft.angle,
         type: laneSelection.lane,
         stage: goalLine.goal,
@@ -1461,7 +1470,7 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       },
       platformStateDelta: {
         postsByUs: 1,
-        topics: [selected.topic],
+        topics: [subject],
         voiceNotes: [],
         account: { handle: intake.xHandle },
       },
