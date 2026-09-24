@@ -159,7 +159,10 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // (67 → 69, 2026-09-24: memory.readFleet / memory.appendFleetRow, the
     // allowlisted fleet-scoped memory the Instagram agent's cross-client
     // variety rule needs; see packages/tools/karos-memory/src/fleet.ts.)
-    expect(names.length).toBe(69);
+    // (69 → 70, 2026-09-24: research.harvestInstagramExemplars, RFC-26 Phase 1 —
+    // hundreds of Instagram posts across client, competitors and references,
+    // ranked inside each account, for the exemplar library.)
+    expect(names.length).toBe(70);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }

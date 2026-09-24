@@ -13,6 +13,8 @@ import {
   type SiteCrawlResult,
   type SitemapResult,
   type SocialHistoryRequest,
+  type SocialHistoryPageRequest,
+  type SocialHistoryPage,
   type SocialPlatform,
 } from "./provider.js";
 import { crawlSiteViaFetch, fetchHtmlViaFetch, fetchPageStatus, fetchRobotsViaFetch, fetchSitemapViaFetch } from "./crawl.js";
@@ -187,6 +189,16 @@ export function createScrappyCocoScraper(options: ScrappyCocoOptions): ScraperPr
     limit: number,
     timeoutMs: number,
   ): Promise<ScrapedRecord[]> {
+    return (await executeWithBody(source, capability, input, limit, timeoutMs)).records;
+  }
+
+  async function executeWithBody(
+    source: string,
+    capability: string,
+    input: Record<string, unknown>,
+    limit: number,
+    timeoutMs: number,
+  ): Promise<{ records: ScrapedRecord[]; body: ExecuteResponse & Record<string, unknown> }> {
     let response: Response;
     try {
       response = await fetchImpl(`${baseUrl}${EXECUTE_PATH}`, {
@@ -232,10 +244,29 @@ export function createScrappyCocoScraper(options: ScrappyCocoOptions): ScraperPr
     }
 
     const records = Array.isArray(body.records) ? body.records : [];
-    return records
-      .map(toRecord)
-      .filter((r): r is ScrapedRecord => r !== undefined)
-      .slice(0, limit);
+    return {
+      records: records
+        .map(toRecord)
+        .filter((r): r is ScrapedRecord => r !== undefined)
+        .slice(0, limit),
+      body: body as ExecuteResponse & Record<string, unknown>,
+    };
+  }
+
+  /**
+   * Where the next page starts. Probed live 2026-09-24 on @semrush: the body
+   * carries a top-level `cursor`, the provider's own `more_available` sits on
+   * `attempts[0].native_response`, and the NEXT page is requested with the
+   * cursor inside `input` (a top-level `cursor` is refused as an extra field).
+   */
+  function nextCursorOf(body: Record<string, unknown>, pageSize: number): string | undefined {
+    const cursor = asString(body["cursor"]);
+    if (cursor === undefined || pageSize === 0) return undefined;
+    const attempts = Array.isArray(body["attempts"]) ? (body["attempts"] as unknown[]) : [];
+    const native = attempts
+      .map((a) => (typeof a === "object" && a !== null ? (a as Record<string, unknown>)["native_response"] : undefined))
+      .find((n): n is Record<string, unknown> => typeof n === "object" && n !== null);
+    return native?.["more_available"] === false ? undefined : cursor;
   }
 
   return {
@@ -272,6 +303,24 @@ export function createScrappyCocoScraper(options: ScrappyCocoOptions): ScraperPr
       // A leading @ is how humans write handles and how every provider rejects them.
       const username = request.username.replace(/^@+/, "");
       return execute(request.platform, mapping.capability, { [mapping.inputKey]: username }, limit, timeoutMs);
+    },
+
+    async socialHistoryPage(request: SocialHistoryPageRequest): Promise<SocialHistoryPage> {
+      if (request.platform === "linkedin") {
+        // LinkedIn keys off a profile URL and has no probed cursor; one page only.
+        return { records: await this.socialHistory(request) };
+      }
+      const mapping = HISTORY_CAPABILITY[request.platform];
+      const username = request.username.replace(/^@+/, "");
+      const { records, body } = await executeWithBody(
+        request.platform,
+        mapping.capability,
+        { [mapping.inputKey]: username, ...(request.cursor !== undefined ? { cursor: request.cursor } : {}) },
+        request.limit ?? 12,
+        request.timeoutMs ?? defaultTimeoutMs,
+      );
+      const nextCursor = nextCursorOf(body, records.length);
+      return { records, ...(nextCursor !== undefined && nextCursor !== request.cursor ? { nextCursor } : {}) };
     },
 
     async searchSocial(platform: SocialPlatform, query: string, opts: ScrapeOptions = {}): Promise<ScrapedRecord[]> {

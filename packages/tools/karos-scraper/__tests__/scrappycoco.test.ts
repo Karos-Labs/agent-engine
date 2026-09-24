@@ -301,3 +301,31 @@ describe.skipIf(!liveEnabled)("ScrappyCocoScraper — live", () => {
     }
   }, 180_000);
 });
+
+describe("socialHistoryPage (RFC-26, probed live 2026-09-24)", () => {
+  function pageFetch(pages: Array<Record<string, unknown>>): { fetchImpl: typeof fetch; bodies: Array<Record<string, unknown>> } {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = (async (_url: string, init: { body: string }) => {
+      bodies.push(JSON.parse(init.body) as Record<string, unknown>);
+      return new Response(JSON.stringify(pages[bodies.length - 1]), { status: 200, headers: { "content-type": "application/json" } });
+    }) as unknown as typeof fetch;
+    return { fetchImpl, bodies };
+  }
+  const record = (id: string) => ({ id, url: `https://www.instagram.com/p/${id}/`, engagement: { likes: 1 } });
+
+  it("sends the cursor INSIDE input and returns the next one while more are available", async () => {
+    const { fetchImpl, bodies } = pageFetch([
+      { status: "completed", records: [record("a")], cursor: "c1", attempts: [{ native_response: { more_available: true } }] },
+      { status: "completed", records: [record("b")], cursor: "c2", attempts: [{ native_response: { more_available: false } }] },
+    ]);
+    const scraper = createScrappyCocoScraper({ apiKey: "k", fetchImpl, idempotencyKey: () => "id" });
+    const first = await scraper.socialHistoryPage!({ platform: "instagram", username: "@semrush" });
+    expect(first.nextCursor).toBe("c1");
+    expect(bodies[0]!["input"]).toEqual({ username: "semrush" });
+    const second = await scraper.socialHistoryPage!({ platform: "instagram", username: "semrush", cursor: "c1" });
+    // A top-level `cursor` is refused by the API as an extra field.
+    expect(bodies[1]!["input"]).toEqual({ username: "semrush", cursor: "c1" });
+    expect(bodies[1]!["cursor"]).toBeUndefined();
+    expect(second.nextCursor).toBeUndefined();
+  });
+});
