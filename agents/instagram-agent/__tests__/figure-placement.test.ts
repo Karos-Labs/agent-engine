@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CLOSER_FORMS, closerFormFor, figurePlacementFor } from "../src/workflow/slides-data.js";
+import { BODY_WORD_BUDGET, CLOSER_FORMS, closerFormFor, figurePlacementFor, trimToSentenceBudget } from "../src/workflow/slides-data.js";
 import type { InstagramSlideLayout } from "../src/workflow/types.js";
 
 /**
@@ -151,5 +151,15 @@ describe("closerFormFor: three closers, seeded per client and run (2026-09-24)",
     expect(html).toContain('data-closer="{{closerForm}}"');
     expect(html).toContain('body[data-closer="block"] .cl-panel');
     expect(html).toContain('body[data-closer="split"] .cl-panel');
+  });
+});
+
+describe("trimToSentenceBudget: one idea per slide (2026-09-24)", () => {
+  it("keeps whole sentences within the budget, never cuts mid-sentence, and keeps a long first sentence whole", () => {
+    const body = "They use AI as an assistant. The approval structure stays the same. Nothing is actually delegated. An approval queue that approvers stop reading is not oversight.";
+    expect(trimToSentenceBudget(body, 18)).toBe("They use AI as an assistant. The approval structure stays the same. Nothing is actually delegated.");
+    expect(trimToSentenceBudget("One very long opening sentence that runs well past any budget at all for sure. Second.", 5)).toBe("One very long opening sentence that runs well past any budget at all for sure.");
+    expect(trimToSentenceBudget("Short.", 3)).toBe("Short.");
+    expect(BODY_WORD_BUDGET.stat_callout).toBeLessThanOrEqual(20);
   });
 });

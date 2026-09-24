@@ -1113,6 +1113,50 @@ export function closerFormFor(seed: string | undefined): CloserForm {
   return CLOSER_FORMS[mix32(fnv1a32ForVariation(`${seed}:closer`)) % CLOSER_FORMS.length]!;
 }
 
+/**
+ * How many words of BODY an interior slide carries on the plate, by layout
+ * (2026-09-24). The owner, on a KAROS stat slide carrying a 17-word label and
+ * a 38-word body in small type: "too much text and small text; this post isn't
+ * attractive". The reference accounts set one idea per slide in three or four
+ * element groups. The body is cut at a WHOLE SENTENCE within the budget (never
+ * mid-sentence; a first sentence longer than the budget is kept whole), so
+ * the plate keeps one complete thought and the fit ladder can grow the type.
+ * The caption carries the rest.
+ */
+export const BODY_WORD_BUDGET: Partial<Record<InstagramSlideLayout, number>> = {
+  stat_callout: 18,
+  quote_card: 14,
+  comparison_card: 16,
+  list_takeaway: 14,
+  headline_focus: 24,
+  photo: 24,
+  text_only: 28,
+};
+
+const SENTENCE_END = /(?<=[.!?\u061F\u3002])\s+(?=\S)/u;
+
+export function trimToSentenceBudget(text: string, maxWords: number): string {
+  const sentences = text.split(SENTENCE_END).map((s) => s.trim()).filter((s) => s.length > 0);
+  if (sentences.length <= 1) return text;
+  const words = (s: string): number => s.split(/\s+/u).filter((w) => w.length > 0).length;
+  const kept: string[] = [];
+  let total = 0;
+  for (const sentence of sentences) {
+    const n = words(sentence);
+    if (kept.length > 0 && total + n > maxWords) break;
+    kept.push(sentence);
+    total += n;
+  }
+  return kept.join(" ");
+}
+
+function withBodyBudget<T extends { layout?: InstagramSlideLayout | undefined; body: string }>(slide: T): T {
+  const budget = BODY_WORD_BUDGET[slide.layout ?? "photo"];
+  if (budget === undefined) return slide;
+  const body = trimToSentenceBudget(slide.body, budget);
+  return body === slide.body ? slide : { ...slide, body };
+}
+
 export function ctaFormFor(text: string): "pill" | "line" {
   const trimmed = text.trim();
   const words = trimmed.split(/\s+/u).filter((w) => w.length > 0).length;
@@ -2737,6 +2781,8 @@ export function assembleSlidesData(params: {
    * read it exactly as before; only the plate's composition changes.
    */
   interiorPhotosAsBlocks?: boolean | undefined;
+  /** 2026-09-24: interior slide bodies are cut to whole sentences within `BODY_WORD_BUDGET` (the workflow sets it). */
+  textBudgets?: boolean | undefined;
   /** 2026-09-24: client product photos lifted off their backdrop; set as objects (`heroKind: "cutout"`). */
   productCutoutPaths?: ReadonlySet<string> | undefined;
   /**
@@ -2944,7 +2990,9 @@ export function assembleSlidesData(params: {
 
   /** Each slide's RESOLVED layout, kept for the carry pass after the map (resolveLayout is stateful, so it runs once). */
   const layoutByN = new Map<number, InstagramSlideLayout>();
-  const slides: Slide[] = params.copy.slides.map((slide, index) => {
+  const slides: Slide[] = params.copy.slides.map((rawSlide, index) => {
+    // 2026-09-24: one idea per slide, at a size that reads in a feed.
+    const slide = params.textBudgets === true && index > 0 && index < lastIndex ? withBodyBudget(rawSlide) : rawSlide;
     const selection = selectionByN.get(slide.n);
     // Phase 2, item M: the two positional archetypes need to know where the
     // slide sits, whether a photograph actually arrived, and what came
