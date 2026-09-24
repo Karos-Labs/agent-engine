@@ -66,7 +66,11 @@ describe("assembleSlidesData with markImagePaths", () => {
     expect(byN.get(1)!.images.mark).toBeUndefined();
     expect(byN.get(1)!.fields.markAt).toBeUndefined();
     expect(byN.get(2)!.images.hero).toBe("media/speaker.jpg");
-    expect(byN.get(2)!.fields.heroKind).toBeUndefined();
+    // NOT `undefined` since 2026-09-24: slide 2 is a `photo` plate carrying a
+    // headline AND a body, which is the case `framedHeroFor` sets as a block
+    // rather than a wall. What this test is about is the MARK — the point is
+    // that slide 2 is not treated as one.
+    expect(byN.get(2)!.fields.heroKind).toBe("framed");
   });
 
   it("never stamps a mark onto a real photograph: the photograph carries the slide", () => {

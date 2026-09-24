@@ -518,13 +518,20 @@ describe("08a1-interest-floor: it can never become a fourth hold", () => {
             : s,
       ),
     };
-    const PROMOTED_PATH = goodImageCandidatePool()[0]!.path;
+    // TWO PATHS, and the split is load-bearing since 2026-09-24: the re-layout
+    // will not promote a picture another slide is already PAINTING (the owner's
+    // XO Digital report — the same photograph on slide 1 and slide 3). This
+    // fixture handed every slide one path, so the "unused" picture on the
+    // `text_only` slide was also the picture on slides 2, 4 and 5, and
+    // promoting it would have been the duplicate. Slide 3's is its own.
+    const PROMOTED_PATH = goodImageCandidatePool()[1]!.path;
+    const OTHER_PATH = goodImageCandidatePool()[0]!.path;
     const vetting = {
       selections: copy.slides
         .filter((s) => s.n !== 1)
         .map((s) => ({
           n: s.n,
-          imagePath: PROMOTED_PATH,
+          imagePath: s.n === 3 ? PROMOTED_PATH : OTHER_PATH,
           reason: `candidate matches "${s.visualNeed}" closely enough`,
           license: s.n === 3 ? "CC0, Openverse — the promotable one" : "CC0, test fixture",
           rightsUsable: true,

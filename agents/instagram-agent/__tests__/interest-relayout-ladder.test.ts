@@ -104,6 +104,52 @@ describe("the ladder's order: merge, picture, archetype, type step, device", () 
     expect(change.record.claimMatchReason).toMatch(/without a re-vet/u);
   });
 
+  /**
+   * THE SAME PICTURE TWICE IN ONE POST — the owner, on the XO Digital
+   * carousel of 2026-09-24: *"what is on slide 3 looks excellent in placement;
+   * it is simply the same picture as on the first slide"*.
+   *
+   * Step `06f2` enforces one picture per post and reads `HERO_IMAGE_LAYOUTS`
+   * — all six archetypes that PAINT a picture. This rung read
+   * `layout !== "photo"`, which is two of the six, so a photograph already
+   * rendering in a panel's bounded band counted as unused and could be
+   * promoted onto the cover. The re-layout put back exactly what the dedupe
+   * had removed, and the reader met the picture twice.
+   */
+  it("never promotes a picture another slide is already rendering, in a band or otherwise", () => {
+    const copy = goodCopyOutput();
+    // Slide 5 keeps a picture, in a PANEL archetype: a bounded band, not a
+    // full-bleed photo plate. A reader sees it there.
+    const panelled: InstagramCopyOutput = {
+      ...copy,
+      slides: copy.slides.map((s) => (s.n === 5 ? { ...s, layout: "quote_card" as const } : s)),
+    };
+    // Every other slide's selection is emptied, so the ONLY candidate this
+    // rung could reach for is the one slide 5 is showing.
+    const selections = goodImageVettingOutput().selections.map((sel) =>
+      sel.n === 5 ? sel : { ...sel, imagePath: null },
+    );
+
+    const plan = planInterestRelayout(withoutBlocks(panelled, 3), selections, FACTS, [weightFinding(3, "interior")]);
+    const promoted = (plan?.changes ?? []).filter((c) => c.kind === "promote-image-to-cover");
+    expect(promoted).toEqual([]);
+  });
+
+  it("still promotes a picture no slide paints — the rung is not disabled, only corrected", () => {
+    // The control for the test above: the same shape, except slide 5 ships
+    // TYPOGRAPHIC, so its vetted picture really is going nowhere.
+    const copy = goodCopyOutput();
+    const typographic: InstagramCopyOutput = {
+      ...copy,
+      slides: copy.slides.map((s) => (s.n === 5 ? { ...s, layout: "text_only" as const } : s)),
+    };
+    const selections = goodImageVettingOutput().selections.map((sel) =>
+      sel.n === 5 ? sel : { ...sel, imagePath: null },
+    );
+    const plan = planInterestRelayout(withoutBlocks(typographic, 3), selections, FACTS, [weightFinding(3, "interior")]);
+    expect(plan?.changes[0]).toMatchObject({ kind: "promote-image-to-cover", slide: 3, fromSlide: 5 });
+  });
+
   it("never promotes a screen-cliche picture, which is how a monitor-in-a-dark-room frame became KAROS's cover (2026-09-24)", () => {
     const copy = goodCopyOutput();
     const typographic: InstagramCopyOutput = {

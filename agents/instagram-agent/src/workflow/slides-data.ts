@@ -1157,6 +1157,56 @@ function withBodyBudget<T extends { layout?: InstagramSlideLayout | undefined; b
   return body === slide.body ? slide : { ...slide, body };
 }
 
+/**
+ * WHEN A PHOTOGRAPH IS A BLOCK RATHER THAN THE WHOLE PLATE.
+ *
+ * `cover` and `photo` paint their picture as the ground and set the copy on
+ * top of it under a scrim. That is a real composition and it stays — a
+ * headline of a few words over a strong photograph is a poster. What the owner
+ * rejected (2026-09-24) is the OTHER case: a headline AND a deck laid across a
+ * face and a body, on two live posts. *"It would have been nicer if the
+ * picture were like slide 3 of XO Digital, where the picture is not over the
+ * whole screen — it is a bit more aesthetic."*
+ *
+ * So the AMOUNT of copy decides, and it has to be an amount rather than a
+ * presence. The first cut asked whether the slide carried a body at all --
+ * `InstagramSlideCopySchema` requires one (`min(1)`), so every photo plate in
+ * the product has a body and that rule framed ALL of them, deleting the
+ * full-bleed composition instead of adding to it. CI caught it on the
+ * calibration sweep (`imageryShare` 0.41 against a 0.5 floor), which is the
+ * whole reason that sweep renders pixels.
+ *
+ * The threshold is on the copy that would sit over the picture, headline and
+ * deck together. The two posts the owner rejected run 148 and 164 characters;
+ * a poster -- "Intake is the bottleneck" over one short line -- runs 69.
+ *
+ * A mark and a cutout are excluded because they already have their own
+ * treatments — a logo at its own size, a product contained whole — and both
+ * already move the lockup below the picture.
+ */
+/**
+ * How much copy a photograph can carry before it stops being a poster.
+ *
+ * Measured against the real cases rather than chosen: the two covers the owner
+ * rejected on 2026-09-24 carry 148 and 164 characters of headline-plus-deck,
+ * and the calibration sweep's short plate carries 69.
+ */
+export const FRAMED_HERO_COPY_CHARS = 120;
+
+export function framedHeroFor(params: {
+  layout: InstagramSlideLayout;
+  headline: string;
+  body: string;
+  hasPicture: boolean;
+  heroIsMark: boolean;
+  isCutout: boolean;
+}): boolean {
+  if (!params.hasPicture || params.heroIsMark || params.isCutout) return false;
+  if (!FULL_BLEED_IMAGE_LAYOUTS.has(params.layout)) return false;
+  return params.headline.trim().length + params.body.trim().length > FRAMED_HERO_COPY_CHARS;
+
+}
+
 export function ctaFormFor(text: string): "pill" | "line" {
   const trimmed = text.trim();
   const words = trimmed.split(/\s+/u).filter((w) => w.length > 0).length;
@@ -3202,6 +3252,15 @@ export function assembleSlidesData(params: {
               }),
         ...(heroIsMark ? { heroKind: imagePath !== undefined && params.clearMarkPaths?.has(imagePath) === true ? "mark-clear" : "mark" } : {}),
         ...(!heroIsMark && imagePath !== undefined && params.productCutoutPaths?.has(imagePath) === true ? { heroKind: "cutout" } : {}),
+        // A PHOTOGRAPH IS A BLOCK WHEN THERE ARE WORDS TO PUT UNDER IT
+        // (2026-09-24). The owner, on two full-bleed covers whose headline and
+        // deck ran across a face and a body: *"it would have been nicer if the
+        // picture were like slide 3 of XO Digital, where the picture is not
+        // over the whole screen"*. `framedHeroFor` is the rule; the plate CSS
+        // (`img.hero[data-kind="framed"]`) is the composition.
+        ...(framedHeroFor({ layout, headline: slide.headline, body: slide.body, hasPicture: imagePath !== undefined, heroIsMark, isCutout: imagePath !== undefined && params.productCutoutPaths?.has(imagePath) === true })
+          ? { heroKind: "framed" as const }
+          : {}),
         // 2026-09-24: which of the three closer forms (`closerFormFor`); only the closer plate reads it.
         ...(layout === "closer" ? { closerForm: closerFormFor(`${params.clientSlug}:${params.paletteSeed ?? ""}`) } : {}),
         ...(photoCredit !== undefined ? { photoCredit } : {}),
