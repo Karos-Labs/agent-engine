@@ -2490,19 +2490,23 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      */
     let discoveredLogoUrl: string | undefined;
     let logoDiscoveryTried = false;
+    /**
+     * The client's site and name, set once `03a-load-trend-profile` has read
+     * the profile. Taken from there rather than from a second
+     * `client.getProfile` call: a tool call outside a checkpointed step is
+     * re-made on every resume, which `resume-idempotency.test.ts` refuses.
+     */
+    let logoSite: { website?: string; name?: string } | undefined;
     const discoverSiteLogo = async (): Promise<string | undefined> => {
-      if (logoDiscoveryTried) return undefined;
+      if (logoDiscoveryTried || logoSite === undefined) return undefined;
       logoDiscoveryTried = true;
       try {
-        const profile = await tools["client.getProfile"]?.execute({}, { ctx });
-        const record = profile?.status === "success" ? (profile.result as Record<string, unknown>) : {};
-        const homepage = homepageUrlFor(typeof record["website"] === "string" ? (record["website"] as string) : undefined);
+        const homepage = homepageUrlFor(logoSite.website);
         if (homepage === undefined) return undefined;
         const page = await brandFetch(homepage, { signal: AbortSignal.timeout(8000), headers: { "user-agent": "Mozilla/5.0 (compatible; KarosBot/1.0)" } });
         if (!page.ok) return undefined;
         const html = (await page.text()).slice(0, 1_500_000);
-        const name = typeof record["name"] === "string" ? (record["name"] as string) : typeof record["companyName"] === "string" ? (record["companyName"] as string) : undefined;
-        for (const candidate of logoCandidatesFromHtml(html, page.url || homepage, name).slice(0, 4)) {
+        for (const candidate of logoCandidatesFromHtml(html, page.url || homepage, logoSite.name).slice(0, 4)) {
           const outcome = await downloadBrandLogoOutcome(brandFetch, candidate);
           if (!outcome.ok) continue;
           discoveredLogoUrl = candidate;
@@ -4262,6 +4266,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         forbiddenTopics: readForbiddenTopics(config),
       };
     });
+    logoSite = {
+      ...(typeof trendProfile.profile["website"] === "string" ? { website: trendProfile.profile["website"] as string } : {}),
+      ...(trendProfile.companyName !== undefined ? { name: trendProfile.companyName } : {}),
+    };
     // ── 01c: the strategy map — the topic pool with a stage on every row ──
     //
     // HERE rather than at `01b`, for the same reason x-agent builds it after
