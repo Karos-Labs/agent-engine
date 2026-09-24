@@ -197,6 +197,56 @@ export interface WordBudgetFinding {
 export const WORD_BUDGET_RULE_ID = "default:slide-word-budget";
 
 /**
+ * COVER AND HEADLINE CAPS (owner feedback round 2026-09-24, item H, WS-08).
+ *
+ * The owner, on photo covers: less text, balanced sizes, a shade so the words
+ * read. XO's cover carried an 11-word title over a 19-word deck; Sitti's 8 + 12
+ * read. Measured across 87 benchmark accounts and @a16z's breakouts (#253):
+ * covers carry ten words or fewer. So a cover title is at most 8 words, its
+ * deck at most 12 words in ONE sentence, 20 in all; an interior headline at
+ * most 10. The steer is the budget's own: the detail goes to the caption.
+ */
+export const COVER_TITLE_MAX_WORDS = 8;
+export const COVER_DECK_MAX_WORDS = 12;
+export const COVER_TOTAL_MAX_WORDS = 20;
+export const HEADLINE_MAX_WORDS = 10;
+
+function sentenceCount(text: string): number {
+  return text
+    .split(/(?<=[.!?؟])\s+/u)
+    .map((t) => t.trim())
+    .filter((t) => countWords(t) > 0).length;
+}
+
+/** The cover's and interior headlines' caps, as findings in the budget's own vocabulary. */
+export function checkHeadlineCaps(slide: Slide, index: number, lastIndex: number): WordBudgetFinding | undefined {
+  const where = `slide ${slide.n} ("${templateBasename(slide.template)}")`;
+  const f = slide.fields ?? {};
+  if (index === 0 && templateBasename(slide.template) === "cover") {
+    const title = countWords(f["title"] ?? "");
+    const deck = countWords(f["subtitle"] ?? "");
+    const decks = sentenceCount(f["subtitle"] ?? "");
+    if (title > COVER_TITLE_MAX_WORDS) {
+      return { ruleId: WORD_BUDGET_RULE_ID, slide: slide.n, measured: { words: title, limit: COVER_TITLE_MAX_WORDS, scope: "cover title" }, reason: `${where}'s title reads ${title} words; a cover title is at most ${COVER_TITLE_MAX_WORDS}, so it reads in the half-second a feed gives it. Keep the one claim; the rest belongs in the deck or the caption` };
+    }
+    if (deck > COVER_DECK_MAX_WORDS || decks > 1) {
+      return { ruleId: WORD_BUDGET_RULE_ID, slide: slide.n, measured: { words: deck, limit: COVER_DECK_MAX_WORDS, scope: "cover deck" }, reason: `${where}'s deck reads ${deck} words in ${decks} sentence(s); a cover deck is ONE sentence of at most ${COVER_DECK_MAX_WORDS} words. Move the rest into the caption` };
+    }
+    if (title + deck > COVER_TOTAL_MAX_WORDS) {
+      return { ruleId: WORD_BUDGET_RULE_ID, slide: slide.n, measured: { words: title + deck, limit: COVER_TOTAL_MAX_WORDS, scope: "cover total" }, reason: `${where} carries ${title + deck} words; a cover carries at most ${COVER_TOTAL_MAX_WORDS}. Shorten the deck` };
+    }
+    return undefined;
+  }
+  if (index > 0 && index < lastIndex) {
+    const headline = countWords(f["headline"] ?? f["title"] ?? "");
+    if (headline > HEADLINE_MAX_WORDS) {
+      return { ruleId: WORD_BUDGET_RULE_ID, slide: slide.n, measured: { words: headline, limit: HEADLINE_MAX_WORDS, scope: "headline" }, reason: `${where}'s headline reads ${headline} words; a headline is at most ${HEADLINE_MAX_WORDS}. Say the point; the explanation is the body's job` };
+    }
+  }
+  return undefined;
+}
+
+/**
  * Words in a run of text, script-agnostic.
  *
  * `\p{L}\p{N}`-anchored rather than split on whitespace, so Hebrew counts the
@@ -268,9 +318,16 @@ export function checkSlideWordBudget(slidesData: RenderCarouselInput, copy: Inst
   const findings: WordBudgetFinding[] = [];
   const byN = new Map(copy.slides.map((s) => [s.n, s]));
 
-  for (const slide of slidesData.slides) {
+  const lastIndex = slidesData.slides.length - 1;
+  for (const [index, slide] of slidesData.slides.entries()) {
     const load = slideWordLoad(slide, byN.get(slide.n));
     const where = `slide ${slide.n} ("${templateBasename(slide.template)}")`;
+
+    const cap = checkHeadlineCaps(slide, index, lastIndex);
+    if (cap !== undefined) {
+      findings.push(cap);
+      continue;
+    }
 
     if (load.statement > MAX_WORDS_PER_SLIDE) {
       findings.push({
