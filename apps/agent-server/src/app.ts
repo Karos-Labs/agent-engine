@@ -19,6 +19,8 @@ export interface CreateAppDeps extends RunsRouterDeps {
   clock?: () => number;
   /** How many `awaiting_gate` runs one sweep reads. Defaults to the sweep's own bound; a test lowers it to drive the truncation warning. */
   gateSweepScanLimit?: number;
+  /** How many runs one sweep resumes -- the gate pass and the abandoned-run pass share it. Defaults to the sweep's own bound; a test lowers it to drive the deferral. */
+  sweepMaxResumes?: number;
   /** See `routes/queue.ts`'s `QueueRouterDeps` — all optional, so an app built with none of this still boots (the push route just 500s if ever hit, same as any other unconfigured-dependency mistake). */
   queuePushAudienceUrl?: string;
   verifyPushIdToken?: VerifyPushIdToken;
@@ -101,6 +103,7 @@ export function createApp(deps: CreateAppDeps): Application {
       ...runsDeps,
       ...(deps.clock !== undefined ? { clock: deps.clock } : {}),
       ...(deps.gateSweepScanLimit !== undefined ? { scanLimit: deps.gateSweepScanLimit } : {}),
+      ...(deps.sweepMaxResumes !== undefined ? { maxResumesPerSweep: deps.sweepMaxResumes } : {}),
     }),
   );
 
