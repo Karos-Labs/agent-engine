@@ -9351,6 +9351,21 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // bucket. Dropping a picture we still have is throwing away the thing
       // the owner has asked for three times over. Re-fetch first; downgrade
       // only if the re-fetch fails too.
+      // 2026-09-23: every durable copy this attempt knows of, including the
+      // imagery-floor frames staged later (`06h3`). And when a path is missing
+      // from the map, its CONVENTIONAL object (`media.stageAsset`'s default,
+      // `agent-engine/<runId>/<file>`, in the bucket any other staged object
+      // of this run lives in) is tried before the picture is given up: Sitti
+      // and XO Digital lost vet-approved pictures on 2026-09-23 to a worker
+      // restart that the checkpointed map did not cover.
+      const durableUris: Record<string, string> = { ...stagedImageUris };
+      const durableUriFor = (imagePath: string): string | undefined => {
+        const known = durableUris[imagePath];
+        if (known !== undefined) return known;
+        const bucket = Object.values(durableUris).map((u) => /^(gs:\/\/[^/]+)\//u.exec(u)?.[1]).find((b) => b !== undefined);
+        return bucket !== undefined ? `${bucket}/agent-engine/${wf.runId}/${path.basename(imagePath)}` : undefined;
+      };
+      const recoverMissingImages = async (label: string): Promise<void> => {
       const rehydrated: number[] = [];
       const gone: number[] = [];
       for (const sel of selections) {
@@ -9359,9 +9374,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           await fs.access(path.resolve(options.repoRoot, sel.imagePath));
           continue;
         } catch {
-          // Missing locally — recoverable only if `06e2` staged it.
+          // Missing locally — recoverable only if a durable copy exists.
         }
-        const uri = stagedImageUris[sel.imagePath];
+        const uri = durableUriFor(sel.imagePath);
         const ingest = tools["media.ingestAssets"];
         if (uri === undefined || ingest === undefined) {
           gone.push(sel.n);
@@ -9392,7 +9407,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         const note = `image cache miss on slide(s) ${rehydrated.join(", ")} — the local media cache did not have the bytes (an instance recycle), and they were re-fetched from the media bucket`;
         console.warn(`06f-verify-images-on-disk: ${note}`);
         try {
-          await tools["ledger.appendEvent"]?.execute({ runId: wf.runId, eventId: `${wf.runId}__image-rehydrate-${attempt}`, level: "info", message: note }, { ctx });
+          await tools["ledger.appendEvent"]?.execute({ runId: wf.runId, eventId: `${wf.runId}__image-rehydrate-${attempt}${label}`, level: "info", message: note }, { ctx });
         } catch {
           /* the ledger is a record, never a gate */
         }
@@ -9407,6 +9422,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         unfillable = selections.filter(isUnfillable);
       }
       if (rehydrated.length > 0 || gone.length > 0) unfillable = selections.filter(isUnfillable);
+      };
+      await recoverMissingImages("");
 
       // ── 06e3: each comparison column under its own mark (2026-09-23) ──
       //
@@ -9819,6 +9836,30 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           }
         }
       }
+
+      // ── 06h3: THE FLOOR FRAMES ARE BYTES TOO (2026-09-23) ──
+      //
+      // `06e2` ran before the imagery floor generated and vetted its frames,
+      // so a floor frame was the one kind of picture never copied out of the
+      // instance's RAM, and a restart between here and the render dropped it.
+      // Staged now, merged into the same map, and the disk re-checked.
+      const floorStaged = await wf.step.code(rev(`06h3-stage-floor-images-attempt-${attempt}`), async () => {
+        const stage = tools["media.stageAsset"];
+        const uris: Record<string, string> = {};
+        if (stage === undefined) return uris;
+        for (const sel of selections) {
+          if (sel.imagePath === null || durableUris[sel.imagePath] !== undefined) continue;
+          try {
+            const outcome = await stage.execute({ repoRoot: options.repoRoot, runId: wf.runId, path: sel.imagePath }, { ctx });
+            if (outcome.status === "success") uris[sel.imagePath] = (outcome.result as { gcsUri: string }).gcsUri;
+          } catch {
+            // Best effort, as 06e2 is.
+          }
+        }
+        return uris;
+      });
+      Object.assign(durableUris, floorStaged);
+      await recoverMissingImages("-floor");
 
       // Guaranteed delivery (2026-08): a slide that survives every tier —
       // retrieval, social scrape, generation — with nothing usable no longer
