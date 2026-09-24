@@ -8,7 +8,8 @@ import { DEFAULT_VISION_MODEL, type VisionAnalysisClient, type VisionPart } from
 // engagement, and records its design DNA. Frames are copied to the media
 // bucket first, because Instagram's CDN links are signed and expire.
 // 1.0.1: every input property carries a description (the registry test); no behaviour change.
-const TOOL_VERSION = "1.0.1";
+// 1.1.0 (2026-09-25): grades are calibrated on the benchmark accounts' breakouts (calibrateCraft), raw kept alongside; an exemplar is a breakout or top quarter with calibrated craft 4+.
+const TOOL_VERSION = "1.1.0";
 
 const MAX_IMAGE_BYTES = 4_000_000;
 const RATE_LIMIT_RETRIES = 3;
@@ -29,6 +30,7 @@ export const JudgeExemplarsInputSchema = z.object({
         comments: z.number().int().min(0).default(0),
         views: z.number().int().min(0).optional(),
         percentile: z.number().min(0).max(1).optional(),
+        outlier: z.boolean().optional().describe("The harvest's breakout flag: 2x (3x for a reel) its own account's median."),
       }),
     )
     .min(1)
@@ -41,9 +43,9 @@ export const JudgeExemplarsInputSchema = z.object({
     .int()
     .min(1)
     .max(5)
-    .default(3)
+    .default(4)
     .describe(
-      "Craft an exemplar needs besides its engagement. 3, not 4, until the judge is calibrated on the owner's own references: the first live run graded @reputeforge, the owner's ground-truth account, mostly 2-3.",
+      "CALIBRATED craft an exemplar needs besides its engagement: 4 = strong next to the benchmark accounts' own breakouts, which `calibrateCraft` anchors at 4.",
     ),
 });
 export type JudgeExemplarsInput = z.input<typeof JudgeExemplarsInputSchema>;
@@ -96,17 +98,69 @@ export interface JudgedExemplar {
   ref: string;
   handle: string;
   role: "client" | "competitor" | "reference";
+  /** The calibrated grade (see `calibrateCraft`); what `exemplar` reads. */
   craft: number;
+  /** What the vision model said, before calibration. */
+  rawCraft: number;
   craftReason: string;
   standout: string;
   dna: DesignDna;
   /** `gs://` paths of the copied frames (reference-only), when a media store is configured. */
   storedFrames: string[];
-  /** Kept as an exemplar: top quarter of its own account AND craft >= `minCraft`. Popular but plain posts are "what this audience rewards", never a look to copy. */
+  /** Kept as an exemplar: a breakout (or top quarter) of its own account AND calibrated craft >= `minCraft`. Popular but plain posts are "what this audience rewards", never a look to copy. */
   exemplar: boolean;
 }
 
+export interface CraftCalibration {
+  /** Benchmark posts the scale was anchored on: reference accounts' breakouts (their top quarter when fewer than three broke out). */
+  anchors: number;
+  anchorMedianRaw?: number;
+  /** Added to every raw grade in this run, 0..2. */
+  shift: number;
+  note: string;
+}
+
+/** Where a proven benchmark post belongs on the scale: "strong". */
+export const ANCHOR_CRAFT = 4;
+const MAX_SHIFT = 2;
+
+function medianOf(values: readonly number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+/**
+ * Anchors the judge's scale on the benchmark accounts' proven hits
+ * (2026-09-25). The first live run graded @reputeforge, the owner's
+ * ground-truth account, mostly 2-3 out of 5: the model's idea of "strong"
+ * was stricter than the market's and the owner's. A reference account's
+ * breakout is, by definition, a post both the owner and that audience chose,
+ * so the scale is moved until those posts sit at `ANCHOR_CRAFT`. The shift is
+ * only ever upward and at most `MAX_SHIFT`, is applied to every post in the
+ * run alike (the ORDER the model gave is kept), and is recorded with the raw
+ * grade so it can be audited.
+ */
+export function calibrateCraft(posts: ReadonlyArray<{ role: string; rawCraft: number; outlier?: boolean | undefined; percentile?: number | undefined }>): CraftCalibration {
+  const references = posts.filter((p) => p.role === "reference");
+  let anchors = references.filter((p) => p.outlier === true);
+  if (anchors.length < 3) anchors = references.filter((p) => p.outlier === true || (p.percentile ?? 0) >= 0.75);
+  if (anchors.length < 3) return { anchors: anchors.length, shift: 0, note: "fewer than three benchmark breakouts were judged, so the raw scale stands" };
+  const anchorMedianRaw = medianOf(anchors.map((a) => a.rawCraft));
+  const shift = Math.max(0, Math.min(MAX_SHIFT, Math.round(ANCHOR_CRAFT - anchorMedianRaw)));
+  return {
+    anchors: anchors.length,
+    anchorMedianRaw,
+    shift,
+    note:
+      shift === 0
+        ? `benchmark breakouts already sit at ${anchorMedianRaw} raw, so the raw scale stands`
+        : `benchmark breakouts sat at ${anchorMedianRaw} raw; every grade in this run moved up ${shift} so they sit at ${ANCHOR_CRAFT}`,
+  };
+}
+
 export interface JudgeExemplarsResult {
+  calibration: CraftCalibration;
   judged: JudgedExemplar[];
   failures: Array<{ ref: string; reason: string }>;
   model: string;
@@ -238,12 +292,15 @@ export function createJudgeExemplars(options: { client?: VisionAnalysisClient | 
           handle: post.handle,
           role: post.role,
           craft: j.craft,
+          rawCraft: j.craft,
           craftReason: j.craftReason,
           standout: j.standout,
           dna: j.dna,
           storedFrames,
-          exemplar: (post.percentile ?? 0) >= 0.75 && j.craft >= input.minCraft,
-        });
+          exemplar: false,
+          ...(post.outlier !== undefined ? { outlier: post.outlier } : {}),
+          ...(post.percentile !== undefined ? { percentile: post.percentile } : {}),
+        } as JudgedExemplar & { outlier?: boolean; percentile?: number });
       };
 
       const queue = input.posts.map((post, index) => ({ post, index }));
@@ -253,8 +310,14 @@ export function createJudgeExemplars(options: { client?: VisionAnalysisClient | 
       await Promise.all(workers);
 
       if (judged.length === 0) return toolingError(`media.judgeExemplars: no post could be judged — ${failures.map((f) => f.reason).slice(0, 3).join("; ")}`);
-      judged.sort((a, b) => Number(b.exemplar) - Number(a.exemplar) || b.craft - a.craft);
-      return success<JudgeExemplarsResult>({ judged, failures, model }, [
+      const calibration = calibrateCraft(judged as Array<JudgedExemplar & { outlier?: boolean; percentile?: number }>);
+      const final: JudgedExemplar[] = (judged as Array<JudgedExemplar & { outlier?: boolean; percentile?: number }>).map(({ outlier, percentile, ...j }) => {
+        const craft = Math.min(5, j.rawCraft + calibration.shift);
+        const proven = outlier === true || (percentile ?? 0) >= 0.75;
+        return { ...j, craft, exemplar: proven && craft >= input.minCraft };
+      });
+      final.sort((a, b) => Number(b.exemplar) - Number(a.exemplar) || b.craft - a.craft);
+      return success<JudgeExemplarsResult>({ calibration, judged: final, failures, model }, [
         { model: "gemini-3.8-flash-vision-analysis-input-token", unit: "input-token", quantity: promptTokens },
         { model: "gemini-3.8-flash-vision-analysis-output-token", unit: "output-token", quantity: outputTokens },
       ]);

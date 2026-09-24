@@ -154,3 +154,35 @@ describe("rate limits", () => {
     expect(outcome.result.judged[0]!.exemplar).toBe(true);
   });
 });
+
+describe("the scale is anchored on the benchmark accounts' proven hits (2026-09-25)", () => {
+  it("moves every grade up until reference breakouts sit at 4, keeping the model's order, never down, at most +2", async () => {
+    const { calibrateCraft } = await import("../src/judge-exemplars.js");
+    const refs = [2, 3, 2].map((rawCraft) => ({ role: "reference", rawCraft, outlier: true }));
+    expect(calibrateCraft(refs).shift).toBe(2);
+    expect(calibrateCraft([4, 5, 4].map((rawCraft) => ({ role: "reference", rawCraft, outlier: true }))).shift).toBe(0);
+    expect(calibrateCraft([1, 1, 1].map((rawCraft) => ({ role: "reference", rawCraft, outlier: true }))).shift).toBe(2);
+    // Too few anchors: the raw scale stands.
+    expect(calibrateCraft([{ role: "reference", rawCraft: 2, outlier: true }]).shift).toBe(0);
+  });
+
+  it("applies the shift in the tool and records raw and calibrated grades", async () => {
+    const tool = createJudgeExemplars({ client: vision([2, 3, 2, 3]), fetchImpl: jpeg });
+    const outcome = await tool.execute(
+      {
+        posts: [
+          ...[1, 2, 3].map((i) => ({ ref: `r${i}`, handle: "reputeforge", role: "reference" as const, format: "carousel" as const, frames: frames(1), outlier: true, percentile: 0.95 })),
+          { ref: "c", handle: "hankypanky", role: "client" as const, format: "carousel" as const, frames: frames(1), outlier: true, percentile: 0.9 },
+        ],
+        concurrency: 1,
+      },
+      { ctx },
+    );
+    if (outcome.status !== "success") throw new Error(JSON.stringify(outcome));
+    expect(outcome.result.calibration.shift).toBe(2);
+    const client = outcome.result.judged.find((j) => j.ref === "c")!;
+    expect(client.rawCraft).toBe(3);
+    expect(client.craft).toBe(5);
+    expect(outcome.result.judged.filter((j) => j.role === "reference").every((j) => j.craft >= 4 && j.exemplar)).toBe(true);
+  });
+});
