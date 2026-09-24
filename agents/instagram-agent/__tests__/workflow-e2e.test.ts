@@ -162,6 +162,12 @@ const HAPPY_PATH_STEP_IDS = [
   "05a-list-used-images",
   // Tier 0: the client's own uploads, resolved before any sourcing tier.
   "05z-attach-user-media",
+  // 2026-09-24: the client's OWN website stocks the media library while it
+  // holds too few offerable site pictures (Hanky Panky shipped zero pictures
+  // on 2026-09-23 because its product existed only on its own site). Present
+  // on every run for the reason `05y` is: here it records that an explicit
+  // candidate pool was supplied, so the site was not read.
+  "05y0-stock-client-site-images",
   // Phase 3 (item T): tier 0.5 — the client's own media LIBRARY, read once per
   // run after the fresh uploads and before any harvester. Present on every
   // run: an archive that is empty, unreadable or unregistered still reports

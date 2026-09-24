@@ -405,12 +405,15 @@ interface FloorGap {
   readonly backfilled: boolean;
 }
 import {
+  buildClientSiteLibraryEntry,
   buildLibraryEntry,
   CLIENT_UPLOAD_RIGHTS,
   describeLibraryCandidate,
   groupShippedUses,
   ingestedSlotOf,
+  LIBRARY_OFFER_LIMIT,
   libraryIngestRequest,
+  planClientSiteHarvest,
   selectLibraryCandidates,
   sceneTagsFor,
 } from "./media-library.js";
@@ -5153,6 +5156,163 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // attempt. The archive is offered as a POOL and the vet decides per
     // slide, exactly as it does for every harvested candidate.
     const previousPostRunId = skeletonHistory.entries.at(-1)?.runId;
+
+    // ── 05y0: stock the library from the CLIENT'S OWN WEBSITE (2026-09-24) ──
+    //
+    // Hanky Panky's 2026-09-23 carousel shipped with ZERO pictures: the writer
+    // named the product ("Signature Lace"), the only picture of it anywhere
+    // was on the client's own site, and stock lace was — correctly — refused
+    // by the vet as an unnamed subject for a slide that names one. Every
+    // client with a product has that problem and every client with a website
+    // has the answer on its homepage, so this is generic: no per-client
+    // config, a brand-new client gets it on its first run.
+    //
+    // It FILLS THE LIBRARY rather than adding a tier of its own, so the
+    // pictures are read once and then reused by `05y` across posts at no
+    // vision cost — the library's whole economic argument. It only reads the
+    // site while the archive holds fewer than `CLIENT_SITE_STOCK_TARGET`
+    // OFFERABLE site frames (the ledger retires every frame that ships), and
+    // never downloads or inspects a picture already filed.
+    //
+    // Best-effort in every branch — agents always deliver and never hold on
+    // an internal gate: a missing tool, an unreadable site, a failed vision
+    // call or a failed write is a note on this step and nothing else changes.
+    // Checkpointed under one stable id, so a resume replays its answer and
+    // never re-reads the site; a crash mid-step re-files by content hash,
+    // which `media.libraryAdd` upserts.
+    //
+    // Skipped on a client-media-only run for `05y`'s reason, and when an
+    // explicit candidate pool was supplied (the pool then wins outright and
+    // nothing this step filed could reach a slide).
+    const siteStock = await wf.step.code("05y0-stock-client-site-images", async () => {
+      const skipped = (note: string) => ({ harvested: 0, filed: [] as string[], offerableBefore: 0, inspected: 0, scraperCalls: 0, note });
+      if (clientMediaOnly) return skipped("this run is set to client-provided media only, so the client's website was not read for pictures");
+      if (imageCandidatePool.length > 0) return skipped("an explicit image candidate pool was supplied, so the client's website was not read for pictures");
+      const harvestTool = tools["media.harvestSiteImages"];
+      const list = tools["media.libraryList"];
+      const add = tools["media.libraryAdd"];
+      if (harvestTool === undefined || list === undefined || add === undefined) {
+        return skipped("media.harvestSiteImages / media.libraryList / media.libraryAdd is not registered on this deployment, so the client's website was not read for pictures");
+      }
+      const siteUrl = gatherBriefSourceUrls(clientWebsite === undefined ? undefined : { website: clientWebsite })[0];
+      if (siteUrl === undefined) return skipped("the client profile names no website, so there was no site to read pictures from");
+      try {
+        const listed = await list.execute({ limit: 60 }, { ctx });
+        if (listed.status !== "success") {
+          return skipped(`the media library could not be read (${listed.status}${"reason" in listed ? `: ${listed.reason}` : ""}), so the site was not harvested into it`);
+        }
+        const plan = planClientSiteHarvest((listed.result as { entries: MediaLibraryEntry[] }).entries, {
+          ...(previousPostRunId !== undefined ? { excludeUsedInRunIds: [previousPostRunId] } : {}),
+          ledgerUsed: usedImages,
+        });
+        if (!plan.harvest) {
+          return { ...skipped(`the library already holds ${plan.offerable} offerable picture(s) from the client's website — not read again`), offerableBefore: plan.offerable };
+        }
+        const harvested = await harvestTool.execute(
+          { repoRoot: options.repoRoot, runId: wf.runId, siteUrl, maxImages: plan.want, excludeImageUrls: plan.filedImageUrls.slice(-500) },
+          { ctx },
+        );
+        if (harvested.status !== "success") {
+          return {
+            ...skipped(`no new picture from ${siteUrl} (${harvested.status}${"reason" in harvested ? `: ${harvested.reason}` : ""})`),
+            offerableBefore: plan.offerable,
+          };
+        }
+        const result = harvested.result as {
+          candidates: Array<{ path: string; imageUrl: string; pageUrl: string; pageTitle?: string; altText?: string }>;
+          notes: string[];
+          scraperCalls: number;
+        };
+        const notes = [...result.notes];
+        // ONE vision call for the whole harvest. A library row's whole value
+        // is the stored sentence, so a picture nobody described is not filed.
+        const inspect = tools["media.inspectImages"];
+        if (inspect === undefined) {
+          return {
+            ...skipped(`${result.candidates.length} picture(s) downloaded from ${siteUrl}, but media.inspectImages is not registered so none could be described and filed`),
+            offerableBefore: plan.offerable,
+            scraperCalls: result.scraperCalls,
+          };
+        }
+        const batch = result.candidates.slice(0, 12);
+        const inspected = await inspect.execute(
+          { repoRoot: options.repoRoot, images: batch.map((c, i) => ({ ref: `site-${i + 1}`, path: c.path })), purpose: "candidate-vetting" },
+          { ctx },
+        );
+        if (inspected.status !== "success") {
+          return {
+            ...skipped(`${batch.length} picture(s) downloaded from ${siteUrl}, but the vision pass did not complete (${inspected.status}${"reason" in inspected ? `: ${inspected.reason}` : ""}) so none were filed`),
+            offerableBefore: plan.offerable,
+            inspected: batch.length,
+            scraperCalls: result.scraperCalls,
+          };
+        }
+        const byRef = new Map(((inspected.result as { inspections: Array<Record<string, unknown>> }).inspections).map((i) => [String(i["ref"]), i]));
+        let refused = 0;
+        const entries = batch.flatMap((candidate, i) => {
+          const found = byRef.get(`site-${i + 1}`);
+          const description = typeof found?.["description"] === "string" ? (found["description"] as string) : "";
+          if (found === undefined || description.trim().length === 0) return [];
+          // What the vet would refuse anyway is not worth an archive row: an
+          // unusable frame, a watermarked one, or a capture of the site's own
+          // UI rather than a picture of anything.
+          if (found["quality"] === "unusable" || found["hasWatermark"] === true || found["looksLikeScreenshot"] === true) {
+            refused += 1;
+            return [];
+          }
+          return [
+            buildClientSiteLibraryEntry(
+              {
+                description,
+                subjects: (found["subjects"] as string[] | undefined) ?? [],
+                textInImage: (found["textInImage"] as string[] | undefined) ?? [],
+                mood: typeof found["mood"] === "string" ? (found["mood"] as string) : "",
+                ...(inspect.version !== undefined ? { toolVersion: inspect.version } : {}),
+              },
+              {
+                path: candidate.path,
+                imageUrl: candidate.imageUrl,
+                pageUrl: candidate.pageUrl,
+                ...(candidate.pageTitle !== undefined ? { pageTitle: candidate.pageTitle } : {}),
+                ...(candidate.altText !== undefined ? { altText: candidate.altText } : {}),
+              },
+            ),
+          ];
+        });
+        if (refused > 0) notes.push(`${refused} picture(s) were unusable, watermarked or screenshots of the site itself and were not filed`);
+        let filed: string[] = [];
+        if (entries.length > 0) {
+          const written = await add.execute({ repoRoot: options.repoRoot, entries }, { ctx });
+          if (written.status === "success") {
+            const w = written.result as { created: string[]; updated: string[]; skipped: Array<{ reason: string }> };
+            filed = [...w.created, ...w.updated];
+            if (w.skipped.length > 0) notes.push(`${w.skipped.length} picture(s) were not filed (${w.skipped.map((k) => k.reason).join("; ")})`);
+          } else {
+            notes.push(`the media library write did not complete (${written.status}${"reason" in written ? `: ${written.reason}` : ""})`);
+          }
+        }
+        return {
+          harvested: result.candidates.length,
+          filed,
+          offerableBefore: plan.offerable,
+          inspected: batch.length,
+          scraperCalls: result.scraperCalls,
+          note: [`${filed.length} picture(s) from the client's own website (${siteUrl}) filed in the media library`, ...notes].join("; "),
+        };
+      } catch (error) {
+        return skipped(`the client's website could not be harvested for pictures (${(error as Error).message})`);
+      }
+    });
+    // Outside the step, like every other meter line: a resumed run replays
+    // the checkpoint and re-adds the line, so the meter needs no checkpoint.
+    if (siteStock.inspected > 0 || siteStock.scraperCalls > 0) {
+      spend(
+        "05y0-stock-client-site-images",
+        undefined,
+        siteStock.inspected * STEP_COST_ESTIMATES_USD.visionInspectPerImage + siteStock.scraperCalls * STEP_COST_ESTIMATES_USD.scraperExecution,
+      );
+    }
+
     const libraryRead = await wf.step.code("05y-read-media-library", async () => {
       const list = tools["media.libraryList"];
       const ingest = tools["media.ingestAssets"];
@@ -5174,6 +5334,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         const selection = selectLibraryCandidates(entries, "", {
           ...(previousPostRunId !== undefined ? { excludeUsedInRunIds: [previousPostRunId] } : {}),
           ledgerUsed: usedImages,
+          limit: LIBRARY_OFFER_LIMIT,
         });
         const selected = selection.candidates.map((c) => c.entry.assetId);
         if (selection.candidates.length === 0) {

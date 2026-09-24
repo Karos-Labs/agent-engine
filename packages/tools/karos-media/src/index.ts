@@ -18,6 +18,7 @@ import { createMediaLibraryAdd, createMediaLibraryList } from "./media-library.j
 import { createVisualQaGate } from "./visual-qa-gate.js";
 import { createInspectImages } from "./inspect-images.js";
 import { createHarvestArticleImages } from "./harvest-article-images.js";
+import { createHarvestSiteImages } from "./harvest-site-images.js";
 import { createScreenshotPage, type BrowserLauncher } from "./screenshot-page.js";
 import { createCutout } from "./cutout.js";
 import { createStageAsset } from "./stage-asset.js";
@@ -51,6 +52,7 @@ export * from "./get-likeness-consent.js";
 export * from "./visual-qa-gate.js";
 export * from "./inspect-images.js";
 export * from "./harvest-article-images.js";
+export * from "./harvest-site-images.js";
 export * from "./screenshot-page.js";
 export * from "./cutout.js";
 export * from "./reference-fidelity.js";
@@ -166,7 +168,8 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
         description:
           "Stub registered when this deployment supplied an empty provider source: always reports not_available rather than searching, since no image-search provider is configured.",
         // 1.0.1: this file gained the video harvest/QA wiring around the stub; the stub itself is unchanged.
-        version: "1.0.1",
+        // 1.0.2: this file gained the `media.harvestSiteImages` registration; the stub itself is unchanged.
+        version: "1.0.2",
         inputSchema: FindImagesInputSchema,
         async execute() {
           return notAvailable(
@@ -327,6 +330,14 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
     // ── Tier 1b: the cited articles' own lead images. Publisher-owned, so
     // `unknown` provenance with a credit line — the reviewer decides.
     "media.harvestArticleImages": createHarvestArticleImages({
+      ...(scraper ? { scraper } : {}),
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    }),
+    // ── Tier 0.5 feed: the pictures on the CLIENT'S OWN website (2026-09-24).
+    // A plain GET first (free); the scraper only when the homepage refuses it.
+    // The Instagram workflow files what this returns in the client's media
+    // library, so the site is read once and reused across posts.
+    "media.harvestSiteImages": createHarvestSiteImages({
       ...(scraper ? { scraper } : {}),
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
     }),

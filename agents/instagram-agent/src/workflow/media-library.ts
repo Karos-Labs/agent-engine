@@ -1,4 +1,4 @@
-import { sceneQueryTags, sceneTagsFor, type MediaLibraryAddEntry, type MediaLibraryEntry, type MediaLibraryRights } from "@agent-engine/tool-karos-media";
+import { CLIENT_SITE_LICENCE, sceneQueryTags, sceneTagsFor, type MediaLibraryAddEntry, type MediaLibraryEntry, type MediaLibraryRights } from "@agent-engine/tool-karos-media";
 import { buildVisionAnnotation } from "./vision-annotation.js";
 
 /**
@@ -46,9 +46,41 @@ export const CLIENT_UPLOAD_RIGHTS: MediaLibraryRights = {
   licence: "client-supplied — owned by the client, uploaded deliberately for this post",
 };
 
-/** True when this row is the CLIENT'S OWN frame rather than something harvested — the fact the rights sentence handed to the vet turns on. */
+/**
+ * The `rights.source` a picture read off the CLIENT'S OWN WEBSITE is filed
+ * under (2026-09-24), and the rights block `05y0` files it with.
+ *
+ * Why this exists: Hanky Panky's 2026-09-23 carousel shipped with zero
+ * pictures because the product the writer named ("Signature Lace") existed as
+ * a licensed picture nowhere except on the client's own site, and stock lace
+ * was — correctly — refused as an unnamed subject for a slide that names one.
+ * The owner approved using what the client itself publishes on its own site on
+ * the client's own channel, with an honest label. The licence words come from
+ * `media.harvestSiteImages` itself (`CLIENT_SITE_LICENCE`), so the tool and
+ * the library can never describe the same picture two ways.
+ *
+ * `note` carries the page the picture was published on, so a reviewer can see
+ * where it came from without opening the archive.
+ */
+export const CLIENT_SITE_RIGHTS_SOURCE = "client-site";
+export function clientSiteRights(pageUrl: string): MediaLibraryRights {
+  return { source: CLIENT_SITE_RIGHTS_SOURCE, licence: CLIENT_SITE_LICENCE, note: `published at ${pageUrl}` };
+}
+
+/** True when this row was read off the client's own website (`05y0`) rather than uploaded. */
+export function isClientSiteFrame(entry: Pick<MediaLibraryEntry, "rights">): boolean {
+  return entry.rights.source.trim().toLowerCase() === CLIENT_SITE_RIGHTS_SOURCE;
+}
+
+/**
+ * True when this row is the CLIENT'S OWN frame rather than something harvested
+ * from a third party — the fact the rights sentence handed to the vet turns
+ * on. A client upload and a picture from the client's own website are both the
+ * client's own; `libraryRightsSentence` still says which of the two it is.
+ */
 export function isClientOwnedFrame(entry: Pick<MediaLibraryEntry, "rights">): boolean {
-  return entry.rights.source.trim().toLowerCase() === CLIENT_UPLOAD_RIGHTS_SOURCE;
+  const source = entry.rights.source.trim().toLowerCase();
+  return source === CLIENT_UPLOAD_RIGHTS_SOURCE || source === CLIENT_SITE_RIGHTS_SOURCE;
 }
 
 /**
@@ -128,6 +160,88 @@ export function buildLibraryEntry(inspection: LibraryInspection, staged: Library
   };
 }
 
+/** Where one client-site picture was found, as `media.harvestSiteImages` reported it. */
+export interface ClientSiteStagedAsset {
+  /** Repo-relative path under `.media-cache/`, as the harvester wrote it. */
+  path: string;
+  /** The image's own URL — the durable location a later run re-fetches it from. */
+  imageUrl: string;
+  /** The page it was published on. */
+  pageUrl: string;
+  pageTitle?: string;
+  /** The page's own caption for it (`alt`, or the social-card title) — usually the client's PRODUCT NAME. */
+  altText?: string;
+}
+
+/**
+ * The `media.libraryAdd` payload for one inspected picture from the client's
+ * own website.
+ *
+ * **The page's own words ride in the stored description, and they have to.**
+ * The vision model sees "a woman in a black lace thong"; the client's site
+ * calls the same frame "Signature Lace Original Rise Thong". A slide that
+ * names the product can only be matched to the picture of it if the name is
+ * in the sentence the vet reads (`instagram-image-vet` §1a/§1b judge identity
+ * from text alone), and `05b1`'s media-library tier filters the archive by the
+ * entity's name in that same description. So the caption and the page title
+ * are appended to the description, and the caption leads `subjects` — which is
+ * also what the scene tags are derived from.
+ */
+export function buildClientSiteLibraryEntry(inspection: LibraryInspection, staged: ClientSiteStagedAsset): MediaLibraryAddEntry {
+  const description = inspection.description.replace(/\s+/gu, " ").trim();
+  const title = staged.pageTitle?.replace(/\s+/gu, " ").trim();
+  const caption = staged.altText?.replace(/\s+/gu, " ").trim();
+  const provenance =
+    `Published on the client's own website${title ? ` on the page "${title}"` : ""}` +
+    `${caption ? `, where the client captions it "${caption}"` : ""}.`;
+  const subjects = [...(caption ? [caption] : []), ...(inspection.subjects ?? [])].slice(0, 24);
+  return {
+    path: staged.path,
+    gcsUri: staged.imageUrl,
+    rights: clientSiteRights(staged.pageUrl),
+    description: `${description} ${provenance}`,
+    ...(subjects.length > 0 ? { subjects } : {}),
+    ...(inspection.textInImage && inspection.textInImage.length > 0 ? { textInImage: [...inspection.textInImage] } : {}),
+    ...(inspection.mood ? { mood: inspection.mood } : {}),
+    ...(inspection.toolVersion ? { inspectedByToolVersion: inspection.toolVersion } : {}),
+  };
+}
+
+/** How many OFFERABLE client-site frames the library should hold before `05y0` stops reading the site. One per photo slide of a default carousel. */
+export const CLIENT_SITE_STOCK_TARGET = 6;
+/** How many pictures one harvest downloads at most — and therefore the most images one harvest's single vision call looks at. */
+export const CLIENT_SITE_HARVEST_CAP = 8;
+
+export interface ClientSiteHarvestPlan {
+  /** Client-site frames on file that this post could still be offered (the same exclusions `05y` applies). */
+  offerable: number;
+  /** Every client-site image URL already on file, used or not — handed to the harvester so it never downloads (or pays vision for) the same picture twice. */
+  filedImageUrls: string[];
+  /** Read the site this run? False once the library holds `CLIENT_SITE_STOCK_TARGET` offerable frames. */
+  harvest: boolean;
+  /** How many new pictures to ask for. */
+  want: number;
+}
+
+/**
+ * Whether this run should read the client's website for pictures, and what to
+ * skip when it does.
+ *
+ * Counted on OFFERABLE frames, not filed ones, because the ledger's cross-post
+ * rule ("never twice, ever") retires every frame that ships: a library that
+ * once held eight site pictures and has shipped all eight is empty for this
+ * post's purposes, and saying "stocked" there would starve every later post.
+ * The exclusions are `selectLibraryCandidates`' own, so this count and what
+ * `05y` actually offers can never disagree.
+ */
+export function planClientSiteHarvest(entries: readonly MediaLibraryEntry[], options: Pick<LibrarySelectionOptions, "excludeUsedInRunIds" | "ledgerUsed"> = {}): ClientSiteHarvestPlan {
+  const site = entries.filter(isClientSiteFrame);
+  const offerable = selectLibraryCandidates(site, "", { ...options, limit: site.length + 1 }).candidates.length;
+  const filedImageUrls = site.map((entry) => entry.gcsUri);
+  const harvest = offerable < CLIENT_SITE_STOCK_TARGET;
+  return { offerable, filedImageUrls, harvest, want: harvest ? CLIENT_SITE_HARVEST_CAP : 0 };
+}
+
 /**
  * The scene tags one inspection files under.
  *
@@ -179,6 +293,18 @@ export interface LibrarySelection {
 }
 
 const DEFAULT_LIBRARY_CANDIDATE_LIMIT = 6;
+
+/**
+ * How many archived frames `05y` offers one post (2026-09-24: 6 -> 8).
+ *
+ * Raised with the client-site tier: a harvest files up to
+ * `CLIENT_SITE_HARVEST_CAP` (8) pictures, and with `05y` reading the archive
+ * unfiltered (the copy is not written yet) a limit of six could leave the one
+ * picture of the product the slide names — the reason the tier exists —
+ * sitting seventh in the archive and never offered. Each extra frame costs one
+ * re-ingest download and a line in the vet prompt, never a vision call.
+ */
+export const LIBRARY_OFFER_LIMIT = 8;
 
 /**
  * Which filed frames may compete for this post's slides.
@@ -255,12 +381,17 @@ export function selectLibraryCandidates(
     candidates.push({ entry, matchedTags, matchScore: matchedTags.length });
   }
 
-  // Best match first; among equals the newest frame, because an archive that
-  // keeps re-offering its oldest picture is the repetition item P exists to
-  // stop. `assetId` is the final tiebreak so the order is total and a fixture
-  // cannot depend on array luck.
+  // Best match first; among equals the client's deliberate UPLOADS before
+  // pictures read off their website (an upload is a choice the client made; a
+  // site picture is one we found), then the newest frame, because an archive
+  // that keeps re-offering its oldest picture is the repetition item P exists
+  // to stop. `assetId` is the final tiebreak so the order is total and a
+  // fixture cannot depend on array luck.
   candidates.sort((a, b) => {
     if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
+    const siteA = isClientSiteFrame(a.entry) ? 1 : 0;
+    const siteB = isClientSiteFrame(b.entry) ? 1 : 0;
+    if (siteA !== siteB) return siteA - siteB;
     if (a.entry.addedAt !== b.entry.addedAt) return a.entry.addedAt < b.entry.addedAt ? 1 : -1;
     return a.entry.assetId < b.entry.assetId ? -1 : 1;
   });
@@ -307,6 +438,13 @@ export function describeLibraryCandidate(entry: MediaLibraryEntry): string {
  */
 export function libraryRightsSentence(entry: Pick<MediaLibraryEntry, "rights">): string {
   const licence = `[licence: ${entry.rights.licence}${entry.rights.note !== undefined && entry.rights.note.length > 0 ? `; ${entry.rights.note}` : ""}]`;
+  if (isClientSiteFrame(entry)) {
+    // The client's own published imagery, on the client's own channel: the
+    // same ownership conclusion as an upload (so `instagram-image-vet`'s §6
+    // library rule — client-owned, `blanket`, rights-usable — reads it
+    // correctly), stated with where it actually came from.
+    return `The client publishes this image on its own website, so it is the client's own imagery of its own products and world, rights-cleared for the client's own channel and unwatermarked unless the picture itself shows otherwise. ${licence}`;
+  }
   return isClientOwnedFrame(entry)
     ? `The client owns this image and supplied it deliberately for an earlier post of theirs, so it is rights-cleared and unwatermarked unless the picture itself shows otherwise. ${licence}`
     : `Filed in this client's media library from ${entry.rights.source}. ${licence}`;
