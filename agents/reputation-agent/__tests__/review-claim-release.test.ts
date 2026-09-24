@@ -83,7 +83,16 @@ describe("review claims: taken to prevent double-drafting, and handed back when 
     });
   });
 
-  it("a REJECTED approve-all gate releases every claim, so the next pulse can draft those reviews again", async () => {
+  /**
+   * A REJECTION REFUSES THE RELEASE, NOT THE PULSE.
+   *
+   * The two things it must still cost are asserted below: no response-ledger
+   * row (or the refused reviews retire from every future pulse) and every
+   * claim back (or they are stranded behind a run that never reopens). What it
+   * no longer costs is the pulse — the capture, triage, flags and drafts are
+   * delivered, marked refused, so the reviewer has the thing they said no to.
+   */
+  it("a REJECTED approve-all gate delivers the pulse marked rejected, and releases every claim", async () => {
     const workflowFn = createReputationPulseWorkflow({ tools: env.tools, promptStore: makePromptStore(), router: goodRouter(), store: env.store });
     const engine = new WorkflowEngine(new MemoryDurableStepStore());
     const rejected = { runId: "pulse_claim_rejected", clientSlug: env.clientSlug, productId: "reputation-agent", runKind: "recurring" as const };
@@ -100,8 +109,16 @@ describe("review claims: taken to prevent double-drafting, and handed back when 
       reason: "batch needs a second look",
       at: new Date().toISOString(),
     });
-    const held = await engine.run(workflowFn, rejected);
-    expect(held.status).toBe("held");
+    const refused = await engine.run(workflowFn, rejected);
+    expect(refused.status).toBe("completed");
+    if (refused.status !== "completed") throw new Error("unreachable");
+
+    // The work survives, and is honest about what happened to it.
+    expect(refused.output.status).toBe("rejected");
+    expect(refused.output.rejection?.reason).toBe("batch needs a second look");
+    expect(refused.output.rejection?.by).toBe("account_manager@karoslabs.com");
+    expect(refused.output.deliverableId).toBeTruthy();
+    expect(refused.output.approvedDraftCount).toBe(1);
 
     // The claim came back — one human "no" must not strand the review forever.
     const afterHold = await env.store.readJson<ReputationClaimRecord>(env.clientSlug, claimSegments(RESPOND_ID));

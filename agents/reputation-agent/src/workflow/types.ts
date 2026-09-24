@@ -141,6 +141,15 @@ export interface ReputationPulseWorkflowResult {
   crisisTriggerCount: number;
   deliverableId: string;
   draftManifest: ReputationCompletionManifestRow[];
+  /**
+   * `"rejected"` when a human refused the batch at `10-reputation-approve-all`.
+   * The pulse is still delivered — the drafts, flags and crisis triggers are
+   * all in the deliverable — but nothing was written to the response ledger
+   * and every claim was released, so a later pulse can draft these again.
+   */
+  status: "ok" | "rejected";
+  /** Present only when `status` is `"rejected"`: who refused it, when, and why. */
+  rejection?: { decision: string; by: string; at: string; reason: string };
   approvedDraftCount: number;
   flaggedCount: number;
   captureLegs: ReputationCaptureLegStatus[];

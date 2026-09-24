@@ -452,7 +452,15 @@ describe("POST /api/v1/runs/:runId/resume — campaign orchestrator gate", () =>
     expect(res.status).toBe(400);
   }, 60_000);
 
-  it("resolves to held when the gate is rejected with a reason", async () => {
+  /**
+   * A rejected campaign COMPLETES now, carrying the refusal, rather than
+   * ending `held`. The bundle is written either way — every channel has
+   * already produced its work by the time this gate opens — and the campaign
+   * workflow marks it `status: "rejected"` with the reviewer's reason. The
+   * HTTP contract is unchanged (202 + a terminal status); what changed is
+   * which terminal status a "no" produces.
+   */
+  it("resolves to a completed, refused run when the gate is rejected with a reason", async () => {
     const startRes = await request(app)
       .post("/api/v1/runs/start")
       .send({ clientSlug: "acme", productId: "campaign-orchestrator", runKind: "recurring" });
@@ -463,7 +471,13 @@ describe("POST /api/v1/runs/:runId/resume — campaign orchestrator gate", () =>
       .send({ gateId: "13-campaign-review", resolution: { decision: "reject", actor: "jane@karoslabs.com", notes: "needs a different theme" } });
 
     expect(res.status).toBe(202);
-    expect(res.body.status).toBe("held");
+    expect(res.body.status).toBe("completed");
+    // The refusal is recorded on the run and on the bundle the workflow wrote
+    // (asserted where that shape lives, in the campaign agent's own suite).
+    // What this route owes the caller is the terminal status and the decision
+    // it acted on.
+    expect(res.body.decision).toBe("reject");
+    expect(res.body.report.domainOutcome).toBe("delivered");
   }, 60_000);
 
   it("returns 404 when resuming a run that doesn't exist", async () => {

@@ -174,6 +174,51 @@ describe("landing-builder-agent v2: fresh build, end to end", () => {
     // Nothing went live before the person said yes.
     expect(env.hostingCalls.some((c) => /\/channels\/live\/releases/.test(c.url))).toBe(false);
   });
+
+  /**
+   * A REJECTION REFUSES THE PUBLISH, NOT THE WORK.
+   *
+   * By the time the gate opens, the page is built, checked, rendered,
+   * screenshotted, uploaded and preview-deployed — the reviewer is looking at
+   * a preview URL when they press the button. The run used to answer that
+   * button with `WorkflowHeld`, discarding all of it and handing the client an
+   * error string in place of the page.
+   *
+   * The owner's rule of 2026-09-17: an agent never ends a run with no
+   * deliverable. So the page ships, marked refused, and the rejection costs
+   * exactly the two things it should — the live deploy, and writing this build
+   * as the baseline the next revision would reuse.
+   */
+  it("keeps the built page when a reviewer rejects it, and publishes nothing", async () => {
+    env = await setupTestEnvironment();
+    const workflowFn = createLandingBuilderAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router: landingFakeRouter().router });
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+
+    const paused = await engine.run(workflowFn, params);
+    if (paused.status !== "awaiting_gate") throw new Error("expected the craft review gate");
+    await engine.resolveGate(params.runId, paused.pendingGateId, {
+      decision: "reject",
+      actor: "tomer",
+      at: new Date().toISOString(),
+      reason: "the hero says nothing",
+    });
+
+    const out = await engine.run(workflowFn, params);
+    if (out.status !== "completed") throw new Error(`expected a completed run, got ${out.status}`);
+    const result = out.output as { status: string; rejection?: { reason: string; by: string }; previewUrl?: string; liveUrl?: string; deliverableId?: string };
+
+    // Delivered, and honest about what happened.
+    expect(result.status).toBe("rejected");
+    expect(result.rejection?.reason).toBe("the hero says nothing");
+    expect(result.rejection?.by).toBe("tomer");
+    // The work the reviewer was looking at survives.
+    expect(result.previewUrl).toMatch(/\.web\.app$/);
+    expect(result.deliverableId).toBeTruthy();
+    // And the two things the rejection actually refuses did not happen.
+    expect(result.liveUrl).toBeUndefined();
+    expect(env.hostingCalls.some((c) => /\/channels\/live\/releases/.test(c.url))).toBe(false);
+  });
 });
 
 describe("landing-builder-agent v2: grounding and revision", () => {

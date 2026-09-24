@@ -1,6 +1,5 @@
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
 import {
-  WorkflowHeld,
   WorkflowToolingFailure,
   type WorkflowContext,
   runTopicGuardrail,
@@ -364,12 +363,39 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
           requiredRole: "account_manager",
           timeout: { duration: "1h", onTimeout: "auto_approve" },
         });
-    if (reviewDecision.decision !== "approve") {
-      throw new WorkflowHeld(`landing craft review rejected: ${reviewDecision.reason ?? "no reason given"}`);
-    }
+    /**
+     * A REJECTION REFUSES THE PUBLISH, NOT THE WORK.
+     *
+     * By this line the page is built, checked, rendered, screenshotted,
+     * uploaded and preview-deployed. Throwing `WorkflowHeld` here discarded all
+     * of it and handed the client an error string — including the preview URL
+     * that already exists and that the reviewer was just looking at when they
+     * pressed the button.
+     *
+     * The owner's standing rule (2026-09-17) is that an agent never ends a run
+     * with no deliverable: fall back, redact, warn or annotate, but always
+     * deliver. `blog-agent` and `intel-report-agent` already read a rejection
+     * this way — keep the work, mark it refused, name who refused it and why.
+     *
+     * What the rejection DOES cost is steps 13 and 14: the live deploy, and
+     * writing this build as the client's landing state. Both are correct to
+     * skip. A rejected page must not become the baseline the next revision
+     * builds on, which is the one thing worse than losing it.
+     */
+    const rejected = reviewDecision.decision !== "approve";
+    const rejection = rejected
+      ? {
+          decision: reviewDecision.decision,
+          by: reviewDecision.actor,
+          at: reviewDecision.at,
+          reason: reviewDecision.reason ?? "no reason given",
+        }
+      : undefined;
 
     // ── 13: PROMOTE the reviewed version to live ──
     const live = await wf.step.code("13-deploy-live", async (): Promise<DeployPageResult | null> => {
+      // The refused half. Everything above it is kept; this is the publish.
+      if (rejected) return null;
       if (!tools["landing.deployPage"]) return null;
       // The reviewed version when the preview deployed; a fresh upload of the
       // identical, checkpointed html when the preview step failed.
@@ -384,6 +410,8 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
 
     // ── 14: persist the approved build as the client's landing state ──
     await wf.step.code("14-write-state", async () => {
+      // A rejected build must not become the baseline the next revision reuses.
+      if (rejected) return null;
       if (!tools["landing.writeState"]) return null;
       return callTool<{ path: string }>(tools, ctx, "landing.writeState", {
         runId: wf.runId,
@@ -401,9 +429,10 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
         deliverable: {
           title: blueprint.meta.title,
           description: blueprint.meta.description,
-          status: needsHuman ? "needs_human" : "ok",
+          status: rejected ? "rejected" : needsHuman ? "needs_human" : "ok",
           gate: check.pass && render.pass ? "pass" : "fail",
           craftVerdict: verdict?.verdict ?? "skipped",
+          ...(rejection ? { rejection } : {}),
           ...(live ? { liveUrl: live.url, versionName: live.versionName } : {}),
           ...(previewDeploy ? { previewUrl: previewDeploy.url } : {}),
           ...(uploaded ? { gcsPrefix: uploaded.gcsPrefix, fileCount: uploaded.fileCount, indexSignedUrl: uploaded.indexSignedUrl } : {}),
@@ -416,7 +445,8 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
     });
 
     return {
-      status: needsHuman ? "needs_human" : "ok",
+      status: rejected ? "rejected" : needsHuman ? "needs_human" : "ok",
+      ...(rejection ? { rejection } : {}),
       client: wf.clientSlug,
       title: blueprint.meta.title,
       gate: check.pass && render.pass ? "pass" : "fail",

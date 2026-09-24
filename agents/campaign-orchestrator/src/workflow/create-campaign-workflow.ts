@@ -420,9 +420,29 @@ export function createCampaignWorkflow(options: CreateCampaignWorkflowOptions) {
       requiredRole: "account_manager",
       timeout: { duration: "1h", onTimeout: "auto_approve" },
     });
-    if (decision.decision !== "approve") {
-      throw new WorkflowHeld(`campaign rejected: ${decision.reason ?? "no reason given"}`);
-    }
+    /**
+     * A REJECTION REFUSES THE CAMPAIGN, NOT EVERY CHANNEL'S WORK.
+     *
+     * Each slot has already run a whole channel workflow by now and written
+     * its own deliverable; this gate is the one human checkpoint over the
+     * BUNDLE. `WorkflowHeld` here left the reviewer with an error string and
+     * a set of orphan per-channel deliverables nothing tied together — the
+     * campaign they had opinions about existed nowhere afterwards.
+     *
+     * The bundle is written either way, marked `rejected` and carrying their
+     * reason. What the rejection costs is step 15: the topic reservation is
+     * NOT committed (those topics stay available for the next campaign), and
+     * client memory records the refusal rather than "ran campaign X".
+     */
+    const rejected = decision.decision !== "approve";
+    const rejection = rejected
+      ? {
+          decision: decision.decision,
+          by: decision.actor,
+          at: decision.at,
+          reason: decision.reason ?? "no reason given",
+        }
+      : undefined;
 
     // ── 14: persist unified campaign bundle and deliverables ──
     const deliverableId = await wf.step.code("14-persist-campaign-bundle", async (): Promise<string> => {
@@ -430,7 +450,15 @@ export function createCampaignWorkflow(options: CreateCampaignWorkflowOptions) {
         {
           runId: wf.runId,
           kind: "campaign-bundle",
-          deliverable: { campaignName: plan.campaignName, theme: plan.theme, targetPillars: plan.targetPillars, channelResults },
+          deliverable: {
+            campaignName: plan.campaignName,
+            theme: plan.theme,
+            targetPillars: plan.targetPillars,
+            channelResults,
+            // No caller may mistake a refused bundle for an approved one.
+            status: rejected ? "rejected" : "ok",
+            ...(rejection ? { rejection } : {}),
+          },
         },
         { ctx },
       );
@@ -440,18 +468,29 @@ export function createCampaignWorkflow(options: CreateCampaignWorkflowOptions) {
 
     // ── 15: commit updates (topics.commit, memory.appendDecision) ──
     await wf.step.code("15-commit-and-record", async () => {
-      if (topicPool.reservationKey) {
+      // The refused half. A committed reservation means "these topics are
+      // spent", which a rejected campaign has no right to claim.
+      if (topicPool.reservationKey && !rejected) {
         await options.tools["topics.commit"]!.execute({ reservationKey: topicPool.reservationKey }, { ctx });
       }
       await options.tools["memory.appendDecision"]!.execute(
         {
           decisionId: `${wf.runId}__decision`,
-          summary: `Ran campaign "${plan.campaignName}" (theme: ${plan.theme}) across ${channelResults.length} channels`,
+          summary: rejected
+            ? `Campaign "${plan.campaignName}" (theme: ${plan.theme}) was REJECTED at review by ${decision.actor}: ${rejection!.reason}`
+            : `Ran campaign "${plan.campaignName}" (theme: ${plan.theme}) across ${channelResults.length} channels`,
         },
         { ctx },
       );
     });
 
-    return { campaignName: plan.campaignName, theme: plan.theme, channelResults, deliverableId };
+    return {
+      campaignName: plan.campaignName,
+      theme: plan.theme,
+      channelResults,
+      deliverableId,
+      status: rejected ? ("rejected" as const) : ("ok" as const),
+      ...(rejection ? { rejection } : {}),
+    };
   };
 }

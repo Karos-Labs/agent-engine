@@ -2,7 +2,7 @@ import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
 import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import type { Annotations, CaptureLegOutcome, DoctrineGateResult, Review, TriageResult } from "@agent-engine/tool-karos-reputation";
-import { readRunDirection, runDirectionField, type SlotOutcome, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, runTopicGuardrail, toAgentContext } from "@agent-engine/workflow";
+import { readRunDirection, runDirectionField, type SlotOutcome, type WorkflowContext, WorkflowBlockedIntake, WorkflowToolingFailure, runTopicGuardrail, toAgentContext } from "@agent-engine/workflow";
 import { ReputationDoctrineGateAgent } from "../agent/reputation-doctrine-gate-agent.js";
 import { ReputationDraftAgent } from "../agent/reputation-draft-agent.js";
 import { REPUTATION_CLASSIFIER_MODEL_ID, ReputationExtractionAgent } from "../agent/reputation-extraction-agent.js";
@@ -688,17 +688,35 @@ export function createReputationPulseWorkflow(options: CreateReputationPulseWork
           requiredRole: "account_manager",
           timeout: { duration: "1h", onTimeout: "auto_approve" },
         });
-    if (approveAllDecision.decision !== "approve") {
-      // A rejection here means a human looked at the batch and said no —
-      // this is `WorkflowHeld`, not a crash: nothing was published either
-      // way (this workflow never calls a publish path at all), so a
-      // rejection just means the drafts stay unapproved for this pulse.
-      //
-      // This IS a closing point (run-protocol.md §9: "`HELD` jumps straight to
-      // the closing step" and "closing... releases every claim"), so every
-      // claim this run took comes back — the approved lane included. Without
-      // this, one human "no" would strand a whole pulse's worth of perfectly
-      // draftable reviews behind claims held by a run that will never reopen.
+    /**
+     * A REJECTION REFUSES THE RELEASE, NOT THE PULSE.
+     *
+     * A human looked at the batch and said no. Nothing was published either
+     * way — this workflow never calls a publish path at all — so the only
+     * things a rejection may cost are the response ledger (which would mark
+     * these reviews as answered and stop any later pulse drafting them) and
+     * the claims (which would strand them behind a run that never reopens).
+     *
+     * It used to cost the pulse itself: `WorkflowHeld` discarded the capture,
+     * the triage, the flags, the crisis triggers and every draft, so a
+     * reviewer who pressed "no" was left with nothing to act on and no record
+     * of what they had refused. The deliverable is written now, marked
+     * `rejected` and carrying their reason, as seo-geo and blog already do.
+     */
+    const rejected = approveAllDecision.decision !== "approve";
+    const rejection = rejected
+      ? {
+          decision: approveAllDecision.decision,
+          by: approveAllDecision.actor,
+          at: approveAllDecision.at,
+          reason: approveAllDecision.reason ?? "no reason given",
+        }
+      : undefined;
+    if (rejected) {
+      // run-protocol.md §9: closing "releases every claim", so every claim this
+      // run took comes back — the approved lane included. Without this, one
+      // human "no" would strand a whole pulse's worth of perfectly draftable
+      // reviews behind claims held by a run that will never reopen.
       await wf.step.code("10b-release-claims-on-hold", async () => {
         const released: string[] = [];
         for (const reviewId of claimResult.claimed) {
@@ -706,7 +724,6 @@ export function createReputationPulseWorkflow(options: CreateReputationPulseWork
         }
         return { released };
       });
-      throw new WorkflowHeld(`reputation_approve_all gate rejected: ${approveAllDecision.reason ?? "no reason given"}`);
     }
 
     // ── 11: payload, ledger appends (idempotent, keyed per run-protocol.md §12), learning log ──
@@ -717,8 +734,13 @@ export function createReputationPulseWorkflow(options: CreateReputationPulseWork
     ];
 
     const deliverableId = await wf.step.code("11-assemble-and-persist", async () => {
-      for (const { reviewId } of approvedList) {
-        await recordResponded(store, wf.clientSlug, wf.runId, "11", reviewId);
+      // NOT written on a rejection: the response ledger is the record that a
+      // review was ANSWERED, and these were refused. Writing it would quietly
+      // retire every refused review from every future pulse.
+      if (!rejected) {
+        for (const { reviewId } of approvedList) {
+          await recordResponded(store, wf.clientSlug, wf.runId, "11", reviewId);
+        }
       }
 
       // run-protocol.md §9: the closing step "releases every claim". A claim
@@ -769,6 +791,11 @@ export function createReputationPulseWorkflow(options: CreateReputationPulseWork
         flagged: flaggedWithTags,
         approvedDrafts: approvedList,
         draftManifest,
+        // The drafts are delivered either way; this is what says whether a
+        // human released them. A reader (and the portal) must not mistake a
+        // refused batch for an approved one.
+        status: rejected ? "rejected" : "ok",
+        ...(rejection ? { rejection } : {}),
       };
 
       const writeOutcome = await tools["ledger.writeDeliverable"]!.execute({ runId: wf.runId, kind: "reputation-pulse", deliverable: payload }, { ctx });
@@ -799,6 +826,8 @@ export function createReputationPulseWorkflow(options: CreateReputationPulseWork
       crisisTriggerCount: triageResult.crisis.triggers.length,
       deliverableId,
       draftManifest,
+      status: rejected ? ("rejected" as const) : ("ok" as const),
+      ...(rejection ? { rejection } : {}),
       approvedDraftCount: approvedList.length,
       flaggedCount: flagRows.length,
       captureLegs: captureLegStatuses,
