@@ -12376,6 +12376,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // 2026-09-23: a slide whose picture is a mark shows it on a card.
           markImagePaths,
           clearMarkPaths,
+          interiorPhotosAsBlocks: true,
           productCutoutPaths,
           markBadges: markBadgeBySlide,
           // IGSTYLE-7, §7a — wires `paletteForSlide`'s already-built, already-

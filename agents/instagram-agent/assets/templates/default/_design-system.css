@@ -631,6 +631,27 @@ body[data-figure]:not([data-figure="band"]) .plate:not(:has(.sc-figure-band img[
    which is half of why `--lockup-anchor` was emitted and read by nothing. */
 /* The run's composition grammar still decides which end a plate leans to, for
    the plates that have one dominant block. */
+/* ── AN INTERIOR PHOTOGRAPH AS A BLOCK (2026-09-24). ──
+   The owner, on full-bleed interior photographs (Sitti's portrait, Hanky
+   Panky's product shot): "nicer like XO Digital's slide 3, where the
+   picture is not the whole screen". On the photo plate, `data-figure=
+   "inset"` frames the photograph as a block under the brand band, inside
+   the side gutters, and the copy takes the field below it on the plain
+   ground: no scrim, no type over the picture. */
+body[data-figure="inset"]:has(.plate.slide) .bg {
+  position: absolute;
+  inset: auto;
+  inset-block-start: calc(var(--zone-mark) + var(--sp));
+  inset-inline: var(--mx);
+  block-size: 600px;
+  border-radius: 4px;
+  overflow: hidden;
+  z-index: 1;
+}
+body[data-figure="inset"]:has(.plate.slide) .bg img { position: absolute; inset: 0; inline-size: 100%; block-size: 100%; object-fit: cover; }
+body[data-figure="inset"]:has(.plate.slide) .scrim { display: none; }
+body[data-figure="inset"]:has(.plate.slide) .plate { padding-block-start: calc(var(--zone-mark) + var(--sp) + 600px + var(--sp-2)); }
+
 /* OVER A PHOTOGRAPH THE COPY GOES TO THE FOOT. The scrim is built to darken
    downward, so the bottom of the plate is where type is legible and where it is
    not standing on somebody's face. With the picture as the only subject the
