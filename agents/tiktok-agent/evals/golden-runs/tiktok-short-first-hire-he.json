@@ -1,6 +1,6 @@
 {
   "id": "tiktok-short-first-hire-he",
-  "description": "A Hebrew-language short on the first hire, for a Hebrew-publishing client. Pre-read 2026-09-14 (SCRUM-437): the script said השכירה הראשונה, which in Hebrew is a rental, not a person you hire; every occurrence is now הגיוס הראשון / העובד הראשון, the words a Hebrew founder would use. A reference output must not teach the model a mistranslation. Exists so an English script shipped to a Hebrew client is a measurable failure rather than something a person notices by eye, and so the voice, shot and pitch lints are exercised on Hebrew words (the stock queries stay English: the library is). Three beats, 20 seconds, every sentence under a breath.",
+  "description": "A Hebrew-language short on the first hire, for a Hebrew-publishing client. Pre-read 2026-09-14 (SCRUM-437): the script said השכירה הראשונה, which in Hebrew is a rental, not a person you hire; every occurrence is now הגיוס הראשון / העובד הראשון, the words a Hebrew founder would use. A reference output must not teach the model a mistranslation. Exists so an English script shipped to a Hebrew client is a measurable failure rather than something a person notices by eye, and so the voice, shot and pitch lints are exercised on Hebrew words (the stock queries stay English: the library is). Three beats, 20 seconds, every sentence under a breath. Endorsed 2026-09-24 by Shlomi after a read for natural Hebrew: the last beat said למי שאתם הופכים להיות (a calque of \"who you are becoming\"), now לחברה שאתם הולכים להיות; the caption's שאלו/תגייסו mixed two registers, now one.",
   "agentId": "tiktok-agent",
   "language": "he",
   "input": {
@@ -32,14 +32,14 @@
         "seconds": 8
       },
       {
-        "narration": "תגייסו למי שאתם הופכים להיות. לא למי שאתם עכשיו.",
+        "narration": "תגייסו לחברה שאתם הולכים להיות. לא לזו שאתם היום.",
         "onScreenText": "לגייס לעתיד, לא להווה",
         "visualBrief": "מעבר חצייה עירוני בבוקר, אנשים חוצים מצולמים מאחור, אור נמוך וחם. בלי פנים מזוהות, בלי שלטים קריאים.",
         "stockQuery": "city street crossing people walking morning",
         "seconds": 6
       }
     ],
-    "caption": "הגיוס הראשון קובע יותר מהתקציב הראשון. שאלו איזו חברה תהיו בעוד שנה, ותגייסו לזה. karoslabs.com. No pitch, just a plan. #גיוס #סטארטאפ #KarosLabs",
+    "caption": "הגיוס הראשון קובע יותר מהתקציב הראשון. תשאלו את עצמכם איזו חברה תהיו בעוד שנה, ותגייסו בשבילה. karoslabs.com. No pitch, just a plan. #גיוס #סטארטאפ #KarosLabs",
     "about": "סרטון של שלושה ביטים על הגיוס הראשון בסטארטאפ: לגייס לחברה שתהיה, לא לזו שקיימת. קהל: מייסדים לפני הגיוס הראשון.",
     "voiceover": true,
     "voiceoverRationale": "טענה עם סיבה ותוצאה: מגייסים להיום, החברה משתנה, ולכן מגייסים לעתיד. קול נושא את הרצף; כתוביות לבד היו מפרקות אותו לשלוש טענות.",
@@ -48,6 +48,6 @@
   "gateArgs": {
     "brandCompliance": { "forbiddenTerms": ["מובטח", "הזול ביותר", "מספר אחת בתעשייה", "game-changer", "unlock"] }
   },
-  "endorsedBy": "claude-code, written for the eval set; awaiting a human endorsement",
-  "endorsedAt": "2026-09-10T13:30:00Z"
+  "endorsedBy": "shlomi@karoslabs.com",
+  "endorsedAt": "2026-09-24T21:30:00Z"
 }
