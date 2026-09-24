@@ -34,7 +34,7 @@ describe("figurePlacementFor", () => {
     expect(seen.size, `eight panels drew ${seen.size} distinct shapes`).toBeGreaterThan(3);
   });
 
-  it("does NOT select the two side shapes, which the fit ladder cannot size type for yet", () => {
+  it("does NOT select the two side shapes, which the fit ladder cannot size type for yet (and does select the three that keep the type full width)", () => {
     // The stylesheet declares them and they render correctly. The calibration
     // sweep refused every archetype that was offered a 56% column, because
     // `_ds-fit.js` sizes type against the FIELD and a side variant changes the
@@ -45,7 +45,7 @@ describe("figurePlacementFor", () => {
         Array.from({ length: 12 }, (_, i) => figurePlacementFor(layout, i + 1, true)),
       ),
     );
-    expect([...drawn].sort()).toEqual(["band", "bleed", "foot", "tall"]);
+    expect([...drawn].sort()).toEqual(["band", "bleed", "circle", "corner", "foot", "inset", "tall"]);
   });
 
   it("never gives two ADJACENT slides the same shape", () => {
@@ -65,6 +65,24 @@ describe("figurePlacementFor", () => {
     }
   });
 
+  it("is PHASED per client and run, so slide 3 is not the same shape in every client's every post (2026-09-24)", () => {
+    const seeds = ["geektime:run-1", "thepitchbydeel:run-1", "xodigital:run-1", "sitti:run-1", "hankypanky:run-1", "karoslabs:run-1", "karoslabs:run-2"];
+    const atSlide3 = new Set(seeds.map((seed) => figurePlacementFor("stat_callout", 3, true, seed)));
+    expect(atSlide3.size, `slide 3 across seven client/run seeds drew ${[...atSlide3].join(", ")}`).toBeGreaterThanOrEqual(4);
+    // Still stable for one seed, and still never the same shape twice in a row.
+    for (const seed of seeds) {
+      expect(figurePlacementFor("quote_card", 4, true, seed)).toBe(figurePlacementFor("quote_card", 4, true, seed));
+      for (let n = 1; n < 8; n++) expect(figurePlacementFor("list_takeaway", n, true, seed)).not.toBe(figurePlacementFor("list_takeaway", n + 1, true, seed));
+    }
+  });
+
+  it("keeps the first and last slide on the four full-width shapes, which were calibrated against the cover and closer floors", () => {
+    const drawn = new Set(
+      ["a:1", "b:2", "c:3", "d:4", "e:5", "f:6", "g:7"].flatMap((seed) => Array.from({ length: 8 }, (_, i) => figurePlacementFor("list_takeaway", i + 1, true, seed, { edge: true }))),
+    );
+    expect([...drawn].sort()).toEqual(["band", "bleed", "foot", "tall"]);
+  });
+
   it("leaves the plain band on a plate with no picture, and on the two where the picture IS the plate", () => {
     expect(figurePlacementFor("stat_callout", 2, false)).toBe("band");
     expect(figurePlacementFor("cover", 2, true)).toBe("band");
@@ -74,7 +92,7 @@ describe("figurePlacementFor", () => {
 
 describe("the stylesheet carries every shape the code can ask for", () => {
   it("declares a rule for each placement, or the code names a shape nothing paints", () => {
-    for (const placement of ["side", "side-end", "foot", "tall", "bleed"]) {
+    for (const placement of ["side", "side-end", "foot", "tall", "bleed", "corner", "circle", "inset"]) {
       expect(DS, placement).toContain(`body[data-figure="${placement}"]`);
     }
   });

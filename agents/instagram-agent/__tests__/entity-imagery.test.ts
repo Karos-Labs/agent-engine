@@ -338,3 +338,17 @@ describe("baked-in text — the deel keyboard, refused for $0", () => {
     expect(verdict.keptAsLastResort).toBe(true);
   });
 });
+
+describe("a publisher's article photograph runs with its credit (owner ruling 2026-09-24)", () => {
+  it("prints the publisher as the credit line, and classes the picture editorial-only", () => {
+    const license = 'Publisher-owned editorial image, credit "geektime.co.il"';
+    expect(licenceClassFor(undefined, license)).toBe("editorial-only");
+    expect(creditLineFor({ licenceClass: "editorial-only", license })).toBe("Photo: geektime.co.il");
+  });
+  it("gives no credit line when the publisher is not named, so the workflow refuses the picture", () => {
+    expect(creditLineFor({ licenceClass: "editorial-only", license: "Publisher-owned editorial image" })).toBeUndefined();
+  });
+  it("leaves an ordinary editorial-only press photo without a publisher credit line, as before", () => {
+    expect(creditLineFor({ licenceClass: "editorial-only", license: "Editorial use only, Getty" })).toBeUndefined();
+  });
+});
