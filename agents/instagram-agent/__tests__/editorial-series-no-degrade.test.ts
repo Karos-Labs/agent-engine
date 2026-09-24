@@ -177,7 +177,8 @@ describe("a series-directed layout repeats on purpose", () => {
     const degradedSeries = BUNDLED_SERIES.filter((series) => walk(copyForSeries(series, 8)).some((slide) => slide.downgradedFrom !== undefined)).map((s) => s.id);
     // `the_list` (2026-09-23) repeats headline_focus on every item slide, so it
     // needs the exemption as much as the four that repeat a panel.
-    expect(degradedSeries).toEqual(["by_the_numbers", "head_to_head", "the_playbook", "in_their_words", "the_list"]);
+    // `the_list` repeats `headline_focus`, which is exempt from the repeat rule since 2026-09-24.
+    expect(degradedSeries).toEqual(["by_the_numbers", "head_to_head", "the_playbook", "in_their_words"]);
   });
 
   /**
@@ -204,17 +205,21 @@ describe("a series-directed layout repeats on purpose", () => {
     const live = { ...copy, slides } as InstagramCopyOutput;
 
     const before = walk(live);
-    expect(before.filter((s) => s.downgradedFrom !== undefined).map((s) => s.n)).toEqual([4, 5, 6]);
+    // Slide 5 is a `headline_focus`, exempt from the repeat rule since 2026-09-24.
+    expect(before.filter((s) => s.downgradedFrom !== undefined).map((s) => s.n)).toEqual([4, 6]);
     expect(before[3]!.downgradedFrom).toContain("already used earlier in this carousel");
     // The render that shipped, verbatim from the run's `07c-emit-slides-data`
     // checkpoint.
+    // Since 2026-09-24 the degraded slides land on `headline_focus` (exempt from
+    // the repeat rule), not on the photo template with no photo: 16.9 shipped
+    // three nearly empty `slide.html` plates here.
     expect(before.map((s) => TEMPLATE_OF[s.layout]!)).toEqual([
       "cover.html",
       "stat-callout.html",
       "headline-focus.html",
-      "slide.html",
-      "slide.html",
-      "slide.html",
+      "headline-focus.html",
+      "headline-focus.html",
+      "headline-focus.html",
       "list-takeaway.html",
       "closer.html",
     ]);

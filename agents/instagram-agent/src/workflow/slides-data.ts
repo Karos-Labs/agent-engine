@@ -1598,7 +1598,8 @@ export function resolveLayout(
       if (candidate === slide.layout) continue; // whatever just failed cannot be the remedy
       const file = LAYOUT_TEMPLATE_FILES[candidate as Exclude<InstagramSlideLayout, "photo" | "text_only" | "custom">] as string | undefined;
       if (file !== undefined && availableTemplates !== undefined && !availableTemplates.has(file)) continue;
-      if (file !== undefined && usedLayouts?.has(candidate)) continue;
+      // 2026-09-24: `headline_focus` may repeat (see the repeat rule below).
+      if (file !== undefined && usedLayouts?.has(candidate) && candidate !== "headline_focus") continue;
       return { layout: candidate, downgradedFrom: `${reason}; rendering as ${candidate}` };
     }
     return { layout: "text_only", downgradedFrom: `${reason}; rendering as text_only` };
@@ -1646,7 +1647,12 @@ export function resolveLayout(
   // `seriesDirected`). Read here rather than folded into `usedLayouts` at the
   // call site so the trace still records that the archetype was used twice —
   // the set is built once, and only this check consults the exemption.
-  if (slide.layout !== "photo" && slide.layout !== "text_only" && usedLayouts?.has(slide.layout) && seriesDirected?.has(slide.n) !== true) {
+  // 2026-09-24: `headline_focus` is exempt, like `photo` and `text_only`. It is
+  // the plate a slide falls back to when its picture is lost, and refusing a
+  // second one sent the slide to the photo template WITHOUT a photo: a nearly
+  // empty plate (Sitti and Kindly Yours, 2026-09-24 prep runs). Its device and
+  // fit ladder differ per slide, so two of them do not read as one slide twice.
+  if (slide.layout !== "photo" && slide.layout !== "text_only" && slide.layout !== "headline_focus" && usedLayouts?.has(slide.layout) && seriesDirected?.has(slide.n) !== true) {
     return degradeTo(`${slide.layout} (already used earlier in this carousel)`);
   }
 
