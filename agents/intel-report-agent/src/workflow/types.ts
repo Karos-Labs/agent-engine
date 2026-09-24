@@ -1,5 +1,5 @@
 import type { ClientBrand, ClientProfile, Competitor } from "@agent-engine/tools";
-import type { DegradedContextGroundingMarker } from "@agent-engine/workflow";
+import type { DegradedContextGroundingMarker, ReviewOutcome } from "@agent-engine/workflow";
 import type { IntelReportNumericGroundingMarker } from "./create-intel-report-agent-workflow.js";
 
 /**
@@ -141,5 +141,12 @@ export interface IntelReportAgentWorkflowResult {
    * The report is kept and marked rather than the run ending, so the analysis
    * survives for whoever has to act on it. Absent on an approval.
    */
-  reviewOutcome?: { outcome: "revisions_exhausted" | "rejected"; detail: string };
+  /**
+   * Every non-approval `runReviewCycle` can end on, derived from the
+   * primitive rather than transcribed. A literal union here is a copy of a
+   * type that is free to grow -- it did, when a revision round that cannot
+   * be produced started delivering the draft the reviewer saw -- and the
+   * copy then disagrees with its source with nothing to notice.
+   */
+  reviewOutcome?: { outcome: Exclude<ReviewOutcome, "approved">; detail: string };
 }

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ContentMode, DegradedContextGroundingMarker, TrendCandidate } from "@agent-engine/workflow";
+import type { ContentMode, DegradedContextGroundingMarker, ReviewOutcome, TrendCandidate } from "@agent-engine/workflow";
 import { SlideDeviceSchema } from "./slide-devices.js";
 // Phase 3, item R: the scene brief. A VALUE import, and deliberately from a
 // module that imports nothing but zod — see `scene-brief.ts`'s own header for
@@ -1649,7 +1649,14 @@ export interface InstagramAgentWorkflowResult {
    * survives for whoever has to act on it, and the topic reservation is
    * released rather than consumed. Absent on an approval.
    */
-  reviewOutcome?: { outcome: "revisions_exhausted" | "rejected"; detail: string };
+  /**
+   * Every non-approval `runReviewCycle` can end on, derived from the
+   * primitive rather than transcribed. A literal union here is a copy of a
+   * type that is free to grow -- it did, when a revision round that cannot
+   * be produced started delivering the draft the reviewer saw -- and the
+   * copy then disagrees with its source with nothing to notice.
+   */
+  reviewOutcome?: { outcome: Exclude<ReviewOutcome, "approved">; detail: string };
   postId: string;
   topic: string;
   slideCount: number;

@@ -46,6 +46,7 @@ function cycleFailingAfterFirstRound(thrown: () => Error, gateId = "09a-batch-re
         kind: "batch_review",
         payload: { preview: draft.text, revision },
         requiredRole: "account_manager",
+        timeout: { duration: "1h", onTimeout: "hold" },
       }),
     });
     return { outcome: review.outcome, detail: review.outcomeDetail, text: review.output.text, revision: review.revision };
@@ -102,7 +103,7 @@ describe("a revision that cannot be produced delivers the draft the reviewer saw
         attempt: async () => {
           throw new WorkflowHeld("no subject available for this run");
         },
-        buildGate: () => ({ kind: "batch_review", payload: {}, requiredRole: "account_manager" }),
+        buildGate: () => ({ kind: "batch_review", payload: {}, requiredRole: "account_manager", timeout: { duration: "1h", onTimeout: "hold" } }),
       });
 
     const result = await engine.run(workflowFn, { ...params, runId: "run_rc_round0" });
