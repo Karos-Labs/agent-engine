@@ -186,11 +186,11 @@ describe("what each entry has to say", () => {
 
   it("keeps the count of work-discarding holds visible", () => {
     // Not a ceiling anybody has to argue about — a number that has to be
-    // changed on purpose. It went 5 → 1 on 2026-09-24/25 (PR #231 fixed four:
-    // landing-builder, seo-geo's fix-generation gate, reputation, campaign).
+    // changed on purpose. It went 6 → 1 across 2026-09-24/25: #231 fixed four
+    // (landing-builder, seo-geo's fix-generation gate, reputation, campaign) and
+    // the branded-shorts style lock followed.
     const afterWork = entries.filter(([, entry]) => entry.stage === "after-work");
     expect(afterWork.map(([agent, entry]) => `${agent}: ${entry.match}`)).toEqual([
-      "branded-shorts-agent: style exploration rejected",
       "seo-geo-agent: fix drafting did not clear its own output validation",
     ]);
   });

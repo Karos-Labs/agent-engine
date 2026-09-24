@@ -99,7 +99,15 @@ describe("createBrandedShortsStyleExplorationWorkflow (RFC-06 onboarding)", () =
     expect(result.status).toBe("held");
   });
 
-  it("resolves to held when the human rejects every candidate", async () => {
+  /**
+   * A REJECTION REFUSES THE LOCK, NOT THE EXPLORATION.
+   *
+   * Three candidates exist by the time the gate opens — proposed,
+   * self-critiqued against the brand's own tokens, shown to a person. The run
+   * used to answer "none of these fit" by throwing them away, so the reviewer
+   * kept an error string and the next exploration proposed into the same void.
+   */
+  it("delivers the candidates when the human rejects every one, and locks nothing", async () => {
     const promptStore = makePromptStore();
     const router = smartFakeRouter([goodStyleCandidates()]);
     const workflowFn = createBrandedShortsStyleExplorationWorkflow({ tools: env.tools, promptStore, router });
@@ -111,6 +119,17 @@ describe("createBrandedShortsStyleExplorationWorkflow (RFC-06 onboarding)", () =
     await engine.resolveGate(runId, "02-style-lock", { decision: "reject", actor: "human", reason: "none of these fit the brand", at: new Date().toISOString() });
     const result = await engine.run(workflowFn, { ...params, runId });
 
-    expect(result.status).toBe("held");
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+    // The work survives, and is honest about what happened to it.
+    expect(result.output.status).toBe("rejected");
+    expect(result.output.rejection?.reason).toBe("none of these fit the brand");
+    expect(result.output.candidates).toHaveLength(3);
+    // And the two things the rejection actually refuses did not happen: no
+    // style is locked for this client, and nothing recorded that one was.
+    expect(result.output.lockedCandidateName).toBeUndefined();
+    const steps = (await durableStore.listSteps(runId)).map((s) => s.stepId);
+    expect(steps).not.toContain("03-persist-locked-style");
+    expect(steps).not.toContain("04-commit-and-record");
   });
 });

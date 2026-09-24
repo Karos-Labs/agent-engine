@@ -24,8 +24,8 @@
  *
  * `after-work` is the one that needs a second look: something exists by the
  * time this fires, so the hold throws work away. Every entry carrying it also
- * carries what a fix would deliver instead. There is exactly one left, and it
- * is listed with what it would take.
+ * carries what a fix would deliver instead. One is left, and it is listed with
+ * what it would take.
  *
  * ## How a site is identified
  *
@@ -69,13 +69,6 @@ export const HOLD_MANIFEST: Record<string, HoldSite[]> = {
       match: "style exploration did not clear its own output validation",
       why: "the exploration IS the deliverable of that workflow, and an unparseable exploration has produced no candidates to show.",
       stage: "before-work",
-    },
-    {
-      match: "style exploration rejected",
-      why: "a human looked at the style candidates and said no. Nothing has been rendered with them yet, so the run has no styled asset to keep.",
-      stage: "after-work",
-      ifFixed:
-        "the candidates themselves exist and could be delivered marked rejected, the way a rejected landing page now is — so the reviewer keeps what they said no to and the next exploration starts from it rather than from nothing.",
     },
   ],
 
