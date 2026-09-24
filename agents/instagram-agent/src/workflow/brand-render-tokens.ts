@@ -167,6 +167,44 @@ function rgbDistance(a: string, b: string): number {
 }
 
 /**
+ * RGB chroma (max channel minus min channel, 0-255). A NEUTRAL is a colour
+ * close to grey: a near-white, a near-black, a warm off-white. Above
+ * `NEUTRAL_CHROMA_CEILING` a colour is a hue, and a hue is an accent.
+ */
+function chroma(hex: string): number {
+  let h = hex.slice(1);
+  if (h.length === 3 || h.length === 4) h = [...h].map((c) => c + c).join("");
+  const ch = [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  return Math.max(...ch) - Math.min(...ch);
+}
+
+/**
+ * 2026-09-24. Karos' warm off-white `#f2f1ec` is 6, Deel's deep purple
+ * `#201547` is 50, XO Digital's navy `#050520` is 27; the saturated green
+ * `#06cf9c` that became XO's TEXT colour is 201. Anything past 80 is a hue.
+ */
+const NEUTRAL_CHROMA_CEILING = 80;
+
+/** The ink synthesised when a kit's lightest (or darkest) colour is a hue, not a neutral. */
+const SYNTH_LIGHT_NEUTRAL = "#ffffff";
+const SYNTH_DARK_NEUTRAL = "#111114";
+
+/**
+ * Social-platform UI colours a site scrape picks up from embedded widgets and
+ * share buttons, and that are therefore NOT the client's brand: Instagram's
+ * link blue, Facebook's, LinkedIn's, X's. XO Digital's kit shipped
+ * `#0095f6` (Instagram's) as "Secondary accent and link color" on 2026-09-23.
+ * Matched within a small RGB distance so a re-encoded copy still counts.
+ * Only kit-derived candidates are filtered; a colour a client's CONFIG names
+ * is an override and always kept.
+ */
+const PLATFORM_UI_COLORS = ["#0095f6", "#1877f2", "#4267b2", "#3b5998", "#0a66c2", "#0077b5", "#1d9bf0", "#1da1f2"] as const;
+
+export function isPlatformUiColor(hex: string): boolean {
+  return PLATFORM_UI_COLORS.some((p) => rgbDistance(hex, p) <= 8);
+}
+
+/**
  * Body text on the templates renders at ~92% fg opacity over the ground, so
  * the floor is checked on the pair as authored. 4.5:1 is WCAG AA for normal
  * text — below it, the ground/fg pair is dropped ENTIRELY (never "fixed" by
@@ -263,6 +301,10 @@ function kitNeutrals(brand: Record<string, unknown>): { neutralDark: string; neu
       if (hex !== undefined) pool.push(hex);
     }
   }
+  // 2026-09-24: a platform's UI colour is scraped furniture, never the brand.
+  const kitPool = pool.filter((hex) => !isPlatformUiColor(hex));
+  pool.length = 0;
+  pool.push(...kitPool);
   if (pool.length < 2) return undefined;
 
   let darkest = pool[0]!;
@@ -272,7 +314,40 @@ function kitNeutrals(brand: Record<string, unknown>): { neutralDark: string; neu
     if (relativeLuminance(hex) > relativeLuminance(lightest)) lightest = hex;
   }
   if (darkest.toLowerCase() === lightest.toLowerCase()) return undefined;
-  return { neutralDark: darkest, neutralLight: lightest };
+
+  // ── A HUE IS NEVER A NEUTRAL (2026-09-24) ──
+  //
+  // XO Digital's kit is navy `#050520`, green `#06cf9c`, and a blue. By
+  // luminance the green is the "lightest", so it became the light neutral,
+  // and on the navy ground every headline and body line shipped GREEN. The
+  // client's own site sets white headlines on navy and keeps the green for
+  // gains and CTAs. So an end whose chroma is past the ceiling is replaced
+  // by a synthesised neutral, and the hue stays in the kit as an accent
+  // candidate (it is no longer the fg, so the accent ring can take it).
+  //
+  // Unless the brand record's roles NAME that very colour the background or
+  // the text: a stated role is a decision, and it still wins.
+  const statedInk = statedGroundOrInkHexes(brand);
+  const keep = (hex: string) => chroma(hex) <= NEUTRAL_CHROMA_CEILING || statedInk.has(hex.toLowerCase());
+  const neutralDark = keep(darkest) ? darkest : SYNTH_DARK_NEUTRAL;
+  const neutralLight = keep(lightest) ? lightest : SYNTH_LIGHT_NEUTRAL;
+  if (neutralDark.toLowerCase() === neutralLight.toLowerCase()) return undefined;
+  return { neutralDark, neutralLight };
+}
+
+/** Hexes whose `dominantColors[].role` LEADS with background or text/ink, lower-cased. */
+function statedGroundOrInkHexes(brand: Record<string, unknown>): Set<string> {
+  const out = new Set<string>();
+  const dominant = brand["dominantColors"];
+  if (!Array.isArray(dominant)) return out;
+  for (const entry of dominant) {
+    const row = entry as Record<string, unknown>;
+    const hex = asHex(row["hex"]);
+    const lead = (asString(row["role"]) ?? "").split(",")[0]?.trim().toLowerCase() ?? "";
+    if (hex === undefined || lead.length === 0) continue;
+    if (/\bbackground\b|\bcanvas\b|\bpage\b|\bforeground\b|\btext\b|\bink\b/.test(lead)) out.add(hex.toLowerCase());
+  }
+  return out;
 }
 
 /**
@@ -538,7 +613,10 @@ function kitAccentCandidates(b: Record<string, unknown>, brandTokens: BrandToken
     }
   }
 
-  return out;
+  // The config's own accent/palette (the first entries) are overrides and
+  // kept whatever they are; everything the KIT contributed is filtered.
+  const configCount = (configAccent !== undefined ? 1 : 0) + (Array.isArray(brandTokens.palette) ? brandTokens.palette.filter((e) => asHex(e) !== undefined).length : 0);
+  return out.filter((hex, i) => i < configCount || !isPlatformUiColor(hex));
 }
 
 /**
@@ -749,7 +827,7 @@ export function deriveBrandRenderTokens(brand: unknown, brandTokens: BrandTokens
         .slice()
         .sort((x, y) => Number(x["dominanceRank"] ?? 99) - Number(y["dominanceRank"] ?? 99))
         .map((c) => c["hex"])
-        .find((h) => asHex(h) !== undefined),
+        .find((h) => asHex(h) !== undefined && !isPlatformUiColor(h as string)),
     );
 
   // ── palette ring: the accent, then whatever else the kit legibly ships ──
