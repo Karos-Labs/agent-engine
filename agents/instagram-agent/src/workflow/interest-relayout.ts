@@ -1,6 +1,6 @@
 import { prescribesClicheScene } from "./visual-direction.js";
 import { MIN_CLAIM_MATCH, selectionPasses, type ImageSelection, type InstagramCopyOutput, type InstagramSlideCopy, type InstagramSlideLayout } from "./types.js";
-import { fallbackArchetypePreferences, type SlideStyleOverride } from "./slides-data.js";
+import { fallbackArchetypePreferences, HERO_IMAGE_LAYOUTS, type SlideStyleOverride } from "./slides-data.js";
 import type { InterestFailureKind, InterestFinding } from "./interest-floor.js";
 import { clampWords, deviceFromText, figuresInText, MAX_DEVICE_LABEL_LENGTH, sentencesOf, type RelayoutFigureDevice } from "./bounded-object.js";
 import { isCompleteClause } from "./slide-devices.js";
@@ -832,7 +832,11 @@ function promoteImageRemedy(
   // match first.
   const unused = selections
     .filter(isUsableSelection)
-    .filter((sel) => sel.n !== slideN && layoutByN.get(sel.n) !== "photo")
+    // 2026-09-24: "no slide is rendering" means no picture-bearing layout at
+    // all, bounded panels included. XO Digital (pubsub-21255292697884248)
+    // promoted slide 3's picture to the cover although slide 3's stat panel
+    // was showing it, and the post carried one photograph twice.
+    .filter((sel) => sel.n !== slideN && !HERO_IMAGE_LAYOUTS.has(layoutByN.get(sel.n) as InstagramSlideLayout))
     // 2026-09-24: the one slide every reader sees is never given the screen
     // cliche. KAROS pubsub-21255039598063450 promoted a generated "desktop
     // monitor" frame onto its cover.

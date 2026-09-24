@@ -151,3 +151,28 @@ describe("the scrim is never hidden globally (2026-09-24 regression)", () => {
     expect(css).not.toContain("460px + var(--sp-2)");
   });
 });
+
+describe("an interior photograph is a block, not the whole screen (2026-09-24)", () => {
+  it("frames interior photo slides as an inset block and keeps the cover full-bleed", () => {
+    const copy = {
+      format: "carousel", caption: "c",
+      slides: [
+        { n: 1, headline: "Cover", body: "b", visualNeed: "v", sourceRef: "c", layout: "cover" },
+        { n: 2, headline: "A photo slide", body: "b", visualNeed: "v", sourceRef: "c", layout: "photo" },
+        { n: 3, headline: "Close", body: "Which one?", visualNeed: "v", sourceRef: "c", layout: "closer" },
+      ],
+    } as InstagramCopyOutput;
+    const sel = (n: number, imagePath: string | null) => ({ n, imagePath, reason: "r", license: "CC0", rightsUsable: true, watermarkFree: true, claimMatch: 5, claimMatchReason: "r" });
+    const data = assembleSlidesData({
+      clientSlug: "k", postId: "p", repoRoot: "/r", brandTokens: { templateDir: "t", slideTemplate: "slide.html" }, copy,
+      selections: [sel(1, "media/a.jpg"), sel(2, "media/b.jpg"), sel(3, null)],
+      canvas: { w: 1080, h: 1440, scale: 2, slides_min: 1, slides_max: 8 },
+      interiorPhotosAsBlocks: true,
+    });
+    expect(data.slides[1]!.fields.figurePlacement).toBe("inset");
+    expect(data.slides[1]!.images.hero).toBe("media/b.jpg");
+    expect(data.slides[0]!.fields.figurePlacement).not.toBe("inset");
+    const css = readFileSync(path.join(TEMPLATES, "_design-system.css"), "utf8");
+    expect(css).toContain('body[data-figure="inset"]:has(.plate.slide) .scrim { display: none; }');
+  });
+});

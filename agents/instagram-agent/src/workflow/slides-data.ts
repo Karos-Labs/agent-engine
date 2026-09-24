@@ -2727,6 +2727,16 @@ export function assembleSlidesData(params: {
   markImagePaths?: ReadonlySet<string> | undefined;
   /** 2026-09-24: the marks among those with no backdrop; set clear (`heroKind: "mark-clear"`). */
   clearMarkPaths?: ReadonlySet<string> | undefined;
+  /**
+   * 2026-09-24: a `photo` slide between the cover and the closer shows its
+   * picture as a framed BLOCK above the copy (`figurePlacement: "inset"` on
+   * the photo plate) instead of full-bleed under it. The owner, on Sitti's
+   * portrait and Hanky Panky's product shot: "nicer like XO Digital's slide 3,
+   * where the picture is not the whole screen". The slide keeps its `hero`
+   * image and its `photo` layout, so the skeleton, grading, QA and inversion
+   * read it exactly as before; only the plate's composition changes.
+   */
+  interiorPhotosAsBlocks?: boolean | undefined;
   /** 2026-09-24: client product photos lifted off their backdrop; set as objects (`heroKind: "cutout"`). */
   productCutoutPaths?: ReadonlySet<string> | undefined;
   /**
@@ -3104,6 +3114,7 @@ export function assembleSlidesData(params: {
     // it (`_design-system.css`, "THE MARK AS A TILE").
     const heroIsMark = chosenPath !== undefined && params.markImagePaths?.has(chosenPath) === true;
     const imagePath = chosenPath;
+    const photoAsBlock = params.interiorPhotosAsBlocks === true && layout === "photo" && index > 0 && index < lastIndex && imagePath !== undefined && !heroIsMark;
     const badgePath: string | undefined = undefined;
     // 2026-09-23: an `attributable` picture (most CC, every Wikimedia file)
     // must carry its credit, and none ever did — `creditLineFor` existed and
@@ -3136,7 +3147,7 @@ export function assembleSlidesData(params: {
         // version: a small logo stretched across half the screen, to one side,
         // looks bad; use judgement (2026-09-24).
         figurePlacement:
-          heroIsMark && !FULL_BLEED_IMAGE_LAYOUTS.has(layout)
+          (heroIsMark && !FULL_BLEED_IMAGE_LAYOUTS.has(layout)) || photoAsBlock
             ? "inset"
             : figurePlacementFor(layout, slide.n, imagePath !== undefined, `${params.clientSlug}:${params.paletteSeed ?? ""}`, {
                 edge: index === 0 || index === params.copy.slides.length - 1,
