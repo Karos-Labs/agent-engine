@@ -70,7 +70,8 @@ describe("assembleSlidesData with markImagePaths", () => {
     // headline AND a body, which is the case `framedHeroFor` sets as a block
     // rather than a wall. What this test is about is the MARK — the point is
     // that slide 2 is not treated as one.
-    expect(byN.get(2)!.fields.heroKind).toBe("framed");
+    // (Framed or poster depends on the deck's length, `FRAMED_DECK_MIN_WORDS`.)
+    expect(byN.get(2)!.fields.heroKind).not.toBe("mark");
   });
 
   it("never stamps a mark onto a real photograph: the photograph carries the slide", () => {
@@ -161,7 +162,7 @@ describe("an interior photograph is a block, not the whole screen (2026-09-24)",
     const copy = {
       format: "carousel", caption: "c",
       slides: [
-        { n: 1, headline: "Cover", body: "b", visualNeed: "v", sourceRef: "c", layout: "cover" },
+        { n: 1, headline: "Cover", body: "A deck long enough to be a real second block of copy here.", visualNeed: "v", sourceRef: "c", layout: "cover" },
         { n: 2, headline: "A photo slide", body: "b", visualNeed: "v", sourceRef: "c", layout: "photo" },
         { n: 3, headline: "Close", body: "Which one?", visualNeed: "v", sourceRef: "c", layout: "closer" },
       ],

@@ -1178,6 +1178,9 @@ function withBodyBudget<T extends { layout?: InstagramSlideLayout | undefined; b
  * treatments — a logo at its own size, a product contained whole — and both
  * already move the lockup below the picture.
  */
+/** Words of body from which a photographed plate's copy is a deck, and the picture is framed rather than full-bleed. */
+export const FRAMED_DECK_MIN_WORDS = 10;
+
 export function framedHeroFor(params: {
   layout: InstagramSlideLayout;
   headline: string;
@@ -1188,9 +1191,12 @@ export function framedHeroFor(params: {
 }): boolean {
   if (!params.hasPicture || params.heroIsMark || params.isCutout) return false;
   if (!FULL_BLEED_IMAGE_LAYOUTS.has(params.layout)) return false;
-  // The deck, not its length: one word of second-block copy is still a second
-  // block, and it is the block that lands on the subject's face.
-  return params.body.trim().length > 0;
+  // 2026-09-24: a DECK, measured. The copy schema requires a body on every
+  // slide, so "any body" framed every photographed plate and the poster could
+  // never be chosen. A short line (a kicker, under `FRAMED_DECK_MIN_WORDS`)
+  // sits in the foot band under the scrim like a caption; a real deck is the
+  // block of words that lands on the subject, and it gets the frame.
+  return params.body.trim().split(/\s+/u).filter((w) => w.length > 0).length >= FRAMED_DECK_MIN_WORDS;
 }
 
 export function ctaFormFor(text: string): "pill" | "line" {

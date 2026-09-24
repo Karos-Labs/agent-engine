@@ -26,18 +26,21 @@ describe("which covers stop being a wall", () => {
   const base = { layout: "cover" as const, headline: "By August, the spotlights had real names", hasPicture: true, heroIsMark: false, isCutout: false };
 
   it("frames a cover that carries a deck — those words would land on the subject", () => {
-    expect(framedHeroFor({ ...base, body: "Alix Earle's map. Matt Peterson's NYC picks." })).toBe(true);
+    expect(framedHeroFor({ ...base, body: "Alix Earle's map. Matt Peterson's NYC picks. Local knowledge, sold by the person who knows." })).toBe(true);
   });
 
-  it("leaves a headline-only cover as the poster it is", () => {
+  it("leaves a headline-only or short-line cover as the poster it is", () => {
     // The composition the owner has NOT objected to: a few words over a strong
     // photograph. Additive, never a regression of what already looks good.
     expect(framedHeroFor({ ...base, body: "" })).toBe(false);
     expect(framedHeroFor({ ...base, body: "   " })).toBe(false);
+    // 2026-09-24: the copy schema requires a body, so a SHORT line is the real
+    // "headline alone" case: under `FRAMED_DECK_MIN_WORDS` it keeps the poster.
+    expect(framedHeroFor({ ...base, body: "Local knowledge, sold by the people who know." })).toBe(false);
   });
 
   it("applies to the `photo` plate too, not only the cover", () => {
-    expect(framedHeroFor({ ...base, layout: "photo", body: "A second block of copy." })).toBe(true);
+    expect(framedHeroFor({ ...base, layout: "photo", body: "Alix Earle's map. Matt Peterson's NYC picks. Local knowledge, sold by the person who knows." })).toBe(true);
   });
 
   it("leaves the panel archetypes alone — their picture is already bounded", () => {
