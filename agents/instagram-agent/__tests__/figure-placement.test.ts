@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { figurePlacementFor } from "../src/workflow/slides-data.js";
+import { CLOSER_FORMS, closerFormFor, figurePlacementFor } from "../src/workflow/slides-data.js";
 import type { InstagramSlideLayout } from "../src/workflow/types.js";
 
 /**
@@ -134,5 +134,21 @@ describe("the stylesheet carries every shape the code can ask for", () => {
       const html = readFileSync(path.join(HERE, "..", "assets", "templates", "default", `${plate}.html`), "utf8");
       expect(html, plate).toContain('data-figure="{{figurePlacement}}"');
     }
+  });
+});
+
+describe("closerFormFor: three closers, seeded per client and run (2026-09-24)", () => {
+  it("is stable for a seed, varies across clients, and stays the original panel with no seed", () => {
+    expect(closerFormFor(undefined)).toBe("panel");
+    expect(closerFormFor("geektime:r1")).toBe(closerFormFor("geektime:r1"));
+    const seen = new Set(["geektime:r1", "thepitchbydeel:r1", "xodigital:r1", "sitti:r1", "hankypanky:r1", "karoslabs:r1", "karoslabs:r2", "kindlyyours:r1"].map((s) => closerFormFor(s)));
+    expect([...seen].sort()).toEqual([...CLOSER_FORMS].sort());
+  });
+
+  it("the closer plate reads the attribute and styles both variants", () => {
+    const html = readFileSync(path.join(HERE, "..", "assets", "templates", "default", "closer.html"), "utf8");
+    expect(html).toContain('data-closer="{{closerForm}}"');
+    expect(html).toContain('body[data-closer="block"] .cl-panel');
+    expect(html).toContain('body[data-closer="split"] .cl-panel');
   });
 });
