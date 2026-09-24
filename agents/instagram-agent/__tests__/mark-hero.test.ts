@@ -141,3 +141,13 @@ describe("a client product lifted off its backdrop is set as an object (2026-09-
     expect(PRODUCT_CUTOUT_MIN_COVERAGE).toBeLessThan(PRODUCT_CUTOUT_MAX_COVERAGE);
   });
 });
+
+describe("the scrim is never hidden globally (2026-09-24 regression)", () => {
+  it("hides the scrim only under a condition, never as a bare rule", () => {
+    const css = readFileSync(path.join(TEMPLATES, "_design-system.css"), "utf8");
+    // #230's CSS splice left a bare `.scrim { display: none; }`, which removed the
+    // shade under the copy on every photographed slide of every client.
+    for (const line of css.split(/\r?\n/u)) expect(line.trim()).not.toBe(".scrim { display: none; }");
+    expect(css).not.toContain("460px + var(--sp-2)");
+  });
+});
