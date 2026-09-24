@@ -2721,6 +2721,8 @@ export function assembleSlidesData(params: {
   markImagePaths?: ReadonlySet<string> | undefined;
   /** 2026-09-24: the marks among those with no backdrop; set clear (`heroKind: "mark-clear"`). */
   clearMarkPaths?: ReadonlySet<string> | undefined;
+  /** 2026-09-24: client product photos lifted off their backdrop; set as objects (`heroKind: "cutout"`). */
+  productCutoutPaths?: ReadonlySet<string> | undefined;
   /**
    * 2026-09-23: per slide number, the credit-free mark of the entity the
    * slide pictures. Shown as a small badge beside a real photograph.
@@ -3132,6 +3134,7 @@ export function assembleSlidesData(params: {
                 edge: index === 0 || index === params.copy.slides.length - 1,
               }),
         ...(heroIsMark ? { heroKind: imagePath !== undefined && params.clearMarkPaths?.has(imagePath) === true ? "mark-clear" : "mark" } : {}),
+        ...(!heroIsMark && imagePath !== undefined && params.productCutoutPaths?.has(imagePath) === true ? { heroKind: "cutout" } : {}),
         // 2026-09-24: which of the three closer forms (`closerFormFor`); only the closer plate reads it.
         ...(layout === "closer" ? { closerForm: closerFormFor(`${params.clientSlug}:${params.paletteSeed ?? ""}`) } : {}),
         ...(photoCredit !== undefined ? { photoCredit } : {}),
