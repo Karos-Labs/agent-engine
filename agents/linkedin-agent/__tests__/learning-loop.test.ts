@@ -93,7 +93,7 @@ describe("linkedin-agent and the learning loop (C7)", () => {
     expect(input.craftRules).toContain("- [L1-li-001] No external link in the body");
     expect(input.clientFeedback).toEqual(["Change requested (2026-09-11): too long for a page post"]);
     expect(input.clientPreferences).toEqual({ neverTopics: ["four-day weeks"], standingInstructions: ["write as the company, never 'I'"] });
-    // The map's expertise row is handed to the prompt as context; the catalog still outranks it as the topic.
+    // The map's expertise row reaches the prompt — as the planned row the draft is written from, since the map now leads selection.
     expect(input.strategyRow).toEqual({ id: "sm-li-003", stage: "expertise", idea: "The three signals of manager burnout a dashboard never shows", problem: "managers cannot see burnout coming" });
 
     const record = await env.store.readJson<Record<string, unknown>>("acme", ["state", "runs", params.runId]);
@@ -172,6 +172,38 @@ describe("linkedin-agent and the learning loop (C7)", () => {
       expect.objectContaining({ check: "never-topic", action: "substituted", detail: expect.stringMatching(/four-day weeks/i) }),
     );
 
+  });
+
+  /**
+   * THE ORDER (2026-09-24, owner's ruling): the strategy map leads — ahead of
+   * an available catalog topic and the scout — and the catalog topic this run
+   * reserved goes back to the floor unused.
+   */
+  it("takes the strategy-map row ahead of an available catalog topic, skips the scout, and releases the unused reservation", async () => {
+    await projectAll(env);
+    const router = fakeRouterSequence([finalTurn(goodPost())]);
+    const store = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(store).run(
+      createLinkedInAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true }),
+      { ...params, runId: "li_map_first", input: { slotStage: "expertise" } },
+    );
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+
+    const steps = await store.listSteps("li_map_first");
+    const selected = steps.find((s) => s.stepId === "07-select-candidate")!.output as { source: string; strategyRowId?: string };
+    expect(selected.source).toBe("strategy");
+    expect(selected.strategyRowId).toBe("sm-li-003");
+    expect(result.output.topic).toBe("The three signals of manager burnout a dashboard never shows");
+    expect(steps.map((s) => s.stepId)).not.toContain("07a-trend-scout");
+
+    const reserve = steps.find((s) => s.stepId === "06-reserve-topic")!.output as { topics: string[] };
+    expect(reserve.topics.length).toBe(1);
+    const listed = await env.tools["topics.list"]!.execute({}, { ctx: { runId: "check", clientSlug: "acme", productId: "linkedin-agent", runKind: "recurring", metadata: {} } });
+    expect(listed.status).toBe("success");
+    if (listed.status !== "success") throw new Error("unreachable");
+    const row = (listed.result as { rows: Array<{ topic: string; status: string }> }).rows.find((r) => r.topic === reserve.topics[0]);
+    expect(row?.status).toBe("available");
   });
 
   it("the subject window and the never list skip catalog rows, leaving the strategy map as the next honest candidate", async () => {

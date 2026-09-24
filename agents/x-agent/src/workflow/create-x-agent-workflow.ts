@@ -461,7 +461,12 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
     // "first headline with a number in it": an empty catalog and no request.
     // `trendJacking: "always"` lets a fresh, high-fit story compete with the
     // catalog for clients whose whole point is being first.
-    const wantsScout = !runDirection.topicOverride && !intake.requestedTopic && (reservation.topics.length === 0 || intake.trendJacking === "always");
+    // 2026-09-24: the strategy map now leads the plan (see `07-select-candidate`),
+    // so a usable map row is "someone planned this run's subject" exactly as a
+    // catalog row is — and the scout, one paid model call, is skipped for it
+    // unless the client opted into `trendJacking: "always"`.
+    const strategyRowUsable = strategyRow !== undefined && touchesNeverTopic(strategyRow.idea, learning.preferences) === undefined;
+    const wantsScout = !runDirection.topicOverride && !intake.requestedTopic && ((reservation.topics.length === 0 && !strategyRowUsable) || intake.trendJacking === "always");
     let scout: TrendScoutOutput | undefined;
     if (wantsScout) {
       scout = await runTrendScout(wf, { tools, promptStore: options.promptStore, router: options.router }, "07a-trend-scout", {
@@ -546,23 +551,32 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       const trend = scout !== undefined ? selectTrendCandidate(scout.candidates, modeSelection.mode, { avoidTopics }) : undefined;
       const trendOk = trend !== undefined && never(trend.topic) === undefined && repeated(trend.topic) === undefined ? trend : undefined;
       const reservedOk = reservation.topics.filter((t) => never(t) === undefined && repeated(t) === undefined);
-      // With `trendJacking: "always"` a fresh, high-fit story outranks the
-      // planned row; otherwise the catalog keeps its slot.
-      if (trendOk !== undefined && intake.trendJacking === "always" && trendOk.brandFit >= 4 && reservedOk.length > 0) {
+      // ── THE ORDER (2026-09-24, owner's ruling) ──
+      //
+      // The strategy map — the client's own problem × stage plan, built at
+      // setup (C1 / SCRUM-464) — now LEADS: after an explicit request, and after
+      // a high-fit trend for a client who opted into `trendJacking: "always"`,
+      // it outranks the topic catalog and the scout. It used to sit fifth, below
+      // both, so any client with a catalog topic or a live trend never drew from
+      // its own map: prep's `karoslabs` read "0 of 15 used" after three drafted
+      // X subjects. The map is the plan the stage rotation (`stageForRun`) and
+      // the learning loop were built around, so it goes first; the catalog and
+      // the scout fill in when the map is spent or refused.
+      //
+      // `pickStrategyRow` already skipped rows whose idea is in this platform's
+      // subject window, so only the never-list is checked here.
+      const strategyOk = strategyRow !== undefined && never(strategyRow.idea) === undefined ? strategyRow : undefined;
+      if (trendOk !== undefined && intake.trendJacking === "always" && trendOk.brandFit >= 4) {
         return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: trendOk.topic, source: "trend", trend: trendOk };
+      }
+      if (strategyOk !== undefined) {
+        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: strategyOk.idea, source: "strategy", strategyRowId: strategyOk.id };
       }
       if (reservedOk.length > 0) {
         return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: reservedOk[0]!, source: "reserved" };
       }
       if (trendOk !== undefined) {
         return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: trendOk.topic, source: "trend", trend: trendOk };
-      }
-      // The strategy map (C1 / SCRUM-464): the client's own problem × stage
-      // rows, picked for this run's stage. Above the research fallback and
-      // below the catalog and the scout, because a planned row and a live
-      // story are both more specific than "the next open idea".
-      if (strategyRow !== undefined && never(strategyRow.idea) === undefined) {
-        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: strategyRow.idea, source: "strategy", strategyRowId: strategyRow.id };
       }
       if (candidateSummary.candidateTopic && never(candidateSummary.candidateTopic) === undefined && repeated(candidateSummary.candidateTopic) === undefined) {
         return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: candidateSummary.candidateTopic, source: "research" };
@@ -587,9 +601,8 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
       if (trend !== undefined && never(trend.topic) === undefined) {
         return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: trend.topic, source: "trend", trend };
       }
-      if (strategyRow !== undefined && never(strategyRow.idea) === undefined) {
-        return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: strategyRow.idea, source: "strategy", strategyRowId: strategyRow.id };
-      }
+      // (No strategy branch here: the map row is refused above only by the
+      // never-list, which is not relaxed, so it could never be taken here either.)
       if (candidateSummary.candidateTopic && never(candidateSummary.candidateTopic) === undefined) {
         return { ...(refusedRequest !== undefined ? { refusedRequest } : {}), topic: candidateSummary.candidateTopic, source: "research" };
       }
@@ -1389,6 +1402,14 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
         } else {
           await tools["topics.commit"]!.execute({ reservationKey: reservation.reservationKey }, { ctx });
         }
+      }
+      // A catalog topic this run reserved but did not write about goes back to
+      // the floor. `06-reserve-topic` reserves before selection runs, and a
+      // reservation has no expiry — so every run that took a map row (the
+      // common case since the map leads) or a trend would otherwise strand
+      // one catalog topic in `reserved` for good.
+      else if (reservation.reservationKey && reservation.topics.length > 0) {
+        await tools["topics.release"]?.execute({ reservationKey: reservation.reservationKey }, { ctx }).catch(() => undefined);
       }
       // The write half of the anti-repetition loop: the shipped post joins
       // this agent's rolling excerpt window, read back by research.pull's

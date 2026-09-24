@@ -95,9 +95,8 @@ describe("x-agent and the learning loop (C7)", () => {
     expect(input.craftRules).toContain("- [L2-saas-x-002] (L2) Lead with a benchmark (moves: replies)");
     expect(input.clientFeedback).toEqual(["Skipped (2026-09-10): too salesy"]);
     expect(input.clientPreferences).toEqual({ neverTopics: ["four-day weeks"], standingInstructions: ["never mention competitors by name"], voiceLessons: ["cut the second adjective"] });
-    // The seeded catalog ("remote work", "hybrid teams", "four-day weeks") still
-    // outranks the strategy map, so the row is handed to the prompt as context
-    // and not taken as the topic.
+    // The map row reaches the prompt either way — as the planned row the draft
+    // is written from (it now leads selection; see the order test below).
     expect(input.strategyRow).toEqual({ id: "sm-x-007", stage: "attention", idea: "Why intake queues break in month two", problem: "intake breaks in month two" });
 
     const record = await env.store.readJson<Record<string, unknown>>("acme", ["state", "runs", params.runId]);
@@ -212,6 +211,43 @@ describe("x-agent and the learning loop (C7)", () => {
       refusedRequest?: string;
     };
     expect(refusedSelection.refusedRequest).toMatch(/never-topic/);
+  });
+
+  /**
+   * THE ORDER (2026-09-24, owner's ruling). The strategy map used to sit
+   * fifth — below the catalog and the scout — so prep's `karoslabs` read
+   * "0 of 15 used" with three X subjects drafted. It now leads: a map row is
+   * taken ahead of an available catalog topic, the scout is not paid for, and
+   * the catalog topic the run reserved goes back to the floor.
+   */
+  it("takes the strategy-map row ahead of an available catalog topic, skips the scout, and releases the unused reservation", async () => {
+    await projectAll(env);
+    const router = fakeRouterSequence([finalTurn(goodPost())]);
+    const store = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(store).run(createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true }), { ...params, runId: "x_map_first" });
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+
+    const steps = await store.listSteps("x_map_first");
+    const selected = steps.find((s) => s.stepId === "07-select-candidate")!.output as { source: string; strategyRowId?: string };
+    expect(selected.source).toBe("strategy");
+    expect(selected.strategyRowId).toBe("sm-x-007");
+    expect(result.output.topic).toBe("Why intake queues break in month two");
+    // A planned row is "someone planned this subject": no scout call for it.
+    expect(steps.map((s) => s.stepId)).not.toContain("07a-trend-scout");
+
+    // The catalog DID have a topic ("remote work"), and 06 reserved it; it was
+    // not written about, so it is back on the floor for the next run.
+    const reserve = steps.find((s) => s.stepId === "06-reserve-topic")!.output as { topics: string[] };
+    expect(reserve.topics).toEqual(["remote work"]);
+    const listed = await env.tools["topics.list"]!.execute({ status: ["available"] }, { ctx: { runId: "check", clientSlug: "acme", productId: "x-agent", runKind: "recurring", metadata: {} } });
+    expect(listed.status).toBe("success");
+    if (listed.status !== "success") throw new Error("unreachable");
+    const available = (listed.result as { rows: Array<{ topic: string; status: string }> }).rows.filter((r) => r.status === "available").map((r) => r.topic);
+    expect(available).toContain("remote work");
+
+    const record = await env.store.readJson<Record<string, unknown>>("acme", ["state", "runs", "x_map_first"]);
+    expect(record!.subjectRow).toMatchObject({ subject: "Why intake queues break in month two", strategyRowId: "sm-x-007" });
   });
 
   it("a subject in the window or a never-topic skips a catalog row", async () => {
