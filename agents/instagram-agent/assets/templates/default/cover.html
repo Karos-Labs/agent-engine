@@ -255,30 +255,59 @@ body[data-ground="glyph"] .ground {
   z-index: 1;
 }
 
-/* ── THE MARK AS A TILE (2026-09-24). ──
-   When the best picture a slide has is a company's mark, the mark IS the
-   picture: shown whole, contained on a clean panel the size of the
-   picture area, never cropped to fill it and never a small framed stamp
-   (the owner: *"a small framed logo is strange"*). In a bounded band it
-   takes the band's own shape (corner, tall, the split's half...); as a
-   full-bleed hero it becomes a large tile under the brand band, and the
-   copy keeps the field below it. */
-.sc-figure-band[data-kind="mark"] { background: var(--mark-panel, #ffffff); }
-.sc-figure-band[data-kind="mark"] img { object-fit: contain; padding: 12%; filter: none; mix-blend-mode: normal; }
-img.hero[data-kind="mark"] {
-  inset: auto;
-  inset-block-start: calc(var(--zone-mark) + var(--sp));
-  inset-inline-end: var(--mx);
-  inline-size: 460px;
-  block-size: 460px;
+/* ── A MARK IS SET CLEAR, AT ITS OWN SIZE (2026-09-24, second pass). ──
+   The owner, on a Honda mark shown as a white tile on half the slide: "not
+   nice and not professional. If you put a logo in, it has no background and
+   sits properly; and a picture that small, blown up to half the screen,
+   looks bad". So a mark is never a panel and never stretched:
+     - `mark-clear` (the workflow lifted its backdrop, or it is a vector):
+       no panel at all, and WHITE on a dark ground, the way a publication
+       sets a logo on a dark page;
+     - `mark` (its backdrop could not be lifted): it keeps it, small, with
+       rounded corners, never the size of a picture.
+   Both are capped at their natural size (`width/height: auto` under a max),
+   so a small file is never enlarged past what it can carry. On a panel the
+   mark sits in the centred block, copy above and below (`inset`). */
+.sc-figure-band:is([data-kind="mark"], [data-kind="mark-clear"]) {
+  background: none;
+  block-size: auto;
+  min-block-size: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-block: var(--sp);
+  overflow: visible;
+}
+.sc-figure-band:is([data-kind="mark"], [data-kind="mark-clear"]) img {
+  inline-size: auto;
+  block-size: auto;
+  max-inline-size: 60%;
+  max-block-size: 200px;
   object-fit: contain;
-  padding: 64px;
-  border-radius: 6px;
-  background: var(--mark-panel, #ffffff);
   filter: none;
   mix-blend-mode: normal;
 }
-body:has(img.hero[data-kind="mark"]) .scrim { display: none; }
+.sc-figure-band[data-kind="mark"] img { max-block-size: 150px; border-radius: 6px; }
+body[data-tone="dark"] .sc-figure-band[data-kind="mark-clear"] img { filter: brightness(0) invert(1); }
+/* On a full-bleed plate (cover, photo) the mark leaves the background alone
+   and sits above the lockup, start-aligned, at the same capped size. */
+img.hero:is([data-kind="mark"], [data-kind="mark-clear"]) {
+  inset: auto;
+  inset-block-start: calc(var(--zone-mark) + var(--sp-2));
+  inset-inline-start: var(--mx);
+  inline-size: auto;
+  block-size: auto;
+  max-inline-size: 56%;
+  max-block-size: 220px;
+  object-fit: contain;
+  filter: none;
+  mix-blend-mode: normal;
+}
+img.hero[data-kind="mark"] { max-block-size: 160px; border-radius: 6px; }
+body[data-tone="dark"] img.hero[data-kind="mark-clear"] { filter: brightness(0) invert(1); }
+body:has(img.hero:is([data-kind="mark"], [data-kind="mark-clear"])) .scrim { display: none; }
+
+.scrim { display: none; }
 body:has(img.hero[data-kind="mark"]) .plate { padding-block-start: calc(var(--zone-mark) + 460px + var(--sp-2)); }
 
 .scrim {
