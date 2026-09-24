@@ -18,8 +18,9 @@ describe("the closer's recap plates", () => {
       slide({ n: 4, layout: "stat_callout", stat: { figure: "20%", subLabel: "discount on the SAFE, converting at the next priced round with no cap", source: "Terms" } }),
     ]);
     expect(titles(html)).toEqual(["84", "1M+", "20%"]);
-    // Whole when it fits two lines; cut at a word, never mid-word, when not.
-    expect(labels(html)).toEqual(["startups reached the Grand Finale", "Zeely users before the Paris Grand Finale", "discount on the SAFE, converting at the next…"]);
+    // Whole when it fits two lines; otherwise cut at a COMPLETE clause, never
+    // with an ellipsis (2026-09-24, Hanky Panky's "sewn in New York and…").
+    expect(labels(html)).toEqual(["startups reached the Grand Finale", "Zeely users before the Paris Grand Finale", "discount on the SAFE"]);
     expect(html.match(/rc-plate rc-fig/gu)).toHaveLength(3);
   });
 
@@ -36,8 +37,9 @@ describe("the closer's recap plates", () => {
     // The premise: that sentence is past the old cut, and inside the new one.
     expect(b!.length).toBeGreaterThan(MAX_RECAP_PLATE_CHARS);
     expect(b!.length).toBeLessThanOrEqual(MAX_RECAP_SENTENCE_CHARS);
-    // No sentence break inside the limit: the word-boundary cut still applies.
-    expect(c!.endsWith("…")).toBe(true);
+    // No sentence break inside the limit: cut at the last complete clause, not
+    // at a word with an ellipsis (2026-09-24).
+    expect(c).toBe("What a production agent system requires");
     expect(labels(html)).toEqual([]);
     expect(html).not.toContain("rc-fig");
   });
@@ -54,5 +56,16 @@ describe("one plate per figure (2026-09-23)", () => {
     expect(labels(html)[0]).toBe("label 1");
     // Whitespace and case are not a different figure.
     expect(titles(buildRecapFragment([stat(1, "1M +"), stat(2, "1m+"), stat(3, "20%")]))).toEqual(["1M +", "20%"]);
+  });
+});
+
+describe("a recap label is a complete clause or a headline, never a stub (2026-09-24)", () => {
+  it("cuts before a conjunction and lends a naked figure its slide's headline", () => {
+    const html = buildRecapFragment([
+      slide({ n: 2, layout: "stat_callout", headline: "Nine in ten customers buy again", stat: { figure: "95%", subLabel: "", source: "s" } }),
+      slide({ n: 3, layout: "stat_callout", stat: { figure: "75%", subLabel: "of Hanky Panky products sewn in New York and shipped from the same studio", source: "s" } }),
+    ]);
+    expect(labels(html)).toEqual(["Nine in ten customers buy again", "of Hanky Panky products sewn in New York"]);
+    expect(html).not.toContain("…");
   });
 });
