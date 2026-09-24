@@ -260,3 +260,19 @@ describe("what the live harvest taught (2026-09-24)", () => {
     expect(outcome.result.problems.some((p) => p.includes("@negative"))).toBe(true);
   });
 });
+
+describe("breakouts over the account's own baseline (2026-09-25)", () => {
+  it("marks a post at 2x its account's median as an outlier and puts it in the pool first", async () => {
+    const { OUTLIER_LIFT } = await import("../src/instagram-exemplars.js");
+    const quiet = [10, 11, 12, 13, 14, 15].map((l) => post("quiet", l));
+    const breakout = post("quiet", 40);
+    const ranked = rankHarvest([...quiet, breakout]);
+    const top = ranked.find((p) => p.likes === 40)!;
+    expect(top.liftOverBaseline).toBeGreaterThanOrEqual(OUTLIER_LIFT);
+    expect(top.outlier).toBe(true);
+    // A steady account has a top quarter but no breakout.
+    const steady = rankHarvest([100, 110, 120, 130, 140].map((l) => post("steady", l)));
+    expect(steady.some((p) => p.outlier)).toBe(false);
+    expect(selectExemplars(ranked, { max: 5 })[0]!.likes).toBe(40);
+  });
+});

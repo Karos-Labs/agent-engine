@@ -7,7 +7,8 @@ import { fetchHtmlViaFetch, ScraperError, type ScrapedRecord, type ScraperProvid
 // and its reference accounts' Instagram posts, hundreds at a time, ranked by
 // how each performed inside its own account.
 // 1.0.1: every input property carries a description (the registry test); no behaviour change.
-const TOOL_VERSION = "1.0.1";
+// 1.1.0 (2026-09-25): every ranked post carries liftOverBaseline and outlier (2x its account-and-format median, 3x for a reel); the exemplar pool takes breakouts first, stills before reels.
+const TOOL_VERSION = "1.1.0";
 
 /** What one `instagram.account_posts` call bills (ScrappyCoco usage, 2026-09-24, 12 posts per call). */
 export const HARVEST_CALL_COST_USD = 0.0019;
@@ -50,7 +51,29 @@ export interface RankedPost extends HarvestedPost {
   score: number;
   /** 0..1, this post's rank inside its own account AND format group. */
   percentile: number;
+  /**
+   * `score` over its account-and-format MEDIAN (2026-09-25). A percentile
+   * always has a top quarter, even on an account where nothing broke out;
+   * this says by how much a post beat its own account's normal day.
+   */
+  liftOverBaseline: number;
+  /** `liftOverBaseline >= OUTLIER_LIFT`: a post that broke out of its own account's baseline. The design source pool starts here. */
+  outlier: boolean;
 }
+
+/**
+ * How far over its own account's median a post has to land to count as a
+ * breakout (2026-09-25, the owner: "posts that generated outlier engagement
+ * relative to that specific account's baseline"). Twice the median is a post
+ * the audience visibly chose over the account's other work.
+ */
+export const OUTLIER_LIFT = 2;
+/**
+ * Reels need more: plays swing by an order of magnitude on an ordinary week,
+ * and at 2x the live harvest marked 44 of @semrush's 120 posts (mostly reels)
+ * as breakouts.
+ */
+export const REEL_OUTLIER_LIFT = 3;
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
@@ -154,7 +177,7 @@ export function rankHarvest(posts: readonly HarvestedPost[]): RankedPost[] {
     // A hidden like count leaves only a placeholder to rank on: kept in the
     // harvest (its frames are still reference material), never ranked.
     if (post.likesHidden === true && !(post.format === "reel" && post.views !== undefined)) {
-      unranked.push({ ...post, score: 0, percentile: 0 });
+      unranked.push({ ...post, score: 0, percentile: 0, liftOverBaseline: 0, outlier: false });
       continue;
     }
     const key = `${post.handle}|${post.format === "reel" ? "reel" : "still"}`;
@@ -163,16 +186,31 @@ export function rankHarvest(posts: readonly HarvestedPost[]): RankedPost[] {
   const ranked: RankedPost[] = [];
   for (const group of groups.values()) {
     const scored = group.map((post) => ({ post, score: performanceScore(post) })).sort((a, b) => a.score - b.score);
+    // The MEDIAN, not the mean: one viral post would drag a mean up and hide
+    // every other breakout on the account.
+    const baseline = Math.max(1, median(scored.map((s) => s.score)) ?? 1);
     scored.forEach(({ post, score }, index) => {
-      ranked.push({ ...post, score, percentile: scored.length === 1 ? 0.5 : index / (scored.length - 1) });
+      const liftOverBaseline = Math.round((score / baseline) * 100) / 100;
+      ranked.push({
+        ...post,
+        score,
+        percentile: scored.length === 1 ? 0.5 : index / (scored.length - 1),
+        liftOverBaseline,
+        // An account with fewer than four posts in the group has no baseline to break out of.
+        outlier: scored.length >= 4 && liftOverBaseline >= (post.format === "reel" ? REEL_OUTLIER_LIFT : OUTLIER_LIFT),
+      });
     });
   }
   return [...ranked.sort((a, b) => b.percentile - a.percentile || b.score - a.score), ...unranked];
 }
 
 /**
- * The exemplar set: each account's top share, interleaved across roles so the
- * client's own winners are never crowded out by a competitor with more posts.
+ * The exemplar set, and the DESIGN SOURCE POOL (2026-09-25): every account's
+ * breakouts (`outlier`) first, then its top share by percentile, interleaved
+ * across roles so the client's own winners are never crowded out by a
+ * competitor with more posts. Breakouts come from every account the harvest
+ * read, which is what widens the pool of proven styles past one reference
+ * account's house look.
  */
 export function selectExemplars(ranked: readonly RankedPost[], options: { topShare?: number; max?: number } = {}): RankedPost[] {
   const topShare = options.topShare ?? 0.25;
@@ -183,8 +221,16 @@ export function selectExemplars(ranked: readonly RankedPost[], options: { topSha
     byAccount.set(post.handle, [...(byAccount.get(post.handle) ?? []), post]);
   }
   const queues = [...byAccount.values()].map((posts) => {
-    const sorted = [...posts].sort((a, b) => b.percentile - a.percentile || b.score - a.score);
-    return sorted.slice(0, Math.max(1, Math.ceil(sorted.length * topShare)));
+    // Stills before reels among equals: the agent designs carousels, and a
+    // reel's cover is one frame of a video, not a layout.
+    const still = (p: RankedPost) => Number(p.format !== "reel");
+    const sorted = [...posts].sort(
+      (a, b) => Number(b.outlier) - Number(a.outlier) || still(b) - still(a) || b.liftOverBaseline - a.liftOverBaseline || b.percentile - a.percentile,
+    );
+    const top = Math.max(1, Math.ceil(sorted.length * topShare));
+    // Every breakout is kept even past the top share; the top share fills in
+    // an account where nothing broke out.
+    return sorted.slice(0, Math.max(top, sorted.filter((p) => p.outlier).length));
   });
   const roleOrder: HarvestRole[] = ["client", "competitor", "reference"];
   queues.sort((a, b) => roleOrder.indexOf(a[0]!.role) - roleOrder.indexOf(b[0]!.role));
