@@ -211,11 +211,40 @@ export function buildCustomArchetypeDocument(bodyHtml: string): string {
  * allowed an `{{image:hero}}` ground, a custom archetype is not — has a
  * place to land that does not touch the run-authored path.
  */
-export function buildStudioTemplateDocument(bodyHtml: string): string {
-  return buildTemplateShell("instagram-agent studio template", bodyHtml);
+export function buildStudioTemplateDocument(bodyHtml: string, designSystem?: StudioDesignSystem): string {
+  return buildTemplateShell("instagram-agent studio template", bodyHtml, designSystem);
 }
 
-function buildTemplateShell(title: string, bodyHtml: string): string {
+/**
+ * The bundled set's own design system, handed to a studio shell (2026-09-24).
+ *
+ * Every studio template of the 2026-09-23 refreshes failed gate 6 the same
+ * way: type set in web pixels (16-24px on a 1080px canvas), copy running past
+ * the plate, near-empty renders. The eight bundled plates do not have that
+ * problem because they share one six-step canvas scale, the role classes
+ * (`.r-display`, `.r-lead`, ...) that step on it, the three-band `.plate`,
+ * and the `_ds-fit.js` ladder that MEASURES and steps a host until it fits.
+ * The studio shell gave the designer none of it, so every template had to
+ * invent a scale and a fit rule inside an 8,000-character stylesheet.
+ *
+ * Passed in rather than read here: the sheet lives with the plates in
+ * `agents/instagram-agent/assets/templates/default/` (one source, synced into
+ * all eight by `scripts/sync-design-system.ts`), and this package does not
+ * reach into an agent's assets. When given, the sheet goes in ahead of the
+ * shell's own rules (so the collapse rules below still apply) and the fit
+ * script REPLACES the unconditional ready flag, because it raises the flag
+ * itself after its second, fonts-loaded pass. A template that does not use
+ * `.plate` / `[data-fitted]` is untouched by the script: it raises the flag
+ * at once, exactly as before.
+ */
+export interface StudioDesignSystem {
+  css: string;
+  fitScript: string;
+}
+
+function buildTemplateShell(title: string, bodyHtml: string, designSystem?: StudioDesignSystem): string {
+  const systemSheet = designSystem !== undefined ? `<style data-studio-design-system>\n${designSystem.css}\n</style>\n` : "";
+  const readyScript = designSystem !== undefined ? designSystem.fitScript : "  window.__CAROUSEL_READY__ = true;";
   return `<!doctype html>
 <html lang="{{lang}}" dir="{{dir}}">
 <head>
@@ -225,7 +254,7 @@ function buildTemplateShell(title: string, bodyHtml: string): string {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<style>
+${systemSheet}<style>
   :root {
     --bg: #17181C;
     --fg: #F4F2EC;
@@ -279,7 +308,7 @@ function buildTemplateShell(title: string, bodyHtml: string): string {
 <div class="brand-handle"><bdi dir="ltr">{{brandHandle}}</bdi></div>
 ${bodyHtml}
 <script>
-  window.__CAROUSEL_READY__ = true;
+${readyScript}
 </script>
 </body>
 </html>
