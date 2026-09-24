@@ -1088,13 +1088,44 @@ export function ctaFormFor(text: string): "pill" | "line" {
   return trimmed.length > 0 && words <= CTA_PILL_MAX_WORDS && trimmed.length <= CTA_PILL_MAX_CHARS && oneClause ? "pill" : "line";
 }
 
-export function figurePlacementFor(layout: InstagramSlideLayout, n: number, hasPicture: boolean, seed?: string): FigurePlacement {
+/**
+ * The shapes that LOOK right on each archetype, judged on renders
+ * (2026-09-24, the owner: *"if it looks good, fine; check how it looks"*).
+ *
+ * A picture beside the copy (`corner`, `circle`) takes width from the
+ * headline's line, and the fit ladder then steps it down. On a quote or a
+ * stat the headline is short and holds; on a list or a comparison the
+ * headline is long and a 420px square shrank it to a caption next to a hole.
+ * So those two archetypes do not take the square, and a list does not take
+ * the circle either. Everything else takes all seven.
+ *
+ * At the FIRST or LAST position a content archetype is judged against the
+ * cover's or the closer's tighter floor, where a column left empty beside
+ * the picture reads as a hole (CI: `list_takeaway` as a closer at `circle`,
+ * 40% against a 22% ceiling). Those positions keep the calibrated
+ * full-width shapes plus whichever side shape the archetype carries well.
+ */
+const FIGURE_ROTATION_BY_LAYOUT: Partial<Record<InstagramSlideLayout, readonly FigurePlacement[]>> = {
+  list_takeaway: ["tall", "foot", "inset", "bleed", "band"],
+  comparison_card: ["tall", "circle", "foot", "inset", "bleed", "band"],
+};
+const EDGE_FIGURE_ROTATION_BY_LAYOUT: Partial<Record<InstagramSlideLayout, readonly FigurePlacement[]>> = {
+  list_takeaway: ["tall", "foot", "bleed", "band"],
+  comparison_card: ["tall", "foot", "bleed", "band"],
+  stat_callout: ["tall", "circle", "foot", "bleed", "corner", "band"],
+  quote_card: ["tall", "circle", "foot", "bleed", "corner", "band"],
+};
+const EDGE_FIGURE_ROTATION: readonly FigurePlacement[] = ["tall", "foot", "bleed", "band"];
+
+export function figurePlacementFor(layout: InstagramSlideLayout, n: number, hasPicture: boolean, seed?: string, options: { edge?: boolean } = {}): FigurePlacement {
   if (!hasPicture) return "band";
   if (FULL_BLEED_IMAGE_LAYOUTS.has(layout)) return "band";
+  const rotation =
+    options.edge === true ? (EDGE_FIGURE_ROTATION_BY_LAYOUT[layout] ?? EDGE_FIGURE_ROTATION) : (FIGURE_ROTATION_BY_LAYOUT[layout] ?? FIGURE_ROTATION);
   // Seeded, never random: one attempt renders a slide up to three times and
   // every render must get the plate the interest floor measured.
-  const phase = seed !== undefined && seed.length > 0 ? mix32(fnv1a32ForVariation(`${seed}:figure`)) % FIGURE_ROTATION.length : 0;
-  return FIGURE_ROTATION[(Math.abs(n) + phase) % FIGURE_ROTATION.length]!;
+  const phase = seed !== undefined && seed.length > 0 ? mix32(fnv1a32ForVariation(`${seed}:figure`)) % rotation.length : 0;
+  return rotation[(Math.abs(n) + phase) % rotation.length]!;
 }
 
 /**
@@ -3042,7 +3073,9 @@ export function assembleSlidesData(params: {
       fields: {
         ...fields,
         ...imageTreatmentFields({ treatment: params.imageTreatment ?? "none" }),
-        figurePlacement: figurePlacementFor(layout, slide.n, imagePath !== undefined, `${params.clientSlug}:${params.paletteSeed ?? ""}`),
+        figurePlacement: figurePlacementFor(layout, slide.n, imagePath !== undefined, `${params.clientSlug}:${params.paletteSeed ?? ""}`, {
+          edge: index === 0 || index === params.copy.slides.length - 1,
+        }),
         ...(photoCredit !== undefined ? { photoCredit } : {}),
         ...(groundTone !== undefined ? { groundTone } : {}),
         // `auto`: the renderer looks at the slide and places it (publish.renderCarousel 1.11.0).

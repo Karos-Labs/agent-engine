@@ -76,6 +76,13 @@ describe("figurePlacementFor", () => {
     }
   });
 
+  it("keeps the first and last slide on the four full-width shapes, which were calibrated against the cover and closer floors", () => {
+    const drawn = new Set(
+      ["a:1", "b:2", "c:3", "d:4", "e:5", "f:6", "g:7"].flatMap((seed) => Array.from({ length: 8 }, (_, i) => figurePlacementFor("list_takeaway", i + 1, true, seed, { edge: true }))),
+    );
+    expect([...drawn].sort()).toEqual(["band", "bleed", "foot", "tall"]);
+  });
+
   it("leaves the plain band on a plate with no picture, and on the two where the picture IS the plate", () => {
     expect(figurePlacementFor("stat_callout", 2, false)).toBe("band");
     expect(figurePlacementFor("cover", 2, true)).toBe("band");
