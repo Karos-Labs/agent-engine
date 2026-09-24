@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createBrandedShortsAgentWorkflow } from "../src/workflow/create-branded-shorts-agent-workflow.js";
-import { fakeRouterSequence, finalTurn, goodGraphicsPlan, goodHighlights, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
+import { fakeRouterSequence, finalTurn, goodCaption, goodGraphicsPlan, goodHighlights, makePromptStore, setupTestEnvironment, type TestEnvironment } from "./test-helpers.js";
 
 /**
  * SCRUM-241 (T-A9). branded-shorts-agent is one of the two agents this
@@ -15,9 +15,9 @@ import { fakeRouterSequence, finalTurn, goodGraphicsPlan, goodHighlights, makePr
  */
 const params = { runId: "branded_shorts_run_ground", clientSlug: "acme", productId: "branded-shorts-agent", runKind: "setup" as const };
 
-/** `fakeRouterSequence` (call-order queue): highlights (06), then graphics (08a) — the fixed order this happy path always takes. */
+/** `fakeRouterSequence` (call-order queue): highlights (06), graphics (08a), then the post caption (09c) — the fixed order this happy path always takes. */
 function orderedRouter() {
-  return fakeRouterSequence([finalTurn(goodHighlights()), finalTurn(goodGraphicsPlan())]);
+  return fakeRouterSequence([finalTurn(goodHighlights()), finalTurn(goodGraphicsPlan()), finalTurn(goodCaption())]);
 }
 
 describe("branded-shorts-agent grounding: branding-guidelines (SCRUM-241/T-A9)", () => {

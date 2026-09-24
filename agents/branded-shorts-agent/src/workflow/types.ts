@@ -400,10 +400,58 @@ export const AssetLibraryStillSchema = z.object({
 export type AssetLibraryStill = z.infer<typeof AssetLibraryStillSchema>;
 export const AssetLibraryIndexSchema = z.object({ stills: z.array(AssetLibraryStillSchema).default([]) }).passthrough();
 
+/**
+ * THE POST, NOT JUST THE VIDEO.
+ *
+ * Every other channel in this fleet delivers words with its asset; this one
+ * delivered an MP4 and nothing else. The portal's own materializer said so
+ * out loud — *"`content` is the empty string by construction: the video IS
+ * the post, and this deliverable carries no caption to put under it"* — and a
+ * client who approved a branded short still had to write the caption
+ * themselves before it could go anywhere. Clipping and content design, which
+ * share this agent's TikTok account and its subject history, have carried a
+ * `caption`/`about` pair since they were migrated.
+ *
+ * ## Why this does not contradict the note above about drafted copy
+ *
+ * `BrandedShortsClientConfigSchema`'s comment says this product has no
+ * copy-drafting step, and for the video that remains exactly true: on-screen
+ * captions quote the transcript word for word, graphics labels quote it, the
+ * endcard is text the client typed. None of that changes. A POST caption is a
+ * different artifact — it sits under the video on the platform, it is what the
+ * client's audience reads before pressing play, and there was no step that
+ * wrote one.
+ *
+ * It is drafted from material the run already holds: the client's own spoken
+ * words (the kept transcript), the takeaway they stated in the intake, and
+ * their voice context. Nothing about the video's content is invented here,
+ * which is why the caption drafter gets the transcript rather than a summary
+ * of it.
+ */
+export const BrandedShortsCopySchema = z.object({
+  /**
+   * What goes under the video. TikTok's own ceiling is 2,200 characters; the
+   * prompt asks for two or three lines, and this is the wall rather than the
+   * target — a schema that enforced the target would fail a caption a client
+   * might genuinely want, and `content_fail` costs the whole caption.
+   */
+  caption: z.string().min(1).max(2200),
+  /** 1-3 plain sentences for the client's own team: what this short is and what it is for. Never posted. */
+  about: z.string().min(1),
+});
+export type BrandedShortsCopy = z.infer<typeof BrandedShortsCopySchema>;
+
 export interface BrandedShortsWorkflowResult {
   outputPath: string;
   durationSeconds: number | null;
   deliverableId: string;
+  /**
+   * The words the video is posted with. Always present: a caption the drafter
+   * could not produce falls back to the client's own stated takeaway and is
+   * recorded as a `contentRepair`, because a short with no caption is the
+   * defect this field exists to close.
+   */
+  copy: BrandedShortsCopy;
   overlayCount: number;
   cutawayCount: number;
   contentCutsDeclared: number;

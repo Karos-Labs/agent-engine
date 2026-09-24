@@ -14,6 +14,7 @@ import {
   finalTurn,
   goodGraphicsPlan,
   goodHighlights,
+  goodCaption,
   happyPathResponses,
   makePromptStore,
   setupTestEnvironment,
@@ -33,7 +34,7 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
   it("runs every stage and resolves to completed with the delivery gate auto-approved", async () => {
     env = await setupTestEnvironment();
     const promptStore = makePromptStore();
-    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan(), goodCaption()]);
     const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
 
     const durableStore = new MemoryDurableStepStore();
@@ -70,7 +71,7 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
   it("without autoApprove, pauses at the branded_shorts_delivery_review gate", async () => {
     env = await setupTestEnvironment();
     const promptStore = makePromptStore();
-    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan(), goodCaption()]);
     const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router });
 
     const durableStore = new MemoryDurableStepStore();
@@ -87,7 +88,7 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     env = await setupTestEnvironment({ withLockedStyle: false });
     await env.store.writeJson(env.clientSlug, ["client", "brand"], { palette: { accent: "#FF6B2C" }, fonts: ["Spectral"], visualStyle: "Minimalist" });
     const promptStore = makePromptStore();
-    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan(), goodCaption()]);
     const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, fetchImpl: fakeFontAndLogoFetch() });
 
     const durableStore = new MemoryDurableStepStore();
@@ -125,7 +126,7 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     const config = (await env.store.readJson<Record<string, unknown>>(env.clientSlug, ["client", "config"])) ?? {};
     await env.store.writeJson(env.clientSlug, ["client", "config"], { ...config, brandedShortsWorkDir: env.workDir });
     const promptStore = makePromptStore();
-    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan(), goodCaption()]);
     const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true, fetchImpl: fakeFontAndLogoFetch() });
 
     const durableStore = new MemoryDurableStepStore();
@@ -149,7 +150,7 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
   it("resolves to blocked_intake when there is no per-upload intake for this run", async () => {
     env = await setupTestEnvironment({ withIntake: false });
     const promptStore = makePromptStore();
-    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan(), goodCaption()]);
     const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
 
     const durableStore = new MemoryDurableStepStore();
@@ -166,7 +167,7 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     const videoPath = path.join(env.rootDir, "attached.mov");
     await fs.writeFile(videoPath, "fake attached bytes", "utf8");
     const promptStore = makePromptStore();
-    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan(), goodCaption()]);
     const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
 
     const durableStore = new MemoryDurableStepStore();
@@ -187,7 +188,7 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
   it("client media only with no video attached: refuses intake and says what to attach, even when a standing intake exists", async () => {
     env = await setupTestEnvironment();
     const promptStore = makePromptStore();
-    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan(), goodCaption()]);
     const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
 
     const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFn, {
@@ -219,7 +220,7 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     });
     env = await setupTestEnvironment({ responses: zeroByteFont });
     const promptStore = makePromptStore();
-    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan(), goodCaption()]);
     const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
 
     const durableStore = new MemoryDurableStepStore();
@@ -249,7 +250,7 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     });
     env = await setupTestEnvironment({ responses: failingCutGate });
     const promptStore = makePromptStore();
-    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan(), goodCaption()]);
     const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
 
     const durableStore = new MemoryDurableStepStore();
@@ -298,7 +299,7 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     const tools = { ...createAllKarosTools(env.store, undefined, { scraper: createOfflineScraper() }), ...videoTools };
 
     const promptStore = makePromptStore();
-    const router = smartFakeRouter([goodHighlights(), { overlays: [{ archetype: "Growth Chart", start: 1.0, end: 3.0, illustrates: "revenue tripled" }], cutaways: [] }]);
+    const router = smartFakeRouter([goodHighlights(), goodCaption(), { overlays: [{ archetype: "Growth Chart", start: 1.0, end: 3.0, illustrates: "revenue tripled" }], cutaways: [] }]);
     const workflowFn = createBrandedShortsAgentWorkflow({ tools, promptStore, router, autoApprove: true });
 
     const durableStore = new MemoryDurableStepStore();
@@ -319,7 +320,7 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     env = await setupTestEnvironment();
     const badArchetypePlan = { overlays: [{ archetype: "Sparkle Burst", start: 1.0, end: 3.0, illustrates: "revenue tripled" }], cutaways: [] };
     const goodArchetypePlan = { overlays: [{ archetype: "Growth Chart", start: 1.0, end: 3.0, illustrates: "revenue tripled" }], cutaways: [] };
-    const router = fakeRouterSequence([finalTurn(goodHighlights()), finalTurn(badArchetypePlan), finalTurn(goodArchetypePlan)]);
+    const router = fakeRouterSequence([finalTurn(goodHighlights()), finalTurn(badArchetypePlan), finalTurn(goodArchetypePlan), finalTurn(goodCaption())]);
     const promptStore = makePromptStore();
     const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
 
@@ -356,6 +357,7 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
       finalTurn(goodHighlights()),
       finalTurn({ overlays: [{ archetype: "Sparkle Burst", start: 1.0, end: 3.0, illustrates: "x" }], cutaways: [] }),
       finalTurn({ overlays: [{ archetype: "Confetti Pop", start: 1.0, end: 3.0, illustrates: "x" }], cutaways: [] }),
+      finalTurn(goodCaption()),
     ]);
     const promptStore = makePromptStore();
     const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
@@ -393,7 +395,7 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     });
     env = await setupTestEnvironment({ responses: withWarning });
     const promptStore = makePromptStore();
-    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan(), goodCaption()]);
     const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
 
     const durableStore = new MemoryDurableStepStore();
@@ -427,7 +429,7 @@ describe("end-to-end: the Branded Shorts 8-stage pipeline (RFC-06)", () => {
     const tools = { ...createAllKarosTools(env.store, undefined, { scraper: createOfflineScraper() }), ...videoTools };
 
     const promptStore = makePromptStore();
-    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan(), goodCaption()]);
     const workflowFn = createBrandedShortsAgentWorkflow({ tools, promptStore, router, autoApprove: true });
 
     const durableStore = new MemoryDurableStepStore();
@@ -466,8 +468,10 @@ describe("the delivery review is a cycle, not a one-way door (2026-09-18)", () =
     const router = fakeRouterSequence([
       finalTurn(goodHighlights()),
       finalTurn(goodGraphicsPlan()),
+      finalTurn(goodCaption()),
       finalTurn(goodHighlights()),
       finalTurn(goodGraphicsPlan()),
+      finalTurn(goodCaption()),
     ]);
     const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router });
 
@@ -502,7 +506,7 @@ describe("the delivery review is a cycle, not a one-way door (2026-09-18)", () =
     // exactly the distinction the timeout now turns on.
     env = await setupTestEnvironment();
     const promptStore = makePromptStore();
-    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan(), goodCaption()]);
     const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router });
 
     const durableStore = new MemoryDurableStepStore();
@@ -533,7 +537,7 @@ describe("the plates are priced before any are bought", () => {
   it("buys every plate on an ordinary plan, and records no budget repair", async () => {
     env = await setupTestEnvironment();
     const promptStore = makePromptStore();
-    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan(), goodCaption()]);
     const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
 
     const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(workflowFn, { ...params, runId: "branded_shorts_run_budget_ok" });
@@ -576,6 +580,7 @@ describe("the plates are priced before any are bought", () => {
           { kind: "plate", phrase: "month six", start: 4.0, end: 5.5, wordSrcStart: 4.0, prompt: "a whiteboard wiped clean" },
         ],
       },
+      goodCaption(),
     ]);
     const workflowFn = createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore, router, autoApprove: true });
 
