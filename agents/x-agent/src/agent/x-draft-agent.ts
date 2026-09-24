@@ -90,6 +90,13 @@ export const XPostOutputSchema = z.object({
   whyNow: z.string().optional(),
   /** The ids of the craft rules (`craftRules` in the input) the draft followed. Empty when no rules were handed in. */
   rulesApplied: z.array(z.string()).default([]),
+  /**
+   * x-craft@9 §14: what the post is about, one short topic line, never
+   * published. What the run records as its subject when the topic came from a
+   * typed note (`recordedSubject`). Optional so v8-shaped output on a resumed
+   * run still validates; `""` is read as absent, like the fields above.
+   */
+  subject: z.string().optional(),
 });
 export type XPostOutput = z.infer<typeof XPostOutputSchema>;
 
@@ -172,7 +179,10 @@ export class XDraftAgent extends BaseAgent<XPostOutput> {
     // the time it is read. The shape check flags it, one redraft is asked
     // to fix it, and the floor under that deletes the phrase — never
     // substitutes a date, which is the failure the rule exists to prevent.
-    skillRef: "x-craft@8",
+    // v9: §14 asks for `subject`, the post's topic as one short line, so a
+    // run steered by a typed note records a topic rather than the note as
+    // typed (see `recordedSubject`). v8 stays frozen.
+    skillRef: "x-craft@9",
     selfCritique: {
       gateTool: "gate.lintPost",
       // Two revisions, not one: the second is what turns "thread part 3 is

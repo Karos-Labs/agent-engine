@@ -191,6 +191,44 @@ describe("x-agent and the learning loop (C7)", () => {
     expect(markdown).not.toContain("- **For:**");
   });
 
+  // Prep, 22 Sept 2026: a run steered by a typed note wrote the note itself —
+  // "…\nor something on costs:" — into the client's subject table. The note
+  // still steers the draft; what is RECORDED is the subject the draft named.
+  const TYPED_NOTE = "Something on AI shopping agents\nor something on costs:";
+
+  it("a typed note steers the draft, and the record carries the subject the draft named, never the note", async () => {
+    const router = fakeRouterSequence([finalTurn(goodPost({ subject: "AI shopping agents and brand discovery" }))]);
+    const store = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(store).run(createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true }), { ...params, runId: "x_typed_note", input: { customPrompt: TYPED_NOTE } });
+    expect(result.status).toBe("completed");
+
+    // The note reached the draft as typed, and selected the topic.
+    expect(draftInputOf(router).runDirection).toBe(TYPED_NOTE);
+    const selection = (await store.listSteps("x_typed_note")).find((st) => st.stepId === "07-select-candidate")!.output as { topic: string; source: string };
+    expect(selection).toMatchObject({ topic: TYPED_NOTE, source: "requested" });
+
+    const record = await env.store.readJson<Record<string, unknown>>("acme", ["state", "runs", "x_typed_note"]);
+    expect(record!.subjectRow).toMatchObject({ subject: "AI shopping agents and brand discovery" });
+    const state = await env.store.readJson<Record<string, unknown>>("acme", ["state", "x", "platform-state"]);
+    expect(state).toMatchObject({ topics: ["AI shopping agents and brand discovery"] });
+  });
+
+  it("when the draft names no subject, a typed note is recorded as its first line, not as typed", async () => {
+    const router = fakeRouterSequence([finalTurn(goodPost())]);
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true }), { ...params, runId: "x_typed_note_bare", input: { customPrompt: TYPED_NOTE } });
+    expect(result.status).toBe("completed");
+    const record = await env.store.readJson<Record<string, unknown>>("acme", ["state", "runs", "x_typed_note_bare"]);
+    expect(record!.subjectRow).toMatchObject({ subject: "Something on AI shopping agents" });
+  });
+
+  it("an explicit requestedTopic is recorded exactly as asked, whatever subject the draft named", async () => {
+    const router = fakeRouterSequence([finalTurn(goodPost({ subject: "A different phrasing" }))]);
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(createXAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true }), { ...params, runId: "x_requested_topic", input: { requestedTopic: "agent pricing" } });
+    expect(result.status).toBe("completed");
+    const record = await env.store.readJson<Record<string, unknown>>("acme", ["state", "runs", "x_requested_topic"]);
+    expect(record!.subjectRow).toMatchObject({ subject: "agent pricing" });
+  });
+
   it("a never-topic REFUSES an explicit request and the account posts about something else", async () => {
     await projectAll(env);
     const refusedRouter = fakeRouterSequence([finalTurn(goodPost()), finalTurn(goodPost()), finalTurn(goodPost())]);

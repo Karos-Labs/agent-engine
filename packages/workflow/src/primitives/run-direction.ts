@@ -84,6 +84,19 @@ export interface RunDirection {
    */
   topicOverride?: string;
   /**
+   * True when `topicOverride` is a note the person TYPED (the run's
+   * instruction, promoted because it read like a topic line), not an explicit
+   * `requestedTopic` field.
+   *
+   * The difference matters once the run is recorded. An explicit field is a
+   * topic line by construction. A typed note is a sentence to the agent —
+   * "something on AI shopping agents\nor something on costs:" — and it used
+   * to go into the client's subject table exactly as typed (prep, 22 Sept
+   * 2026). A run with this flag records a clean subject instead: see
+   * `recordedSubject`.
+   */
+  topicFromNote?: true;
+  /**
    * The content mode this run should write in, when the typed instruction
    * says so. "React to this week's funding news" is hot-news whatever "Kind
    * of post" was picked in the dialog; "ask the audience whether…" is an
@@ -264,6 +277,7 @@ export function readRunDirection(input: Readonly<Record<string, unknown>> | unde
   // An explicit topic field is a topic, full stop — no length or style
   // heuristic applies to it. Only a free-text instruction has to look like one.
   const topicOverride = requestedTopic ?? (instruction && looksLikeTopic(instruction) ? instruction : undefined);
+  const topicFromNote = requestedTopic === undefined && topicOverride !== undefined;
   // Read off the bare instruction, like the topic question above: brief lines
   // are labelled form fields, and a "Tone: casual" line must never be mistaken
   // for a request to change the kind of post.
@@ -280,6 +294,7 @@ export function readRunDirection(input: Readonly<Record<string, unknown>> | unde
   return {
     ...(direction ? { direction } : {}),
     ...(topicOverride ? { topicOverride } : {}),
+    ...(topicFromNote ? { topicFromNote: true as const } : {}),
     ...(modeOverride ? { modeOverride } : {}),
     mediaAssets: rich.mediaAssets,
     mediaSource: rich.mediaSource,
@@ -299,4 +314,50 @@ export function readRunDirection(input: Readonly<Record<string, unknown>> | unde
  */
 export function runDirectionField(direction: RunDirection): { runDirection?: string } {
   return direction.direction !== undefined ? { runDirection: direction.direction } : {};
+}
+
+/** The longest subject line `recordedSubject` writes. A subject is a table cell, not a paragraph. */
+export const MAX_RECORDED_SUBJECT_CHARS = 100;
+
+/**
+ * A typed note, tidied into one topic line by rule alone: its first non-empty
+ * line, whitespace collapsed, a trailing ":" / "," / "-" / "…" dropped, and
+ * cut at a word boundary to `MAX_RECORDED_SUBJECT_CHARS`.
+ *
+ * The fallback for `recordedSubject` when the draft stated no subject of its
+ * own. It does not try to understand the note: "או משהו על עלויות:" on a
+ * second line is simply not the first line, and a first line that is itself
+ * a sentence stays a sentence, only shorter.
+ */
+export function topicLineFromNote(note: string): string {
+  const firstLine = note.split(/\r?\n/).map((line) => line.replace(/\s+/g, " ").trim()).find((line) => line.length > 0) ?? "";
+  const bare = firstLine.replace(/[\s:;,\-–—…]+$/u, "").trim();
+  if (bare.length <= MAX_RECORDED_SUBJECT_CHARS) return bare;
+  const cut = bare.slice(0, MAX_RECORDED_SUBJECT_CHARS);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${(lastSpace > MAX_RECORDED_SUBJECT_CHARS / 2 ? cut.slice(0, lastSpace) : cut).replace(/[\s:;,\-–—…]+$/u, "")}…`;
+}
+
+/**
+ * The subject a run WRITES DOWN — into the subject table, the platform state's
+ * topic list and the decision memory the next run's anti-repetition reads.
+ *
+ * Only a topic that came from a typed note is rewritten. Every other source
+ * (an explicit `requestedTopic`, a strategy-map row, a catalog topic, a
+ * scouted trend, research) is already a topic line, and a strategy row's idea
+ * or a catalog topic has to be recorded verbatim for the loop to match it back.
+ *
+ * For a typed note: the subject the draft stated for itself (`stated` — the
+ * model has just written the post and knows what it is about), collapsed to
+ * one line; else `topicLineFromNote`. Never the note as typed.
+ *
+ * The note itself still steers the draft untouched — this decides only what
+ * is recorded afterwards.
+ */
+export function recordedSubject(topic: string, options: { readonly fromNote: boolean; readonly stated?: string | undefined }): string {
+  if (!options.fromNote) return topic;
+  const stated = options.stated?.replace(/\s+/g, " ").trim();
+  if (stated !== undefined && stated.length > 0) return topicLineFromNote(stated);
+  const tidied = topicLineFromNote(topic);
+  return tidied.length > 0 ? tidied : topic;
 }

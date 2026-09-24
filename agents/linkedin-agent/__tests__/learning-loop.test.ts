@@ -140,6 +140,35 @@ describe("linkedin-agent and the learning loop (C7)", () => {
     expect(markdown).toContain("- **For:** People leaders evaluating hybrid work policies");
   });
 
+  // Prep, 22 Sept 2026: a run steered by a typed note wrote the note itself
+  // into the client's subject table. The note still steers the draft; what is
+  // RECORDED is the draft's own working title (`headline`).
+  const TYPED_NOTE = "Something on hybrid scheduling\nor something on costs:";
+
+  it("a typed note steers the draft, and the record carries the draft's headline, never the note", async () => {
+    const router = fakeRouterSequence([finalTurn(goodPost())]);
+    const store = new MemoryDurableStepStore();
+    const result = await new WorkflowEngine(store).run(createLinkedInAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true }), { ...params, runId: "li_typed_note", input: { customPrompt: TYPED_NOTE } });
+    expect(result.status).toBe("completed");
+
+    expect(draftInputOf(router).runDirection).toBe(TYPED_NOTE);
+    const selection = (await store.listSteps("li_typed_note")).find((st) => st.stepId === "07-select-candidate")!.output as { topic: string; source: string };
+    expect(selection).toMatchObject({ topic: TYPED_NOTE, source: "requested" });
+
+    const record = await env.store.readJson<Record<string, unknown>>("acme", ["state", "runs", "li_typed_note"]);
+    expect(record!.subjectRow).toMatchObject({ subject: "Anchor days cut scheduling friction" });
+    const state = await env.store.readJson<Record<string, unknown>>("acme", ["state", "linkedin", "platform-state"]);
+    expect(state).toMatchObject({ topics: ["Anchor days cut scheduling friction"] });
+  });
+
+  it("an explicit requestedTopic is recorded exactly as asked, whatever the headline says", async () => {
+    const router = fakeRouterSequence([finalTurn(goodPost())]);
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(createLinkedInAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true }), { ...params, runId: "li_requested_topic", input: { requestedTopic: "hybrid scheduling" } });
+    expect(result.status).toBe("completed");
+    const record = await env.store.readJson<Record<string, unknown>>("acme", ["state", "runs", "li_requested_topic"]);
+    expect(record!.subjectRow).toMatchObject({ subject: "hybrid scheduling" });
+  });
+
   it("a never-topic REFUSES an explicit request and writes something else; the window and the never list skip catalog rows", async () => {
     await projectAll(env);
     // Two turns now, not one: refusing the request no longer ends the run

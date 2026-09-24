@@ -11,6 +11,7 @@ import {
   researchDigestForDrafting,
   researchSourceTexts,
   readRunDirection,
+  recordedSubject,
   runDirectionField,
   type RevisionNote,
   MAX_REVISION_ROUNDS,
@@ -1407,6 +1408,15 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       },
     });
     const { mediaPlan, formatting, ...draft } = review.output;
+    // What this run WRITES DOWN as its subject — the subject table, the
+    // platform state's topics and the decision memory. Equal to the selected
+    // topic for every source but a typed note, which records the draft's own
+    // `headline` (linkedin-craft §14: "a short internal working title (the
+    // content calendar; never published)") rather than the note as typed.
+    const subject = recordedSubject(selected.topic, {
+      fromNote: selected.source === "requested" && runDirection.topicFromNote === true && selected.topic === runDirection.topicOverride,
+      stated: draft.headline,
+    });
     /**
      * The repairs made to the round that was APPROVED — not the last round
      * attempted, which on an approve-after-revise run is the same thing only by
@@ -1510,7 +1520,7 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
           decisionId: `${wf.runId}__decision`,
           // `(archetype: …)` feeds the never-repeat rule and `(mode: …)` the
           // content-mode rotation on every future run.
-          summary: `Posted about "${selected.topic}" (archetype: ${draft.archetype}, mode: ${modeSelection.mode})`,
+          summary: `Posted about "${subject}" (archetype: ${draft.archetype}, mode: ${modeSelection.mode})`,
         },
         { ctx },
       );
@@ -1534,7 +1544,7 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
         sources: (researchDigest ?? []).map((d) => d.url).filter((u): u is string => typeof u === "string"),
       },
       subjectRow: {
-        subject: selected.topic,
+        subject,
         angle: draft.takeaway,
         type: draft.archetype,
         stage: goalLine.goal,
@@ -1545,7 +1555,7 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
       },
       platformStateDelta: {
         postsByUs: 1,
-        topics: [selected.topic],
+        topics: [subject],
         voiceNotes: [],
         account: clientContext.identity.scope === "executive" ? { handle: clientContext.identity.executiveName } : { handle: typeof clientContext.profile["companyName"] === "string" ? (clientContext.profile["companyName"] as string) : "company" },
       },
