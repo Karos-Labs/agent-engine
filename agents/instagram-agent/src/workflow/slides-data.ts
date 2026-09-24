@@ -3070,7 +3070,9 @@ export function assembleSlidesData(params: {
     // either be ignored by its template or — worse, for a template that did
     // grow a background slot later — quietly reintroduce the "every slide
     // needs a picture" coupling this set exists to break.
-    const chosenPath = HERO_IMAGE_LAYOUTS.has(layout) ? (selection?.imagePath ?? undefined) : undefined;
+    // 2026-09-24: a numbered list's item plate (`headline_focus`) carries a
+    // bounded band too; the imagery floor fills it only in that series.
+    const chosenPath = HERO_IMAGE_LAYOUTS.has(layout) || (params.numberedItems === true && layout === "headline_focus") ? (selection?.imagePath ?? undefined) : undefined;
     // ── A MARK IS A BADGE, NEVER THE WHOLE PICTURE (2026-09-23). ──
     //
     // The owner, on the white panel this code first drew: a logo does not
