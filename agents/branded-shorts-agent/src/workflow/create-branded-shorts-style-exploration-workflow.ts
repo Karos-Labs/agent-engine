@@ -77,8 +77,33 @@ export function createBrandedShortsStyleExplorationWorkflow(options: CreateBrand
           timeout: { duration: "1h", onTimeout: "auto_approve" },
         });
 
-    if (decision.decision !== "approve") {
-      throw new WorkflowHeld(`style exploration rejected: ${decision.reason ?? "no reason given"}`);
+    /**
+     * A REJECTION REFUSES THE LOCK, NOT THE EXPLORATION.
+     *
+     * Three candidate directions exist by the time this gate opens — proposed,
+     * self-critiqued against the brand's own tokens, and put in front of a
+     * person. `WorkflowHeld` discarded all three to answer "none of these fit",
+     * so the reviewer was left with an error string and the next exploration
+     * started from nothing, proposing into the same void that had just been
+     * refused.
+     *
+     * The owner's rule of 2026-09-17: an agent never ends a run with no
+     * deliverable. The candidates ship, marked refused and carrying the
+     * reviewer's words, and the rejection costs exactly the two things it
+     * should — step 03 locks no style for this client, and step 04 records no
+     * decision claiming one was locked.
+     */
+    const rejected = decision.decision !== "approve";
+    const rejection = rejected
+      ? {
+          decision: decision.decision,
+          by: decision.actor,
+          at: decision.at,
+          reason: decision.reason ?? "no reason given",
+        }
+      : undefined;
+    if (rejected) {
+      return { candidates, status: "rejected" as const, ...(rejection ? { rejection } : {}) };
     }
 
     // A person names the candidate in `reason`. The one approval that names
@@ -110,6 +135,6 @@ export function createBrandedShortsStyleExplorationWorkflow(options: CreateBrand
       );
     });
 
-    return { candidates, lockedCandidateName: locked.name };
+    return { candidates, lockedCandidateName: locked.name, status: "ok" as const };
   };
 }

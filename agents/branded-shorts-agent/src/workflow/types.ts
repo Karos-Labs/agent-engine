@@ -128,7 +128,15 @@ export type StyleExplorationOutput = z.infer<typeof StyleExplorationOutputSchema
 
 export interface StyleExplorationWorkflowResult {
   candidates: StyleCandidate[];
-  lockedCandidateName: string;
+  /**
+   * The candidate a person locked. Absent when they rejected all three — the
+   * run still delivers the candidates, and nothing was locked.
+   */
+  lockedCandidateName?: string;
+  /** `"rejected"` when the reviewer refused every candidate at `02-style-lock`. */
+  status: "ok" | "rejected";
+  /** Present only when `status` is `"rejected"`: who refused them, when, and why. */
+  rejection?: { decision: string; by: string; at: string; reason: string };
 }
 
 // ---- Highlights (bounded step 3) ----
