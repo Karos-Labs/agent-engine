@@ -1,3 +1,4 @@
+import { keepClientSitePages } from "./site-identity.js";
 import { lintReadableCopy, readableCopySteer } from "./readable-copy.js";
 import { brandMarkZone } from "./brand-render-tokens.js";
 import { buildExemplarLibrary, EXEMPLAR_LIBRARY_BELIEF_KEY, EXEMPLAR_POSTS_PER_ACCOUNT, exemplarLibraryAction, exemplarPatternEvidence, exemplarStudioNotes, failedLibrary, planHarvest, postsToJudge, readExemplarLibrary, type ExemplarLibrary, type HarvestedExemplar } from "./exemplar-library.js";
@@ -3214,7 +3215,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               const outcome = await fetchPages.execute({ urls, maxChars: 4000 }, { ctx });
               if (outcome.status === "success") {
                 const result = outcome.result as { pages: Array<{ url: string; title?: string; text: string; fromCache: boolean }>; problems: string[] };
-                sitePages = result.pages.map((p) => ({ url: p.url, ...(p.title !== undefined ? { title: p.title } : {}), text: p.text }));
+                // Owner feedback WS-03: a lander or a challenge page is not the client's site.
+                const identity = keepClientSitePages(result.pages.map((p) => ({ url: p.url, ...(p.title !== undefined ? { title: p.title } : {}), text: p.text })));
+                sitePages = identity.kept;
+                for (const gap of identity.gaps) problems.push(`site: ${gap}`);
                 scraperExecutions += result.pages.filter((p) => !p.fromCache).length;
                 for (const problem of result.problems) problems.push(`site: ${problem}`);
               } else {
