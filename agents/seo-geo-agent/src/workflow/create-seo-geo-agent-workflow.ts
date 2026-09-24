@@ -1080,9 +1080,24 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
           // gate's comment.
           timeout: { duration: "1h", onTimeout: "auto_approve" },
         });
-    if (fixGenerationDecision.decision !== "approve") {
-      throw new WorkflowHeld(`fix generation rejected: ${fixGenerationDecision.reason ?? "no reason given"}`);
-    }
+    /**
+     * A REJECTION HERE REFUSES THE FIXES, NOT THE REPORT.
+     *
+     * By the time this gate opens the run has paid for a full technical crawl,
+     * an AI-visibility capture, a scoring pass and the recommendation firing —
+     * every number the client-visible report is made of already exists.
+     * Throwing `WorkflowHeld` discarded all of it to refuse the ONE thing the
+     * gate is about: drafting agent-direct fixes from the fired
+     * recommendations.
+     *
+     * So the drafting is skipped and the report ships without fix drafts,
+     * carrying the reviewer's decision as a `contentRepair` — the same marker
+     * 16-batch-review already uses for a rejection, and the same shape the
+     * portal already renders. The recommendations themselves stay in the
+     * report: they are measured output, not drafted text, and refusing to
+     * draft fixes is not a statement that the findings are wrong.
+     */
+    const fixGenerationRejected = fixGenerationDecision.decision !== "approve";
 
     /** What one Phase 7/8 drafting pass produces, once its own gates have all passed. */
     interface DraftResult {
@@ -1124,7 +1139,7 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
 
       // ── fix drafting — one bounded agent, only when there's something agent-direct to draft ──
       let fixDrafts: SeoGeoFixDraft[] = [];
-      if (topAgentDirect.length > 0) {
+      if (topAgentDirect.length > 0 && !fixGenerationRejected) {
         const fixAgent = new SeoGeoFixDraftAgent({ router: options.router, tools, promptStore: options.promptStore });
         const fixResult = await wf.step.agent(rev("13-draft-fixes"), fixAgent, {
           ...runDirectionField(runDirection),
@@ -1352,6 +1367,13 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
     // them to act on, and the marker is what makes their decision unmissable.
     // Nothing here publishes anything — every deliverable still waits on a
     // human — so this changes what a reviewer KEEPS, not what ships.
+    if (fixGenerationRejected) {
+      contentRepairs.push({
+        check: "fix-generation-review",
+        action: "unresolved",
+        detail: `fix generation rejected by ${fixGenerationDecision.actor} — the report is delivered with its measurements and recommendations, without drafted fixes: ${fixGenerationDecision.reason ?? "no reason given"}`,
+      });
+    }
     if (review.outcome !== undefined && review.outcome !== "approved") {
       contentRepairs.push({
         check: "human-review",

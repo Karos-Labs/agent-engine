@@ -1,6 +1,19 @@
 /** What a Landing Builder v2 run returns (RFC-11 §7). */
 export interface LandingBuilderWorkflowResult {
-  status: "ok" | "needs_human";
+  /**
+   * `rejected` is a DELIVERED run, not a failed one.
+   *
+   * The craft review refuses the publish; the page is still built, checked,
+   * screenshotted, uploaded and preview-deployed by the time a reviewer sees
+   * it. The run used to throw `WorkflowHeld` there and hand the client an
+   * error string in place of the page they had just been looking at. It ships
+   * the page now, marked refused, with `rejection` saying who and why — and
+   * skips only the live deploy and the state write, which is what the
+   * rejection actually refused.
+   */
+  status: "ok" | "needs_human" | "rejected";
+  /** Present only when `status` is `rejected`. */
+  rejection?: { decision: string; by: string; at: string; reason: string };
   client: string;
   /** The page's `<title>`, so a listing can name the deliverable. */
   title: string;

@@ -179,4 +179,61 @@ describe("checkpoint resume idempotency across the campaign gate (RFC-01 §8.1, 
     // state, or the next reader is left with "expected false to be true".
     expect(finalSteps.filter((s) => s.status !== "completed").map((s) => `${s.stepId}: ${s.status}${s.error ? ` (${s.error})` : ""}`)).toEqual([]);
   });
+
+  /**
+   * A REJECTION REFUSES THE CAMPAIGN, NOT EVERY CHANNEL'S WORK.
+   *
+   * By the time this gate opens, five channel workflows have each run to
+   * completion and written their own deliverable. The campaign used to answer
+   * a "no" with `WorkflowHeld`, which left the reviewer an error string and a
+   * set of orphan per-channel deliverables with nothing tying them together.
+   *
+   * Two things must still be refused, and both are asserted here: the topic
+   * reservation must NOT be committed (a rejected campaign has no right to
+   * spend those topics), and client memory must record the refusal rather
+   * than "ran campaign X".
+   */
+  it("a rejected campaign still writes the bundle, leaves the topics uncommitted, and records the refusal", async () => {
+    const params = { ...baseParams, runId: runId("campaign_run_rejected") };
+    const { spied, callCounts } = spyOnAllTools(env.tools);
+    const workflowFn = createCampaignWorkflow({
+      tools: spied,
+      promptStore: makeCampaignPromptStore(),
+      router: fakeRouterSequence([finalTurn(goodCampaignPlan())]),
+      channelPromptStores: makeChannelPromptStores(),
+      channelRouters: makeChannelRouters(),
+    });
+
+    const durableStore = new MemoryDurableStepStore();
+    const engine = new WorkflowEngine(durableStore);
+    const first = await engine.run(workflowFn, params);
+    expect(first.status).toBe("awaiting_gate");
+    const countsAtGate = callCounts();
+
+    await engine.resolveGate(params.runId, "13-campaign-review", {
+      decision: "reject",
+      actor: "jane@karoslabs.com",
+      reason: "the theme repeats last month's",
+      at: new Date(2026, 7, 16).toISOString(),
+    });
+
+    const result = await engine.run(workflowFn, params);
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+    expect(result.output.status).toBe("rejected");
+    expect(result.output.rejection?.reason).toBe("the theme repeats last month's");
+    expect(result.output.deliverableId).toBeTruthy();
+    // Every channel's work is still in the bundle — that is what the reviewer
+    // said no to, and what they need in order to act on their own decision.
+    expect(result.output.channelResults.some((r) => r.status === "completed")).toBe(true);
+
+    const after = callCounts();
+    // The bundle was written; the topic reservation was NOT committed.
+    expect(after["ledger.writeDeliverable"]).toBe(countsAtGate["ledger.writeDeliverable"]! + 1);
+    expect(after["topics.commit"]).toBe(countsAtGate["topics.commit"]!);
+    // The decision reaches client memory, worded as the refusal it was.
+    expect(after["memory.appendDecision"]).toBe(countsAtGate["memory.appendDecision"]! + 1);
+    const decisionCall = vi.mocked(spied["memory.appendDecision"]!.execute).mock.calls.at(-1)!;
+    expect((decisionCall[0] as { summary: string }).summary).toMatch(/REJECTED at review/);
+  });
 });

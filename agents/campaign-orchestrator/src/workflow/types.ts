@@ -54,4 +54,12 @@ export interface CampaignAgentWorkflowResult {
   theme: string;
   channelResults: CampaignChannelResult[];
   deliverableId: string;
+  /**
+   * `"rejected"` when a human refused the bundle at `13-campaign-review`. The
+   * bundle is still written — every channel's work is in it — but the topic
+   * reservation is left uncommitted and client memory records the refusal.
+   */
+  status: "ok" | "rejected";
+  /** Present only when `status` is `"rejected"`: who refused it, when, and why. */
+  rejection?: { decision: string; by: string; at: string; reason: string };
 }

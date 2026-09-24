@@ -60,7 +60,19 @@ describe("12-fix-generation-review gate (RFC-04 §2 Phase 7 — \"nothing ships 
     expect(finalSteps.map((s) => s.stepId)).toContain("13-draft-fixes");
   });
 
-  it("rejecting the gate holds the run before any fix is drafted, and the deliverable never ships", async () => {
+  /**
+   * A REJECTION REFUSES THE FIXES, NOT THE REPORT.
+   *
+   * This reverses the earlier behaviour deliberately. By the time this gate
+   * opens the run has paid for a full technical crawl, an AI-visibility
+   * capture, a scoring pass and the recommendation firing — every number the
+   * client-visible report is made of. Holding here threw all of it away to
+   * refuse the one thing the gate is about: drafting fixes.
+   *
+   * The gate keeps that authority — no fix is drafted — and the report ships
+   * with the reviewer's own words attached where nobody can miss them.
+   */
+  it("rejecting the gate drafts no fix, and still delivers the report that was already measured", async () => {
     const promptStore = makePromptStore();
     const router = smartFakeRouter([goodFixDrafts(), goodNarrative()]);
     const workflowFn = createSeoGeoAgentWorkflow({ tools: withMeasuredCapture(env.tools), promptStore, router });
@@ -78,13 +90,34 @@ describe("12-fix-generation-review gate (RFC-04 §2 Phase 7 — \"nothing ships 
       reason: "want a second look at priorities before drafting fixes",
       at: new Date().toISOString(),
     });
-    const result = await engine.run(workflowFn, { ...baseParams, runId });
+    const third = await engine.run(workflowFn, { ...baseParams, runId });
+    // The narrative is still written, so the run stops at the final review
+    // gate exactly as an approved one does.
+    expect(third.status).toBe("awaiting_gate");
+    if (third.status !== "awaiting_gate") throw new Error("unreachable");
+    expect(third.pendingGateId).toContain("16-batch-review-r0");
 
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/fix generation rejected/i);
+    // The refused half, and the ONLY refused half.
+    expect((await durableStore.listSteps(runId)).map((s) => s.stepId)).not.toContain("13-draft-fixes");
+
+    await engine.resolveGate(runId, "16-batch-review-r0", { decision: "approve", actor: "jane@karoslabs.com", at: new Date().toISOString() });
+    const result = await engine.run(workflowFn, { ...baseParams, runId });
+    expect(result.status).toBe("completed");
 
     const deliverables = await env.store.listJson("acme", ["ledger", "deliverables", runId, "_"]);
-    expect(deliverables).toHaveLength(0);
-  });
+    expect(deliverables).toHaveLength(1);
+    const report = (deliverables[0] as { data: { deliverable: Record<string, unknown> } }).data.deliverable;
+    // Measured output survives: the recommendations are findings, not drafted
+    // text, and refusing to draft fixes is not a claim that they are wrong.
+    expect((report["firedRecommendations"] as unknown[]).length).toBeGreaterThan(0);
+    expect(report["fixDrafts"]).toEqual([]);
+    expect(report["narrative"]).toBeTruthy();
+    expect(report["contentRepairs"]).toContainEqual(
+      expect.objectContaining({
+        check: "fix-generation-review",
+        action: "unresolved",
+        detail: expect.stringContaining("want a second look at priorities before drafting fixes"),
+      }),
+    );
+  }, 30000);
 });

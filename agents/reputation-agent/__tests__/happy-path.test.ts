@@ -208,7 +208,11 @@ describe("end-to-end: the reputation pulse workflow happy path (RFC-08 §5)", ()
     expect(afterApproval).toHaveLength(1);
   });
 
-  it("held when a human rejects the reputation_approve_all gate — nothing persisted, never mistaken for a crash", async () => {
+  it("a rejected reputation_approve_all gate still delivers the pulse, marked rejected", async () => {
+    // The reviewer said no to RELEASING the drafts. The capture, the triage,
+    // the flags, the crisis triggers and the drafts themselves are the pulse's
+    // work and they are what the reviewer needs in order to act on their own
+    // decision — a run that ended `held` left them with an error string.
     const promptStore = makePromptStore();
     const router = goodRouter();
     const workflowFn = createReputationPulseWorkflow({ tools: env.tools, promptStore, router, store: env.store });
@@ -226,11 +230,19 @@ describe("end-to-end: the reputation pulse workflow happy path (RFC-08 §5)", ()
     });
 
     const result = await engine.run(workflowFn, rejectedParams);
-    expect(result.status).toBe("held");
-    if (result.status !== "held") throw new Error("unreachable");
-    expect(result.reason).toMatch(/reputation_approve_all gate rejected/i);
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("unreachable");
+    expect(result.output.status).toBe("rejected");
+    expect(result.output.rejection?.reason).toMatch(/second look/i);
 
     const deliverables = await env.store.listJson(env.clientSlug, ["ledger", "deliverables", rejectedParams.runId, "_"]);
-    expect(deliverables).toHaveLength(0);
+    expect(deliverables).toHaveLength(1);
+    const payload = (deliverables[0] as { data: { deliverable: Record<string, unknown> } }).data.deliverable;
+    expect(payload["status"]).toBe("rejected");
+    // The drafts the reviewer refused are IN it — that is the point.
+    expect((payload["approvedDrafts"] as unknown[]).length).toBeGreaterThan(0);
+
+    // And the one thing a rejection must still cost: nothing is marked answered.
+    expect(await env.store.listJson(env.clientSlug, ["reputation", "ledger", "responded"])).toHaveLength(0);
   });
 });
