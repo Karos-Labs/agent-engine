@@ -255,6 +255,8 @@ const HAPPY_PATH_STEP_IDS = [
   "06h3-stage-floor-images-attempt-1",
   "07-self-check-attempt-1",
   "07b-craft-hygiene-attempt-1",
+  // Owner feedback WS-10: the $0 readable-copy lint, after 07b.
+  "07b2-readable-copy-attempt-1",
   // Phase 0 (RFC-13 §C): the relevance judge — one Flash call per attempt,
   // "would a reader see how this post connects to this business?".
   "07g-relevance-attempt-1",

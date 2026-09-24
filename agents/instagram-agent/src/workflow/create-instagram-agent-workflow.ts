@@ -1,3 +1,4 @@
+import { lintReadableCopy, readableCopySteer } from "./readable-copy.js";
 import { buildExemplarLibrary, EXEMPLAR_LIBRARY_BELIEF_KEY, EXEMPLAR_POSTS_PER_ACCOUNT, exemplarLibraryAction, exemplarPatternEvidence, exemplarStudioNotes, failedLibrary, planHarvest, postsToJudge, readExemplarLibrary, type ExemplarLibrary, type HarvestedExemplar } from "./exemplar-library.js";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -11421,6 +11422,28 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           step: rev(`07b-craft-hygiene-attempt-${attempt}`),
           kind: "lint",
           detail: craftHygiene.reason,
+        });
+      }
+
+      // ── 07b2: READABLE COPY (owner feedback round 2026-09-24, WS-10) ──
+      //
+      // $0, deterministic, same contract as 07b: attempts 1..n-1 redraft with
+      // every finding named at once; the final attempt records and ships.
+      const readable = await wf.step.code(rev(`07b2-readable-copy-attempt-${attempt}`), () => {
+        const last = copy.slides[copy.slides.length - 1];
+        const findings = lintReadableCopy(copy.slides, last !== undefined && last.layout === "closer" ? last.n : undefined);
+        return { findings };
+      });
+      if (readable.findings.length > 0) {
+        if (!isFinalAttempt) {
+          returnToCopyWith(readableCopySteer(readable.findings));
+          continue;
+        }
+        recordSelfCheckFinding({
+          gate: "craft",
+          step: rev(`07b2-readable-copy-attempt-${attempt}`),
+          kind: "lint",
+          detail: readableCopySteer(readable.findings),
         });
       }
 
