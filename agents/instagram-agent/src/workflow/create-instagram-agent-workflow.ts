@@ -1129,6 +1129,11 @@ export async function loadStudioDesignSystem(repoRoot: string): Promise<StudioDe
   }
 }
 
+/** A lifted product covering more of its frame than this was a scene, not a product on a backdrop. */
+export const PRODUCT_CUTOUT_MAX_COVERAGE = 0.75;
+/** Less than this and the lift kept a fragment (a reflection, a label), not the product. */
+export const PRODUCT_CUTOUT_MIN_COVERAGE = 0.06;
+
 export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkflowOptions) {
   const tools = options.tools;
   const imageCandidatePool = options.imageCandidatePool ?? [];
@@ -7650,6 +7655,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       const markImagePaths = new Set<string>();
       /** 2026-09-24: marks with no backdrop (lifted by 06h25, or vector), set clear on the slide. */
       const clearMarkPaths = new Set<string>();
+      /** 2026-09-24: client product photos lifted off their backdrop by 06h26, set as objects. */
+      const productCutoutPaths = new Set<string>();
       /** 2026-09-23: per slide, the credit-free mark of the entity it pictures (05b1), shown as a small badge. */
       const markBadgeBySlide = new Map<number, string>();
       /** Records why this attempt failed AND hands that finding to the next draft. */
@@ -10805,6 +10812,53 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         for (const p of lifted.clear) clearMarkPaths.add(p);
       }
 
+      // ── 06h26: THE CLIENT'S PRODUCT AS AN OBJECT (2026-09-24) ──
+      //
+      // A shop photo from the client's own site is usually the product on a
+      // seamless backdrop, and cropped into a band it reads as a catalogue
+      // thumbnail. Lifted off that backdrop (`media.cutout`, uniform grounds
+      // only) it is set on the plate as an object with a soft shadow, the way
+      // the Karos Labs reference sets a can on its ground. Only for the
+      // client's own site pictures (a client's deliberate upload is left as
+      // the photograph it is), and only when the product is an object in the
+      // frame: a cut-out that keeps most of the frame was a scene, not a
+      // product on a backdrop, and keeps its photograph.
+      const productSelections = selections.filter(
+        (sel) => sel.imagePath !== null && !markImagePaths.has(sel.imagePath) && /client's own published website imagery/iu.test(sel.license ?? ""),
+      );
+      if (productSelections.length > 0) {
+        const cutouts = await wf.step.code(rev(`06h26-lift-product-cutouts-attempt-${attempt}`), async () => {
+          const replaced: Record<string, string> = {};
+          const notes: string[] = [];
+          const cut = tools["media.cutout"];
+          if (cut === undefined) return { replaced, notes: ["media.cutout is not registered"] };
+          for (const sel of productSelections) {
+            const from = sel.imagePath!;
+            if (!/\.(png|jpe?g|webp)$/iu.test(from)) continue;
+            try {
+              const outcome = await cut.execute({ repoRoot: options.repoRoot, runId: wf.runId, image: from }, { ctx });
+              if (outcome.status !== "success") {
+                notes.push(`${from}: kept as a photograph (${(outcome as { reason?: string }).reason ?? "refused"})`);
+                continue;
+              }
+              const result = outcome.result as { path: string; coverage: number };
+              if (result.coverage > PRODUCT_CUTOUT_MAX_COVERAGE || result.coverage < PRODUCT_CUTOUT_MIN_COVERAGE) {
+                notes.push(`${from}: kept as a photograph (the subject covered ${Math.round(result.coverage * 100)}% of the frame)`);
+                continue;
+              }
+              replaced[from] = result.path;
+            } catch (error) {
+              notes.push(`${from}: kept as a photograph (${(error as Error).message})`);
+            }
+          }
+          return { replaced, notes };
+        });
+        if (Object.keys(cutouts.replaced).length > 0) {
+          selections = selections.map((sel) => (sel.imagePath !== null && cutouts.replaced[sel.imagePath] !== undefined ? { ...sel, imagePath: cutouts.replaced[sel.imagePath]! } : sel));
+          for (const to of Object.values(cutouts.replaced)) productCutoutPaths.add(to);
+        }
+      }
+
       // ── 06h3: THE FLOOR FRAMES ARE BYTES TOO (2026-09-23) ──
       //
       // `06e2` ran before the imagery floor generated and vetted its frames,
@@ -12286,6 +12340,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // 2026-09-23: a slide whose picture is a mark shows it on a card.
           markImagePaths,
           clearMarkPaths,
+          productCutoutPaths,
           markBadges: markBadgeBySlide,
           // IGSTYLE-7, §7a — wires `paletteForSlide`'s already-built, already-
           // seeded rotation into the render path for the first time. Seeded

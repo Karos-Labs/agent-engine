@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { PRODUCT_CUTOUT_MAX_COVERAGE, PRODUCT_CUTOUT_MIN_COVERAGE } from "../src/workflow/create-instagram-agent-workflow.js";
 import { describe, expect, it } from "vitest";
 import { looksLikeMark, MARK_CANDIDATE_TAG, planEntitySourcing, type RecognisedEntity } from "../src/workflow/entity-imagery.js";
 import { MARK_AUTO_CANDIDATES, rotatedCandidates } from "@agent-engine/tool-karos-publish";
@@ -120,5 +121,23 @@ describe("a badge must be a mark (2026-09-23)", () => {
     expect(looksLikeMark({ path: "b.jpg", description: 'slide 1 candidate — geo-verified photo of "ChatGPT logo" from Google Places (contributed by M.) [licence: Google Places photo]' })).toBe(false);
     // The engine's own tag says "logo"; the check reads the provider's title, not the tag.
     expect(looksLikeMark({ path: "a.jpg", description: "slide 3 candidate — a desk [licence: CC0] [kind: brand mark — a logo or wordmark, not a photograph]" })).toBe(false);
+  });
+});
+
+describe("a client product lifted off its backdrop is set as an object (2026-09-24)", () => {
+  it("carries heroKind cutout, and the plates contain it with a shadow instead of cropping it", () => {
+    const data = assembleSlidesData({
+      clientSlug: "k", postId: "p", repoRoot: "/r",
+      brandTokens: { templateDir: "t", slideTemplate: "slide.html" },
+      copy: { format: "carousel", caption: "c", slides: [{ n: 1, headline: "A product", body: "b", visualNeed: "v", sourceRef: "c", layout: "photo" }] } as InstagramCopyOutput,
+      selections: [{ n: 1, imagePath: "media/lifted.png", reason: "r", license: "x", rightsUsable: true, watermarkFree: true, claimMatch: 5, claimMatchReason: "r" }],
+      canvas: { w: 1080, h: 1440, scale: 2, slides_min: 1, slides_max: 8 },
+      productCutoutPaths: new Set(["media/lifted.png"]),
+    });
+    expect(data.slides[0]!.fields.heroKind).toBe("cutout");
+    const css = readFileSync(path.join(TEMPLATES, "_design-system.css"), "utf8");
+    expect(css).toMatch(/\.sc-figure-band\[data-kind="cutout"\] img \{[^}]*object-fit: contain/u);
+    expect(css).toMatch(/img\.hero\[data-kind="cutout"\] \{[^}]*drop-shadow/u);
+    expect(PRODUCT_CUTOUT_MIN_COVERAGE).toBeLessThan(PRODUCT_CUTOUT_MAX_COVERAGE);
   });
 });

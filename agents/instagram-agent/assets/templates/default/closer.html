@@ -302,6 +302,32 @@ body:has(img.hero:is([data-kind="mark"], [data-kind="mark-clear"])) .scrim { dis
 .scrim { display: none; }
 body:has(img.hero[data-kind="mark"]) .plate { padding-block-start: calc(var(--zone-mark) + 460px + var(--sp-2)); }
 
+/* ── THE CLIENT'S PRODUCT AS AN OBJECT (2026-09-24). ──
+   A product lifted off its shop backdrop (`heroKind: "cutout"`) is set on
+   the plate, not cropped into a frame: contained whole, no panel, a soft
+   shadow under it so it sits on the ground rather than floating. In a band
+   it keeps the band's shape and extent; as a full-bleed hero it becomes an
+   object in the upper field, above the lockup. */
+.sc-figure-band[data-kind="cutout"] { background: none; overflow: visible; border-radius: 0; }
+.sc-figure-band[data-kind="cutout"] img {
+  object-fit: contain;
+  filter: drop-shadow(0 18px 28px color-mix(in srgb, var(--shadow-ink, #000000) 38%, transparent));
+  mix-blend-mode: normal;
+}
+img.hero[data-kind="cutout"] {
+  inset: auto;
+  inset-block-start: calc(var(--zone-mark) + var(--sp));
+  inset-inline: var(--mx);
+  inline-size: auto;
+  block-size: 38%;
+  margin-inline: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 22px 34px color-mix(in srgb, var(--shadow-ink, #000000) 40%, transparent));
+}
+body:has(img.hero[data-kind="cutout"]) .scrim { display: none; }
+/* The lockup starts under the object: a product is never behind the words. */
+body:has(img.hero[data-kind="cutout"]) .plate { padding-block-start: calc(var(--zone-mark) + var(--sp) + 38% + var(--sp-2)); }
+
 .scrim {
   position: absolute;
   inset: 0;
