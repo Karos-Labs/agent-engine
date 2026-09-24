@@ -1018,8 +1018,36 @@ export function buildListRows(items: readonly { title: string; note?: string | u
  * four shapes against the one this set had before, and every one of them uses
  * the full width and fills the plate by construction.
  */
-const FIGURE_ROTATION = ["tall", "foot", "bleed", "band"] as const;
+/*
+ * 2026-09-24 (stage 8): seven, and the walk is PHASED per client and run.
+ *
+ * The owner, the same day: *"there are no images in random places, like the
+ * centre or the sides"*. Two things made every carousel look placed by the
+ * same hand. The rotation had four full-width shapes only, and it was keyed
+ * on the slide number alone, so slide 3 of every client's every post took
+ * the same shape. `corner` (a square at the inline end), `circle` (a round
+ * crop at the start) and `inset` (centred, between the first block and the
+ * rest) move the picture while the type keeps the full field width the fit
+ * ladder is calibrated on; `interest-floor-calibration.test.ts` renders every
+ * selectable shape on every picture panel before it may be listed here.
+ * The side shapes stay out for the reason above. The order is chosen so
+ * neighbours differ in both position and size.
+ */
+const FIGURE_ROTATION = ["tall", "corner", "foot", "inset", "bleed", "circle", "band"] as const;
 export type FigurePlacement = (typeof FIGURE_ROTATION)[number] | "side" | "side-end" | "carry-out" | "carry-in";
+/** Every shape `figurePlacementFor` may return for a picture panel. */
+export const SELECTABLE_FIGURE_PLACEMENTS: readonly FigurePlacement[] = FIGURE_ROTATION;
+
+/** murmur3's finaliser: FNV-1a's high bits barely move across similar seeds, and a phase taken modulo 7 needs all of them mixed. */
+function mix32(h: number): number {
+  let x = h >>> 0;
+  x ^= x >>> 16;
+  x = Math.imul(x, 0x85ebca6b) >>> 0;
+  x ^= x >>> 13;
+  x = Math.imul(x, 0xc2b2ae35) >>> 0;
+  x ^= x >>> 16;
+  return x >>> 0;
+}
 
 /** The panel archetypes whose bounded band can run off the edge (`carry-out`) or pick a strip up (`carry-in`). */
 const CARRY_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<InstagramSlideLayout>(["stat_callout", "quote_card", "comparison_card", "list_takeaway"]);
@@ -1060,10 +1088,13 @@ export function ctaFormFor(text: string): "pill" | "line" {
   return trimmed.length > 0 && words <= CTA_PILL_MAX_WORDS && trimmed.length <= CTA_PILL_MAX_CHARS && oneClause ? "pill" : "line";
 }
 
-export function figurePlacementFor(layout: InstagramSlideLayout, n: number, hasPicture: boolean): FigurePlacement {
+export function figurePlacementFor(layout: InstagramSlideLayout, n: number, hasPicture: boolean, seed?: string): FigurePlacement {
   if (!hasPicture) return "band";
   if (FULL_BLEED_IMAGE_LAYOUTS.has(layout)) return "band";
-  return FIGURE_ROTATION[Math.abs(n) % FIGURE_ROTATION.length]!;
+  // Seeded, never random: one attempt renders a slide up to three times and
+  // every render must get the plate the interest floor measured.
+  const phase = seed !== undefined && seed.length > 0 ? mix32(fnv1a32ForVariation(`${seed}:figure`)) % FIGURE_ROTATION.length : 0;
+  return FIGURE_ROTATION[(Math.abs(n) + phase) % FIGURE_ROTATION.length]!;
 }
 
 /**
@@ -3011,7 +3042,7 @@ export function assembleSlidesData(params: {
       fields: {
         ...fields,
         ...imageTreatmentFields({ treatment: params.imageTreatment ?? "none" }),
-        figurePlacement: figurePlacementFor(layout, slide.n, imagePath !== undefined),
+        figurePlacement: figurePlacementFor(layout, slide.n, imagePath !== undefined, `${params.clientSlug}:${params.paletteSeed ?? ""}`),
         ...(photoCredit !== undefined ? { photoCredit } : {}),
         ...(groundTone !== undefined ? { groundTone } : {}),
         // `auto`: the renderer looks at the slide and places it (publish.renderCarousel 1.11.0).

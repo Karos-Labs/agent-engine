@@ -492,6 +492,56 @@ body[data-figure="bleed"] .sc-figure-band {
   border-radius: 0;
 }
 
+/* ── THREE SHAPES THAT MOVE THE PICTURE WITHOUT NARROWING THE TYPE ──
+   (2026-09-24, stage 8 of the owner's reference-looks plan: *"no pictures in
+   random places, like the centre or the sides"*.) The side shapes above stay
+   unselected because they halve the column the fit ladder sizes type in.
+   These three keep the type at the full field width, so the ladder's
+   measurement is exactly the one it was calibrated on, and move only the
+   picture: to the side, into a circle, or into the middle of the plate.
+
+   CORNER — a square picture held to the inline END of the field, smaller than
+   a band. The editorial "picture beside the headline" read, at the size of
+   an object rather than a banner. */
+/* RIGID, not the band's `0 1 auto`: a shape that yields only in height stops
+   being a square (and a circle becomes an oval). The fit ladder steps the
+   type instead, which is what it is for. */
+body[data-figure="corner"] .sc-figure-band {
+  align-self: flex-end;
+  flex: 0 0 auto;
+  inline-size: 420px;
+  block-size: 420px;
+  min-block-size: 0;
+  border-radius: 4px;
+}
+/* CIRCLE — a round crop at the inline START, for a person or an object that
+   reads as a portrait. A logo is never cropped round: a mark shown whole on
+   its panel keeps its square corners. */
+body[data-figure="circle"] .sc-figure-band {
+  align-self: flex-start;
+  flex: 0 0 auto;
+  inline-size: 400px;
+  block-size: 400px;
+  min-block-size: 0;
+  border-radius: 50%;
+}
+body[data-figure="circle"] .sc-figure-band[data-kind="mark"] { border-radius: 4px; }
+/* INSET — the picture sits in the MIDDLE of the plate, between the first
+   block of copy and the rest, centred and narrower than the field. `order`
+   does it without touching any plate's markup: the band sorts after the
+   first content block (the element right after the carry strip) and before
+   everything else. On a plate with one block the picture follows it. */
+body[data-figure="inset"] .plate > * { order: 2; }
+body[data-figure="inset"] .plate > .sc-carry + * { order: 0; }
+body[data-figure="inset"] .plate > .sc-figure-band {
+  order: 1;
+  align-self: center;
+  inline-size: 76%;
+  block-size: 420px;
+  min-block-size: 280px;
+  border-radius: 4px;
+}
+
 /* The collapse rule is written against the band itself, so it holds for every
    variant above. A `side` plate with no picture is a one-column plate, because
    a `display: none` grid item leaves its track empty rather than reserving it:

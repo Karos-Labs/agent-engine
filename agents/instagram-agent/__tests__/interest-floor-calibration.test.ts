@@ -22,7 +22,7 @@ import {
 import { buildMarkRing, markCssBlock, type EmphasisIssue, type MarkRing } from "../src/workflow/emphasis-marks.js";
 import { visualSystemCssBlock } from "../src/workflow/visual-system.js";
 import { countContentElements } from "../src/workflow/visual-qa-pre-checks.js";
-import { HERO_IMAGE_LAYOUTS } from "../src/workflow/slides-data.js";
+import { HERO_IMAGE_LAYOUTS, SELECTABLE_FIGURE_PLACEMENTS } from "../src/workflow/slides-data.js";
 import { MAX_COPY_FOR_OBJECT } from "../src/workflow/bounded-object.js";
 import { buildScriptFontHeadForLanguage, scriptTypographyFor } from "../src/workflow/script-fonts.js";
 import { deviceCssBlock } from "../src/workflow/slide-devices.js";
@@ -1570,6 +1570,65 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
       }
     },
     600_000,
+  );
+
+  /**
+   * STAGE 8 (2026-09-24): the picture moves without narrowing the type.
+   *
+   * `corner`, `circle` and `inset` put the bounded picture at the side, in a
+   * circle, or in the middle of the plate, and keep the copy at the full field
+   * width the fit ladder was calibrated on. Every one of them has to clear
+   * the interior floor and the overflow probe on every panel archetype that
+   * holds a picture, at two copy lengths, before the rotation may select it.
+   * The four shapes already in the rotation are rendered alongside as the
+   * baseline the new ones are read against.
+   */
+  it(
+    "every placement the rotation can select clears the interior floor and the overflow probe on every picture panel",
+    async () => {
+      const content: Array<{ label: string; over: Partial<InstagramSlideCopy> }> = [
+        { label: "stat_callout", over: { layout: "stat_callout", stat: { figure: "73%", subLabel: "of teams file intake by hand", source: "Karos survey, 2026" } } },
+        { label: "quote_card", over: { layout: "quote_card", quote: { text: "We stopped guessing and started measuring the queue.", attribution: "Head of Ops, 2026" } } },
+        {
+          label: "comparison_card",
+          over: { layout: "comparison_card", comparison: { leftLabel: "Before", leftBody: "Five review rounds", rightLabel: "After", rightBody: "Two review rounds" } },
+        },
+        {
+          label: "list_takeaway",
+          over: {
+            layout: "list_takeaway",
+            items: [
+              { title: "Name a single accountable owner", note: "One person, not a channel" },
+              { title: "Measure the queue every week", note: "Weekly, not monthly" },
+              { title: "Cut one review round" },
+            ],
+          },
+        },
+      ];
+      const heroRel = path.relative(REPO_ROOT, heroPath).replaceAll("\\", "/");
+      const failures: string[] = [];
+      for (const placement of SELECTABLE_FIGURE_PLACEMENTS) {
+        for (const { label, over } of content) {
+          for (const [lengthLabel, copy] of [["short", SHORT], ["medium", MEDIUM]] as const) {
+            const slides = [
+              slide({ n: 1, layout: "cover", ...MEDIUM, kicker: "THE SHIFT" }),
+              slide({ n: 2, ...copy, ...over }),
+              slide({ n: 3, layout: "closer", headline: "That is the pattern", body: "Which round would you cut first?" }),
+            ];
+            const input = assemble(slides, [selection(1, heroRel), selection(2, heroRel), selection(3, null)]);
+            const target = input.slides[1]! as { fields: Record<string, unknown> };
+            target.fields = { ...target.fields, figurePlacement: placement };
+            const entry = (await render(input))[1]!;
+            report(`${label} @ ${placement} (${lengthLabel})`, "interior", entry);
+            const findings = checkInterestFloor(entry.metrics, entry.probe, "interior", optsFor(entry)).findings;
+            if (findings.length > 0) failures.push(`${label} @ ${placement} (${lengthLabel}): ${findings.map((f) => f.sentence).join(" | ")}`);
+            if (entry.probe.overflow) failures.push(`${label} @ ${placement} (${lengthLabel}) overflows: ${entry.probe.overflowing.join(", ")}`);
+          }
+        }
+      }
+      expect(failures, failures.join("\n")).toEqual([]);
+    },
+    1_200_000,
   );
 
   it(

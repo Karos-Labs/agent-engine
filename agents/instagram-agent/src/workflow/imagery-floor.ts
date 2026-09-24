@@ -205,6 +205,30 @@ export const PICTURE_BANDS: Readonly<Record<PictureDensity, PictureBand>> = {
   "photo-first": { floor: MIN_PICTURE_SLIDES, ceiling: 8, quiet: 1 },
 };
 
+/**
+ * Industries whose feed is carried by pictures of the thing itself: what it
+ * looks like IS the offer (2026-09-24, stage 7). A lingerie label, a
+ * restaurant, a hotel, a florist. Hanky Panky's post of 2026-09-23 shipped
+ * with no picture at all because nothing told the writer this client is one
+ * of them: an unconfigured client got the band a B2B analyst gets.
+ *
+ * Matched as whole words against the client's declared industry, so
+ * "Fashion & Apparel", "Boutique hotel" and "Food and beverage" all land,
+ * and "Fintech" or "Marketing services" do not.
+ */
+const PHOTO_FIRST_INDUSTRY =
+  /\b(fashion|apparel|clothing|lingerie|intimates|underwear|swimwear|footwear|shoes|jewel(?:le)?ry|accessor(?:y|ies)|beauty|cosmetics?|skincare|fragrance|salon|food|beverages?|restaurants?|caf[eé]s?|bakery|coffee|wine|brewery|hospitality|hotels?|resorts?|travel|tourism|events?|weddings?|florists?|flowers|interiors?|furniture|home ?decor|decor|design studio|architecture|real estate|fitness|gym|yoga|retail|boutique|gifts?|toys|pets?|art|photography|crafts?|e-?commerce|consumer goods|dtc)\b/iu;
+
+/**
+ * The density an UNCONFIGURED client gets from what it is. Every explicit
+ * setting outranks it: the run input, the client's config and its learned
+ * preference all come first. `undefined` means the standard band, which is
+ * what every client had before this existed.
+ */
+export function defaultPictureDensityFor(industry: string | undefined): PictureDensity | undefined {
+  return industry !== undefined && PHOTO_FIRST_INDUSTRY.test(industry) ? "photo-first" : undefined;
+}
+
 export function isPictureDensity(value: unknown): value is PictureDensity {
   return typeof value === "string" && (PICTURE_DENSITIES as readonly string[]).includes(value);
 }

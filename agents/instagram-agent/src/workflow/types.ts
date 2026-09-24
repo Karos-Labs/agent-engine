@@ -281,7 +281,7 @@ export interface InstagramRunClaim {
    */
   requestedSeries?: string;
   /** Which source decided the post type this run, for the trace: the run input, the client config, or the client's learned preference. */
-  postTypeSource?: "run-input" | "client-config" | "client-preference";
+  postTypeSource?: "run-input" | "client-config" | "client-preference" | "industry-default";
 }
 
 // ─────────────────────────────────────────────────────────────────────────
