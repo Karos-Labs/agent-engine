@@ -1033,10 +1033,26 @@ export function buildListRows(items: readonly { title: string; note?: string | u
  * The side shapes stay out for the reason above. The order is chosen so
  * neighbours differ in both position and size.
  */
-const FIGURE_ROTATION = ["tall", "corner", "foot", "inset", "bleed", "circle", "band"] as const;
-export type FigurePlacement = (typeof FIGURE_ROTATION)[number] | "side" | "side-end" | "carry-out" | "carry-in";
-/** Every shape `figurePlacementFor` may return for a picture panel. */
-export const SELECTABLE_FIGURE_PLACEMENTS: readonly FigurePlacement[] = FIGURE_ROTATION;
+/*
+ * 2026-09-24, later the same day: the SPLIT joins, and the rotation is
+ * WEIGHTED toward the two compositions the owner asked to see.
+ *
+ * *"I still have not seen a picture in the middle or on the side, something
+ * that looks good and fits in, e.g. a picture in the middle with the text
+ * above, or a picture on one side and the text on the other."* The side
+ * shapes are now the editorial split (`_design-system.css`: the picture bleeds
+ * down one half, the copy lays out in the other with its own scale), which
+ * the calibration sweep renders clean on every picture panel. `side`,
+ * `side-end` and `inset` each appear more than once in the walk, never next
+ * to themselves, so a carousel with three or four pictured panels shows at
+ * least one of them whatever the phase.
+ */
+const FIGURE_SHAPES = ["tall", "corner", "foot", "inset", "bleed", "circle", "band", "side", "side-end"] as const;
+const FIGURE_ROTATION: readonly FigureShape[] = ["side", "tall", "inset", "corner", "side-end", "foot", "side", "bleed", "inset", "circle", "side-end", "band"];
+type FigureShape = (typeof FIGURE_SHAPES)[number];
+export type FigurePlacement = FigureShape | "carry-out" | "carry-in";
+/** Every shape `figurePlacementFor` may return for a picture panel, once each. */
+export const SELECTABLE_FIGURE_PLACEMENTS: readonly FigurePlacement[] = [...new Set(FIGURE_ROTATION)];
 
 /** murmur3's finaliser: FNV-1a's high bits barely move across similar seeds, and a phase taken modulo 7 needs all of them mixed. */
 function mix32(h: number): number {
@@ -1106,8 +1122,8 @@ export function ctaFormFor(text: string): "pill" | "line" {
  * full-width shapes plus whichever side shape the archetype carries well.
  */
 const FIGURE_ROTATION_BY_LAYOUT: Partial<Record<InstagramSlideLayout, readonly FigurePlacement[]>> = {
-  list_takeaway: ["tall", "foot", "inset", "bleed", "band"],
-  comparison_card: ["tall", "circle", "foot", "inset", "bleed", "band"],
+  list_takeaway: ["side", "tall", "inset", "foot", "side-end", "bleed", "inset", "band"],
+  comparison_card: ["side", "tall", "circle", "inset", "side-end", "foot", "bleed", "inset", "band"],
 };
 const EDGE_FIGURE_ROTATION_BY_LAYOUT: Partial<Record<InstagramSlideLayout, readonly FigurePlacement[]>> = {
   list_takeaway: ["tall", "foot", "bleed", "band"],
@@ -3044,9 +3060,21 @@ export function assembleSlidesData(params: {
     // and the slide goes typographic around it, and a slide with a real
     // photograph also carries its entity's mark (05b1) when one is
     // credit-free.
+    //
+    // ── AND THEN THE OWNER, A DAY LATER (2026-09-24). ──
+    //
+    // *"A logo that is small and on the side does not look good and is not
+    // related. Either there is a picture related to the logo, or the logo
+    // appears some other way; a small framed logo is strange."* So there is no
+    // badge any more. A slide with a real photograph lets the photograph
+    // carry it (a related picture), and a mark the vet chose as the picture
+    // is shown AS the picture: a brand tile the size of the slide's picture
+    // area, placed by the same shape rotation as any picture, `heroKind:
+    // "mark"` so the plate contains it on a clean panel instead of cropping
+    // it (`_design-system.css`, "THE MARK AS A TILE").
     const heroIsMark = chosenPath !== undefined && params.markImagePaths?.has(chosenPath) === true;
-    const imagePath = heroIsMark ? undefined : chosenPath;
-    const badgePath = heroIsMark ? chosenPath : imagePath !== undefined ? params.markBadges?.get(slide.n) : undefined;
+    const imagePath = chosenPath;
+    const badgePath: string | undefined = undefined;
     // 2026-09-23: an `attributable` picture (most CC, every Wikimedia file)
     // must carry its credit, and none ever did — `creditLineFor` existed and
     // nothing called it. Only when the picture actually renders on this slide:
@@ -3073,9 +3101,19 @@ export function assembleSlidesData(params: {
       fields: {
         ...fields,
         ...imageTreatmentFields({ treatment: params.imageTreatment ?? "none" }),
-        figurePlacement: figurePlacementFor(layout, slide.n, imagePath !== undefined, `${params.clientSlug}:${params.paletteSeed ?? ""}`, {
-          edge: index === 0 || index === params.copy.slides.length - 1,
-        }),
+        // A mark on an interior panel is always the SPLIT: the brand on a clean
+        // half, the copy on the other, which reads as a composition. In a
+        // corner square the same tile read as the framed stamp the owner
+        // rejected (render check, 2026-09-24).
+        figurePlacement:
+          heroIsMark && !FULL_BLEED_IMAGE_LAYOUTS.has(layout) && index !== 0 && index !== params.copy.slides.length - 1
+            ? slide.n % 2 === 0
+              ? "side-end"
+              : "side"
+            : figurePlacementFor(layout, slide.n, imagePath !== undefined, `${params.clientSlug}:${params.paletteSeed ?? ""}`, {
+                edge: index === 0 || index === params.copy.slides.length - 1,
+              }),
+        ...(heroIsMark ? { heroKind: "mark" } : {}),
         ...(photoCredit !== undefined ? { photoCredit } : {}),
         ...(groundTone !== undefined ? { groundTone } : {}),
         // `auto`: the renderer looks at the slide and places it (publish.renderCarousel 1.11.0).

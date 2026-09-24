@@ -55,26 +55,24 @@ describe("assembleSlidesData with markImagePaths", () => {
       ...(badges !== undefined ? { markBadges: badges } : {}),
     });
 
-  // 2026-09-23, the owner on the first version's white panel: a logo does
-  // not have to fill the slide or stand alone; it can be small, to the side.
-  it("turns a mark the vet chose as the picture into a badge, and the slide goes typographic around it", () => {
+  // 2026-09-24, the owner: "a small framed logo is strange; either a picture
+  // related to the logo, or the logo appears some other way". No badges.
+  it("shows a mark the vet chose as the picture AS the picture, a tile (heroKind mark), never a small badge", () => {
     const data = run(new Set(["media/anthropic-logo.webp"]));
     const byN = new Map(data.slides.map((s) => [s.n, s]));
-    expect(byN.get(1)!.images.hero).toBeUndefined();
-    expect(byN.get(1)!.images.mark).toBe("media/anthropic-logo.webp");
-    // The renderer looks at the slide and places it (`mark-placement.ts`).
-    expect(byN.get(1)!.fields.markAt).toBe("auto");
+    expect(byN.get(1)!.images.hero).toBe("media/anthropic-logo.webp");
+    expect(byN.get(1)!.fields.heroKind).toBe("mark");
+    expect(byN.get(1)!.images.mark).toBeUndefined();
+    expect(byN.get(1)!.fields.markAt).toBeUndefined();
     expect(byN.get(2)!.images.hero).toBe("media/speaker.jpg");
-    expect(byN.get(2)!.images.mark).toBeUndefined();
-    expect(byN.get(2)!.fields.markAt).toBeUndefined();
+    expect(byN.get(2)!.fields.heroKind).toBeUndefined();
   });
 
-  it("puts the entity's mark beside a real photograph, never on a slide with no picture", () => {
+  it("never stamps a mark onto a real photograph: the photograph carries the slide", () => {
     const data = run(new Set(), new Map([[2, "media/anthropic-cc0.svg"], [1, "media/unused.svg"]]));
     const byN = new Map(data.slides.map((s) => [s.n, s]));
-    expect(byN.get(2)!.images).toEqual({ hero: "media/speaker.jpg", mark: "media/anthropic-cc0.svg" });
-    // Slide 1's hero is not a mark here, so it is a photo and gets its badge too.
-    expect(byN.get(1)!.images.mark).toBe("media/unused.svg");
+    expect(byN.get(2)!.images).toEqual({ hero: "media/speaker.jpg" });
+    expect(byN.get(1)!.images.mark).toBeUndefined();
   });
 
   it("emits nothing when the run supplied no marks (byte-identical to before)", () => {
@@ -107,8 +105,10 @@ describe("every picture plate carries the badge slot, in flow", () => {
     const rules = css.match(/\.mark-badge[^{]*\{[^}]*\}/gu) ?? [];
     expect(rules.length).toBeGreaterThan(3);
     for (const rule of rules) if (/position:\s*absolute/u.test(rule)) expect(rule).toMatch(/data-at\^="(corner|side)-"/u);
-    // The first version's 700px panel is gone.
-    expect(css).not.toContain('img.hero[data-kind="mark"]');
+    // The first version's 700px panel is gone; a mark hero is a bounded tile
+    // under the brand band (2026-09-24), never the top half of the plate.
+    expect(css).not.toMatch(/img\.hero\[data-kind="mark"\][^{]*\{[^}]*block-size: 700px/u);
+    expect(css).toMatch(/img\.hero\[data-kind="mark"\] \{[^}]*block-size: 460px/u);
   });
 });
 

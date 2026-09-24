@@ -34,7 +34,7 @@ describe("figurePlacementFor", () => {
     expect(seen.size, `eight panels drew ${seen.size} distinct shapes`).toBeGreaterThan(3);
   });
 
-  it("does NOT select the two side shapes, which the fit ladder cannot size type for yet (and does select the three that keep the type full width)", () => {
+  it("selects every shape the calibration sweep renders clean, the split included (2026-09-24)", () => {
     // The stylesheet declares them and they render correctly. The calibration
     // sweep refused every archetype that was offered a 56% column, because
     // `_ds-fit.js` sizes type against the FIELD and a side variant changes the
@@ -45,7 +45,7 @@ describe("figurePlacementFor", () => {
         Array.from({ length: 12 }, (_, i) => figurePlacementFor(layout, i + 1, true)),
       ),
     );
-    expect([...drawn].sort()).toEqual(["band", "bleed", "circle", "corner", "foot", "inset", "tall"]);
+    expect([...drawn].sort()).toEqual(["band", "bleed", "circle", "corner", "foot", "inset", "side", "side-end", "tall"]);
   });
 
   it("never gives two ADJACENT slides the same shape", () => {
@@ -98,8 +98,10 @@ describe("the stylesheet carries every shape the code can ask for", () => {
   });
 
   it("gives the side shapes an actual column, and the size shapes an actual size", () => {
-    expect(DS).toMatch(/body\[data-figure="side"\] \.plate \{[^}]*grid-template-columns: 44% 1fr/u);
-    expect(DS).toMatch(/body\[data-figure="side-end"\] \.plate \{[^}]*grid-template-columns: 1fr 44%/u);
+    // The split: the picture bleeds down one half, the plate narrows to the other.
+    expect(DS).toMatch(/body\[data-figure="side"\] \.sc-figure-band \{[^}]*inset-inline-start: 0/u);
+    expect(DS).toMatch(/body\[data-figure="side"\] \.plate \{[^}]*padding-inline-start: calc\(var\(--split\)/u);
+    expect(DS).toMatch(/body\[data-figure="side-end"\] \.plate \{[^}]*padding-inline-end: calc\(var\(--split\)/u);
     // `tall` and `bleed` are about weight, so they must actually change it.
     expect(DS).toMatch(/body\[data-figure="tall"\] \.sc-figure-band \{[^}]*block-size: 620px/u);
     // `foot` fills by construction: it sorts last and an auto margin pushes it
@@ -114,6 +116,17 @@ describe("the stylesheet carries every shape the code can ask for", () => {
     // the type would sit in the second column of a two-column plate with a
     // 44% hole beside it. This is the rule that stops it.
     expect(DS).toContain('body[data-figure]:not([data-figure="band"]) .plate:not(:has(.sc-figure-band img[src]:not([src=""])))');
+  });
+
+  it("a pictureless split gives the copy its whole field back", () => {
+    expect(DS).toContain('body:is([data-figure="side"], [data-figure="side-end"]):not(:has(.sc-figure-band img[src]:not([src=""]))) .plate { padding-inline: var(--mx); }');
+  });
+
+  it("shows the owner's two compositions (the split, the centred picture) in any carousel with three pictured panels", () => {
+    for (const seed of ["geektime:r1", "thepitchbydeel:r1", "xodigital:r1", "sitti:r1", "hankypanky:r1", "karoslabs:r1", "karoslabs:r2", "kindlyyours:r1"]) {
+      const shapes = [2, 3, 4].map((n) => figurePlacementFor("stat_callout", n, true, seed));
+      expect(shapes.some((s) => s === "side" || s === "side-end" || s === "inset"), `${seed}: ${shapes.join(", ")}`).toBe(true);
+    }
   });
 
   it("every plate reads the slot, or the attribute never arrives", () => {
