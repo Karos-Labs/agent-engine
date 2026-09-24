@@ -227,7 +227,7 @@ import {
 } from "./interest-floor.js";
 import { boundedObjectFor, composeBoundedObjects, type BoundedObjectDecision } from "./bounded-object.js";
 import { checkSlideWordBudget, formatWordBudgetFindings, MAX_WORDS_PER_SLIDE } from "./slide-word-budget.js";
-import { ceilingFor, enforceImageryBand, imageryShortfallsFor, isPictureDensity, MIN_PICTURE_SLIDES, PICTURE_BANDS, placementMixShortfall, type ImageryDemotion, type ImageryPromotion, type ImageryShortfall } from "./imagery-floor.js";
+import { ceilingFor, defaultPictureDensityFor, enforceImageryBand, imageryShortfallsFor, isPictureDensity, MIN_PICTURE_SLIDES, PICTURE_BANDS, placementMixShortfall, type ImageryDemotion, type ImageryPromotion, type ImageryShortfall } from "./imagery-floor.js";
 // Phase 5.5, spec §2 A1b — the split every optional-spend gate in the generate
 // ladder consults, so the image floor is enforced where it actually binds.
 import { guaranteedGapCount, partitionGaps } from "./image-gap-partition.js";
@@ -1228,13 +1228,26 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // the format. Anything but a known value is ignored, so a typo keeps the
       // standard band rather than switching a client's feed.
       const runDensity = (wf.input ?? {})["pictureDensity"];
-      const pictureDensity = isPictureDensity(runDensity)
+      const explicitDensity = isPictureDensity(runDensity)
         ? runDensity
         : isPictureDensity(runConfig["instagramPictureDensity"])
           ? runConfig["instagramPictureDensity"]
           : isPictureDensity(learned.pictureDensity)
             ? learned.pictureDensity
             : undefined;
+      // 2026-09-24 (stage 7): and when nothing says, what the client IS. A
+      // visual business (fashion, food, hospitality, ...) is photo-first by
+      // default, for every such client, configured or not.
+      let industryDensity: ReturnType<typeof defaultPictureDensityFor>;
+      if (explicitDensity === undefined) {
+        try {
+          const profile = await tools["client.getProfile"]?.execute({}, { ctx });
+          industryDensity = defaultPictureDensityFor(profile !== undefined ? industryForSetup(profile) : undefined);
+        } catch {
+          industryDensity = undefined;
+        }
+      }
+      const pictureDensity = explicitDensity ?? industryDensity;
       // 2026-09-23: news mode, the same precedence. A config value that is not
       // a list of strings is ignored rather than guessed at.
       const configModes = Array.isArray(runConfig["instagramPostModes"]) ? (runConfig["instagramPostModes"] as unknown[]).filter((m): m is string => typeof m === "string") : [];
@@ -1250,7 +1263,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             ? ("client-config" as const)
             : Object.keys(learned).length > 0
               ? ("client-preference" as const)
-              : undefined;
+              : industryDensity !== undefined
+                ? ("industry-default" as const)
+                : undefined;
       // `wf.runId` is already a caller-supplied, globally-unique idempotency
       // key (RFC-01 §9.1 rule 2), so it doubles as `postId` directly — a
       // dedicated sequential-counter tool (RFC-03 §3's suggested

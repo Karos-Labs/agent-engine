@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ceilingFor, enforceImageryBand, isPictureDensity, MAX_PICTURE_SLIDES, MIN_PICTURE_SLIDES, MIN_QUIET_SLIDES, PICTURE_BANDS, placementMixShortfall } from "../src/workflow/imagery-floor.js";
+import { ceilingFor, defaultPictureDensityFor, enforceImageryBand, isPictureDensity, MAX_PICTURE_SLIDES, MIN_PICTURE_SLIDES, MIN_QUIET_SLIDES, PICTURE_BANDS, placementMixShortfall } from "../src/workflow/imagery-floor.js";
 import { FULL_BLEED_IMAGE_LAYOUTS, HERO_IMAGE_LAYOUTS } from "../src/workflow/slides-data.js";
 import type { InstagramCopyOutput, InstagramSlideLayout } from "../src/workflow/types.js";
 import { goodCopyOutput } from "./test-helpers.js";
@@ -402,5 +402,16 @@ describe("picture density: photo-first", () => {
     expect(PICTURE_BANDS.standard).toEqual({ floor: MIN_PICTURE_SLIDES, ceiling: MAX_PICTURE_SLIDES, quiet: MIN_QUIET_SLIDES });
     expect(isPictureDensity("photo-first")).toBe(true);
     expect(isPictureDensity("photo first")).toBe(false);
+  });
+});
+
+describe("an unconfigured visual business is photo-first by default (2026-09-24)", () => {
+  it("reads the declared industry as whole words, and leaves everything else on the standard band", () => {
+    for (const industry of ["Fashion & Apparel", "Lingerie", "Boutique hotel", "Food and beverage", "Restaurants", "Beauty & cosmetics", "Event planning and weddings"]) {
+      expect(defaultPictureDensityFor(industry), industry).toBe("photo-first");
+    }
+    for (const industry of ["Fintech", "Marketing services", "B2B SaaS", "Venture capital", "Cybersecurity", undefined]) {
+      expect(defaultPictureDensityFor(industry), String(industry)).toBeUndefined();
+    }
   });
 });
