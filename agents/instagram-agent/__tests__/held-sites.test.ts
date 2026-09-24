@@ -191,6 +191,8 @@ describe("RFC-19: the workflow has exactly four WorkflowHeld sites, and each one
     // the final one — the same shape every other guard in this list has, and
     // the reason it is in this list at all.
     const guards = source.match(/if \(!isFinalAttempt[ )]/g) ?? [];
-    expect(guards.length).toBe(17);
+    // The eighteenth (2026-09-25, owner feedback WS-10): `07b2-readable-copy`, the $0 readable-copy
+    // lint. Same shape: attempts 1..n-1 redraft with every finding named; the final attempt records.
+    expect(guards.length).toBe(18);
   });
 });
