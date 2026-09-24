@@ -290,9 +290,9 @@ export const HarvestInstagramExemplarsInputSchema = z.object({
     .max(10)
     .default([])
     .describe("Competitors known only by website: each home page is fetched (free) and its instagram.com link, if any, becomes a competitor account. Never guessed."),
-  maxPostsPerAccount: z.number().int().min(12).max(300).default(120),
-  sinceDays: z.number().int().min(30).max(1095).default(365),
-  exemplarsMax: z.number().int().min(10).max(120).default(60),
+  maxPostsPerAccount: z.number().int().min(12).max(300).default(120).describe("Posts to read per account (12 per billed call, ~$0.0019 each)."),
+  sinceDays: z.number().int().min(30).max(1095).default(365).describe("How far back to read; older posts are not harvested."),
+  exemplarsMax: z.number().int().min(10).max(120).default(60).describe("How many exemplars to return across all accounts (each account's top quarter, interleaved)."),
 });
 export type HarvestInstagramExemplarsInput = z.input<typeof HarvestInstagramExemplarsInputSchema>;
 
