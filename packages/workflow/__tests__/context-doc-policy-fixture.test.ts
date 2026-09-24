@@ -41,6 +41,7 @@ import { createBrandedShortsAgentWorkflow } from "../../../agents/branded-shorts
 import {
   fakeRouterSequence as brandedShortsFakeRouterSequence,
   finalTurn as brandedShortsFinalTurn,
+  goodCaption,
   goodGraphicsPlan,
   goodHighlights,
   makePromptStore as makeBrandedShortsPromptStore,
@@ -182,7 +183,11 @@ describe("SCRUM-242 (T-A10) — one fixture, all four grounded agents, every con
     const brandedShortsEnv = await setupBrandedShortsEnv();
     try {
       const brandedShortsParams = { runId: "fixture_branded_shorts", clientSlug: "acme", productId: "branded-shorts-agent", runKind: "setup" as const };
-      const brandedShortsRouter = brandedShortsFakeRouterSequence([brandedShortsFinalTurn(goodHighlights()), brandedShortsFinalTurn(goodGraphicsPlan())]);
+      const brandedShortsRouter = brandedShortsFakeRouterSequence([
+        brandedShortsFinalTurn(goodHighlights()),
+        brandedShortsFinalTurn(goodGraphicsPlan()),
+        brandedShortsFinalTurn(goodCaption()),
+      ]);
       const brandedShortsWorkflowFn = createBrandedShortsAgentWorkflow({
         tools: brandedShortsEnv.tools,
         promptStore: makeBrandedShortsPromptStore(),

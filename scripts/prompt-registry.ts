@@ -136,6 +136,13 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
     requires: { languageDirective: true, numbersSourced: true, structuredOutput: true },
     structuredOutputFields: ["bodyMarkdown", "slug", "excerpt", "estimatedReadMinutes", "faqItems"],
   },
+  // The post caption (2026-09-25). `languageDirective` because it is the only
+  // client-FACING copy this product writes: the video's own captions quote the
+  // transcript, so a Hebrew client's short used to be posted with nothing at
+  // all under it. No `numbersSourced`: a figure may only come from the
+  // transcript it is handed, which is a stricter rule than the gate's and is
+  // stated as the prompt's one hard rule.
+  { promptId: "branded-shorts-caption", agent: "branded-shorts-agent", versions: ["1"], latestVersion: "1", requires: { languageDirective: true, structuredOutput: true }, structuredOutputFields: ["caption", "about"] },
   { promptId: "branded-shorts-graphics", agent: "branded-shorts-agent", versions: ["1", "2", "3"], latestVersion: "3" },
   { promptId: "branded-shorts-highlights", agent: "branded-shorts-agent", versions: ["1", "2"], latestVersion: "2" },
   { promptId: "branded-shorts-style-exploration", agent: "branded-shorts-agent", versions: ["1"], latestVersion: "1" },

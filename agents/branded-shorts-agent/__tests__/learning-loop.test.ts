@@ -1,7 +1,8 @@
 import { describe, expect, it, afterEach } from "vitest";
 import { MemoryDurableStepStore, WorkflowEngine } from "@agent-engine/workflow";
 import { createBrandedShortsAgentWorkflow } from "../src/workflow/create-branded-shorts-agent-workflow.js";
-import { goodGraphicsPlan, goodHighlights, makePromptStore, setupTestEnvironment, smartFakeRouter, type TestEnvironment } from "./test-helpers.js";
+import { goodGraphicsPlan, goodHighlights,
+  goodCaption, makePromptStore, setupTestEnvironment, smartFakeRouter, type TestEnvironment } from "./test-helpers.js";
 
 /**
  * C7 on the EDITING agent — D08's third TikTok product (SCRUM-455/459/460).
@@ -35,7 +36,7 @@ describe("branded-shorts (TikTok editing) and the learning loop (C7)", () => {
       createBrandedShortsAgentWorkflow({
         tools: env.tools,
         promptStore: makePromptStore(),
-        router: smartFakeRouter([goodHighlights(), goodGraphicsPlan()]),
+        router: smartFakeRouter([goodHighlights(), goodGraphicsPlan(), goodCaption()]),
         autoApprove: true,
       }),
       params,
@@ -64,7 +65,7 @@ describe("branded-shorts (TikTok editing) and the learning loop (C7)", () => {
       createBrandedShortsAgentWorkflow({
         tools: env.tools,
         promptStore: makePromptStore(),
-        router: smartFakeRouter([goodHighlights(), goodGraphicsPlan()]),
+        router: smartFakeRouter([goodHighlights(), goodGraphicsPlan(), goodCaption()]),
         autoApprove: true,
       }),
       { ...params, runId: "branded_shorts_learning_2" },
@@ -94,7 +95,7 @@ describe("branded-shorts (TikTok editing) and the learning loop (C7)", () => {
       source: SOURCE,
     });
 
-    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan()]);
+    const router = smartFakeRouter([goodHighlights(), goodGraphicsPlan(), goodCaption()]);
     const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(
       createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true }),
       { ...params, runId: "branded_shorts_learning_3" },

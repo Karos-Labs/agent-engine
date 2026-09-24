@@ -7,9 +7,10 @@ import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type Workf
 // (2026-09-18): the reviewer's revise loop it never had, and the owner's
 // always-deliver rule as the fleet's own primitives rather than a local
 // re-invention.
-MAX_REVISION_ROUNDS, runReviewCycle, revisionDirective, persistReviewFeedbackToMemory, readPastFeedback, type RevisionNote, type ContentRepair } from "@agent-engine/workflow";
+MAX_REVISION_ROUNDS, runReviewCycle, revisionDirective, persistReviewFeedbackToMemory, readPastFeedback, buildClientVoiceContext, type RevisionNote, type ContentRepair } from "@agent-engine/workflow";
 import { BrandProfileSchema, type BrandProfile, type TranscriptWord, type VideoTranscript } from "@agent-engine/tool-karos-video";
 import { BrandedShortsGraphicsAgent } from "../agent/branded-shorts-graphics-agent.js";
+import { BrandedShortsCaptionAgent } from "../agent/branded-shorts-caption-agent.js";
 import { BrandedShortsHighlightsAgent } from "../agent/branded-shorts-highlights-agent.js";
 import { deriveCutSegments, totalRetainedDuration } from "./cut-planner.js";
 import { assembleJob, resolveRunPaths, type RunPaths } from "./job-builder.js";
@@ -26,6 +27,7 @@ import {
   PLATE_IMAGE_SKU,
   TARGET_RUN_SPEND_USD,
   type AssetLibraryStill,
+  type BrandedShortsCopy,
   type BrandedShortsIntake,
   type BrandedShortsWorkflowResult,
   type CutawayPlan,
@@ -213,6 +215,30 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
      * into a void.
      */
     const pastFeedback = await readPastFeedback(wf, tools, ctx, "01c-read-past-feedback");
+
+    /**
+     * The client's own profile, voice rules and brand-kit language, for the
+     * one step on this product that writes free text (09c).
+     *
+     * Read here rather than inside the review round for the same reason the
+     * learning context is: everything below `rev(id)` runs again on every
+     * revision, and a client's voice does not change between attempt 1 and
+     * attempt 2.
+     *
+     * Best-effort and never blocking. A client with nothing on file gets a
+     * caption in the language their own transcript is in, which is what the
+     * prompt falls back to.
+     */
+    const clientVoiceContext = await wf.step.code("01d-load-client-voice-context", async () => {
+      const profileOutcome = await tools["client.getProfile"]?.execute({}, { ctx });
+      const voiceOutcome = await tools["client.getVoiceRules"]?.execute({}, { ctx });
+      const brandOutcome = await tools["client.getBrand"]?.execute({}, { ctx });
+      return buildClientVoiceContext(
+        profileOutcome?.status === "success" ? (profileOutcome.result as Record<string, unknown>) : undefined,
+        voiceOutcome?.status === "success" ? (voiceOutcome.result as Record<string, unknown>) : undefined,
+        brandOutcome?.status === "success" ? (brandOutcome.result as Record<string, unknown>) : undefined,
+      );
+    });
 
     // ── 00: brand resolve — the locked style and brand profile on file, or
     //        the same things DERIVED from the client's brand kit ──
@@ -551,6 +577,8 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
     /** What one review round produced, and what it had to adapt around to produce it. */
     interface ShortDraft {
       outputPath: string;
+      /** The words this round would post the video with. Drafted inside the round, so a reviewer's note about the caption actually changes it. */
+      copy: BrandedShortsCopy;
       durationSeconds: number | null;
       plan: GraphicsPlanOutput;
       warnings: string[];
@@ -961,6 +989,47 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
           },
         );
 
+        // -- 09c: the words the video is posted with --
+        //
+        // The one free-text thing this product writes, and until now it wrote
+        // nothing: the portal materialized a branded short with `content: ""`
+        // and said so in its own comment. A client approved an MP4 and then
+        // wrote the caption themselves.
+        //
+        // INSIDE the round on purpose. A reviewer at 10-delivery-review is
+        // looking at the caption and the video together; "the caption misses
+        // the point" is one of the likeliest notes they will send, and a
+        // caption drafted outside the loop would come back identical. It is
+        // also the only place the reviewer's directive can reach it.
+        //
+        // A `content_fail` cannot end the run (owner ruling 2026-09-17). The
+        // client's own stated takeaway is the fallback: it is one sentence
+        // they wrote themselves about what the video should say, so it is the
+        // most honest thing to put under it when the drafter has produced
+        // nothing schema-valid. The substitution is recorded, never silent --
+        // a reviewer must be able to tell a written caption from a fallback.
+        const captionAgent = new BrandedShortsCaptionAgent({ router: options.router, tools, promptStore: options.promptStore });
+        const captionResult = await wf.step.agent(rev("09c-draft-caption"), captionAgent, {
+          ...runDirectionField(runDirection),
+          words: kept.map((w) => w.text),
+          takeaway: intake.takeaway,
+          ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
+          ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
+          ...(directive !== undefined ? { revisionRequest: directive } : {}),
+        });
+        if (captionResult.status !== "completed" && captionResult.status !== "content_fail") {
+          throw new WorkflowToolingFailure(`caption step resolved to "${captionResult.status}"`);
+        }
+        const drafted = captionResult.status === "completed" ? captionResult.finalOutput : null;
+        const copy: BrandedShortsCopy = drafted ?? { caption: intake.takeaway, about: intake.takeaway };
+        if (drafted === null) {
+          repairs.push({
+            check: "branded-shorts-caption",
+            action: "unresolved",
+            detail: "the caption drafter returned nothing schema-valid; the short is posted with the client's own stated takeaway as its caption rather than with none at all",
+          });
+        }
+
         // -- terminal topic guardrail --
         //
         // The words that survive into the cut, plus the takeaway the client asked
@@ -975,13 +1044,14 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
         await runTopicGuardrail(
           wf,
           { tools, promptStore: options.promptStore, router: options.router },
-          [kept.map((w) => w.text).join(" "), intake.takeaway, ...build.plan.overlays.map((o) => o.label ?? o.illustrates)].filter(Boolean).join("\n\n"),
+          [kept.map((w) => w.text).join(" "), intake.takeaway, copy.caption, ...build.plan.overlays.map((o) => o.label ?? o.illustrates)].filter(Boolean).join("\n\n"),
           undefined,
           revision === 0 ? undefined : `-r${revision}`,
         );
 
         return {
           outputPath: build.outputPath,
+          copy,
           durationSeconds: build.durationSeconds,
           plan: build.plan,
           warnings: build.warnings,
@@ -1020,6 +1090,21 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
           runId: wf.runId,
           outputPath: draft.outputPath,
           durationSeconds: draft.durationSeconds,
+          // The words this short would be posted with. A reviewer approving a
+          // POST has to see the post, not only the video: until 2026-09-25
+          // this gate showed a play button and six counts, and the caption
+          // did not exist to show.
+          //
+          // `preview`, not `caption`, and the key is the whole point. The
+          // portal's gate renderer paints an unanticipated string into a
+          // `truncate`d fact row -- a caption cut to one line is the same
+          // reviewer approving the same thing unseen -- while `preview` has
+          // its own full-width block with `whitespace-pre-wrap` and
+          // `dir="auto"`, which a Hebrew caption needs to read at all. It is
+          // the key instagram, linkedin, blog and the campaign bundle already
+          // send their copy under.
+          preview: draft.copy.caption,
+          about: draft.copy.about,
           overlayCount: draft.plan.overlays.length,
           cutawayCount: draft.plan.cutaways.length,
           renderWarnings: draft.warnings,
@@ -1127,6 +1212,11 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
       deliverable: {
         // D11 / C3: the point of the post, on the thing the client opens.
         goalLine,
+        // The post. `materializeBrandedShortsVideo` reads this for the asset's
+        // body; before it existed that body was the empty string by
+        // construction, and the client wrote their own caption.
+        caption: build!.copy.caption,
+        about: build!.copy.about,
         outputPath: build!.outputPath,
         ...(uploaded ? { gcsUri: uploaded.gcsUri, ...(uploaded.signedUrl ? { signedUrl: uploaded.signedUrl } : {}) } : {}),
         durationSeconds: build!.durationSeconds,
@@ -1197,6 +1287,7 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
       outputPath: build.outputPath,
       durationSeconds: build.durationSeconds,
       deliverableId,
+      copy: build.copy,
       overlayCount: build.plan.overlays.length,
       cutawayCount: build.plan.cutaways.length,
       contentCutsDeclared: cutPlan.contentCuts.length,

@@ -75,6 +75,23 @@ export function goodHighlights() {
   return { highlightStarts: [0.6] };
 }
 
+/**
+ * The post caption every happy-path run now drafts (09c).
+ *
+ * Deliberately clean against `gate.lintPost`, which runs on it as the caption
+ * agent's own self-critique: no dash, no exclamation mark, no announcement
+ * opener, no engagement bait. A fixture that tripped the gate would make the
+ * agent revise and the router serve the same text again, and every test in
+ * this file would fail for a reason that has nothing to do with what it is
+ * testing.
+ */
+export function goodCaption() {
+  return {
+    caption: "Most teams measure the wrong thing, and the number they watch goes up while the business does not.",
+    about: "A forty second clip of the founder on why the obvious metric misleads. For the client's TikTok.",
+  };
+}
+
 export function goodGraphicsPlan() {
   return { overlays: [], cutaways: [] };
 }
