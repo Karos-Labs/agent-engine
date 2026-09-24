@@ -372,7 +372,16 @@ export function planImageBackfill(
   const byBrief = (a: BackfillCandidate, b: BackfillCandidate): number =>
     Number(a.reason.includes("built from the claim")) - Number(b.reason.includes("built from the claim")) || a.n - b.n;
 
-  return [...bounded.sort(byBrief), ...fullBleed.sort(byBrief)].slice(0, want);
+  // THE COVER FIRST (2026-09-24, stage 10). The cover is the grid thumbnail,
+  // the one slide every reader sees, and every reference account the owner
+  // named opens on a picture. It is full-bleed, so the bounded-first rule
+  // above had put it LAST, and a floor with one frame to buy spent it on an
+  // interior plate while the cover shipped as type. The bounded-first ruling
+  // still orders everything after it.
+  const firstN = copy.slides.reduce((min, slide) => Math.min(min, slide.n), Number.POSITIVE_INFINITY);
+  const cover = [...bounded, ...fullBleed].filter((c) => c.n === firstN);
+  const rest = (list: BackfillCandidate[]) => list.filter((c) => c.n !== firstN).sort(byBrief);
+  return [...cover, ...rest(bounded), ...rest(fullBleed)].slice(0, want);
 }
 
 
