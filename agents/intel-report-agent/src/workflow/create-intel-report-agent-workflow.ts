@@ -25,6 +25,7 @@ import {
   readPastFeedback,
   revisionDirective,
   runReviewCycle,
+  textGateTimeout,
 } from "@agent-engine/workflow";
 import type { ClientBrand, ClientProfile, Competitor, OnPageAuditSnapshot, PageSignals, TechnicalSeoSnapshot } from "@agent-engine/tools";
 import { isPathDisallowed } from "@agent-engine/tool-karos-scraper";
@@ -808,12 +809,38 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
       maxRevisions: MAX_REVISION_ROUNDS,
       ...(options.autoApprove ? { autoApprove: true } : {}),
       attempt: draftOnce,
-      buildGate: (report, revision) => ({
+      buildGate: (report, revision) => {
+        // The platform's three-tier policy, not a flat hour
+        // (`packages/workflow/src/primitives/gate-timeout.ts`). A report that
+        // had a figure REDACTED to get here is not what the writer wrote, and
+        // that is exactly the case worth a longer look — six hours instead of
+        // one, and then it still ships: the flag buys a reviewer TIME, not a
+        // veto, because a report nobody came back to is a report thrown away.
+        const grounding = numericGroundingByRevision.get(revision);
+        const policy = textGateTimeout({
+          flags: [
+            ...(grounding && grounding.redactedFigures.length > 0
+              ? [`${grounding.redactedFigures.length} unsourced figure(s) were redacted from this report before it got here`]
+              : []),
+            ...(grounding && grounding.unsourcedFigures.length > 0
+              ? [`${grounding.unsourcedFigures.length} figure(s) could not be traced to a source`]
+              : []),
+          ],
+        });
+        return {
         kind: "batch_review",
-        payload: { runId: wf.runId, dimensionScores: report.dimensionScores, swot: report.swot, revision },
+        payload: {
+          runId: wf.runId,
+          dimensionScores: report.dimensionScores,
+          swot: report.swot,
+          revision,
+          gateWaitReason: policy.reason,
+          ...(policy.flags.length > 0 ? { gateFlags: policy.flags } : {}),
+        },
         requiredRole: "account_manager",
-        timeout: { duration: "1h", onTimeout: "auto_approve" },
-      }),
+        timeout: { duration: policy.duration, onTimeout: policy.onTimeout },
+        };
+      },
       onDecision: async ({ revision, response, output }) => {
         // SCRUM-306 (AU23): a reject's drafted content previously had nowhere
         // durable to go — it lived only in this round's step checkpoints and

@@ -3,6 +3,7 @@ import {
   WorkflowToolingFailure,
   type WorkflowContext,
   runTopicGuardrail,
+  textGateTimeout,
   readRunDirection,
   runDirectionField,
   readContextDoc,
@@ -338,6 +339,29 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
     // ── terminal topic guardrail on the page copy, before a person is asked to approve it ──
     await runTopicGuardrail(wf, { tools, promptStore: options.promptStore, router: options.router }, stripToVisibleText(html));
 
+    /**
+     * WHAT THE CLOCK ON THIS GATE IS WORTH.
+     *
+     * Every gate in this repo used to carry a flat `1h / auto_approve`, which
+     * gave a page whose own checks FAILED exactly the hour a clean one got:
+     * an hour of nobody looking published a page the engine had already said
+     * was not ready. `textGateTimeout` is the platform's three-tier policy
+     * (`packages/workflow/src/primitives/gate-timeout.ts`) — a flag buys a
+     * reviewer TIME, not a veto, so a flagged page waits six hours and then
+     * still ships rather than going in the bin.
+     *
+     * Nothing here is a new judgement: both flags are facts this run already
+     * computed and already shows the reviewer under `findings`.
+     */
+    const gateFlags: string[] = [];
+    if (!check.pass || !render.pass) {
+      gateFlags.push(`the page did not pass its own deterministic checks (${summarizeChecks(check, render, undefined).length} finding(s))`);
+    }
+    if (verdict?.verdict === "content_fail") {
+      gateFlags.push(`the craft verdict failed: ${verdict.reason}`);
+    }
+    const gateTimeout = textGateTimeout({ flags: gateFlags });
+
     // ── 12: the mandatory human review gate ──
     const reviewDecision: GateResponse = options.autoApprove
       ? await wf.step.code("12-human-review", () => ({ decision: "approve" as const, actor: "system", at: new Date().toISOString() }))
@@ -359,9 +383,13 @@ export function createLandingBuilderAgentWorkflow(options: CreateLandingBuilderA
             signatureMoment: blueprint.signatureMoment,
             pov: blueprint.pov,
             revision,
+            // The clock and the sentence explaining it, read from one place so
+            // they can never disagree.
+            gateWaitReason: gateTimeout.reason,
+            ...(gateTimeout.flags.length > 0 ? { gateFlags: gateTimeout.flags } : {}),
           },
           requiredRole: "account_manager",
-          timeout: { duration: "1h", onTimeout: "auto_approve" },
+          timeout: { duration: gateTimeout.duration, onTimeout: gateTimeout.onTimeout },
         });
     /**
      * A REJECTION REFUSES THE PUBLISH, NOT THE WORK.

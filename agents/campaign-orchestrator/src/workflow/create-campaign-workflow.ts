@@ -1,5 +1,5 @@
 import { readForbiddenTopics, type AgentContext, type AgentToolRegistry, type ModelRouter, type PromptStore } from "@agent-engine/core";
-import { readRunDirection, runDirectionField, runTopicGuardrail, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, toAgentContext } from "@agent-engine/workflow";
+import { readRunDirection, runDirectionField, runTopicGuardrail, type WorkflowContext, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, textGateTimeout, toAgentContext } from "@agent-engine/workflow";
 import { createXAgentWorkflow } from "@agent-engine/agent-x";
 import { createLinkedInAgentWorkflow } from "@agent-engine/agent-linkedin";
 import { createRedditAgentWorkflow } from "@agent-engine/agent-reddit";
@@ -414,11 +414,28 @@ export function createCampaignWorkflow(options: CreateCampaignWorkflowOptions) {
     });
 
     // ── 13: campaign gate — human review pause ──
+    // The clock is the platform's three-tier policy, not a flat hour: a
+    // campaign where a channel HELD or FAILED is one a reviewer should see
+    // before it ships, so it waits six hours instead of one — and then ships
+    // anyway, because a flag buys a reviewer TIME, not a veto.
+    const incomplete = channelResults.filter((r) => r.status !== "completed");
+    const campaignPolicy = textGateTimeout({
+      flags:
+        incomplete.length > 0
+          ? [`${incomplete.length} of ${channelResults.length} channels produced nothing (${incomplete.map((r) => `${r.channel}: ${r.status}`).join(", ")})`]
+          : [],
+    });
     const decision = await wf.step.gate("13-campaign-review", {
       kind: "campaign_review",
-      payload: { campaignName: plan.campaignName, theme: plan.theme, channelResults },
+      payload: {
+        campaignName: plan.campaignName,
+        theme: plan.theme,
+        channelResults,
+        gateWaitReason: campaignPolicy.reason,
+        ...(campaignPolicy.flags.length > 0 ? { gateFlags: campaignPolicy.flags } : {}),
+      },
       requiredRole: "account_manager",
-      timeout: { duration: "1h", onTimeout: "auto_approve" },
+      timeout: { duration: campaignPolicy.duration, onTimeout: campaignPolicy.onTimeout },
     });
     /**
      * A REJECTION REFUSES THE CAMPAIGN, NOT EVERY CHANNEL'S WORK.
