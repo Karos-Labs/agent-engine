@@ -1735,17 +1735,37 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
   it(
     "a real hero slide measures as imagery, and a 1x1 TRANSPARENT hero is caught as no-device",
     async () => {
-      const slides = [slide({ n: 1, layout: "photo", ...MEDIUM }), slide({ n: 2, layout: "photo", ...SHORT })];
+      // SHORT COPY ON SLIDE 1, and the length is now load-bearing rather than
+      // incidental: `framedHeroFor` (2026-09-24) sets a photograph as a BLOCK
+      // once headline-plus-deck passes {FRAMED_HERO_COPY_CHARS} characters, so
+      // `MEDIUM` here renders the framed composition and every assertion below
+      // — full-bleed imagery share, the bleed-band ink, the flat-share and
+      // empty-rect bounds — is about the plate where the picture IS the ground.
+      // Slide 3 is the same picture with the same copy this case used to carry,
+      // measured as what it now is.
+      const slides = [
+        slide({ n: 1, layout: "photo", ...SHORT }),
+        slide({ n: 2, layout: "photo", ...SHORT }),
+        slide({ n: 3, layout: "photo", ...MEDIUM }),
+      ];
       const measured = await render(
         assemble(slides, [
           selection(1, path.relative(REPO_ROOT, heroPath).replaceAll("\\", "/")),
           selection(2, path.relative(REPO_ROOT, transparentHeroPath).replaceAll("\\", "/")),
+          selection(3, path.relative(REPO_ROOT, heroPath).replaceAll("\\", "/")),
         ]),
       );
       report("slide.html real hero", "cover", measured[0]!);
       report("slide.html transparent hero", "cover", measured[1]!);
+      report("slide.html framed hero", "cover", measured[2]!);
 
       expect(measured[0]!.metrics.imageryShare).toBeGreaterThanOrEqual(0.5);
+      // THE FRAMED COMPOSITION, ON PIXELS. A block, not a wall and not a
+      // thumbnail: well under the full-bleed share above, and far above the
+      // transparent plate below. Both bounds matter — a rule that fired onto
+      // CSS painting a wall would pass the lower one.
+      expect(measured[2]!.metrics.imageryShare, "the framed hero covers the plate like a full-bleed one").toBeLessThan(0.55);
+      expect(measured[2]!.metrics.imageryShare, "the framed hero is a thumbnail, not a block").toBeGreaterThan(0.2);
       // ── AND THE "PHOTOGRAPH" IS REALLY A PHOTOGRAPH, ASSERTED ON THE TWO
       //    SHARES THAT MOVE WHEN IT IS NOT. ──
       //
