@@ -1259,16 +1259,77 @@ export function buildBrandHeadHtml(
  * IN-FLOW consumer needs in order to work out how far past the zone's inline
  * edge it has to start.
  */
-function brandMarkZoneCss(placement: BrandLogoPlacement | undefined): string {
+/**
+ * ONE VISUAL AREA FOR EVERY LOGO (owner feedback round 2026-09-24, item E,
+ * WS-05). Every mark was clamped to 65px WIDE, so a wide wordmark shrank to a
+ * sliver: Hanky Panky's 864x157 SVG rendered 64x12. The mark is now sized to
+ * an equal visual area from its own aspect ratio (read from the bytes), with
+ * a height floor for wordmarks and caps either way. A mark whose shape cannot
+ * be read (a JPEG/WebP) keeps the old square rule. The reserved zone grows
+ * with the box, so nothing is laid over a wider mark.
+ */
+export const BRAND_MARK_AREA_PX2 = 4900;
+export const BRAND_MARK_MIN_HEIGHT_PX = 30;
+export const BRAND_MARK_MAX_BOX = { w: 200, h: 76 } as const;
+/** Clearance the reserved zone keeps around the mark's own box. */
+const BRAND_MARK_ZONE_PAD_PX = 16;
+
+/** A placement plus the mark's own aspect ratio, when the bytes told us. */
+export type SizedBrandLogoPlacement = BrandLogoPlacement & { aspect?: number };
+
+/** Width / height from the logo's bytes: a PNG's IHDR, or an SVG's viewBox or width/height. `undefined` for anything else. */
+export function logoAspectRatio(download: BrandLogoDownload): number | undefined {
+  const b = download.bytes;
+  if (b.length >= 24 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) {
+    const w = ((b[16]! << 24) | (b[17]! << 16) | (b[18]! << 8) | b[19]!) >>> 0;
+    const h = ((b[20]! << 24) | (b[21]! << 16) | (b[22]! << 8) | b[23]!) >>> 0;
+    return w > 0 && h > 0 ? w / h : undefined;
+  }
+  if (download.mime.includes("svg")) {
+    const head = new TextDecoder().decode(b.slice(0, 4096));
+    const vb = /viewBox\s*=\s*["']\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)/iu.exec(head);
+    if (vb !== null && Number(vb[1]) > 0 && Number(vb[2]) > 0) return Number(vb[1]) / Number(vb[2]);
+    const w = /<svg[^>]*\swidth\s*=\s*["']([\d.]+)/iu.exec(head);
+    const h = /<svg[^>]*\sheight\s*=\s*["']([\d.]+)/iu.exec(head);
+    if (w !== null && h !== null && Number(w[1]) > 0 && Number(h[1]) > 0) return Number(w[1]) / Number(h[1]);
+  }
+  return undefined;
+}
+
+/** The mark's rendered box: equal area from its aspect ratio, floored and capped; the old square otherwise. */
+export function brandMarkBox(placement: SizedBrandLogoPlacement): { w: number; h: number } {
+  const square = Math.min(placement.widthPx, BRAND_MARK_MAX_WIDTH_PX);
+  const ar = placement.aspect;
+  if (ar === undefined || !Number.isFinite(ar) || ar <= 0) return { w: square, h: square };
+  let w = Math.sqrt(BRAND_MARK_AREA_PX2 * ar);
+  let h = Math.sqrt(BRAND_MARK_AREA_PX2 / ar);
+  if (h < BRAND_MARK_MIN_HEIGHT_PX) [h, w] = [BRAND_MARK_MIN_HEIGHT_PX, BRAND_MARK_MIN_HEIGHT_PX * ar];
+  if (w > BRAND_MARK_MAX_BOX.w) [w, h] = [BRAND_MARK_MAX_BOX.w, BRAND_MARK_MAX_BOX.w / ar];
+  if (h > BRAND_MARK_MAX_BOX.h) [h, w] = [BRAND_MARK_MAX_BOX.h, BRAND_MARK_MAX_BOX.h * ar];
+  return { w: Math.round(w), h: Math.round(h) };
+}
+
+/** The reserved zone around that box: at least the old 132px square, wider for a wide mark. */
+export function brandMarkZone(placement: SizedBrandLogoPlacement): { w: number; h: number } {
+  const box = brandMarkBox(placement);
+  const lead = (inset: number) => Math.max(0, inset - BRAND_MARK_ZONE.inset);
+  return {
+    w: Math.max(BRAND_MARK_ZONE.size, lead(placement.insetInlinePx) + box.w + BRAND_MARK_ZONE_PAD_PX),
+    h: Math.max(BRAND_MARK_ZONE.size, lead(placement.insetBlockPx) + box.h + BRAND_MARK_ZONE_PAD_PX),
+  };
+}
+
+function brandMarkZoneCss(placement: SizedBrandLogoPlacement | undefined): string {
   const occupied = placement !== undefined && placement.decision !== "omit";
-  const width = occupied ? BRAND_MARK_ZONE.size : 0;
+  const zone = occupied ? brandMarkZone(placement) : { w: 0, h: 0 };
+  const width = zone.w;
   const start = occupied && placement.corner === "top-start" ? width : 0;
   const end = occupied && placement.corner === "top-end" ? width : 0;
   return [
     ":root {",
     `  --logo-zone-start: ${start}px;`,
     `  --logo-zone-end: ${end}px;`,
-    `  --logo-zone-block: ${occupied ? BRAND_MARK_ZONE.size : 0}px;`,
+    `  --logo-zone-block: ${zone.h}px;`,
     `  --logo-zone-inset: ${occupied ? BRAND_MARK_ZONE.inset : 0}px;`,
     "}",
     // ── THE ZONE'S CONSUMERS, AND THE PREMISE THAT WAS WRONG ABOUT THEM. ──
@@ -1344,7 +1405,7 @@ function brandMarkZoneCss(placement: BrandLogoPlacement | undefined): string {
  * `undefined` for an omitted plan: no rules, and the caller emits no `<img>`
  * either, so an illegible mark renders as nothing rather than as a smudge.
  */
-function brandLogoCss(placement: BrandLogoPlacement | undefined, headlineContrast?: number): string | undefined {
+function brandLogoCss(placement: SizedBrandLogoPlacement | undefined, headlineContrast?: number): string | undefined {
   if (placement === undefined || placement.decision === "omit") return undefined;
   const side = placement.corner === "top-end" ? "inset-inline-end" : "inset-inline-start";
   /**
@@ -1362,11 +1423,13 @@ function brandLogoCss(placement: BrandLogoPlacement | undefined, headlineContras
    * mark. `Math.min` rather than an override, so a planner that ever returns
    * something SMALLER (a mark that needed a scrim, say) keeps its own number.
    */
-  const widthPx = Math.min(placement.widthPx, BRAND_MARK_MAX_WIDTH_PX);
+  const box = brandMarkBox(placement);
   const rules = [
     ".brand-logo {",
     `  position: absolute; top: ${placement.insetBlockPx}px; ${side}: ${placement.insetInlinePx}px; z-index: 6;`,
-    `  width: ${widthPx}px; height: auto; display: block;`,
+    placement.aspect !== undefined
+      ? `  width: ${box.w}px; height: ${box.h}px; object-fit: contain; display: block;`
+      : `  width: ${box.w}px; height: auto; display: block;`,
   ];
   if (placement.scrim !== undefined) {
     // The plate goes on the <img> itself: `background` shows through the
@@ -1429,15 +1492,17 @@ export function planBrandLogo(
   tokens: BrandRenderTokens,
   download: BrandLogoDownload,
   options: { hasSeriesBadge?: boolean } = {},
-): BrandLogoPlacement {
+): SizedBrandLogoPlacement {
   const ink = readBrandLogoInk(download);
-  return planBrandLogoPlacement({
+  const aspect = logoAspectRatio(download);
+  const plan = planBrandLogoPlacement({
     ground: tokens.cssVars["--bg"] ?? DEFAULT_TEMPLATE_GROUND,
     ...(ink !== undefined ? { ink } : {}),
     ...(tokens.cssVars["--fg"] !== undefined ? { fg: tokens.cssVars["--fg"] } : {}),
     ...(options.hasSeriesBadge !== undefined ? { hasSeriesBadge: options.hasSeriesBadge } : {}),
     surface: "slide",
   });
+  return aspect !== undefined ? { ...plan, aspect } : plan;
 }
 
 /**

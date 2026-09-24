@@ -1,4 +1,5 @@
 import { lintReadableCopy, readableCopySteer } from "./readable-copy.js";
+import { brandMarkZone } from "./brand-render-tokens.js";
 import { buildExemplarLibrary, EXEMPLAR_LIBRARY_BELIEF_KEY, EXEMPLAR_POSTS_PER_ACCOUNT, exemplarLibraryAction, exemplarPatternEvidence, exemplarStudioNotes, failedLibrary, planHarvest, postsToJudge, readExemplarLibrary, type ExemplarLibrary, type HarvestedExemplar } from "./exemplar-library.js";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -2750,8 +2751,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // `top-start` is the left corner in an LTR document and the right one in
       // an RTL document; `top-end` is the mirror of that.
       const atLeft = placement.corner === "top-start" ? !rtl : rtl;
-      const { size, inset } = BRAND_MARK_ZONE;
-      return { x: atLeft ? inset : Math.max(0, assembled.canvas.w - inset - size), y: inset, w: size, h: size };
+      // The zone follows the mark's own box (owner feedback WS-05): a wide
+      // wordmark reserves a wider corner than a square mark.
+      const { inset } = BRAND_MARK_ZONE;
+      const zone = brandMarkZone(placement);
+      return { x: atLeft ? inset : Math.max(0, assembled.canvas.w - inset - zone.w), y: inset, w: zone.w, h: zone.h };
     };
 
     /**
