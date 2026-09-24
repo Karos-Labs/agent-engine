@@ -1223,7 +1223,33 @@ function recapTextFor(slide: InstagramSlideCopy): string {
   // A whole first sentence reads as a thought; a cut one reads as a bug.
   const sentence = /^(.+?[.!?])\s/u.exec(headline)?.[1];
   if (sentence !== undefined && sentence.length <= MAX_RECAP_SENTENCE_CHARS) return sentence;
-  return cutAtWord(headline, MAX_RECAP_PLATE_CHARS);
+  return completeClause(headline, MAX_RECAP_PLATE_CHARS) ?? cutAtWord(headline, MAX_RECAP_PLATE_CHARS);
+}
+
+/**
+ * The longest COMPLETE piece of `text` that fits in `max` characters, or
+ * `undefined` (2026-09-24).
+ *
+ * The Hanky Panky closer (pubsub-21255031808714496) read "75% / of Hanky Panky
+ * products sewn in New York and…": a word-boundary cut with an ellipsis reads
+ * as a render bug, not a recap. Whole text first, then a whole first
+ * sentence, then the text up to a clause boundary (a comma, a dash, or before
+ * "and", "but", "that", "which", "who", "because"). A piece shorter than a few
+ * words says nothing and is refused.
+ */
+const CLAUSE_BOUNDARY = /\s*[,;:\u2013\u2014]\s+|\s+(?=(?:and|but|that|which|who|because|while|so|with)\s)/giu;
+export function completeClause(text: string, max: number): string | undefined {
+  const tidy = text.replace(/\s+/gu, " ").trim();
+  if (tidy.length <= max) return tidy;
+  const sentence = /^(.+?[.!?])\s/u.exec(tidy)?.[1];
+  if (sentence !== undefined && sentence.length <= max) return sentence;
+  let best: string | undefined;
+  for (const match of tidy.matchAll(CLAUSE_BOUNDARY)) {
+    const piece = tidy.slice(0, match.index).trim();
+    if (piece.length > max) break;
+    best = piece;
+  }
+  return best !== undefined && best.split(" ").length >= 3 ? best : undefined;
 }
 
 function cutAtWord(text: string, max: number): string {
@@ -1241,9 +1267,16 @@ function cutAtWord(text: string, max: number): string {
  * reached the Grand Finale") says it, verbatim, so the plate carries it.
  */
 function recapLabelFor(slide: InstagramSlideCopy): string | undefined {
-  if (figureOn(slide) === undefined) return undefined;
-  const label = slide.stat?.subLabel?.trim();
-  return label !== undefined && label.length > 0 ? cutAtWord(label, MAX_RECAP_LABEL_CHARS) : undefined;
+  const figure = figureOn(slide);
+  if (figure === undefined) return undefined;
+  const label = slide.stat?.subLabel?.trim() ?? (slide.device?.kind === "figure" ? slide.device.label?.trim() : undefined);
+  // 2026-09-24: a complete clause or nothing, never "…" (see `completeClause`).
+  const own = label !== undefined && label.length > 0 ? completeClause(label, MAX_RECAP_LABEL_CHARS) : undefined;
+  if (own !== undefined) return own;
+  // A NAKED NUMBER says nothing: the same closer's "95%" had no label at all.
+  // The slide's own headline is what the figure counts, when it fits whole.
+  const headline = completeClause(slide.headline, MAX_RECAP_LABEL_CHARS);
+  return headline !== undefined && headline !== figure ? headline : undefined;
 }
 
 /**
