@@ -1,3 +1,4 @@
+import { buildExemplarLibrary, EXEMPLAR_LIBRARY_BELIEF_KEY, EXEMPLAR_POSTS_PER_ACCOUNT, exemplarLibraryAction, exemplarPatternEvidence, exemplarStudioNotes, failedLibrary, planHarvest, postsToJudge, readExemplarLibrary, type ExemplarLibrary, type HarvestedExemplar } from "./exemplar-library.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { readForbiddenTopics, UNIT_PRICING } from "@agent-engine/core";
@@ -2931,6 +2932,148 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
      */
     let setupStudioOutcome: SetupAttemptOutcome | undefined;
 
+    // ── 00h: the EXEMPLAR LIBRARY (RFC-26 Phase 3, 2026-09-25) ──
+    //
+    // The owner: harvest hundreds of posts from the client and its
+    // competitors, take the ones that broke out of their own account's
+    // baseline, judge their craft, and use them as the source pool for
+    // layouts and templates, automatically in setup, with no approval gate.
+    // Built once per `EXEMPLAR_LIBRARY_TTL_DAYS`; a failed build waits
+    // `EXEMPLAR_LIBRARY_RETRY_DAYS`. Every failure is a named problem on the
+    // setup notes, never a hold: the studio and the art director simply run
+    // on the evidence they had before.
+    let exemplarLibrary: ExemplarLibrary | undefined;
+    {
+      const libraryCheck = await wf.step.code("00h-check-exemplar-library", async () => {
+        let stored: ExemplarLibrary | undefined;
+        try {
+          const read = await tools["memory.read"]?.execute({ scope: "beliefs" }, { ctx });
+          if (read?.status === "success") {
+            const beliefs = (read.result as { beliefs?: Record<string, unknown> }).beliefs;
+            stored = readExemplarLibrary(beliefs?.[EXEMPLAR_LIBRARY_BELIEF_KEY]);
+          }
+        } catch (error) {
+          console.error("00h-check-exemplar-library: could not read the beliefs document", error);
+        }
+        return { action: exemplarLibraryAction(stored, new Date()), ...(stored !== undefined ? { library: stored } : {}) };
+      });
+      if (libraryCheck.action === "reuse") {
+        exemplarLibrary = libraryCheck.library;
+      } else if (libraryCheck.action === "build") {
+        const harvest = await wf.step.code("00h1-harvest-exemplars", async () => {
+          const problems: string[] = [];
+          // A deployment without the harvest (no tool, no scraper key) is
+          // UNCONFIGURED, not failed: no warn, no failure marker, and the
+          // next run on a configured deployment builds the library.
+          if (tools["research.harvestInstagramExemplars"] === undefined) {
+            return { ok: false as const, unconfigured: true as const, problems: ["research.harvestInstagramExemplars is not registered on this deployment"] };
+          }
+          const read = async (name: string): Promise<unknown> => {
+            try {
+              const got = await tools[name]?.execute({}, { ctx });
+              return got?.status === "success" ? got.result : undefined;
+            } catch (error) {
+              problems.push(`${name} could not be read (${(error as Error).message})`);
+              return undefined;
+            }
+          };
+          const config = (await read("client.getConfig")) as Record<string, unknown> | undefined;
+          const brandKit = (await read("client.getBrand")) as Record<string, unknown> | undefined;
+          const competitors = (await read("client.listCompetitors")) as ReadonlyArray<{ name?: unknown; website?: unknown }> | undefined;
+          const plan = planHarvest({
+            ownAccounts: socialAccountsFromClient(config, brandKit),
+            referenceAccounts: brief.referenceAccounts,
+            competitors: Array.isArray(competitors) ? competitors : [],
+          });
+          if (plan.accounts.length === 0 && plan.competitorSites.length === 0) {
+            return { ok: false as const, problems: [...problems, "no Instagram account, reference account or competitor website is on file, so there was nothing to harvest"] };
+          }
+          try {
+            const outcome = await tools["research.harvestInstagramExemplars"]!.execute(
+              { accounts: plan.accounts, competitorSites: plan.competitorSites, maxPostsPerAccount: EXEMPLAR_POSTS_PER_ACCOUNT, sinceDays: 365, exemplarsMax: 60 },
+              { ctx },
+            );
+            if (outcome.status === "not_available") {
+              return { ok: false as const, unconfigured: true as const, problems: [...problems, `the harvest is not configured here${"reason" in outcome ? ` (${outcome.reason})` : ""}`] };
+            }
+            if (outcome.status !== "success") {
+              return { ok: false as const, problems: [...problems, `the harvest reported ${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""}`] };
+            }
+            const result = outcome.result as {
+              accounts: Array<{ handle: string; role: "client" | "competitor" | "reference"; posts: number; medianCarouselFrames?: number }>;
+              exemplars: HarvestedExemplar[];
+              problems: string[];
+              estimatedCostUsd: number;
+              postCount: number;
+            };
+            return { ok: true as const, result, problems };
+          } catch (error) {
+            return { ok: false as const, problems: [...problems, `the harvest failed: ${(error as Error).message}`] };
+          }
+        });
+        if (harvest.ok) setupSpend("00h1-harvest-exemplars", harvest.result.estimatedCostUsd, harvest.result.estimatedCostUsd);
+
+        const judged =
+          harvest.ok && tools["media.judgeExemplars"] !== undefined && harvest.result.exemplars.length > 0
+            ? await wf.step.code("00h2-judge-exemplars", async () => {
+                try {
+                  const posts = postsToJudge(harvest.result.exemplars).map((e) => ({
+                    ref: e.url,
+                    handle: e.handle,
+                    role: e.role,
+                    format: e.format,
+                    frames: e.frames.slice(0, 20),
+                    hook: e.hook,
+                    likes: e.likes,
+                    comments: e.comments,
+                    percentile: e.percentile,
+                    ...(e.outlier !== undefined ? { outlier: e.outlier } : {}),
+                  }));
+                  const outcome = await tools["media.judgeExemplars"]!.execute({ posts, framesPerPost: 5, concurrency: 3 }, { ctx });
+                  if (outcome.status !== "success") return { ok: false as const, problem: `the judge reported ${outcome.status}${"reason" in outcome ? `: ${outcome.reason}` : ""}` };
+                  return {
+                    ok: true as const,
+                    result: outcome.result as {
+                      judged: Array<{ ref: string; craft: number; dna: Record<string, unknown>; standout: string; storedFrames: string[]; exemplar: boolean }>;
+                      calibration?: { anchors: number; shift: number; note: string };
+                      failures?: Array<{ ref: string; reason: string }>;
+                    },
+                  };
+                } catch (error) {
+                  return { ok: false as const, problem: `the judge failed: ${(error as Error).message}` };
+                }
+              })
+            : undefined;
+        if (judged?.ok === true) setupSpend("00h2-judge-exemplars", undefined, SETUP_STEP_COST_ESTIMATES_USD.exemplarJudge);
+
+        const built = harvest.ok === false && "unconfigured" in harvest ? undefined : await wf.step.code("00h3-persist-exemplar-library", async () => {
+          const now = new Date();
+          const library = harvest.ok
+            ? buildExemplarLibrary({
+                now,
+                harvest: harvest.result,
+                ...(judged?.ok === true ? { judged: judged.result } : {}),
+                problems: [...harvest.problems, ...(judged !== undefined && judged.ok === false ? [judged.problem] : []), ...(judged === undefined ? ["media.judgeExemplars is not registered, so no post was judged"] : [])],
+              })
+            : failedLibrary(now, harvest.problems);
+          try {
+            await tools["memory.updateBeliefs"]?.execute({ diff: { [EXEMPLAR_LIBRARY_BELIEF_KEY]: library } }, { ctx });
+          } catch (error) {
+            library.problems.push(`the library could not be stored (${(error as Error).message}); the next run rebuilds it`);
+          }
+          return library;
+        });
+        if (built === undefined) {
+          // Unconfigured: nothing to say, nothing stored.
+        } else if (built.status === "built") {
+          exemplarLibrary = built;
+          setupNotes.push(`exemplar library: ${built.entries.length} judged breakouts from ${built.accounts.length} account(s)${built.calibration !== undefined ? `; ${built.calibration.note}` : ""}`);
+        } else {
+          await setupWarn("exemplar-library", `the exemplar library was not built: ${built.problems.slice(0, 3).join("; ")}`);
+        }
+      }
+    }
+
     if (options.templateStore !== undefined) {
       const templateStore = options.templateStore;
       /** The studio's half of the shared setup warn row. Kept as a local alias so every `00c*` call site reads unchanged. */
@@ -3130,6 +3273,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           ...(studioKit !== undefined ? { kit: studioKit } : {}),
           sitePages: evidence.sitePages,
           referenceFormats: evidence.evidence,
+          // RFC-26 Phase 3: descriptions of breakout posts across the client
+          // and its niche, from the exemplar library (`00h`). Descriptions,
+          // never pixels: the studio's own rule.
+          ...(exemplarStudioNotes(exemplarLibrary).length > 0 ? { imageNotes: exemplarStudioNotes(exemplarLibrary) } : {}),
           ...(targetLanguage !== undefined ? { targetLanguage } : {}),
           problems: evidence.problems,
         };
@@ -3830,7 +3977,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             brandTokens: frozen.brandTokens,
             ...(effectiveKit !== undefined ? { renderTokens: effectiveKit.cssVars } : {}),
             brief,
-            ...(bundle.patterns !== undefined ? { patterns: bundle.patterns } : {}),
+            // RFC-26 Phase 3: when the client's own feed could not be read (the
+            // usual case), the exemplar library's measured breakouts stand in.
+            ...(bundle.patterns !== undefined
+              ? { patterns: bundle.patterns }
+              : exemplarPatternEvidence(exemplarLibrary) !== undefined
+                ? { patterns: exemplarPatternEvidence(exemplarLibrary)! }
+                : {}),
             // `sitePages` when this run's studio block fetched them at
             // `00c2` — already paid for, already cached, and the prompt
             // documents them as an input and lets a line cite one as its

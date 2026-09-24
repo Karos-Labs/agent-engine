@@ -46,7 +46,7 @@ const EXPENSIVE_HISTORY = { ...EMPTY_SETUP_BUDGET_HISTORY, ewmaRatio: 3, setups:
 describe("the setup estimate table", () => {
   it("carries every unit a setup can bill, and no Opus-priced line", () => {
     expect(Object.keys(SETUP_STEP_COST_ESTIMATES_USD).sort()).toEqual(
-      ["artDirection", "designBrief", "formatMap", "sampleInspect", "scraperExecution", "setReview", "templateDesign", "templateRepair", "visualPatterns"].sort(),
+      ["artDirection", "designBrief", "exemplarJudge", "formatMap", "sampleInspect", "scraperExecution", "setReview", "templateDesign", "templateRepair", "visualPatterns"].sort(),
     );
     expect(Object.values(SETUP_STEP_COST_ESTIMATES_USD).every((v) => v > 0)).toBe(true);
     // The two Sonnet authoring lines are the only ones above a cent, and even

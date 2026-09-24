@@ -2317,6 +2317,8 @@ export const CHEAPEST_PATH_STUDIO_TEMPLATES = 2;
  * next setup.
  */
 export const SETUP_STEP_COST_ESTIMATES_USD = {
+  /** RFC-26: flash vision over ~24 breakout posts x 5 frames, measured at ~84k input tokens live (00h2). The harvest's own cost is metered from its call count (00h1). */
+  exemplarJudge: 0.04,
   /** Sonnet, ~8k in / 1.2k out — the format thesis every designer call reads (00c3). */
   designBrief: 0.042,
   /** Sonnet, ~7k in / 2.0k out — authors one template's HTML+CSS+sample, in the client's own script (00c4). ONE CALL PER TEMPLATE, so a schema failure costs one template instead of six. */

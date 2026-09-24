@@ -45,6 +45,10 @@ const HAPPY_PATH_STEP_IDS = [
   // runs on every run; `00b1`/`00b2`/`00b3` only when the brief is missing or
   // stale, and `setupTestEnvironment` seeds a fresh one here.
   "00b-check-client-brief",
+  // RFC-26 Phase 3 (2026-09-25): the exemplar library check runs on every run;
+  // `00h1` reads "unconfigured" here (no scraper), so nothing is persisted.
+  "00h-check-exemplar-library",
+  "00h1-harvest-exemplars",
   // The client's own profile description + voice-rules guidelines,
   // best-effort — this is where a language requirement like Geektime's
   // "Hebrew-language technology site" actually lives.
