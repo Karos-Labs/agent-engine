@@ -487,7 +487,7 @@ export function goodBrandTokens(overrides: Partial<BrandTokens> = {}): BrandToke
 export function goodImageCandidatePool(): ImageCandidate[] {
   return [
     { path: "fixtures/images/photo-1.png", description: "a bright modern open-plan office with people actively collaborating at a whiteboard, daytime, no visible branding" },
-    { path: "fixtures/images/photo-2.png", description: "a close-up of hands typing on a laptop keyboard at a clean desk" },
+    { path: "fixtures/images/photo-2.png", description: "a close-up of hands sorting printed tickets on a wooden table" },
     { path: "fixtures/images/photo-3.png", description: "a small team gathered around a table reviewing printed charts" },
     // SIX, one per slide, and the last three are load-bearing. `goodImageVettingOutput`
     // cycles this pool with `pool[i % pool.length]` and the imagery band gives
@@ -535,10 +535,10 @@ export function goodResearchOutput(topic = "process changes that actually moved 
 
 const GOOD_VISUAL_NEEDS = [
   "a bright modern open-plan office with people actively collaborating at a whiteboard, daytime",
-  "a close-up of hands typing on a laptop keyboard at a clean desk",
+  "a close-up of hands sorting printed tickets on a wooden table",
   "a small team gathered around a table reviewing printed charts",
   "a bright modern open-plan office with people actively collaborating at a whiteboard, daytime",
-  "a close-up of hands typing on a laptop keyboard at a clean desk",
+  "a close-up of hands sorting printed tickets on a wooden table",
   "a small team gathered around a table reviewing printed charts",
 ];
 
