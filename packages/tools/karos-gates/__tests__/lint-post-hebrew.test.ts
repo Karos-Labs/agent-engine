@@ -36,6 +36,7 @@ describe("the Hebrew tells fail, the way their English twins do", () => {
   it("refuses the announcement opener", async () => {
     const verdict = await verdictOf("נרגשים להודיע על שיתוף הפעולה החדש שלנו עם אחת מחברות הביטוח הגדולות בישראל.");
     expect(verdict.verdict).toBe("content_fail");
+    if (verdict.verdict !== "content_fail") throw new Error("unreachable");
     expect(verdict.reason).toMatch(/נרגשים להודיע/);
   });
 
@@ -51,6 +52,8 @@ describe("the Hebrew tells fail, the way their English twins do", () => {
 
   it("names the phrase it found, so a redraft knows what to change", async () => {
     const verdict = await verdictOf("אנחנו גאים להציג את הגרסה החדשה, שמשנה את כללי המשחק בתחום.");
+    expect(verdict.verdict).toBe("content_fail");
+    if (verdict.verdict === "tooling_error") throw new Error("unreachable");
     expect(verdict.evidence.join(" ")).toMatch(/גאים להציג|משנה את כללי המשחק/);
   });
 });
