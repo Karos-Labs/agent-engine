@@ -22,7 +22,7 @@ describe("fleet-scoped memory (2026-09-24)", () => {
 
   const read = async (clientSlug: string): Promise<FleetDocument> => {
     const out = await tools["memory.readFleet"]!.execute({ key: "instagramCrossClientFormats" }, { ctx: ctxFor(clientSlug) });
-    expect(out.status).toBe("success");
+    if (out.status !== "success") throw new Error(`memory.readFleet: ${out.status}`);
     return (out.result as { document: FleetDocument }).document;
   };
 
