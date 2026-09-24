@@ -7648,6 +7648,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       let entitySourcingForGate: Array<{ slide: number; entity: string; tiers: Array<{ tier: string; why: string; got: number }> }> = [];
       /** 2026-09-23: candidate paths that are an entity's MARK (05b1's logo rung), so the render shows them whole on a card. */
       const markImagePaths = new Set<string>();
+      /** 2026-09-24: marks with no backdrop (lifted by 06h25, or vector), set clear on the slide. */
+      const clearMarkPaths = new Set<string>();
       /** 2026-09-23: per slide, the credit-free mark of the entity it pictures (05b1), shown as a small badge. */
       const markBadgeBySlide = new Map<number, string>();
       /** Records why this attempt failed AND hands that finding to the next draft. */
@@ -10753,6 +10755,56 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         }
       }
 
+      // ── 06h25: A LOGO WITHOUT ITS BACKGROUND (2026-09-24) ──
+      //
+      // The owner, on a Honda mark shown on a white card: "not nice and not
+      // professional; if you put a logo in, make sure it has no background and
+      // sits properly". A raster mark on a flat backdrop is lifted off it
+      // (`media.cutout`, uniform backgrounds only, which is what a logo file
+      // is), and a vector mark already has none. Either way the slide then
+      // sets the mark CLEAR (`heroKind: "mark-clear"`): no panel, its natural
+      // size as the ceiling, white on a dark ground. A mark that cannot be
+      // lifted keeps its own backdrop and is set small (`"mark"`). Runs only
+      // when a slide's picture is a mark, so no other run gains a step.
+      const markSelections = selections.filter((sel) => sel.imagePath !== null && markImagePaths.has(sel.imagePath));
+      if (markSelections.length > 0) {
+        const lifted = await wf.step.code(rev(`06h25-lift-mark-backgrounds-attempt-${attempt}`), async () => {
+          const replaced: Record<string, string> = {};
+          const clear: string[] = [];
+          const notes: string[] = [];
+          for (const sel of markSelections) {
+            const from = sel.imagePath!;
+            if (/\.svg$/iu.test(from)) {
+              clear.push(from);
+              continue;
+            }
+            const cut = tools["media.cutout"];
+            if (cut === undefined) {
+              notes.push(`${from}: media.cutout is not registered, the mark keeps its backdrop`);
+              continue;
+            }
+            try {
+              const outcome = await cut.execute({ repoRoot: options.repoRoot, runId: wf.runId, image: from }, { ctx });
+              if (outcome.status === "success") {
+                const to = (outcome.result as { path: string }).path;
+                replaced[from] = to;
+                clear.push(to);
+              } else {
+                notes.push(`${from}: ${(outcome as { reason?: string }).reason ?? "refused"}`);
+              }
+            } catch (error) {
+              notes.push(`${from}: ${(error as Error).message}`);
+            }
+          }
+          return { replaced, clear, notes };
+        });
+        if (Object.keys(lifted.replaced).length > 0) {
+          selections = selections.map((sel) => (sel.imagePath !== null && lifted.replaced[sel.imagePath] !== undefined ? { ...sel, imagePath: lifted.replaced[sel.imagePath]! } : sel));
+          for (const to of Object.values(lifted.replaced)) markImagePaths.add(to);
+        }
+        for (const p of lifted.clear) clearMarkPaths.add(p);
+      }
+
       // ── 06h3: THE FLOOR FRAMES ARE BYTES TOO (2026-09-23) ──
       //
       // `06e2` ran before the imagery floor generated and vetted its frames,
@@ -12233,6 +12285,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           sideLogos,
           // 2026-09-23: a slide whose picture is a mark shows it on a card.
           markImagePaths,
+          clearMarkPaths,
           markBadges: markBadgeBySlide,
           // IGSTYLE-7, §7a — wires `paletteForSlide`'s already-built, already-
           // seeded rotation into the render path for the first time. Seeded

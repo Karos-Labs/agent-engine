@@ -1048,7 +1048,11 @@ export function buildListRows(items: readonly { title: string; note?: string | u
  * least one of them whatever the phase.
  */
 const FIGURE_SHAPES = ["tall", "corner", "foot", "inset", "bleed", "circle", "band", "side", "side-end"] as const;
-const FIGURE_ROTATION: readonly FigureShape[] = ["side", "tall", "inset", "corner", "side-end", "foot", "side", "bleed", "inset", "circle", "side-end", "band"];
+// 2026-09-24, the owner's second look at the split: "the half-screen picture
+// does not look good yet; maybe a block in the picture with something above
+// and below it". The split leaves the rotation (its CSS stays, unselected);
+// the centred block (`inset`: copy above, picture, copy below) leads it.
+const FIGURE_ROTATION: readonly FigureShape[] = ["inset", "tall", "corner", "inset", "foot", "bleed", "inset", "circle", "band"];
 type FigureShape = (typeof FIGURE_SHAPES)[number];
 export type FigurePlacement = FigureShape | "carry-out" | "carry-in";
 /** Every shape `figurePlacementFor` may return for a picture panel, once each. */
@@ -1136,8 +1140,8 @@ export function ctaFormFor(text: string): "pill" | "line" {
  * full-width shapes plus whichever side shape the archetype carries well.
  */
 const FIGURE_ROTATION_BY_LAYOUT: Partial<Record<InstagramSlideLayout, readonly FigurePlacement[]>> = {
-  list_takeaway: ["side", "tall", "inset", "foot", "side-end", "bleed", "inset", "band"],
-  comparison_card: ["side", "tall", "circle", "inset", "side-end", "foot", "bleed", "inset", "band"],
+  list_takeaway: ["inset", "tall", "foot", "inset", "bleed", "band"],
+  comparison_card: ["inset", "tall", "circle", "inset", "foot", "bleed"],
 };
 const EDGE_FIGURE_ROTATION_BY_LAYOUT: Partial<Record<InstagramSlideLayout, readonly FigurePlacement[]>> = {
   list_takeaway: ["tall", "foot", "bleed", "band"],
@@ -2715,6 +2719,8 @@ export function assembleSlidesData(params: {
    * whole on a white card instead of cropping it to fill the frame.
    */
   markImagePaths?: ReadonlySet<string> | undefined;
+  /** 2026-09-24: the marks among those with no backdrop; set clear (`heroKind: "mark-clear"`). */
+  clearMarkPaths?: ReadonlySet<string> | undefined;
   /**
    * 2026-09-23: per slide number, the credit-free mark of the entity the
    * slide pictures. Shown as a small badge beside a real photograph.
@@ -3115,19 +3121,17 @@ export function assembleSlidesData(params: {
       fields: {
         ...fields,
         ...imageTreatmentFields({ treatment: params.imageTreatment ?? "none" }),
-        // A mark on an interior panel is always the SPLIT: the brand on a clean
-        // half, the copy on the other, which reads as a composition. In a
-        // corner square the same tile read as the framed stamp the owner
-        // rejected (render check, 2026-09-24).
+        // A mark on a panel is the centred BLOCK: copy above it, copy below,
+        // the mark between them at its own size. The owner, on the half-slide
+        // version: a small logo stretched across half the screen, to one side,
+        // looks bad; use judgement (2026-09-24).
         figurePlacement:
-          heroIsMark && !FULL_BLEED_IMAGE_LAYOUTS.has(layout) && index !== 0 && index !== params.copy.slides.length - 1
-            ? slide.n % 2 === 0
-              ? "side-end"
-              : "side"
+          heroIsMark && !FULL_BLEED_IMAGE_LAYOUTS.has(layout)
+            ? "inset"
             : figurePlacementFor(layout, slide.n, imagePath !== undefined, `${params.clientSlug}:${params.paletteSeed ?? ""}`, {
                 edge: index === 0 || index === params.copy.slides.length - 1,
               }),
-        ...(heroIsMark ? { heroKind: "mark" } : {}),
+        ...(heroIsMark ? { heroKind: imagePath !== undefined && params.clearMarkPaths?.has(imagePath) === true ? "mark-clear" : "mark" } : {}),
         // 2026-09-24: which of the three closer forms (`closerFormFor`); only the closer plate reads it.
         ...(layout === "closer" ? { closerForm: closerFormFor(`${params.clientSlug}:${params.paletteSeed ?? ""}`) } : {}),
         ...(photoCredit !== undefined ? { photoCredit } : {}),

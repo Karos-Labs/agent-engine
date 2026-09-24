@@ -108,7 +108,7 @@ describe("every picture plate carries the badge slot, in flow", () => {
     // The first version's 700px panel is gone; a mark hero is a bounded tile
     // under the brand band (2026-09-24), never the top half of the plate.
     expect(css).not.toMatch(/img\.hero\[data-kind="mark"\][^{]*\{[^}]*block-size: 700px/u);
-    expect(css).toMatch(/img\.hero\[data-kind="mark"\] \{[^}]*block-size: 460px/u);
+    expect(css).toMatch(/img\.hero:is\(\[data-kind="mark"\], \[data-kind="mark-clear"\]\) \{[^}]*max-block-size: 220px/u);
   });
 });
 

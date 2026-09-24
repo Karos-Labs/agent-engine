@@ -34,7 +34,7 @@ describe("figurePlacementFor", () => {
     expect(seen.size, `eight panels drew ${seen.size} distinct shapes`).toBeGreaterThan(3);
   });
 
-  it("selects every shape the calibration sweep renders clean, the split included (2026-09-24)", () => {
+  it("selects the shapes that look right; the split left the rotation on the owner's second look (2026-09-24)", () => {
     // The stylesheet declares them and they render correctly. The calibration
     // sweep refused every archetype that was offered a 56% column, because
     // `_ds-fit.js` sizes type against the FIELD and a side variant changes the
@@ -45,7 +45,7 @@ describe("figurePlacementFor", () => {
         Array.from({ length: 12 }, (_, i) => figurePlacementFor(layout, i + 1, true)),
       ),
     );
-    expect([...drawn].sort()).toEqual(["band", "bleed", "circle", "corner", "foot", "inset", "side", "side-end", "tall"]);
+    expect([...drawn].sort()).toEqual(["band", "bleed", "circle", "corner", "foot", "inset", "tall"]);
   });
 
   it("never gives two ADJACENT slides the same shape", () => {
@@ -68,7 +68,8 @@ describe("figurePlacementFor", () => {
   it("is PHASED per client and run, so slide 3 is not the same shape in every client's every post (2026-09-24)", () => {
     const seeds = ["geektime:run-1", "thepitchbydeel:run-1", "xodigital:run-1", "sitti:run-1", "hankypanky:run-1", "karoslabs:run-1", "karoslabs:run-2"];
     const atSlide3 = new Set(seeds.map((seed) => figurePlacementFor("stat_callout", 3, true, seed)));
-    expect(atSlide3.size, `slide 3 across seven client/run seeds drew ${[...atSlide3].join(", ")}`).toBeGreaterThanOrEqual(4);
+    // Three, not four, since the centred block is WEIGHTED (three slots of nine): variety across clients, not uniformity.
+    expect(atSlide3.size, `slide 3 across seven client/run seeds drew ${[...atSlide3].join(", ")}`).toBeGreaterThanOrEqual(3);
     // Still stable for one seed, and still never the same shape twice in a row.
     for (const seed of seeds) {
       expect(figurePlacementFor("quote_card", 4, true, seed)).toBe(figurePlacementFor("quote_card", 4, true, seed));
@@ -122,10 +123,10 @@ describe("the stylesheet carries every shape the code can ask for", () => {
     expect(DS).toContain('body:is([data-figure="side"], [data-figure="side-end"]):not(:has(.sc-figure-band img[src]:not([src=""]))) .plate { padding-inline: var(--mx); }');
   });
 
-  it("shows the owner's two compositions (the split, the centred picture) in any carousel with three pictured panels", () => {
+  it("shows the centred block (copy above, picture, copy below) in any carousel with three pictured panels", () => {
     for (const seed of ["geektime:r1", "thepitchbydeel:r1", "xodigital:r1", "sitti:r1", "hankypanky:r1", "karoslabs:r1", "karoslabs:r2", "kindlyyours:r1"]) {
       const shapes = [2, 3, 4].map((n) => figurePlacementFor("stat_callout", n, true, seed));
-      expect(shapes.some((s) => s === "side" || s === "side-end" || s === "inset"), `${seed}: ${shapes.join(", ")}`).toBe(true);
+      expect(shapes.includes("inset"), `${seed}: ${shapes.join(", ")}`).toBe(true);
     }
   });
 
