@@ -54,6 +54,7 @@ import {
   assertSafeMarkup,
   buildCustomArchetypeDocument,
   buildStudioTemplateDocument,
+  type StudioDesignSystem,
   composeDocument,
   composeRawDocument,
   DEFAULT_QUALITY_BY_SOURCE,
@@ -1070,6 +1071,25 @@ export interface CreateInstagramAgentWorkflowOptions {
  * the batch review. Each is asserted in `__tests__/zero-held-guarantee.test.ts`
  * so the boundary is pinned rather than assumed.
  */
+/** Where the eight plates and their shared design system live, relative to the repo root. */
+const BUNDLED_DESIGN_SYSTEM_DIR = "agents/instagram-agent/assets/templates/default";
+
+/**
+ * The bundled design system a studio shell is built on (2026-09-24): the
+ * same `_design-system.css` and `_ds-fit.js` `scripts/sync-design-system.ts`
+ * writes into every plate. `undefined` when either file cannot be read, so
+ * a deployment without the assets still builds the original shell.
+ */
+export async function loadStudioDesignSystem(repoRoot: string): Promise<StudioDesignSystem | undefined> {
+  try {
+    const dir = path.resolve(repoRoot, BUNDLED_DESIGN_SYSTEM_DIR);
+    const [css, fitScript] = await Promise.all([fs.readFile(path.join(dir, "_design-system.css"), "utf8"), fs.readFile(path.join(dir, "_ds-fit.js"), "utf8")]);
+    return css.trim().length > 0 && fitScript.trim().length > 0 ? { css, fitScript } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkflowOptions) {
   const tools = options.tools;
   const imageCandidatePool = options.imageCandidatePool ?? [];
@@ -2978,9 +2998,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // its validation renders go through the same one, or the studio is
         // measuring a different renderer than the run.
         const studioRenderDir = `.template-cache/${wf.runId}/studio`;
+        // 2026-09-24: the studio shell carries the bundled set's design
+        // system (canvas scale, role classes, `.plate`, the fit ladder), so a
+        // studio template is built on the same system the eight plates are.
+        // Read from the plates' own source; a missing file leaves the old
+        // shell, which is what every stored row was built with.
+        const studioDesignSystem = await loadStudioDesignSystem(options.repoRoot);
         const studioDeps: StudioValidationDeps = {
           assertSafeMarkup,
-          buildStudioTemplateDocument,
+          buildStudioTemplateDocument: (bodyHtml) => buildStudioTemplateDocument(bodyHtml, studioDesignSystem),
           composeDocument,
           interest: {
             // `slide: 1` because a validation render IS one slide: the

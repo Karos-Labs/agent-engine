@@ -421,12 +421,15 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect(flat(v5)).toContain("never re-derive or dispute them");
   });
 
-  it("the three Template Studio prompts resolve, each latest.md is byte-identical to its 1.md, and each H1 carries v1", async () => {
+  it("the three Template Studio prompts resolve, each latest.md is byte-identical to its newest version, and each v1 H1 carries v1", async () => {
     const promptStore = makePromptStore();
+    // 2026-09-24: the designer is at @2 (it builds on the shell's design system).
+    const LATEST: Record<string, string> = { "instagram-design-brief": "1", "instagram-template-designer": "2", "instagram-template-set-review": "1" };
     for (const id of ["instagram-design-brief", "instagram-template-designer", "instagram-template-set-review"]) {
       const v1 = await promptStore.getPrompt(id, "1");
-      expect(v1).toBe(await promptStore.getPrompt(id));
-      expect(readFileSync(path.join(PROMPTS_ROOT, id, "1.md"), "utf8")).toBe(readFileSync(path.join(PROMPTS_ROOT, id, "latest.md"), "utf8"));
+      const newest = LATEST[id]!;
+      expect(await promptStore.getPrompt(id, newest)).toBe(await promptStore.getPrompt(id));
+      expect(readFileSync(path.join(PROMPTS_ROOT, id, `${newest}.md`), "utf8")).toBe(readFileSync(path.join(PROMPTS_ROOT, id, "latest.md"), "utf8"));
       expect(v1.split(/\r?\n/)[0]).toMatch(/^# .+, v1$/);
       expect(v1.length).toBeGreaterThan(2000);
       // Every one of the three is a setup-time prompt whose output is read by
@@ -479,6 +482,14 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect(designer).toContain("A large empty rectangle fails.");
     expect(designer).toContain("One archetype, one fragment, one");
 
+    // v2 (2026-09-24): builds on the shell's design system. The six studio
+    // templates of the 2026-09-23 refresh all failed gate 6 on web-sized type.
+    const designer2 = (await promptStore.getPrompt("instagram-template-designer", "2")).replace(/\r\n/g, "\n");
+    expect(designer2.split("\n")[0]).toBe("# Instagram Template Designer Guide, v2");
+    for (const needle of ['`<div class="plate">`', "`r-display`", "`r-label`", '`data-fitted="primary"`', "never a\n`font-size` of your own", "You never write a document.", "has to survive being MEASURED"]) {
+      expect(designer2).toContain(needle);
+    }
+
     const review = await promptStore.getPrompt("instagram-template-set-review", "1");
     // Residue only: the factual half is already answered by the eight gates.
     expect(review).toContain("What has already been decided without you");
@@ -528,7 +539,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     expect(registry).toContain(`{ promptId: "instagram-art-director", agent: "instagram-agent", versions: ["1", "2", "3"], latestVersion: "3" }`);
     expect(registry).toContain(`{ promptId: "instagram-visual-qa", agent: "instagram-agent", versions: ["1", "2", "3", "4", "5"], latestVersion: "5" }`);
     expect(registry).toContain(`{ promptId: "instagram-design-brief", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
-    expect(registry).toContain(`{ promptId: "instagram-template-designer", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
+    expect(registry).toContain(`{ promptId: "instagram-template-designer", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" }`);
     expect(registry).toContain(`{ promptId: "instagram-template-set-review", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);
     // Phase 4 (RFC-16): the concept direction prompt.
     expect(registry).toContain(`{ promptId: "instagram-concept", agent: "instagram-agent", versions: ["1"], latestVersion: "1" }`);

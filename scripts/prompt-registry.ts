@@ -296,7 +296,7 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   // stronger guarantee than a prompt sentence and is why none is declared.
   { promptId: "instagram-entities", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
   { promptId: "instagram-research", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
-  { promptId: "instagram-template-designer", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
+  { promptId: "instagram-template-designer", agent: "instagram-agent", versions: ["1", "2"], latestVersion: "2" },
   { promptId: "instagram-template-set-review", agent: "instagram-agent", versions: ["1"], latestVersion: "1" },
   // Phase 5.5 (@5): the rubric is re-centred on five POST-LEVEL questions, the
   // judge is fed a CONTACT SHEET of every plate at once — which is how the

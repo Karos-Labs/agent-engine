@@ -89,6 +89,6 @@ export class InstagramTemplateDesignerAgent extends BaseAgent<StudioTemplateDraf
     // (three karoslabs setups of 0/6); see `omitThought`.
     omitThought: true,
     modelPolicy: resolveModelPolicy("instagram-template-designer", { policy: "pinned", model: "claude-sonnet-4-6", contentLanguageSensitive: true }),
-    skillRef: "instagram-template-designer@1",
+    skillRef: "instagram-template-designer@2",
   };
 }
