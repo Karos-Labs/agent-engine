@@ -9363,7 +9363,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // shipped with no pictures at all.
         const placement = selectionPlacement(s);
         if (placement.placement === "refuse") return true;
-        if (placement.placement === "bounded" && FULL_BLEED_IMAGE_LAYOUTS.has(layoutOf(s.n))) return true;
+        // 2026-09-24: EXCEPT the news-frame cover, whose picture sits in a box
+        // under the headline, a bounded placement by design. Geektime's news
+        // single (pubsub-21255083218346529) had a vetted frame refused here as
+        // if it were a full-bleed ground, and shipped as a text card.
+        if (placement.placement === "bounded" && FULL_BLEED_IMAGE_LAYOUTS.has(layoutOf(s.n)) && !(newsCover && layoutOf(s.n) === "cover")) return true;
         // Phase 5.5, item A2 — and the rights class, as a CODE, not as a
         // sentence. `POST_USAGE` is `"commentary"`: an Instagram carousel that
         // argues an editorial point about a news story is commentary, and
