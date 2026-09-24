@@ -95,13 +95,31 @@ describe("the ladder's order: merge, picture, archetype, type step, device", () 
       ...copy,
       slides: copy.slides.map((s) => (s.n === 5 ? { ...s, layout: "text_only" as const } : s)),
     };
-    const plan = planInterestRelayout(withoutBlocks(typographic, 3), goodImageVettingOutput().selections, FACTS, [weightFinding(3, "interior")]);
+    // The fixture's slide 5 picture is "hands typing on a laptop keyboard",
+    // which since 2026-09-24 is never promoted (the screen cliche); a neutral
+    // picture keeps this test about what it tests.
+    const selections = goodImageVettingOutput().selections.map((sel) => (sel.n === 5 ? { ...sel, reason: "a small team gathered around a table reviewing printed charts" } : sel));
+    const plan = planInterestRelayout(withoutBlocks(typographic, 3), selections, FACTS, [weightFinding(3, "interior")]);
     expect(plan?.changes[0]).toMatchObject({ kind: "promote-image-to-cover", slide: 3, fromSlide: 5, archetype: "photo" });
     // The compliance record travels with the path, capped — nothing re-vetted
     // that picture against slide 3's claim.
     const change = plan?.changes[0] as Extract<InterestRelayoutChange, { kind: "promote-image-to-cover" }>;
     expect(change.record.claimMatch).toBeLessThanOrEqual(3);
     expect(change.record.claimMatchReason).toMatch(/without a re-vet/u);
+  });
+
+  it("never promotes a screen-cliche picture, which is how a monitor-in-a-dark-room frame became KAROS's cover (2026-09-24)", () => {
+    const copy = goodCopyOutput();
+    const typographic: InstagramCopyOutput = {
+      ...copy,
+      slides: copy.slides.map((s) => (s.n === 5 ? { ...s, layout: "text_only" as const } : s)),
+    };
+    const selections = goodImageVettingOutput().selections.map((sel) =>
+      sel.n === 5 ? { ...sel, reason: "The generated image shows a desktop monitor with multiple disconnected browser tabs in a dim room." } : sel,
+    );
+    const plan = planInterestRelayout(withoutBlocks(typographic, 3), selections, FACTS, [weightFinding(3, "interior")]);
+    const promoted = plan?.changes.filter((c) => c.kind === "promote-image-to-cover") as Array<Extract<InterestRelayoutChange, { kind: "promote-image-to-cover" }>> | undefined;
+    expect((promoted ?? []).map((c) => c.fromSlide)).not.toContain(5);
   });
 
   /**

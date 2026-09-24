@@ -1,3 +1,4 @@
+import { prescribesClicheScene } from "./visual-direction.js";
 import { MIN_CLAIM_MATCH, selectionPasses, type ImageSelection, type InstagramCopyOutput, type InstagramSlideCopy, type InstagramSlideLayout } from "./types.js";
 import { fallbackArchetypePreferences, type SlideStyleOverride } from "./slides-data.js";
 import type { InterestFailureKind, InterestFinding } from "./interest-floor.js";
@@ -832,6 +833,10 @@ function promoteImageRemedy(
   const unused = selections
     .filter(isUsableSelection)
     .filter((sel) => sel.n !== slideN && layoutByN.get(sel.n) !== "photo")
+    // 2026-09-24: the one slide every reader sees is never given the screen
+    // cliche. KAROS pubsub-21255039598063450 promoted a generated "desktop
+    // monitor" frame onto its cover.
+    .filter((sel) => !prescribesClicheScene(`${sel.reason ?? ""} ${sel.subjectMatchReason ?? ""}`))
     .sort((a, b) => b.claimMatch - a.claimMatch || a.n - b.n)[0];
   if (unused === undefined) return undefined;
   const archetype: RelayoutArchetype = role === "cover" ? "cover" : "photo";
