@@ -67,8 +67,12 @@ describe("a client's own colours reach the render", () => {
     const painted = [...tokens!.palette, tokens!.cssVars["--bg"], tokens!.cssVars["--fg"]]
       .filter((v): v is string => typeof v === "string")
       .map((v) => v.toLowerCase());
-    // Every colour that reaches the plate comes from Deel's kit.
-    for (const hex of painted) expect(DEEL.colors.map((c) => c.toLowerCase())).toContain(hex);
+    // Every colour that reaches the plate comes from Deel's kit, except the
+    // plain white ink synthesised since 2026-09-24 when the kit's lightest
+    // colour is a hue (Deel's yellow is an accent, not a text colour).
+    for (const hex of painted) expect([...DEEL.colors.map((c) => c.toLowerCase()), "#ffffff"]).toContain(hex);
+    expect(tokens!.cssVars["--fg"]?.toLowerCase()).toBe("#ffffff");
+    expect(tokens!.palette.map((c) => c.toLowerCase())).toContain("#ffcf25");
     // And Karos's signature orange is nowhere near it.
     expect(painted).not.toContain("#ff6b2c");
   });
