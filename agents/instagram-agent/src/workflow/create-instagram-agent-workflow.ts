@@ -12389,6 +12389,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           markImagePaths,
           clearMarkPaths,
           interiorPhotosAsBlocks: true,
+          textBudgets: true,
           productCutoutPaths,
           markBadges: markBadgeBySlide,
           // IGSTYLE-7, §7a — wires `paletteForSlide`'s already-built, already-
