@@ -1735,7 +1735,10 @@ describe.skipIf(!isChromiumInstalled())("interest-floor calibration: every bundl
   it(
     "a real hero slide measures as imagery, and a 1x1 TRANSPARENT hero is caught as no-device",
     async () => {
-      const slides = [slide({ n: 1, layout: "photo", ...MEDIUM }), slide({ n: 2, layout: "photo", ...SHORT })];
+      // Slide 1 carries a SHORT line: since #244 a photo plate with a real deck
+      // frames its picture as a block (`heroKind: "framed"`), and this case
+      // measures the FULL-BLEED poster, which a plate with a short line still is.
+      const slides = [slide({ n: 1, layout: "photo", ...SHORT }), slide({ n: 2, layout: "photo", ...SHORT })];
       const measured = await render(
         assemble(slides, [
           selection(1, path.relative(REPO_ROOT, heroPath).replaceAll("\\", "/")),

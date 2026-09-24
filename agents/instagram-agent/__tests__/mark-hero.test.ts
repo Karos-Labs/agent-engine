@@ -66,7 +66,12 @@ describe("assembleSlidesData with markImagePaths", () => {
     expect(byN.get(1)!.images.mark).toBeUndefined();
     expect(byN.get(1)!.fields.markAt).toBeUndefined();
     expect(byN.get(2)!.images.hero).toBe("media/speaker.jpg");
-    expect(byN.get(2)!.fields.heroKind).toBeUndefined();
+    // NOT `undefined` since 2026-09-24: slide 2 is a `photo` plate carrying a
+    // headline AND a body, which is the case `framedHeroFor` sets as a block
+    // rather than a wall. What this test is about is the MARK — the point is
+    // that slide 2 is not treated as one.
+    // (Framed or poster depends on the deck's length, `FRAMED_DECK_MIN_WORDS`.)
+    expect(byN.get(2)!.fields.heroKind).not.toBe("mark");
   });
 
   it("never stamps a mark onto a real photograph: the photograph carries the slide", () => {
@@ -157,7 +162,7 @@ describe("an interior photograph is a block, not the whole screen (2026-09-24)",
     const copy = {
       format: "carousel", caption: "c",
       slides: [
-        { n: 1, headline: "Cover", body: "b", visualNeed: "v", sourceRef: "c", layout: "cover" },
+        { n: 1, headline: "Cover", body: "A deck long enough to be a real second block of copy here.", visualNeed: "v", sourceRef: "c", layout: "cover" },
         { n: 2, headline: "A photo slide", body: "b", visualNeed: "v", sourceRef: "c", layout: "photo" },
         { n: 3, headline: "Close", body: "Which one?", visualNeed: "v", sourceRef: "c", layout: "closer" },
       ],
@@ -172,6 +177,9 @@ describe("an interior photograph is a block, not the whole screen (2026-09-24)",
     expect(data.slides[1]!.fields.figurePlacement).toBe("inset");
     expect(data.slides[1]!.images.hero).toBe("media/b.jpg");
     expect(data.slides[0]!.fields.figurePlacement).not.toBe("inset");
+    // #244 merged over #242: the cover with a deck is `framed`; the interior photo is the inset block, never both.
+    expect(data.slides[0]!.fields.heroKind).toBe("framed");
+    expect(data.slides[1]!.fields.heroKind).not.toBe("framed");
     const css = readFileSync(path.join(TEMPLATES, "_design-system.css"), "utf8");
     expect(css).toContain('body[data-figure="inset"]:has(.plate.slide) .scrim { display: none; }');
   });
