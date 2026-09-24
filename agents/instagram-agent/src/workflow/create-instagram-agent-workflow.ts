@@ -10699,6 +10699,35 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           );
           if (floorSourced.status === "success") {
             const floorPool = (floorSourced.result as { candidates: ImageCandidate[] }).candidates;
+            // 2026-09-24: WHAT WAS ACTUALLY DRAWN, before the vet reads it. A
+            // floor frame used to reach the vet with only its own brief as a
+            // description, and the vet (rightly) scored it 3/5 for "no vision
+            // note to confirm what was drawn": under the full-bleed floor, so
+            // KAROS's and Geektime's covers of that day shipped as type. One
+            // vision pass per frame (~$0.003), the same one 05c runs; a failed
+            // pass leaves the pool as it was, and an unusable frame is dropped.
+            const floorInspect = tools["media.inspectImages"];
+            const floorPoolSeen: ImageCandidate[] =
+              floorInspect === undefined || floorPool.length === 0
+                ? floorPool
+                : await wf.step.code(rev(`06h1b-inspect-floor-images-attempt-${attempt}`), async (): Promise<ImageCandidate[]> => {
+                    try {
+                      const inspected = await floorInspect.execute(
+                        { repoRoot: options.repoRoot, images: floorPool.map((c, i) => ({ ref: `f-${i}`, path: c.path })), purpose: "candidate-vetting" },
+                        { ctx },
+                      );
+                      if (inspected.status !== "success") return floorPool;
+                      const byRef = new Map(((inspected.result as { inspections: Array<Record<string, unknown>> }).inspections).map((i) => [i["ref"] as string, i]));
+                      return floorPool.flatMap((c, i) => {
+                        const found = byRef.get(`f-${i}`);
+                        if (found === undefined) return [c];
+                        if (found["quality"] === "unusable") return [];
+                        return [{ ...c, description: describeWithVision(c.description, found, { includeFlags: true }) }];
+                      });
+                    } catch {
+                      return floorPool;
+                    }
+                  });
             generatedSoFar += floorPool.length;
             for (const cand of floorPool) {
               generatedPaths.add(cand.path);
@@ -10731,7 +10760,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                     isClientPhotoSlot: tier0Slots.has(g.n),
                   };
                 }),
-                candidatePool: floorPool,
+                candidatePool: floorPoolSeen,
                 usedImages,
               });
               spend(rev(`06h2-vet-floor-images-attempt-${attempt}`), floorVet.totalCostUsd, STEP_COST_ESTIMATES_USD.vetCall);
