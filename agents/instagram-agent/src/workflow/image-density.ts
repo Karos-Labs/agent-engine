@@ -198,6 +198,12 @@ export interface ConceptualPromptOptions {
   readonly register?: (typeof ILLUSTRATION_REGISTERS)[number];
   /** The real things the post names, which the frame may show ILLUSTRATED. */
   readonly subjects?: readonly NamedSubject[];
+  /**
+   * 2026-09-24: the run is a numbered list (`the_list`), whose item slides are
+   * `headline_focus` plates. They carry a bounded picture band only in that
+   * series, so only then may the floor fill them.
+   */
+  readonly itemPictures?: boolean;
 }
 
 /**
@@ -340,7 +346,7 @@ export function planImageBackfill(
     if (slide.n === lastN) return false;
     // A layout with no image slot would take the money and drop the frame,
     // which is the exact waste the picture floor was just fixed to stop.
-    if (!HERO_IMAGE_LAYOUTS.has(slide.layout ?? "photo")) return false;
+    if (!HERO_IMAGE_LAYOUTS.has(slide.layout ?? "photo") && !(options.itemPictures === true && slide.layout === "headline_focus")) return false;
     return normaliseVisualNeed(slide).source === "none";
   });
 

@@ -155,6 +155,12 @@ describe("planImageBackfill", () => {
     expect(planImageBackfill(copy, new Set([6]), 5).map((p) => p.n)).toEqual([1, 2, 4, 5, 7]);
   });
 
+  it("fills a numbered list's item plates only in the list series (2026-09-24)", () => {
+    const copy = geektimeShaped();
+    expect(planImageBackfill(copy, new Set([1, 6]), 9).map((p) => p.n)).not.toContain(3);
+    expect(planImageBackfill(copy, new Set([1, 6]), 9, { itemPictures: true }).map((p) => p.n)).toContain(3);
+  });
+
   it("never touches the closer, because a picture behind the ask competes with the ask", () => {
     expect(planImageBackfill(geektimeShaped(), new Set(), 99).map((p) => p.n)).not.toContain(8);
   });

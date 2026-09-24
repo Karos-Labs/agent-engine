@@ -10643,6 +10643,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           ...(frozenStyle.treatment !== undefined ? { treatment: frozenStyle.treatment } : {}),
           register: registerFor(ctx.runId),
           ...(drawnSubjects.length > 0 ? { subjects: drawnSubjects } : {}),
+          // 2026-09-24: a list post's items may carry pictures (thepitchbydeel
+          // pubsub-21255292697877233 shipped one picture in eight).
+          ...(series?.series.id === "the_list" ? { itemPictures: true } : {}),
         }).map((candidate) => ({ n: candidate.n, prompt: candidate.prompt, backfilled: true }));
         // ── STEER THE BRIEFS APART BEFORE PAYING FOR THEM (2026-09-20) ──
         //
