@@ -156,7 +156,10 @@ describe("Layer 3 tool registry — cross-cutting", () => {
     // prefix the caller asks for, so that prefix joins the expected list.)
     // (66 -> 67, 2026-09-23: `research.entityPeople`, the people a company
     // is recognised by, from Wikidata, for Instagram's entity route.)
-    expect(names.length).toBe(67);
+    // (67 → 69, 2026-09-24: memory.readFleet / memory.appendFleetRow, the
+    // allowlisted fleet-scoped memory the Instagram agent's cross-client
+    // variety rule needs; see packages/tools/karos-memory/src/fleet.ts.)
+    expect(names.length).toBe(69);
     for (const prefix of expectedPrefixes) {
       expect(names.some((n) => n.startsWith(prefix))).toBe(true);
     }

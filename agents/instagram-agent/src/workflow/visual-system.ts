@@ -1065,6 +1065,8 @@ export interface CrossClientFormatEntry {
   clientSlug: string;
   seriesId: string;
   systemId: string;
+  /** The shipped post's slide skeleton signature (`skeleton-memory.ts`), when the row carries one. Fleet rows from 2026-09-24 on do. */
+  skeleton?: string;
 }
 
 export interface CrossClientFormatHistory {
@@ -1097,9 +1099,34 @@ export function readCrossClientFormatHistory(beliefs: unknown): CrossClientForma
     const seriesId = typeof r["seriesId"] === "string" ? r["seriesId"] : undefined;
     const systemId = typeof r["systemId"] === "string" ? r["systemId"] : undefined;
     if (at === undefined || clientSlug === undefined || seriesId === undefined || systemId === undefined) continue;
-    entries.push({ at, clientSlug, seriesId, systemId });
+    const skeleton = typeof r["skeleton"] === "string" && r["skeleton"].length > 0 ? r["skeleton"] : undefined;
+    entries.push({ at, clientSlug, seriesId, systemId, ...(skeleton !== undefined ? { skeleton } : {}) });
   }
   return { version: 1, entries: entries.slice(-CROSS_CLIENT_HISTORY_LIMIT) };
+}
+
+/**
+ * The client's own history and the FLEET's (`memory.readFleet`), as one
+ * history ordered by time (2026-09-24). Before the fleet read existed the
+ * cross-client readers only ever saw the calling client's own rows, excluded
+ * them, and abstained on every run. Deduplicated on (clientSlug, at).
+ */
+export function mergeCrossClientHistories(own: CrossClientFormatHistory, fleet: CrossClientFormatHistory): CrossClientFormatHistory {
+  const byKey = new Map<string, CrossClientFormatEntry>();
+  for (const entry of [...own.entries, ...fleet.entries]) byKey.set(`${entry.clientSlug}|${entry.at}`, entry);
+  const entries = [...byKey.values()].sort((a, b) => a.at.localeCompare(b.at));
+  return { version: 1, entries: entries.slice(-CROSS_CLIENT_HISTORY_LIMIT) };
+}
+
+/** Slide skeletons OTHER clients shipped most recently, newest first, distinct. */
+export function crossClientSkeletons(history: CrossClientFormatHistory, clientSlug: string, window: number): string[] {
+  const out: string[] = [];
+  for (const entry of [...history.entries].reverse()) {
+    if (entry.clientSlug === clientSlug || entry.skeleton === undefined || out.includes(entry.skeleton)) continue;
+    out.push(entry.skeleton);
+    if (out.length >= Math.max(0, Math.floor(window))) break;
+  }
+  return out;
 }
 
 /** Appends one row and trims to the limit. Pure — the caller persists the result. */
