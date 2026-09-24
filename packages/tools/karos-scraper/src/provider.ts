@@ -62,6 +62,16 @@ export interface SearchOptions extends ScrapeOptions {
   readonly includeDomains?: readonly string[];
 }
 
+export interface SocialHistoryPageRequest extends SocialHistoryRequest {
+  /** The previous page's `nextCursor`; absent for the first page. */
+  readonly cursor?: string;
+}
+
+export interface SocialHistoryPage {
+  records: ScrapedRecord[];
+  nextCursor?: string;
+}
+
 export interface SocialHistoryRequest extends ScrapeOptions {
   readonly platform: SocialPlatform;
   /**
@@ -219,6 +229,15 @@ export interface ScraperProvider {
 
   /** Recent posts for one social account, newest first where the provider orders them. */
   socialHistory(request: SocialHistoryRequest): Promise<ScrapedRecord[]>;
+
+  /**
+   * One PAGE of an account's history, and the cursor for the next (RFC-26,
+   * 2026-09-24). `socialHistory` answers "what did they post lately" in one
+   * call; the exemplar harvest reads hundreds of posts, so it pages. Optional:
+   * a provider that cannot page simply is not a harvest source.
+   * `nextCursor` is absent when the account has no more posts.
+   */
+  socialHistoryPage?(request: SocialHistoryPageRequest): Promise<SocialHistoryPage>;
 
   /** Raw HTML/text for a URL, for callers doing their own parsing. */
   fetchRaw(url: string, options?: ScrapeOptions): Promise<RawPage | undefined>;
