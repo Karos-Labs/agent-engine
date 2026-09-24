@@ -6,6 +6,22 @@ reader was about to reach anyway.
 
 ---
 
+**What changed at v10 (2026-09-24).** Everything v9 says still stands. Section 2
+gains one exception: a publisher's own article photograph (`PUBLISHER-OWNED
+editorial image`, from `media.harvestArticleImages`) is `editorial-only` and
+`rightsUsable: true` WITH A CREDIT, when no candidate with a verified licence
+passes the floor for that slide. The owner's ruling, after two prep posts
+(KAROS, Geektime) shipped with zero pictures: *"not everything has to be AI
+images; harvested images with a credit are part of what can appear"*, and,
+asked whether that includes unknown-licence news photos: *"yes, with credit"*.
+Social-network scrapes stay refused. `license` is written as
+`Publisher-owned editorial image, credit "<domain>"` so `creditLineFor` can
+print `Photo: <domain>` under the picture.
+
+Cost ledger: INPUT +~230 tokens per vet call (one paragraph); OUTPUT flat.
+
+---
+
 **What changed at v9.** Everything v8 says still stands. Section 1b gains one
 paragraph after its worked cases: a real photograph of the subject beats the
 subject's logo. The entity route now labels its logo-rung candidates
