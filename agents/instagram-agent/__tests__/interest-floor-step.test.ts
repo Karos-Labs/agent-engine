@@ -204,7 +204,8 @@ describe("08a1-interest-floor: where it runs and what it costs", () => {
     const { result, stepIds } = await runToGate(env, "interest_device_drop_steer", router, {
       metrics: (slide: Slide) => {
         if (slide.n === 1) renders += 1;
-        return renders <= 2 && slide.n === 1 ? boringSlideMetrics() : passingSlideMetrics();
+        // First render + BOTH free re-layout rounds (`INTEREST_RELAYOUT_ROUNDS`, 2026-09-24) fail.
+        return renders <= 3 && slide.n === 1 ? boringSlideMetrics() : passingSlideMetrics();
       },
     });
 
@@ -236,7 +237,8 @@ describe("08a1-interest-floor: where it runs and what it costs", () => {
       if (slide.n === 1) renders += 1;
       // Renders 1 and 2 are attempt 1 (the render and the re-layout's
       // re-render); render 3 onward is attempt 2.
-      return renders <= 2 && slide.n === 1 ? boringSlideMetrics() : passingSlideMetrics();
+      // First render + BOTH free re-layout rounds (`INTEREST_RELAYOUT_ROUNDS`, 2026-09-24) fail.
+      return renders <= 3 && slide.n === 1 ? boringSlideMetrics() : passingSlideMetrics();
     };
     const router = fakeRouterSequence([
       ...standardTurns({ scout: goodTrendScoutOutput(), research: goodResearchOutput(), angle: goodAngleProposal(), copy: goodCopyOutput(), vet: goodImageVettingOutput(), relevance: goodRelevanceVerdict() }),
@@ -254,6 +256,28 @@ describe("08a1-interest-floor: where it runs and what it costs", () => {
     // Exactly one visual-QA model turn was consumed: the passing attempt's.
     expect(qaTurnInputs(router)).toHaveLength(1);
   }, 40000);
+
+  it("runs a SECOND free round against the post-merge document before paying for a redraft (2026-09-24)", async () => {
+    // Hanky Panky, attempt 3: one merge per plan fixed slide 5 and shipped old
+    // slide 6 empty. Here the first round's render still fails and the second
+    // round's passes, so the attempt clears with NO redraft.
+    const router = fakeRouterSequence([
+      ...standardTurns({ scout: goodTrendScoutOutput(), research: goodResearchOutput(), angle: goodAngleProposal(), copy: goodCopyOutput(), vet: goodImageVettingOutput(), relevance: goodRelevanceVerdict() }),
+      ...happyTurns({ scout: undefined, research: undefined, angle: undefined }),
+    ]);
+    let renders = 0;
+    const idle = boringSlideMetrics({ occupiedShare: 0.08, contentOccupiedShare: 0.08 });
+    const { result, stepIds } = await runToGate(env, "interest_second_round", router, {
+      metrics: (slide: Slide) => {
+        if (slide.n === 1) renders += 1;
+        return renders <= 2 && slide.n === 1 ? idle : passingSlideMetrics();
+      },
+    });
+    expect(result.status).toBe("awaiting_gate");
+    expect(stepIds).toContain(`${INTEREST_STEP_IDS.relayout}-round-2`);
+    expect(stepIds).toContain(`${INTEREST_STEP_IDS.recheck}-round-2`);
+    expect(stepIds).not.toContain("05-write-copy-attempt-2");
+  });
 
   it("returns the draft to 05 with the measured numbers when nothing free fixes it", async () => {
     const router = fakeRouterSequence([
@@ -282,7 +306,8 @@ describe("08a1-interest-floor: where it runs and what it costs", () => {
     const { result, stepIds } = await runToGate(env, "interest_returns_to_copy", router, {
       metrics: (slide: Slide) => {
         if (slide.n === 1) renders += 1;
-        return renders <= 2 && slide.n === 1 ? idleUnderTheNewFloor : passingSlideMetrics();
+        // First render + BOTH free re-layout rounds (`INTEREST_RELAYOUT_ROUNDS`, 2026-09-24) fail.
+        return renders <= 3 && slide.n === 1 ? idleUnderTheNewFloor : passingSlideMetrics();
       },
     });
 

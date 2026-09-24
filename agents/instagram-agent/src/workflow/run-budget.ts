@@ -105,6 +105,13 @@ export const GENERATED_IMAGES_PER_RUN_CAP = 8;
 export const FLOOR_RESERVE_FRAMES = 4;
 
 /**
+ * How many free re-layout rounds (`08a1b`/`08a1c`/`08a1d`) one attempt may run
+ * before the paid redraft (2026-09-24). A render is $0; a second round is what
+ * lets a post with two empty plates fix both on the final attempt.
+ */
+export const INTEREST_RELAYOUT_ROUNDS = 2;
+
+/**
  * Candidates the harvester returns per photo slide — `media.findImages`'s
  * `maxPerNeed`, which the workflow now passes EXPLICITLY at `05b` from this
  * constant.

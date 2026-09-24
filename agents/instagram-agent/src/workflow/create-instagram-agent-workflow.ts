@@ -158,6 +158,7 @@ import {
   // Phase 5.5, spec §2 A1 — the generated-image floor no lever may cross.
   GENERATED_IMAGES_PER_RUN_CAP,
   FLOOR_RESERVE_FRAMES,
+  INTEREST_RELAYOUT_ROUNDS,
   MIN_GENERATED_IMAGES_PER_RUN,
   RUN_BUDGET_BELIEF_KEY,
   RunSpendMeter,
@@ -13030,8 +13031,18 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         }
       }
 
-      if (!floor.ok) {
-        // ── 08a1b/08a1c/08a1d: the FREE remedy, once ──
+      // ── A SECOND FREE ROUND (2026-09-24). ──
+      //
+      // One merge per plan is a correctness bound (see `interest-relayout.ts`),
+      // so a post with TWO one-element plates got one of them fixed and the
+      // other "returned to the writer" — which on the final attempt means it
+      // shipped. Hanky Panky (pubsub-21255031808714496, attempt 3) merged slide
+      // 5 into 4 and shipped old slide 6: a headline and a line of body at the
+      // foot of an empty plate. The second round plans against the RECHECK's
+      // findings on the post-merge document, so its numbering is the real one.
+      for (let relayoutRound = 1; relayoutRound <= INTEREST_RELAYOUT_ROUNDS && !floor.ok; relayoutRound++) {
+        const roundSuffix = relayoutRound === 1 ? "" : `-round-${relayoutRound}`;
+        // ── 08a1b/08a1c/08a1d: the FREE remedy ──
         //
         // A render is $0; a Sonnet redraft is $0.12. `planInterestRelayout`
         // returns at most ONE change per failing slide from a fixed, tested
@@ -13083,10 +13094,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // slide that LOST A PICTURE from the pixel symptom alone, and the two
           // remedies that key on this attempt's own imagery facts could not be
           // chosen at all.
-          ...(imageryShortfalls.length > 0 ? { imageryShortfalls } : {}),
+          // Round 1 only: the record is keyed on PRE-merge slide numbers.
+          ...(relayoutRound === 1 && imageryShortfalls.length > 0 ? { imageryShortfalls } : {}),
         });
         if (plan !== undefined) {
-          interestRelayout = await wf.step.code(rev(`08a1b-relayout-for-interest-attempt-${attempt}`), () => plan);
+          const previousRound = interestRelayout;
+          interestRelayout = await wf.step.code(rev(`08a1b-relayout-for-interest-attempt-${attempt}${roundSuffix}`), () => plan);
+          if (previousRound !== undefined) {
+            interestRelayout = { ...interestRelayout, changes: [...previousRound.changes, ...interestRelayout.changes], notes: [...previousRound.notes, ...interestRelayout.notes] };
+          }
           // Every mutation the re-layout makes is built into a CANDIDATE and
           // committed only after `08a1c` renders it — the copy, the image
           // selections, the type-scale overrides and the validated custom
@@ -13242,7 +13258,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // written — the case that made the mismatch real rather than possible.
           runVisualSystem = systemFor(nextCopy.slides.length);
           await ensureTemplatesOnDisk(nextValidatedCustomArchetypes);
-          const relayoutRender = await wf.step.code(rev(`08a1c-render-relayout-attempt-${attempt}`), async () => {
+          const relayoutRender = await wf.step.code(rev(`08a1c-render-relayout-attempt-${attempt}${roundSuffix}`), async () => {
             const assembled = assembleForAttempt(nextCopy, nextSelections, nextValidatedCustomArchetypeIds, nextStyleOverrides);
             // The re-layout may have shortened the carousel, so the zone is
             // re-resolved against the document that is actually being rendered
@@ -13263,7 +13279,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             validatedCustomArchetypeIds = nextValidatedCustomArchetypeIds;
             slidesDataForQa = relayoutRender.slidesData;
             renderedAttempt = relayoutRender.outcome.result as RenderCarouselResult;
-            floor = await wf.step.code(rev(`08a1d-interest-floor-recheck-attempt-${attempt}`), () =>
+            floor = await wf.step.code(rev(`08a1d-interest-floor-recheck-attempt-${attempt}${roundSuffix}`), () =>
               checkSlidesInterestFloor(withSubjectBoxes(renderedAttempt.rendered), {
                 downgradedForImages: downgradedForImagesThisAttempt,
                 archetypeBySlide: measuredArchetypes(slidesDataForQa, copy, validatedCustomArchetypeIds),
@@ -13311,7 +13327,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               discarded: true,
               discardedReason: `the re-layout's render reported ${relayoutRender.outcome.status}, so its copy and selection changes were rolled back`,
             };
+            break;
           }
+        } else {
+          break;
         }
       }
 
