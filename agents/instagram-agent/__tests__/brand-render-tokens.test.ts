@@ -4,6 +4,7 @@ import {
   contrastRatio,
   deriveBrandRenderTokens,
   filterLearnedStyleToRing,
+  isPlatformUiColor,
   paletteForSlide,
 } from "../src/workflow/brand-render-tokens.js";
 import type { BrandTokens } from "../src/workflow/types.js";
@@ -129,7 +130,9 @@ describe("deriveBrandRenderTokens: the derivation ladder", () => {
       const noRoles = { colors: ["#5938b7", "#201547", "#ffcf25"], dominantColors: [{ hex: "#5938b7", dominanceRank: 1 }] };
       const kit = deriveBrandRenderTokens(noRoles, baseTokens);
       expect(kit?.cssVars["--bg"]).toBe("#201547");
-      expect(kit?.cssVars["--fg"]).toBe("#ffcf25");
+      // 2026-09-24: the yellow is a HUE, so it is no longer the ink; it stays
+      // in the kit as an accent and the text is a synthesised white.
+      expect(kit?.cssVars["--fg"]).toBe("#ffffff");
     });
 
     it("ignores a stated background that is neither of the resolved neutrals rather than inventing an ink for it", () => {
@@ -519,5 +522,51 @@ describe("paletteForSlide: seeded, reproducible rotation", () => {
 
   it("an empty ring rotates nothing at all rather than inventing a color", () => {
     expect(paletteForSlide({ palette: [] }, { index: 0 })).toBeUndefined();
+  });
+});
+
+describe("a hue is never the ink, and a platform colour is never the brand (2026-09-24)", () => {
+  // XO Digital's prep brand.json, verbatim.
+  const XO = {
+    colors: ["#06cf9c", "#050520", "#0095f6"],
+    dominantColors: [
+      { hex: "#06cf9c", role: "Primary CTA and accent color", dominanceRank: 1 },
+      { hex: "#050520", role: "Dark background and text", dominanceRank: 2 },
+      { hex: "#0095f6", role: "Secondary accent and link color", dominanceRank: 3 },
+    ],
+    visualStyle: "High-Tech",
+  };
+
+  it("sets white type on XO's navy and keeps the green as the accent", () => {
+    const kit = deriveBrandRenderTokens(XO, baseTokens);
+    expect(kit?.cssVars["--bg"]).toBe("#050520");
+    expect(kit?.cssVars["--fg"], "the green was the text colour of every XO slide").toBe("#ffffff");
+    expect(kit?.palette?.[0]).toBe("#06cf9c");
+  });
+
+  it("drops Instagram's UI blue from the accent ring", () => {
+    const kit = deriveBrandRenderTokens(XO, baseTokens);
+    expect(kit?.palette ?? []).not.toContain("#0095f6");
+    expect(isPlatformUiColor("#0095F6")).toBe(true);
+    expect(isPlatformUiColor("#1877f2")).toBe(true);
+    expect(isPlatformUiColor("#06cf9c")).toBe(false);
+  });
+
+  it("keeps a platform colour the CONFIG names, since config is an override", () => {
+    const kit = deriveBrandRenderTokens(XO, { ...baseTokens, palette: ["#0095f6"] });
+    expect(kit?.palette ?? []).toContain("#0095f6");
+  });
+
+  it("keeps a saturated colour the record NAMES the background", () => {
+    const kit = deriveBrandRenderTokens(
+      { colors: ["#c0262d", "#ffffff"], dominantColors: [{ hex: "#c0262d", role: "Background, hero panels", dominanceRank: 1 }] },
+      baseTokens,
+    );
+    expect(kit?.cssVars["--bg"]).toBe("#c0262d");
+  });
+
+  it("leaves neutral kits exactly as they were", () => {
+    const kit = deriveBrandRenderTokens({ colors: ["#ff6b2c", "#1a1a1a", "#f2f1ec"], dominantColors: [{ hex: "#1a1a1a", role: "Background", dominanceRank: 1 }] }, baseTokens);
+    expect(kit?.cssVars["--fg"]).toBe("#f2f1ec");
   });
 });
