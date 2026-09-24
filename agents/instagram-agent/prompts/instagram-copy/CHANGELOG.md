@@ -16,6 +16,19 @@ to hold five obsolete descriptions of them as well.
 
 ---
 
+**What changed at v32.** Owner feedback round 2026-09-24 (item C, WS-10):
+complete human sentences, and no negation habit. The guide itself taught the
+habit: section 25's model "correction" was "X is not the reason Y happens. Z
+is." and section 26 required a body turning on "not this. that." Both now
+state the claim positively, with rewritten English and Hebrew examples. New
+section 31 lists the six shapes `07b2-readable-copy` checks for free, each
+with a shipped example and its rewrite.
+
+**Cost.** INPUT: about +1,600 prompt characters, about +400 tokens, about
++$0.0012 an attempt. OUTPUT: unchanged.
+
+---
+
 **What changed at v31.** Everything v30 says still stands. Section 12 gains
 one paragraph for the new optional input `newsFlash`: a news cover always
 briefs a real photograph of the story's subject.
