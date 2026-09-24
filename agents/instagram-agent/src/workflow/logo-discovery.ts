@@ -117,8 +117,12 @@ function iconLinks(html: string): { touch: Array<{ href: string; size: number }>
     const href = attr(tag, "href");
     if (href === undefined || href.length === 0) continue;
     const size = Number.parseInt(/(\d+)x\d+/u.exec(attr(tag, "sizes") ?? "")?.[1] ?? "0", 10);
+    // A vector icon (`sizes="any"`, or an .svg file) renders sharp at any size,
+    // so it clears the 128px bar by construction: Karos Labs publishes its
+    // mark only as `/icon.svg` (2026-09-24), beside a text wordmark.
+    const vector = (attr(tag, "sizes") ?? "").toLowerCase() === "any" || /\.svg(?:[?#]|$)/iu.test(href) || (attr(tag, "type") ?? "").includes("svg");
     if (rel.includes("apple-touch-icon")) touch.push({ href, size: size || 180 });
-    else if (/\bicon\b/u.test(rel)) icons.push({ href, size });
+    else if (/\bicon\b/u.test(rel)) icons.push({ href, size: vector ? 512 : size });
   }
   return { touch: touch.sort((a, b) => b.size - a.size), icons: icons.filter((i) => i.size >= 128).sort((a, b) => b.size - a.size) };
 }

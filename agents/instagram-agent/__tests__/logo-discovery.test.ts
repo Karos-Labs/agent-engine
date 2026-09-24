@@ -49,6 +49,13 @@ describe("logoCandidatesFromHtml: the client's own mark, from its own homepage (
   });
 });
 
+describe("a vector icon is a mark at any size (2026-09-24)", () => {
+  it("offers Karos Labs' own /icon.svg (sizes=any) and still never a 32px favicon", () => {
+    const html = `<link rel="icon" href="/favicon.ico?x" sizes="32x32" type="image/x-icon"/><link rel="icon" href="/icon.svg?icon.2s5d" sizes="any" type="image/svg+xml"/>`;
+    expect(logoCandidatesFromHtml(html, "https://www.karoslabs.com/", "Karos Labs")).toEqual(["https://www.karoslabs.com/icon.svg?icon.2s5d"]);
+  });
+});
+
 describe("homepageUrlFor", () => {
   it("normalises what a client record calls its site to an https homepage", () => {
     expect(homepageUrlFor("hankypanky.com")).toBe("https://hankypanky.com/");
