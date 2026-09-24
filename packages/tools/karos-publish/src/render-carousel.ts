@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
@@ -168,7 +169,17 @@ import { placeAutoMarkBadge } from "./mark-placement.js";
  * that carries one). Nothing else moves; a slide without a badge renders
  * exactly as before.
  */
-const TOOL_VERSION = "1.11.0";
+/*
+ * 1.12.0 (2026-09-25, owner feedback round WS-09): every render uploads under
+ * its own key, `instagram/<client>/<postId>/<renderKey>/slide-<n>.png`. Objects
+ * were overwritten in place at `…/<postId>/slide-<n>.png`, so a SHORTER
+ * re-render (a merge after the interest floor) left the previous render's last
+ * slide in the prefix: Kindly Yours shipped slides 7 and 8 byte-identical, and
+ * 29 orphaned `slide-8.png` objects sit in the prep bucket. The key defaults to
+ * a hash of the slides data (a resumed render lands on the same objects); a
+ * caller may pass its own. Local `outDir` files are unchanged.
+ */
+const TOOL_VERSION = "1.12.0";
 
 // n/template/fields/images have no existing TSDoc to transcribe (SCRUM-293 flag) — descriptions
 // below synthesized from fillTemplate's/validateRenderInputs' usage of each field.
@@ -225,6 +236,11 @@ export const RenderCarouselInputSchema = z.object({
   /** Repo root every `templateDir`/`outDir`/image path is resolved and bounds-checked against. */
   repoRoot: z.string().min(1).describe("Repo root every templateDir/outDir/image path is resolved and bounds-checked against."),
   slides: z.array(SlideSchema).min(1).describe("The carousel's slides, in order, each rendered from its own template."),
+  renderKey: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{1,64}$/u)
+    .optional()
+    .describe("Namespaces this render's uploaded objects so a shorter re-render never leaves an older slide behind. Defaults to a hash of the slides data."),
   canvas: CanvasSchema.default(() => ({ w: 1080, h: 1440, scale: 2, slides_min: 6, slides_max: 8 })).describe("Render canvas dimensions and slide-count bounds."),
   readyFlag: z
     .string()
@@ -389,6 +405,11 @@ function fillTemplate(
  * (`contentFail`, legacy exit 1 — "the post had no viable image" is a real
  * content problem, not a bug in the renderer).
  */
+/** This render's object namespace (1.12.0): the caller's key, else a hash of the slides it renders. */
+export function renderKeyFor(input: Pick<RenderCarouselInput, "renderKey" | "slides">): string {
+  return input.renderKey ?? createHash("sha256").update(JSON.stringify(input.slides)).digest("hex").slice(0, 12);
+}
+
 export async function validateRenderInputs(
   input: RenderCarouselInput,
 ): Promise<{ ok: true; resolvedTemplateDir: string; resolvedOutDir: string } | { ok: false; kind: "tooling" | "content"; reason: string }> {
@@ -1266,6 +1287,7 @@ export function createRenderCarousel(mediaStore?: GcsArtifactStoreLike) {
         return validation.kind === "tooling" ? toolingError(validation.reason) : contentFail(validation.reason);
       }
       const { resolvedTemplateDir, resolvedOutDir } = validation;
+      const renderKey = renderKeyFor(input);
 
       let chromium: typeof import("playwright").chromium;
       try {
@@ -1438,7 +1460,7 @@ export function createRenderCarousel(mediaStore?: GcsArtifactStoreLike) {
           }
 
           const outPath = path.join(resolvedOutDir, `slide-${slide.n}.png`);
-          const objectPath = `instagram/${input.client}/${input.postId}/slide-${slide.n}.png`;
+          const objectPath = `instagram/${input.client}/${input.postId}/${renderKey}/slide-${slide.n}.png`;
           const persisted = await persistRenderedSlide(buffer, outPath, objectPath, mediaStore);
           rendered.push({
             n: slide.n,

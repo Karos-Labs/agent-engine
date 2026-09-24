@@ -162,3 +162,21 @@ describe("persistRenderedSlide", () => {
     expect(result.gcsUri).toBe(result.path);
   });
 });
+
+describe("every render uploads under its own key (1.12.0, owner feedback WS-09)", () => {
+  it("a shorter re-render cannot leave the previous render's last slide in its prefix", async () => {
+    const { renderKeyFor } = await import("../src/render-carousel.js");
+    const { readFileSync } = await import("node:fs");
+    const slide = (n: number) => ({ n, template: "slide.html", fields: { title: `t${n}` }, images: {}, htmlFragments: {} });
+    const eight = renderKeyFor({ slides: [1, 2, 3, 4, 5, 6, 7, 8].map(slide) } as never);
+    const seven = renderKeyFor({ slides: [1, 2, 3, 4, 5, 6, 7].map(slide) } as never);
+    // Kindly Yours shipped slides 7 and 8 byte-identical: the 7-slide render
+    // overwrote slide-1..7 and the old slide-8 stayed in the same prefix.
+    expect(eight).not.toBe(seven);
+    // A resumed render of the same document lands on the same objects.
+    expect(renderKeyFor({ slides: [1, 2, 3, 4, 5, 6, 7].map(slide) } as never)).toBe(seven);
+    expect(renderKeyFor({ renderKey: "08a1c-round-2", slides: [slide(1)] } as never)).toBe("08a1c-round-2");
+    const src = readFileSync(new URL("../src/render-carousel.ts", import.meta.url), "utf8");
+    expect(src).toContain("instagram/${input.client}/${input.postId}/${renderKey}/slide-${slide.n}.png");
+  });
+});
