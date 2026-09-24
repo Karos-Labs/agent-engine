@@ -14,6 +14,7 @@ import {
   type WorkflowContext,
   WorkflowBlockedIntake,
   WorkflowHeld,
+  textGateTimeout,
   WorkflowToolingFailure,
   toAgentContext,
   runGate,
@@ -1334,20 +1335,35 @@ export function createSeoGeoAgentWorkflow(options: CreateSeoGeoAgentWorkflowOpti
       maxRevisions: MAX_REVISION_ROUNDS,
       ...(options.autoApprove ? { autoApprove: true } : {}),
       attempt: draftOnce,
-      buildGate: (draft, revision) => ({
-        kind: "batch_review",
-        payload: {
-          runId: wf.runId,
-          seoScore: scoring.seoScore.score,
-          geoReadinessScore: scoring.geoReadiness.score,
-          firedRecommendationCount: recommendations.length,
-          fixDraftCount: draft.fixDrafts.length,
-          preview: draft.narrative,
-          revision,
-        },
-        requiredRole: "account_manager",
-        timeout: { duration: "1h", onTimeout: "auto_approve" },
-      }),
+      buildGate: (draft, revision) => {
+        // The platform's three-tier policy, not a flat hour. A report whose
+        // narrative had to be REPAIRED to get here (an unsourced figure
+        // redacted), or whose AI visibility was never measured, is exactly the
+        // case worth a longer look — so it waits six hours instead of one, and
+        // then still ships: the flag buys a reviewer TIME, not a veto.
+        const policy = textGateTimeout({
+          repairs: narrativeRepairsByRevision.get(revision) ?? [],
+          flags: visibilityUnmeasuredNote !== undefined ? ["AI visibility was not measured on this run"] : [],
+        });
+        return {
+          kind: "batch_review",
+          payload: {
+            runId: wf.runId,
+            seoScore: scoring.seoScore.score,
+            geoReadinessScore: scoring.geoReadiness.score,
+            firedRecommendationCount: recommendations.length,
+            fixDraftCount: draft.fixDrafts.length,
+            preview: draft.narrative,
+            revision,
+            // The clock and the sentence explaining it, from one place, so they
+            // can never disagree.
+            gateWaitReason: policy.reason,
+            ...(policy.flags.length > 0 ? { gateFlags: policy.flags } : {}),
+          },
+          requiredRole: "account_manager",
+          timeout: { duration: policy.duration, onTimeout: policy.onTimeout },
+        };
+      },
       onDecision: async ({ revision, response }) => {
         await persistReviewFeedbackToMemory(wf, tools, ctx, revision, response);
       },

@@ -2,7 +2,7 @@ import { readForbiddenTopics } from "@agent-engine/core";
 import type { AgentContext, AgentToolRegistry, GateResponse, ModelRouter, PromptStore } from "@agent-engine/core";
 import type { WorkspaceStoreLike } from "@agent-engine/tool-common";
 import type { Annotations, CaptureLegOutcome, DoctrineGateResult, Review, TriageResult } from "@agent-engine/tool-karos-reputation";
-import { readRunDirection, runDirectionField, type SlotOutcome, type WorkflowContext, WorkflowBlockedIntake, WorkflowToolingFailure, runTopicGuardrail, toAgentContext } from "@agent-engine/workflow";
+import { readRunDirection, runDirectionField, type SlotOutcome, type WorkflowContext, WorkflowBlockedIntake, WorkflowToolingFailure, textGateTimeout, runTopicGuardrail, toAgentContext } from "@agent-engine/workflow";
 import { ReputationDoctrineGateAgent } from "../agent/reputation-doctrine-gate-agent.js";
 import { ReputationDraftAgent } from "../agent/reputation-draft-agent.js";
 import { REPUTATION_CLASSIFIER_MODEL_ID, ReputationExtractionAgent } from "../agent/reputation-extraction-agent.js";
@@ -674,6 +674,28 @@ export function createReputationPulseWorkflow(options: CreateReputationPulseWork
       frozen.forbiddenTopics,
     );
 
+    /**
+     * WHAT THE CLOCK ON THIS GATE IS WORTH.
+     *
+     * A flat `1h / auto_approve` gave a pulse carrying a CRISIS trigger, or one
+     * whose capture legs were half down, exactly the hour a clean pulse got.
+     * The platform's three-tier policy
+     * (`packages/workflow/src/primitives/gate-timeout.ts`) gives a flagged
+     * batch six hours and then still releases it — a flag buys a reviewer
+     * TIME, not a veto. Both flags are facts this run already computed and
+     * already puts on the gate payload.
+     */
+    const approvePolicy = textGateTimeout({
+      flags: [
+        ...(triageResult.crisis.fired
+          ? [`a crisis trigger fired on this pulse (${triageResult.crisis.triggers.length} trigger(s))`]
+          : []),
+        ...(unavailableLegs.length > 0
+          ? [`${unavailableLegs.length} capture leg(s) were unavailable, so this pulse saw less than the client's full surface`]
+          : []),
+      ],
+    });
+
     const approveAllDecision: GateResponse = options.autoApprove
       ? await wf.step.code("10-reputation-approve-all", () => ({ decision: "approve" as const, actor: "system", at: new Date().toISOString() }))
       : await wf.step.gate("10-reputation-approve-all", {
@@ -684,9 +706,11 @@ export function createReputationPulseWorkflow(options: CreateReputationPulseWork
             approvedDraftCount: approvedList.length,
             flaggedCount: flagRows.length,
             crisisFired: triageResult.crisis.fired,
+            gateWaitReason: approvePolicy.reason,
+            ...(approvePolicy.flags.length > 0 ? { gateFlags: approvePolicy.flags } : {}),
           },
           requiredRole: "account_manager",
-          timeout: { duration: "1h", onTimeout: "auto_approve" },
+          timeout: { duration: approvePolicy.duration, onTimeout: approvePolicy.onTimeout },
         });
     /**
      * A REJECTION REFUSES THE RELEASE, NOT THE PULSE.
