@@ -115,7 +115,10 @@ body {
      a client with no display face of its own would have shipped. */
   --f-display: 'Fraunces', Georgia, 'Times New Roman', serif;
   --f-body: 'Inter', system-ui, -apple-system, sans-serif;
-  --f-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  /* No `--f-mono` default (owner feedback 2026-09-24, WS-02/06): IBM Plex Mono
+     was declared and never loaded, so every label painted the system mono
+     (DejaVu). A brand that declares a mono sets it; every other reads its
+     own body face through `var(--f-mono, var(--f-body))`. */
 }
 
 :root { --accent: {{accentColor}}; }
@@ -909,7 +912,7 @@ body:has(.hero) .kicker {
 }
 
 .eyebrow, .kicker {
-  font-family: var(--f-mono, ui-monospace, monospace);
+  font-family: var(--f-mono, var(--f-body));
   font-size: var(--t-micro);
   font-weight: 600;
   letter-spacing: 0.14em;
@@ -929,7 +932,7 @@ body:has(.hero) .kicker {
   inset-block-start: 0;
   inset-inline-start: var(--mx);
   z-index: 5;
-  font-family: var(--f-mono, ui-monospace, monospace);
+  font-family: var(--f-mono, var(--f-body));
   font-size: var(--t-micro);
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -971,7 +974,7 @@ body:has(.hero) .kicker {
 .brand-handle:has( > bdi:empty) { display: none; }
 
 .brand-handle {
-  font-family: var(--f-mono, ui-monospace, monospace);
+  font-family: var(--f-mono, var(--f-body));
   font-size: var(--t-micro);
   letter-spacing: 0.08em;
   color: color-mix(in srgb, var(--fg) 46%, transparent);
@@ -986,7 +989,7 @@ body:has(.hero) .kicker {
      `numeralSlides` names every interior and never the cover or the closer, so
      the switch is what makes it all-or-none. */
   display: var(--fx-pagination, none);
-  font-family: var(--f-mono, ui-monospace, monospace);
+  font-family: var(--f-mono, var(--f-body));
   font-size: var(--t-micro);
   letter-spacing: 0.16em;
   color: color-mix(in srgb, var(--fg) 34%, transparent);
@@ -1146,7 +1149,7 @@ body[data-accent="none"] .acc { display: none; }
   margin: 0;
 }
 .source-line, .note {
-  font-family: var(--f-mono, ui-monospace, monospace);
+  font-family: var(--f-mono, var(--f-body));
   font-size: var(--t-micro);
   letter-spacing: 0.06em;
   color: color-mix(in srgb, var(--fg) 48%, transparent);
