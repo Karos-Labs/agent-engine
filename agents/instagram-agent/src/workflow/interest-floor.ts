@@ -2384,6 +2384,18 @@ export function plateSubject(metrics: SlideMetrics, probe: SlideProbe | undefine
   if (metrics.imageryOrDeviceShare >= IMAGERY_OR_DEVICE_FLOOR * SUBJECT_IMAGERY_MULTIPLE) {
     return `it carries imagery or a drawn device over ${pct(metrics.imageryOrDeviceShare)} of the frame`;
   }
+  // ── A DECLARED BOX COUNTS BY ITS AREA, NOT BY ITS FILL (2026-09-25, WS-07). ──
+  //
+  // A device drawn in the client's own language is often a hairline with no
+  // fill (KAROS: transparent boxes, 1px lines). The pixel limb above reads its
+  // inside as ground, so the only way to pass it was a tinted fill: the owner's
+  // "brown and pink boxes". The DOM knows the box is there; the cover's clause
+  // I already counts it by area (`COVER_OBJECT_BOX_SHARE`), and now every role
+  // does. The grey screen carries no device box, so this cannot waive it.
+  const declared = probe?.subjectBoxes?.device;
+  if (declared !== undefined && declared >= COVER_OBJECT_BOX_SHARE) {
+    return `it carries a declared device box over ${pct(declared)} of the canvas`;
+  }
   // ── THE TYPE LIMB IS WITHDRAWN. IT WAIVED THE PLATE THIS PHASE EXISTS TO
   //    REFUSE, AND THE SWEEP IS WHAT CAUGHT IT. ──
   //
@@ -2845,7 +2857,8 @@ export function checkInterestFloor(
   const lowOccupancy = metrics.flatBackgroundShare > FLAT_BACKGROUND_CEILING && metrics.occupiedShare < occupiedFloor;
   // ── E — a cover or a closer carries something other than type. ──
   const deviceFloor = role === "closer" ? CLOSER_IMAGERY_OR_DEVICE_FLOOR : IMAGERY_OR_DEVICE_FLOOR;
-  if (role !== "interior" && metrics.imageryOrDeviceShare < deviceFloor) {
+  const declaredDevice = probe?.subjectBoxes?.device;
+  if (role !== "interior" && metrics.imageryOrDeviceShare < deviceFloor && !(declaredDevice !== undefined && declaredDevice >= COVER_OBJECT_BOX_SHARE)) {
     const finding: InterestFinding = {
       slide,
       role,
