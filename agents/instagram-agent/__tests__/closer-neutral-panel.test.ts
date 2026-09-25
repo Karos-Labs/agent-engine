@@ -17,13 +17,10 @@ describe("the closer's panels carry no accent", () => {
     expect(panelRules.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("paints every one of them from the text colour, never the accent", () => {
+  it("paints every one of them from the text colour, never the accent, and never as a gradient fill", () => {
     for (const rule of panelRules) {
       expect(rule.body, rule.selector).not.toContain("--accent");
-      // A ramp is allowed only as the neutral one the stat and quote panels use
-      // (#280): every stop is the ink colour. A flat fill measured as one empty
-      // rectangle on short copy (main CI after #293), which is why it is a ramp.
-      for (const stop of rule.body.match(/color-mix\([^)]*\)/gu) ?? []) expect(stop, rule.selector).toMatch(/var\(--fg\)/u);
+      expect(rule.body, rule.selector).not.toMatch(/linear-gradient/u);
     }
   });
 });
