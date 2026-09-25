@@ -1419,10 +1419,15 @@ body.ta-center .plate > .mark-badge { margin-inline: auto; }
      the plate made the ink measurement blind to the type size and read the
      frame edge as clipped ink. */
   background-image: none;
+  /* A flat, faint fill of the ink colour under the hairline: never a gradient
+     and never the accent. With no fill at all the panel's inside read as the
+     plate's largest empty rectangle on short copy (LER 0.209 against the
+     closer's 0.22 ceiling, which calibration holds with a 15% margin). */
+  background-color: color-mix(in srgb, var(--fg) 8%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 26%, transparent);
   border-radius: 6px;
 }
-body:not(:has(#takeaway > span:not(:empty))) .cl-panel { box-shadow: none; }
+body:not(:has(#takeaway > span:not(:empty))) .cl-panel { box-shadow: none; background-color: transparent; }
 .cl-recap {
   margin-block-start: var(--sp-2);
   inline-size: 100%;
