@@ -1380,7 +1380,12 @@ body.ta-center .plate > .mark-badge { margin-inline: auto; }
 body:not(:has(#quote > span:not(:empty))) .quote-block { background-image: none; box-shadow: none; }
 /* A quotation is read, not scanned, so it takes a narrower measure than a
    headline: ~34 characters a line rather than the headline's 15 words. */
-.quote-text { max-inline-size: min(17ch, 100%); }
+/* AND NEVER NARROWER THAN MOST OF THE PANEL (2026-09-25). `ch` follows the
+   font, so once the fit ladder shrinks a long quotation, 17ch is a column:
+   prep batch 6's karoslabs quote set 14 lines in 40% of its box, beside an
+   attribution running the full width. The frame floor holds the measure
+   where the step cannot. */
+.quote-text { max-inline-size: min(max(17ch, 78%), 100%); }
 .quote-attr { margin-block-start: var(--sp); }
 </style>
 </head>
