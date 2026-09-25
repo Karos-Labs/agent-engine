@@ -1393,6 +1393,25 @@ body.ta-center .plate > .mark-badge { margin-inline: auto; }
    pubsub-21255292697877233). With a picture the plate drops its device: one
    object per item, the picture or the figure, never both crowding the copy. */
 .plate.focus:has(.sc-figure-band img[src]:not([src=""])) .hf-device { display: none; }
+
+/* ── A LIST ITEM THAT CARRIES A FIGURE (owner, 2026-09-25). ──
+   The item number above sat at the top step and never stepped with the fit
+   ladder, so on a plate that also carried a figure the ladder shrank the
+   FIGURE instead: The Pitch by Deel and KAROS shipped a 200px "03" over a
+   66px figure and a 22px caption, six sizes on one plate, and the owner saw
+   the small text on top fighting what was written below it. The figure is
+   the display object; the item number becomes a place marker at the label
+   step, and the caption never drops below that step. */
+.plate.focus:has(.hf-device:not(:empty)):not(:has(.sc-figure-band img[src]:not([src=""]))) .hf-ordinal {
+  font-family: var(--f-mono, var(--f-body, system-ui, sans-serif));
+  font-size: var(--t-label);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+}
+.plate.focus .hf-device .dv-label,
+.plate.focus .hf-device[data-fit] .dv-label { font-size: var(--t-label); }
 </style>
 </head>
 <body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-ground="{{groundStyle}}" data-tone="{{groundTone}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}" data-anchor="{{compositionAnchor}}" data-figure="{{figurePlacement}}">
