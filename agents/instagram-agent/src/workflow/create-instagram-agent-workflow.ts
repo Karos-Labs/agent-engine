@@ -10671,6 +10671,32 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         unfillable = selections.filter(isUnfillable);
       }
 
+      // ── 06f4: THE BANNED SCENE, FROM ANY SOURCE (2026-09-25) ──
+      //
+      // The owner banned the scene every AI-written feed shows (a person lit by
+      // a laptop or monitor, a dashboard on a screen), and #211 enforces it on
+      // what we GENERATE. Stock retrieval still brought it in: KAROS's
+      // 2026-09-25 carousel shipped a Pexels man at a wall of financial graphs
+      // because the writer briefed "an enterprise data dashboard on a large
+      // screen" and the vet matched it. A picked picture whose own vetting
+      // reason prescribes the scene is released here, and the floor below
+      // fills the slide with a rewritten real-world scene. A client's own
+      // upload is theirs to choose and is never released.
+      const clicheReleased = await wf.step.code(rev(`06f4-release-cliche-scenes-attempt-${attempt}`), () =>
+        selections
+          .filter((sel) => sel.imagePath !== null && !/client|upload/iu.test(sel.license ?? "") && prescribesClicheScene(`${sel.reason ?? ""} ${sel.subjectMatchReason ?? ""}`))
+          .map((sel) => sel.n),
+      );
+      if (clicheReleased.length > 0) {
+        const released = new Set(clicheReleased);
+        selections = selections.map((sel) =>
+          released.has(sel.n)
+            ? { ...sel, imagePath: null, reason: "the picked picture shows a screen or a person at a laptop, the scene the owner banned; this slide is sourced again with a real-world scene" }
+            : sel,
+        );
+        unfillable = selections.filter(isUnfillable);
+      }
+
       // ── 06h: THE IMAGE FLOOR, CHECKED ON WHAT ACTUALLY LANDED (Phase 5.5, spec §2 A1b) ──
       //
       // `wf.step.code`, **$0.00**, and it is the second of the two enforcements
