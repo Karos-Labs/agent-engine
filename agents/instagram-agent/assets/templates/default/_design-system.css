@@ -365,11 +365,17 @@ body:has(.bg[data-kind="framed"]) .plate { padding-block-start: calc(var(--zone-
      the picture, so its shape decides how much of the plate keeps the image's
      own palette. Fully transparent above 62%, and only the band the lockup
      sits in is dark enough to read on. */
+  /* ANCHORED TO THE TEXT (owner feedback round 2026-09-24, item H, WS-08):
+     `_ds-fit.js` measures where the lockup starts and sets `--scrim-dense` so
+     the dense band reaches one line above the first line of copy. A long
+     cover title used to climb past 42% onto a half-strength shade. Never
+     below today's 22%, so a short cover keeps its photograph exactly as
+     before; without the script the stops are today's. */
   background: linear-gradient(to top,
     color-mix(in srgb, var(--bg) 96%, transparent) 0%,
-    color-mix(in srgb, var(--bg) 86%, transparent) 22%,
-    color-mix(in srgb, var(--bg) 52%, transparent) 42%,
-    color-mix(in srgb, var(--bg) 0%, transparent) 62%);
+    color-mix(in srgb, var(--bg) 86%, transparent) var(--scrim-dense, 22%),
+    color-mix(in srgb, var(--bg) 52%, transparent) calc(var(--scrim-dense, 22%) + 20%),
+    color-mix(in srgb, var(--bg) 0%, transparent) calc(var(--scrim-dense, 22%) + 40%));
 }
 /* No photograph, no scrim: it exists to make copy legible over a picture, and
    over bare ground it only flattens the ground. */

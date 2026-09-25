@@ -259,8 +259,23 @@
      the plate actually uses have loaded. `render-carousel.ts` waits on
      `__CAROUSEL_READY__`, so raising it before the second pass would screenshot
      a layout the ladder had not seen. */
+  /* THE SHADE FOLLOWS THE WORDS (WS-08). After the last fit pass, so the
+     lockup's top is where it will be screenshotted: the dense band of the
+     scrim reaches one line (6% of the plate) above the first line of copy,
+     and never drops below the 22% the stylesheet has always used. */
+  function anchorScrim() {
+    var scrim = document.querySelector('.scrim');
+    var lock = plate.querySelector('.lockup, .sl-lockup');
+    if (!scrim || !lock || getComputedStyle(scrim).display === 'none') return;
+    var h = document.documentElement.clientHeight || window.innerHeight;
+    if (!h) return;
+    var fromBottom = ((h - lock.getBoundingClientRect().top) / h) * 100 + 6;
+    var dense = Math.max(22, Math.min(80, fromBottom));
+    document.body.style.setProperty('--scrim-dense', dense.toFixed(1) + '%');
+    document.body.setAttribute('data-scrim-dense', dense.toFixed(0));
+  }
   pass();
-  var done = function () { pass(); window.__CAROUSEL_READY__ = true; };
+  var done = function () { pass(); anchorScrim(); window.__CAROUSEL_READY__ = true; };
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(done, done);
   else done();
 })();

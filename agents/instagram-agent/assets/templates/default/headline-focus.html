@@ -387,11 +387,17 @@ body:has(.bg[data-kind="framed"]) .plate { padding-block-start: calc(var(--zone-
      the picture, so its shape decides how much of the plate keeps the image's
      own palette. Fully transparent above 62%, and only the band the lockup
      sits in is dark enough to read on. */
+  /* ANCHORED TO THE TEXT (owner feedback round 2026-09-24, item H, WS-08):
+     `_ds-fit.js` measures where the lockup starts and sets `--scrim-dense` so
+     the dense band reaches one line above the first line of copy. A long
+     cover title used to climb past 42% onto a half-strength shade. Never
+     below today's 22%, so a short cover keeps its photograph exactly as
+     before; without the script the stops are today's. */
   background: linear-gradient(to top,
     color-mix(in srgb, var(--bg) 96%, transparent) 0%,
-    color-mix(in srgb, var(--bg) 86%, transparent) 22%,
-    color-mix(in srgb, var(--bg) 52%, transparent) 42%,
-    color-mix(in srgb, var(--bg) 0%, transparent) 62%);
+    color-mix(in srgb, var(--bg) 86%, transparent) var(--scrim-dense, 22%),
+    color-mix(in srgb, var(--bg) 52%, transparent) calc(var(--scrim-dense, 22%) + 20%),
+    color-mix(in srgb, var(--bg) 0%, transparent) calc(var(--scrim-dense, 22%) + 40%));
 }
 /* No photograph, no scrim: it exists to make copy legible over a picture, and
    over bare ground it only flattens the ground. */
@@ -1669,8 +1675,23 @@ body.ta-center .plate > .mark-badge { margin-inline: auto; }
      the plate actually uses have loaded. `render-carousel.ts` waits on
      `__CAROUSEL_READY__`, so raising it before the second pass would screenshot
      a layout the ladder had not seen. */
+  /* THE SHADE FOLLOWS THE WORDS (WS-08). After the last fit pass, so the
+     lockup's top is where it will be screenshotted: the dense band of the
+     scrim reaches one line (6% of the plate) above the first line of copy,
+     and never drops below the 22% the stylesheet has always used. */
+  function anchorScrim() {
+    var scrim = document.querySelector('.scrim');
+    var lock = plate.querySelector('.lockup, .sl-lockup');
+    if (!scrim || !lock || getComputedStyle(scrim).display === 'none') return;
+    var h = document.documentElement.clientHeight || window.innerHeight;
+    if (!h) return;
+    var fromBottom = ((h - lock.getBoundingClientRect().top) / h) * 100 + 6;
+    var dense = Math.max(22, Math.min(80, fromBottom));
+    document.body.style.setProperty('--scrim-dense', dense.toFixed(1) + '%');
+    document.body.setAttribute('data-scrim-dense', dense.toFixed(0));
+  }
   pass();
-  var done = function () { pass(); window.__CAROUSEL_READY__ = true; };
+  var done = function () { pass(); anchorScrim(); window.__CAROUSEL_READY__ = true; };
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(done, done);
   else done();
 })();
