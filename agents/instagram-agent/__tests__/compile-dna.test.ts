@@ -54,7 +54,9 @@ describe("the consumers read the DNA and keep the regex for the unclassified", (
 
   it("harvest peers come from the pack ahead of the industry regex", () => {
     const plan = planHarvest({ ownAccounts: [], referenceAccounts: [], competitors: [], industry: "News", peers: ["boilerroomtv", "defected"] });
-    expect(plan.accounts.map((a) => a.handle)).toEqual(["boilerroomtv", "defected"]);
+    // The pack's peers lead; the industry benchmarks top them up to four (2026-09-25).
+    expect(plan.accounts.map((a) => a.handle).slice(0, 2)).toEqual(["boilerroomtv", "defected"]);
+    expect(plan.accounts).toHaveLength(4);
     const legacy = planHarvest({ ownAccounts: [], referenceAccounts: [], competitors: [], industry: "News" });
     expect(legacy.accounts.map((a) => a.handle)).toContain("wired");
   });
