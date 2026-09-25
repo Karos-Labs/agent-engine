@@ -75,6 +75,20 @@ export const COPY_MAX_TOKENS = 32_000;
  * concern (which checkpointed step to re-run), not a Layer 2 one.
  */
 export class InstagramCopyAgent extends BaseAgent<InstagramCopyDraft> {
+  /**
+   * 2026-09-25: the LEAN twin (`omitThought`) for an attempt that follows a
+   * timed-out one. Copy turns spend 84-88% of their output on `thought`
+   * (table above) and take 240-590 s; Geektime's Hebrew drafts then ran past
+   * the 600 s step timeout on all three attempts of both prep runs
+   * (pubsub-21793069060814783, pubsub-21793655015127109) and the runs held
+   * with no draft. A ceiling the engine hit is a ceiling it recovers from
+   * (owner rule): the next attempt drafts without the planning prose.
+   */
+  constructor(runtime: ConstructorParameters<typeof BaseAgent<InstagramCopyDraft>>[0], options: { omitThought?: boolean } = {}) {
+    super(runtime);
+    if (options.omitThought === true) this.config = { ...this.config, omitThought: true };
+  }
+
   protected readonly config: AgentStepConfig<InstagramCopyDraft> = {
     id: "instagram-copy",
     description: "Write an Instagram post in the requested format: 6-8 carousel slides (one idea each) or one designed slide with a deep caption, every claim traced to a sourced research fact.",
