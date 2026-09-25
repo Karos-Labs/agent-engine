@@ -3001,10 +3001,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           const config = (await read("client.getConfig")) as Record<string, unknown> | undefined;
           const brandKit = (await read("client.getBrand")) as Record<string, unknown> | undefined;
           const competitors = (await read("client.listCompetitors")) as ReadonlyArray<{ name?: unknown; website?: unknown }> | undefined;
+          const profileForHarvest = (await read("client.getProfile")) as ClientProfile | undefined;
           const plan = planHarvest({
             ownAccounts: socialAccountsFromClient(config, brandKit),
             referenceAccounts: brief.referenceAccounts,
             competitors: Array.isArray(competitors) ? competitors : [],
+            ownWebsite: gatherBriefSourceUrls(profileForHarvest)[0],
+            industry: typeof (profileForHarvest as Record<string, unknown> | undefined)?.["industry"] === "string" ? ((profileForHarvest as Record<string, unknown>)["industry"] as string) : undefined,
           });
           if (plan.accounts.length === 0 && plan.competitorSites.length === 0) {
             return { ok: false as const, problems: [...problems, "no Instagram account, reference account or competitor website is on file, so there was nothing to harvest"] };

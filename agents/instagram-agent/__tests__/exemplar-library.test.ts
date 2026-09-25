@@ -119,6 +119,26 @@ describe("the library steers picture density (RFC-26 Phase 4a)", () => {
     expect(densityFromLibrary(lib([entry("none"), entry("none"), entry("none"), entry("inset"), entry("none")]))).toBeUndefined();
     expect(densityFromLibrary(lib([entry("full-bleed"), entry("inset")]))).toBeUndefined();
     expect(densityFromLibrary(undefined)).toBeUndefined();
+describe("a client with nothing on file still gets a library (2026-09-25)", () => {
+  it("falls back to its industry's benchmark accounts and reads its own account off its website", async () => {
+    const { benchmarksForIndustry, DEFAULT_BENCHMARKS } = await import("../src/workflow/exemplar-library.js");
+    const plan = planHarvest({ ownAccounts: [], referenceAccounts: [], competitors: [], ownWebsite: "hankypanky.com", industry: "Intimate apparel and lingerie" });
+    expect(plan.accounts.map((a) => a.handle)).toEqual(["aerie", "knix", "thirdlove", "wearcommando"]);
+    expect(plan.competitorSites).toEqual([{ name: "the client's own site", website: "https://hankypanky.com", role: "client" }]);
+    expect(benchmarksForIndustry("AI marketing agency")).toContain("reputeforge");
+    expect(benchmarksForIndustry("Something unusual")).toEqual(DEFAULT_BENCHMARKS);
+  });
+
+  it("does not add benchmarks when the brief names references, nor read the site when the config names the account", () => {
+    const plan = planHarvest({ ownAccounts: [{ platform: "instagram", username: "karoslabs" }], referenceAccounts: [{ platform: "instagram", handle: "semrush" }], competitors: [], ownWebsite: "karoslabs.com", industry: "AI marketing" });
+    expect(plan.accounts.map((a) => a.handle)).toEqual(["karoslabs", "semrush"]);
+    expect(plan.competitorSites).toEqual([]);
+  });
+
+  it("rebuilds at once over a 'nothing to harvest' marker", () => {
+    const now = new Date("2026-09-25T02:00:00Z");
+    expect(exemplarLibraryAction(failedLibrary(new Date("2026-09-25T00:01:00Z"), ["no Instagram account, reference account or competitor website is on file, so there was nothing to harvest"]), now)).toBe("build");
+    expect(exemplarLibraryAction(failedLibrary(new Date("2026-09-25T00:01:00Z"), ["the harvest failed: scraper down"]), now)).toBe("wait");
   });
 });
 
