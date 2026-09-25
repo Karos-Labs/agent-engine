@@ -121,3 +121,17 @@ describe("the library steers picture density (RFC-26 Phase 4a)", () => {
     expect(densityFromLibrary(undefined)).toBeUndefined();
   });
 });
+
+describe("the writer sees the niche's breakout hook shapes (RFC-26 Phase 4c)", () => {
+  it("summarises shapes and techniques, never wording or handles", async () => {
+    const { nicheHooksForCopy } = await import("../src/workflow/exemplar-library.js");
+    const e = (hook: string, standout: string) => ({ handle: "wearcommando", role: "competitor" as const, format: "carousel", frameCount: 5, craft: 4, dna: { hookPattern: hook }, standout, hook: "Denim on denim, because one layer just isn't enough", storedFrames: [] });
+    const lib = { version: 1 as const, builtAt: "2026-09-25T00:00:00Z", status: "built" as const, problems: [], accounts: [], entries: [e("number", "one highlighted word"), e("number", "numbered pastel badges"), e("question", "a real room"), e("list", "t"), e("number", "t")] };
+    const text = nicheHooksForCopy(lib)!;
+    expect(text).toContain("number 60%");
+    expect(text).toContain("one highlighted word");
+    expect(text).not.toContain("wearcommando");
+    expect(text).not.toContain("Denim on denim");
+    expect(nicheHooksForCopy({ ...lib, entries: lib.entries.slice(0, 3) })).toBeUndefined();
+  });
+});

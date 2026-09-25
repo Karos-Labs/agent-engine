@@ -1,7 +1,7 @@
 import { keepClientSitePages } from "./site-identity.js";
 import { lintReadableCopy, readableCopySteer } from "./readable-copy.js";
 import { brandMarkZone } from "./brand-render-tokens.js";
-import { buildExemplarLibrary, densityFromLibrary, EXEMPLAR_LIBRARY_BELIEF_KEY, EXEMPLAR_POSTS_PER_ACCOUNT, exemplarLibraryAction, exemplarPatternEvidence, exemplarStudioNotes, failedLibrary, planHarvest, postsToJudge, readExemplarLibrary, type ExemplarLibrary, type HarvestedExemplar } from "./exemplar-library.js";
+import { buildExemplarLibrary, densityFromLibrary, nicheHooksForCopy, EXEMPLAR_LIBRARY_BELIEF_KEY, EXEMPLAR_POSTS_PER_ACCOUNT, exemplarLibraryAction, exemplarPatternEvidence, exemplarStudioNotes, failedLibrary, planHarvest, postsToJudge, readExemplarLibrary, type ExemplarLibrary, type HarvestedExemplar } from "./exemplar-library.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { readForbiddenTopics, UNIT_PRICING } from "@agent-engine/core";
@@ -8508,6 +8508,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // last three posts leaned on (today: arrow bullets) and asks for a
         // different move, which no per-run check could ever notice.
         ...(deviceSteer !== undefined ? { deviceSteer } : {}),
+        // RFC-26 Phase 4c (prompt section 32): the hook shapes that broke out
+        // in this client's niche, from the setup's exemplar library.
+        ...(nicheHooksForCopy(exemplarLibrary) !== undefined ? { nicheHooks: nicheHooksForCopy(exemplarLibrary) } : {}),
         // The post format (2026-09): `carousel` (6-8 slides) or `single` (one
         // designed slide and a deep caption). The copy step echoes it back and
         // `checkSlidesData` holds the slide count to it.
