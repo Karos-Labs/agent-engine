@@ -12,6 +12,30 @@ import { resolveExpectedScript } from "./language-gate.js";
 import { truncateOnWordBoundary } from "./post-package.js";
 import { scriptTypographyFor } from "./script-fonts.js";
 import { assessContrastFacts, checkPaletteWithinKit, LAYOUT_FIELD_KEYS, LEADS_WITH_FIGURE, type ContrastFact } from "./visual-qa-pre-checks.js";
+import { ACCENT_GROUND_CONTRAST_FLOOR, contrastRatio } from "./brand-render-tokens.js";
+
+/**
+ * THE ACCENT THE STUDIO DESIGNS WITH: THE KIT'S OWN, THE FIRST THAT CAN BE READ.
+ *
+ * Gate 7 measures the seed accent against the ground, and the seed was the
+ * kit's `--accent` whatever it measured. Sitti's #ff5b5f sits at 2.84:1 on
+ * its ground (floor 3:1), so gate 7 refused all six of Sitti's templates on
+ * every setup, and a second client's accent the same way: a property of the
+ * PALETTE, which no designer call and no repair can change, killed the whole
+ * studio and left the client on the shared bundled plates. The brand ring
+ * usually holds a colour that reads (a wine on cream, an ink on white), so
+ * the seed walks `--accent`, then the palette, and takes the first that
+ * clears the floor; with none, the kit's accent as before, and gate 7 says so.
+ */
+export function studioSeedAccent(kit: { cssVars: Record<string, string>; palette?: readonly string[] } | undefined): string {
+  const first = kit?.cssVars["--accent"] ?? kit?.palette?.[0] ?? "#C8FF4D";
+  const ground = kit?.cssVars["--bg"];
+  if (ground === undefined) return first;
+  const candidates = [first, ...(kit?.palette ?? [])].filter((hex) => /^#[0-9a-f]{6}$/iu.test(hex));
+  const fg = kit?.cssVars["--fg"]?.toLowerCase();
+  const readable = candidates.find((hex) => hex.toLowerCase() !== ground.toLowerCase() && hex.toLowerCase() !== fg && contrastRatio(hex, ground) >= ACCENT_GROUND_CONTRAST_FLOOR);
+  return readable ?? first;
+}
 
 /**
  * Phase 2, item N — the **Template Studio**: 4-6 templates generated PER
@@ -1608,7 +1632,7 @@ export function studioSampleSeedFromBrief(input: {
     takeaway: iso(firstWords(positioning, 7)),
     cta: dir === "rtl" ? "שמרו את הפוסט" : "Save this for your next planning round",
     question: dir === "rtl" ? "מה הייתם משנים?" : "Which of these would you change first?",
-    accentHex: input.kit?.cssVars["--accent"] ?? input.kit?.palette?.[0] ?? "#C8FF4D",
+    accentHex: studioSeedAccent(input.kit),
     brandHandle: `@${input.clientSlug}`,
     seriesBadge: dir === "rtl" ? "מדריך" : "playbook",
     ...(input.heroPath !== undefined ? { heroPath: input.heroPath } : {}),
