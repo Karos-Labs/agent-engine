@@ -241,7 +241,7 @@ import { guaranteedGapCount, partitionGaps } from "./image-gap-partition.js";
 import { carryImageKinds } from "./recovered-image-kinds.js";
 import { applyCoverPictureMove, coverPictureMove } from "./cover-picture.js";
 import { compileInstagramDna } from "./compile-dna.js";
-import { DESIGN_LANGUAGE_BELIEF_KEY, DESIGN_LANGUAGE_RETRY_DAYS, designLanguageAction, readDesignLanguage, type StoredDesignLanguage } from "./design-language.js";
+import { DESIGN_LANGUAGE_BELIEF_KEY, DESIGN_LANGUAGE_RETRY_DAYS, designLanguageAction, designLanguageCssBlock, readDesignLanguage, type StoredDesignLanguage } from "./design-language.js";
 import { planInterestRelayout, type InterestRelayoutPlan } from "./interest-relayout.js";
 // RFC-19 §4 item 17 — the deterministic headline fact cards `04b` falls back to, and the one hold it keeps.
 import { headlineFallbackResearch, NO_READABLE_SOURCE } from "./research-fallback.js";
@@ -3127,8 +3127,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // The boxes, buttons and lines the client's site draws, so the panels can
     // be drawn in that language instead of the bundled accent gradient. Once
     // per 90 days, a week's backoff after a failure, fail-open: a blocked or
-    // blank site is a note, never a hold. Stored as a client belief; the
-    // templates read it in a later step, so on its own this moves no pixel.
+    // blank site is a note, never a hold. Stored as a client belief, and
+    // painted by `designLanguageCssBlock` through `headExtras` (WS-07).
+    let runDesignLanguage: StoredDesignLanguage | undefined;
     if (tools["media.captureDesignLanguage"] !== undefined) {
       const languageCheck = await wf.step.code("00f-check-design-language", async () => {
         let stored: StoredDesignLanguage | undefined;
@@ -3141,8 +3142,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         } catch (error) {
           console.error("00f-check-design-language: could not read the beliefs or the profile", error);
         }
-        return { action: designLanguageAction(stored, new Date()), ...(website !== undefined ? { website } : {}) };
+        return { action: designLanguageAction(stored, new Date()), ...(website !== undefined ? { website } : {}), ...(stored?.status === "measured" ? { stored } : {}) };
       });
+      runDesignLanguage = languageCheck.stored;
       if (languageCheck.action === "measure" && languageCheck.website !== undefined) {
         const website = languageCheck.website;
         const measured = await wf.step.code("00f1-capture-design-language", async (): Promise<StoredDesignLanguage> => {
@@ -3164,6 +3166,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           }
           return record;
         });
+        if (measured.status === "measured") runDesignLanguage = measured;
         setupNotes.push(
           measured.status === "measured" && measured.tokens !== undefined
             ? `design language: ${measured.tokens.boxStyle} boxes${measured.tokens.boxRadius !== undefined ? `, radius ${measured.tokens.boxRadius}px` : ""}${measured.tokens.pillButtons ? ", pill buttons" : ""} (${measured.evidence?.cards ?? 0} boxes on ${measured.url ?? website})`
@@ -6141,6 +6144,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // able to disagree.
         heroScrimCssBlock(),
         markCssBlock(markScript, runMarkRing()),
+        // WS-07: the client's own corners, lines and buttons, when its site was measured.
+        designLanguageCssBlock(runDesignLanguage),
         // RFC-20 Part 11: MOUNTED NOWHERE — see `GROUND_MATERIAL_MOUNTED`.
         "",
       ]
