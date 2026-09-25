@@ -2872,6 +2872,12 @@ export function assembleSlidesData(params: {
    * read it exactly as before; only the plate's composition changes.
    */
   interiorPhotosAsBlocks?: boolean | undefined;
+  /**
+   * 2026-09-25: pictures the vet placed on its middle rung (compatible, not of
+   * the subject). On a cover they are framed, on an interior photo slide set as
+   * an inset block: a picture inside the plate, never its ground.
+   */
+  boundedPicturePaths?: ReadonlySet<string> | undefined;
   /** 2026-09-24: interior slide bodies are cut to whole sentences within `BODY_WORD_BUDGET` (the workflow sets it). */
   textBudgets?: boolean | undefined;
   /** 2026-09-24: client product photos lifted off their backdrop; set as objects (`heroKind: "cutout"`). */
@@ -3253,7 +3259,8 @@ export function assembleSlidesData(params: {
     // it (`_design-system.css`, "THE MARK AS A TILE").
     const heroIsMark = chosenPath !== undefined && params.markImagePaths?.has(chosenPath) === true;
     const imagePath = chosenPath;
-    const photoAsBlock = params.interiorPhotosAsBlocks === true && layout === "photo" && index > 0 && index < lastIndex && imagePath !== undefined && !heroIsMark;
+    const pictureIsBounded = imagePath !== undefined && params.boundedPicturePaths?.has(imagePath) === true;
+    const photoAsBlock = (params.interiorPhotosAsBlocks === true || pictureIsBounded) && layout === "photo" && index > 0 && index < lastIndex && imagePath !== undefined && !heroIsMark;
     const badgePath: string | undefined = undefined;
     // 2026-09-23: an `attributable` picture (most CC, every Wikimedia file)
     // must carry its credit, and none ever did — `creditLineFor` existed and
@@ -3300,7 +3307,7 @@ export function assembleSlidesData(params: {
         // over the whole screen"*. `framedHeroFor` is the rule; the plate CSS
         // (`img.hero[data-kind="framed"]`) is the composition.
         // An interior photo already renders as the inset block (`photoAsBlock`); the two compositions never stack on one plate.
-        ...(!photoAsBlock && framedHeroFor({ layout, headline: slide.headline, body: slide.body, hasPicture: imagePath !== undefined, heroIsMark, isCutout: imagePath !== undefined && params.productCutoutPaths?.has(imagePath) === true })
+        ...(!photoAsBlock && (framedHeroFor({ layout, headline: slide.headline, body: slide.body, hasPicture: imagePath !== undefined, heroIsMark, isCutout: imagePath !== undefined && params.productCutoutPaths?.has(imagePath) === true }) || (pictureIsBounded && layout === "cover" && !heroIsMark))
           ? { heroKind: "framed" as const }
           : {}),
         // 2026-09-24: which of the three closer forms (`closerFormFor`); only the closer plate reads it.

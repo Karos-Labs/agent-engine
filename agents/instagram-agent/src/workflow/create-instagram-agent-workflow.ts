@@ -7867,6 +7867,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       /** 2026-09-23: candidate paths that are an entity's MARK (05b1's logo rung), so the render shows them whole on a card. */
       const markImagePaths = new Set<string>();
       /**
+       * 2026-09-25: pictures on the vet's middle rung (compatible with the slide,
+       * not OF its subject) that landed on a cover or a photo slide. They used to
+       * be refused there as a would-be ground, which is how KAROS' prep run
+       * pubsub-21536461577789691 shipped one picture: the floor generated a cover
+       * frame three times and the vet placed it `bounded` three times. A cover or
+       * photo slide can show a picture as a BLOCK (the framed cover, the inset
+       * photo), so such a picture is placed there as one instead.
+       */
+      const boundedPicturePaths = new Set<string>();
+      /**
        * 2026-09-24: every durable copy ANY attempt of this run staged (06e2,
        * 06h3), by the local path it was staged from. Kindly Yours'
        * pubsub-21254987551616377 lost a vet-approved picture: by attempt 3 the
@@ -9610,7 +9620,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // under the headline, a bounded placement by design. Geektime's news
         // single (pubsub-21255083218346529) had a vetted frame refused here as
         // if it were a full-bleed ground, and shipped as a text card.
-        if (placement.placement === "bounded" && FULL_BLEED_IMAGE_LAYOUTS.has(layoutOf(s.n)) && !(newsCover && layoutOf(s.n) === "cover")) return true;
+        if (placement.placement === "bounded" && FULL_BLEED_IMAGE_LAYOUTS.has(layoutOf(s.n)) && !(newsCover && layoutOf(s.n) === "cover") && s.imagePath !== null) boundedPicturePaths.add(s.imagePath);
         // Phase 5.5, item A2 — and the rights class, as a CODE, not as a
         // sentence. `POST_USAGE` is `"commentary"`: an Instagram carousel that
         // argues an editorial point about a news story is commentary, and
@@ -12698,6 +12708,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           markImagePaths,
           clearMarkPaths,
           interiorPhotosAsBlocks: true,
+          boundedPicturePaths,
           textBudgets: true,
           productCutoutPaths,
           markBadges: markBadgeBySlide,
