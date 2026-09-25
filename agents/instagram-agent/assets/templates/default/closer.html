@@ -1428,6 +1428,14 @@ body.ta-center .plate > .mark-badge { margin-inline: auto; }
   border-radius: 6px;
 }
 body:not(:has(#takeaway > span:not(:empty))) .cl-panel { box-shadow: none; background-color: transparent; }
+/* THE PANEL'S AIR IS SPREAD, NOT POOLED (2026-09-25). The takeaway's wrap
+   grew to fill the panel and pushed the ask to its foot, so short copy left
+   ONE hole in the middle of the box: LER 0.209 in the gate-zero sweep (main CI
+   after #293), and on a render a big grey box with nothing in it. The blocks
+   now sit at their own height and the panel spaces them evenly, so the same
+   air becomes several small gaps. */
+.plate.closer > .cl-panel { justify-content: space-evenly; }
+.plate.closer > .cl-panel > .cl-wrap { flex: 0 1 auto; }
 .cl-recap {
   margin-block-start: var(--sp-2);
   inline-size: 100%;
