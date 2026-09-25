@@ -16,6 +16,12 @@ to hold five obsolete descriptions of them as well.
 
 ---
 
+**What changed at v36.** The prompt diet (plan phase P, 2026-09-25). The guide went from 17,264 words to 7,740 with every section number and heading kept. Removed: dated incident narratives, rules restated in several sections (visualNeed in §6 and §22; layout in §7, §20 and §29; the ask in §2, §24.3 and §30; sentence craft in §10, §26 and §31), multi-paragraph justifications of rules code enforces, and bad examples that taught the habit they warned against. Kept: every instruction, every backticked identifier (282), every numeric limit, and the pinned sentences. Three contradictions resolved: the `generate` identity rule is one rule; a series gap goes to `unfillable`, never into `body`; `headline_focus` renders a device, as §19 said. The coverage table mapping each v35 instruction to its v36 place is on the PR.
+
+**Cost.** INPUT: about 12,700 fewer prompt tokens per drafting attempt (about $0.04 less per attempt at the pinned model's input price). OUTPUT: expected shorter planning; measured on the next prep batch against batch 4 (copy duration, tokens, readable-copy and word-budget findings). Rolled back to v35 if any is worse.
+
+---
+
 **What changed at v35.** Owner decision 20 on research round #253: a whole plate carries at most 35 words (was 60), and a cover whose photograph fills the plate at most 16 with its deck. Section 7's plate budget and cover rule say so.
 
 **Cost.** INPUT: about +150 prompt characters. OUTPUT: shorter slides.
