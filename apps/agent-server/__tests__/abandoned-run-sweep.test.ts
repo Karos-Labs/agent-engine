@@ -73,6 +73,49 @@ describe("the sweep picks up runs whose worker died", () => {
     expect(["completed", "awaiting_gate", "degraded", "held"]).toContain(run?.status);
   }, 90_000);
 
+  it("recovers the exact shape the six stuck prep runs are in: killed AT the gate step", async () => {
+    // NOT a hypothetical shape. Each of the six (`pubsub-21255267599312000`
+    // and friends, 2026-09-24) holds a finished carousel -- copy drafted, two
+    // revision passes paid for -- with its LAST step record reading
+    // `09a-batch-review-r0 | gate | running`. The worker died with the gate
+    // half-registered, so the run never reached `awaiting_gate` and no human
+    // was ever shown anything.
+    //
+    // The recovery turns on `running` not being a checkpointed step status,
+    // which is a claim about `isCheckpointedStepStatus` that a test with no
+    // steps at all cannot make. This one makes it: the gate step re-executes,
+    // the gate is registered, and the run parks where it should have parked.
+    const started = await request(app).post("/api/v1/runs/start").send({ clientSlug: "acme", productId: "x-agent", runKind: "recurring", inputParams: {} });
+    expect(started.status).toBe(202);
+    const runId = started.body.runId as string;
+    expect((await env.durableStore.getRun(runId))?.status).toBe("awaiting_gate");
+
+    // Rewind to the instant before the gate finished registering: the worker
+    // is gone, the run says `running`, and its gate step says `running` too.
+    const gateStepId = "15-batch-review-r0";
+    const gateStep = await env.durableStore.getStep(runId, gateStepId);
+    expect(gateStep?.kind).toBe("gate");
+    await env.durableStore.saveStep(runId, { stepId: gateStepId, kind: "gate", status: "running", startedAt: clock - RUN_LEASE_TTL_MS - 60_000 });
+    await env.durableStore.updateRun(runId, {
+      status: "running",
+      updatedAt: clock - RUN_LEASE_TTL_MS - 60_000,
+      leaseOwner: "worker-that-died",
+      pendingGateId: null,
+    });
+
+    const res = await request(app).post("/api/v1/maintenance/sweep-gate-timeouts").send();
+    expect(res.status).toBe(200);
+    expect(res.body.reclaimed).toHaveLength(1);
+    expect(res.body.reclaimed[0].runId).toBe(runId);
+
+    // Parked for a person, which is where it was always meant to end up --
+    // and the drafted work is still on its earlier checkpoints, unpaid-for
+    // twice.
+    const run = await env.durableStore.getRun(runId);
+    expect(run?.status).toBe("awaiting_gate");
+    expect(run?.pendingGateId).toBe(`${runId}__${gateStepId}`);
+  }, 90_000);
+
   it("leaves a run whose heartbeat is still fresh completely alone", async () => {
     // THE BOUNDARY, and it is the one that matters: a live worker mid-step is
     // `running` with a recent heartbeat, and stealing its run would double-run
