@@ -816,6 +816,11 @@ export function heroScrimCssBlock(): string {
     `${scrims.map((s) => `body[data-hero-scrim="standard"] ${s}::after, body[data-hero-scrim="strong"] ${s}::after`).join(",\n")} {`,
     `  content: ""; position: absolute; inset: 0; pointer-events: none;`,
     `  background-color: var(--bg);`,
+    // 2026-09-25: the veil lies where the words are, as the shade does
+    // (`--scrim-dense`, set by `anchorScrim`), and fades out above them. Over the
+    // whole frame it greyed the part of the photograph no word stands on.
+    `  -webkit-mask-image: linear-gradient(to top, #000 calc(var(--scrim-dense, 22%) + 12%), transparent calc(var(--scrim-dense, 22%) + 32%));`,
+    `  mask-image: linear-gradient(to top, #000 calc(var(--scrim-dense, 22%) + 12%), transparent calc(var(--scrim-dense, 22%) + 32%));`,
     `}`,
     `${scrims.map((s) => `body[data-hero-scrim="standard"] ${s}::after`).join(",\n")} { opacity: ${HERO_SCRIM_ALPHA.standard}; }`,
     `${scrims.map((s) => `body[data-hero-scrim="strong"] ${s}::after`).join(",\n")} { opacity: ${HERO_SCRIM_ALPHA.strong}; }`,

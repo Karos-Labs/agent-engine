@@ -1664,7 +1664,15 @@ body.ta-center .plate > .mark-badge { margin-inline: auto; }
       for (var o = 0; o < objects.length; o++) total += objects[o].getBoundingClientRect().height;
       return total;
     };
-    if (primary.length) {
+    /* NOT OVER A FULL-BLEED PHOTOGRAPH (2026-09-25). On a poster the grown
+       title climbs the frame, the shade follows it up (`anchorScrim`), and the
+       picture under it is gone: prep batch 6's karoslabs cover set five display
+       lines from a third of the way down and its photograph of a phone showing
+       ChatGPT printed as near-black. The title keeps its role's step there, so
+       the upper frame is the picture. */
+    var overPhoto = document.querySelector('img.hero[src]:not([src=""]):not([data-kind]), img.hero[src]:not([src=""])[data-kind=""], .bg[data-kind=""] > img[src]:not([src=""]), .bg:not([data-kind]) > img[src]:not([src=""])') !== null
+      && getComputedStyle(document.querySelector('.scrim') || document.body).display !== 'none';
+    if (primary.length && !overPhoto) {
       var extentBefore = objectExtent();
       var grown = 0;
       while (grown > -1 && !overflows()) {
