@@ -663,6 +663,38 @@ export function prescribesClicheScene(text: string): boolean {
   }
   return false;
 }
+/**
+ * Subject families a direction's "do not include" list can ban, each with the
+ * words that ban it (`trigger`) and the words that name it in a scene brief
+ * (`names`). Families, not raw words: a forbid line like "pure white or
+ * saturated colour" must not make every brief that says "white" a conflict.
+ */
+const FORBIDDABLE_SUBJECTS: ReadonlyArray<{ trigger: RegExp; names: RegExp }> = [
+  { trigger: /\b(screens?|monitors?|laptops?|displays?)\b/iu, names: /\b(screens?|monitors?|laptops?|desktops?|displays?|interfaces?|dashboards?|UI|app window|browser)\b/iu },
+  { trigger: /\bkeyboards?\b/iu, names: /\b(keyboards?|typing)\b/iu },
+  { trigger: /\bhandshakes?\b/iu, names: /\bhandshakes?\b/iu },
+  { trigger: /\b(skylines?|glass[- ]towers?)\b/iu, names: /\b(skylines?|glass[- ]towers?)\b/iu },
+  { trigger: /\b(brains?|neural)\b/iu, names: /\b(brains?|neural|network diagram)\b/iu },
+  { trigger: /\b(meeting table|boardroom)\b/iu, names: /\b(meeting table|boardroom|conference table)\b/iu },
+];
+
+/**
+ * Whether a scene brief asks for a subject the run's own art direction bans.
+ *
+ * Prep batch 6, karoslabs (2026-09-25): the writer briefed "ChatGPT interface
+ * on a dark desktop screen" and the direction's negatives say "laptop, desktop
+ * monitor, or any illuminated screen". The generator was handed both, drew
+ * neither (a man by a doorway), and the floor vet refused the frame on every
+ * attempt, so the cover's picture floor never filled. Such a brief is
+ * rewritten like the cliché scene (`generationPromptFor`), and the frame is
+ * vetted against the scene it was drawn to. Retrieval is untouched: a real
+ * screenshot can still be found.
+ */
+export function sceneNamesForbiddenSubject(scene: string, forbid: readonly string[]): boolean {
+  if (forbid.length === 0) return false;
+  return FORBIDDABLE_SUBJECTS.some((family) => family.names.test(scene) && forbid.some((line) => family.trigger.test(line)));
+}
+
 /** Added to every direction's negatives for generation. */
 export const CLICHE_SCENE_FORBID: readonly string[] = [
   "a person at a laptop or desk in a dark room",

@@ -367,6 +367,7 @@ import {
   finaliseVisualDirection,
   prescribesAbstractGraphic,
   prescribesClicheScene,
+  sceneNamesForbiddenSubject,
   styleIsNonPhotographic,
   // Phase 5.5 (spec §5 D1) — the same vocabulary the studio marker uses; the
   // module asserts the two lists agree at compile time.
@@ -9778,8 +9779,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // 2026-09-24: which briefs a generator is given the slide's world
       // instead of: the cliche scene, and a diagram asked of a client whose
       // locked style is photographic (`prescribesAbstractGraphic`).
+      // 2026-09-25: and a brief whose subject the client's own direction bans
+      // ("ChatGPT interface on a dark desktop screen" under "no illuminated
+      // screen"): the generator drew neither and the floor vet refused it
+      // every attempt (`sceneNamesForbiddenSubject`).
+      const directionForbid = visualDirection?.forbid ?? [];
       const rewritesScene = (scene: string): boolean =>
-        prescribesClicheScene(scene) || (!styleIsNonPhotographic(frozenStyle.line) && prescribesAbstractGraphic(scene));
+        prescribesClicheScene(scene) || (!styleIsNonPhotographic(frozenStyle.line) && prescribesAbstractGraphic(scene)) || sceneNamesForbiddenSubject(scene, directionForbid);
 
       if (attemptPool.length === 0) {
         // An empty pool has exactly one possible vetting verdict, so asking a
