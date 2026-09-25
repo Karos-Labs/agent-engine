@@ -883,15 +883,23 @@ function promoteImageRemedy(
    * same PATH still arrive through another selection row, so the paths already
    * on rendering slides are excluded by path as well.
    */
+  // 2026-09-25: a list item's `headline_focus` plate paints its picture too
+  // (#234, `itemPictures`), so it counts as showing one. Hanky Panky's and
+  // KAROS's list posts of 2026-09-25 had an item's picture promoted onto the
+  // cover and showed it twice.
+  const paintsPicture = (n: number): boolean => {
+    const layout = (layoutByN.get(n) ?? "photo") as InstagramSlideLayout;
+    return HERO_IMAGE_LAYOUTS.has(layout) || layout === "headline_focus";
+  };
   const renderedPaths = new Set(
     selections
       .filter(isUsableSelection)
-      .filter((sel) => HERO_IMAGE_LAYOUTS.has((layoutByN.get(sel.n) ?? "photo") as InstagramSlideLayout))
+      .filter((sel) => paintsPicture(sel.n))
       .map((sel) => sel.imagePath),
   );
   const unused = selections
     .filter(isUsableSelection)
-    .filter((sel) => sel.n !== slideN && !HERO_IMAGE_LAYOUTS.has((layoutByN.get(sel.n) ?? "photo") as InstagramSlideLayout))
+    .filter((sel) => sel.n !== slideN && !paintsPicture(sel.n))
     .filter((sel) => !renderedPaths.has(sel.imagePath))
     // 2026-09-24: the one slide every reader sees is never given the screen
     // cliche. KAROS pubsub-21255039598063450 promoted a generated "desktop
