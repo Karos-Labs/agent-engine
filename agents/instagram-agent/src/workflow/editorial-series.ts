@@ -743,6 +743,12 @@ export interface ClientLibraryInput {
   readonly clientSlug: string;
   /** `brief.icp.industries` and anything else that names what this client does. */
   readonly segments?: readonly string[];
+  /**
+   * 2026-09-25, compileDNA v0: the archetype card's series affinity, from the
+   * client's classification. When present it replaces the segment regex; the
+   * regex stays for a client with no classification yet.
+   */
+  readonly affinity?: { readonly prefers: readonly EditorialSeriesId[]; readonly basis: string };
 }
 
 export interface ClientLibrary {
@@ -761,8 +767,8 @@ export interface ClientLibrary {
  * be paid to make.
  */
 export function seriesLibraryFor(input: ClientLibraryInput, catalogue: readonly EditorialSeries[] = BUNDLED_SERIES): ClientLibrary {
-  const reading = readClientSegment(input.segments);
-  const preferred = new Set<EditorialSeriesId>(seriesPreferredBy(reading.segment));
+  const reading = input.affinity !== undefined ? { segment: "unknown" as const, matched: [] } : readClientSegment(input.segments);
+  const preferred = new Set<EditorialSeriesId>(input.affinity !== undefined ? input.affinity.prefers : seriesPreferredBy(reading.segment));
 
   const seed = stableHash(input.clientSlug);
   // Three, four or five, from the slug: the SIZE varies per client too, so two
@@ -788,7 +794,9 @@ export function seriesLibraryFor(input: ClientLibraryInput, catalogue: readonly 
     series,
     segment: reading.segment,
     rule:
-      reading.segment === "unknown"
+      input.affinity !== undefined
+        ? `${series.length} series for a ${input.affinity.basis} client, leaning ${input.affinity.prefers.join(", ")}: ${series.map((s) => s.id).join(", ")}`
+        : reading.segment === "unknown"
         ? `${series.length} series for this client; the brief named no segment this recognises, so the set is stable per client rather than steered: ${series.map((s) => s.id).join(", ")}`
         : `${series.length} series for a ${reading.segment} client, from "${reading.matched.join(", ")}" in the brief: ${series.map((s) => s.id).join(", ")}`,
   };

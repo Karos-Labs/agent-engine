@@ -281,7 +281,7 @@ export interface InstagramRunClaim {
    */
   requestedSeries?: string;
   /** Which source decided the post type this run, for the trace: the run input, the client config, or the client's learned preference. */
-  postTypeSource?: "run-input" | "client-config" | "client-preference" | "industry-default" | "exemplar-library";
+  postTypeSource?: "run-input" | "client-config" | "client-preference" | "category-pack" | "industry-default" | "exemplar-library";
   /**
    * 2026-09-24: this run asked for a PRODUCT CAMPAIGN (stage 4 of the
    * reference-looks plan, `product-campaign.ts`): the run input's
