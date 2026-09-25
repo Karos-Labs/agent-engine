@@ -35,7 +35,7 @@ describe("a diagram brief under a photographic style is drawn as the slide's wor
     expect(styleIsNonPhotographic(undefined)).toBe(false);
   });
 
-  it("rewrites the KAROS brief into a documentary scene from the slide's words", () => {
+  it("rewrites the KAROS brief into a conceptual picture of the slide's words, never a generic scene", () => {
     const slide = {
       headline: "Two silos, one column",
       body: "The data lived in two systems. The rebuild made it one.",
@@ -43,7 +43,11 @@ describe("a diagram brief under a photographic style is drawn as the slide's wor
     };
     const rewrite = (scene: string): boolean => prescribesClicheScene(scene) || (!styleIsNonPhotographic(KAROS_STYLE) && prescribesAbstractGraphic(scene));
     const prompt = generationPromptFor(normaliseVisualNeed(slide as never), slide, { rewrite });
-    expect(prompt).toMatch(/^An editorial photograph of the real-world setting/u);
+    // 2026-09-25: "the real-world setting ... as a documentary photographer would" drew a man in a
+    // dim workshop for a software idea (job PCjzJDH10gQW7peazB5n). One object that stands for the idea.
+    expect(prompt).toMatch(/^A striking conceptual editorial photograph/u);
+    expect(prompt).toContain("ONE concrete physical object");
+    expect(prompt).not.toContain("real-world setting");
     expect(prompt).toContain("Two silos, one column");
   });
 

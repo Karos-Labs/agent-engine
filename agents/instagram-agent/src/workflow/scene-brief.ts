@@ -557,7 +557,20 @@ export function generationRewrites(need: NormalisedVisualNeed, options: { rewrit
   return isEntityPictureBrief(need.scene) || options.rewrite?.(need.scene) === true;
 }
 
-/** A documentary scene built from the slide's own words, with no logo, lettering, screen or recognisable person. */
+/**
+ * A conceptual picture built from the slide's own words, with no logo,
+ * lettering, screen or recognisable person.
+ *
+ * 2026-09-25, job PCjzJDH10gQW7peazB5n (karoslabs, "agent delegation
+ * thresholds"): this used to ask for "the real-world setting behind" the slide
+ * "as a documentary photographer would". A software idea has no real-world
+ * setting once screens are forbidden, so the generator invented one: a man in
+ * a dim workshop opening a door, a figure in a corridor, cables. The owner:
+ * the pictures fit less and are less attractive than before. An abstract claim
+ * is made visible by ONE concrete object or small arrangement that stands for
+ * it, which is what editorial illustrators and magazine art directors do, so
+ * the fallback now asks for that.
+ */
 export function sceneFromSlideWords(need: NormalisedVisualNeed, slide?: { headline?: string; body?: string }): string {
   const said = [slide?.headline, slide?.body]
     .filter((t): t is string => typeof t === "string" && t.trim().length > 0)
@@ -566,7 +579,9 @@ export function sceneFromSlideWords(need: NormalisedVisualNeed, slide?: { headli
     .slice(0, 220);
   const about = said.length > 0 ? `a slide that says: "${said}"` : need.why !== undefined ? `a slide about ${need.why}` : "this slide";
   return (
-    `An editorial photograph of the real-world setting behind ${about}. Show the place, the work or the objects that story is about, as a documentary photographer would. ` +
+    `A striking conceptual editorial photograph for ${about}. Make the slide's idea visible through ONE concrete physical object or small arrangement that stands for it, ` +
+    "the way a magazine art director would illustrate an abstract story: a single clear focal subject a viewer recognises in a second, a bold simple composition, crisp and well lit, contemporary. " +
+    "Not a generic scene of a person, a room or a building. " +
     "No logos, brand names, lettering, laptops, monitors, phones or other screens, and no recognisable real people anywhere in the frame."
   );
 }
