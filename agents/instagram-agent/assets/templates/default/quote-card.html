@@ -1365,7 +1365,7 @@ body.ta-center .plate > .mark-badge { margin-inline: auto; }
   background-repeat: no-repeat;
 }
 /* Content-guarded: no quotation, no surface. */
-body:not(:has(#quote > span:not(:empty))) .quote-block { background-image: none; }
+body:not(:has(#quote > span:not(:empty))) .quote-block { background-image: none; box-shadow: none; }
 /* A quotation is read, not scanned, so it takes a narrower measure than a
    headline: ~34 characters a line rather than the headline's 15 words. */
 .quote-text { max-inline-size: min(17ch, 100%); }

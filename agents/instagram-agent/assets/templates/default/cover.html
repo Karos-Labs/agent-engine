@@ -1585,7 +1585,7 @@ body:not(:has(.hero)) .cov-field {
 /* CONTENT-GUARDED. A cover with no title has nothing for the object to be the
    ground of, and a ramp painted on an empty plate is the empty plate with a
    colour on it — which is the case G2 refuses. */
-body:not(:has(#title > span:not(:empty))) .cov-field { background-image: none; }
+body:not(:has(#title > span:not(:empty))) .cov-field { background-image: none; box-shadow: none; }
 
 /* The lockup is one block: mark, title, subtitle, on one rhythm. */
 .lockup {
