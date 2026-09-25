@@ -54,6 +54,17 @@ import { InstagramCopyDraftSchema, type InstagramCopyDraft } from "../workflow/t
 export const COPY_MAX_TOKENS = 32_000;
 
 /**
+ * The step bound for a drafting attempt (2026-09-25). The default 600 s bound
+ * cut off the FULL drafter 9 times in 16 across prep batches 4 and 5; the
+ * full attempts that finished took 274-518 s, and batch 5's per-run data
+ * showed the drafter's planning improves the copy (readable-copy findings:
+ * full 0-0.14 per post, lean 1.86-2.5). A ceiling the engine hit is one it
+ * raises (owner rule): 15 minutes lets the full attempt finish, and the lean
+ * drafter stays the fallback after a timeout.
+ */
+export const COPY_STEP_TIMEOUT_MS = 15 * 60_000;
+
+/**
  * RFC-03 §3 step 05: "write the copy — six to eight slides, one idea each"
  * (enforced directly by `InstagramCopyOutputSchema`'s `.min(6).max(8)`, so
  * an out-of-range draft is a schema-validation `content_fail` at the agent

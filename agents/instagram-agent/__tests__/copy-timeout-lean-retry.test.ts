@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
-import { InstagramCopyAgent } from "../src/agent/instagram-copy-agent.js";
+import { COPY_STEP_TIMEOUT_MS, InstagramCopyAgent } from "../src/agent/instagram-copy-agent.js";
 
 /**
  * 2026-09-25: Geektime's Hebrew drafts ran past the 600 s step timeout on all
@@ -29,5 +29,11 @@ describe("the copy drafter after a timeout", () => {
     expect(src).toContain("lastCopyAttemptTimedOut ? copyLeanAgent : copyAgent");
     // Sticky: once a run has timed out, every later attempt stays lean.
     expect(src).toMatch(/lastCopyAttemptTimedOut \|\|= revisedDraft === undefined && copyExec\.status !== "completed" && typeof \(copyExec as \{ timedOutAfterMs\?: unknown \}\)\.timedOutAfterMs === "number";/u);
+  });
+
+  it("the full drafter gets 15 minutes, the time its finished attempts actually took (2026-09-25)", () => {
+    expect(COPY_STEP_TIMEOUT_MS).toBe(15 * 60_000);
+    const src = readFileSync(path.resolve(__dirname, "../src/workflow/create-instagram-agent-workflow.ts"), "utf8");
+    expect(src).toContain("}, { timeoutMs: COPY_STEP_TIMEOUT_MS });");
   });
 });
