@@ -16377,7 +16377,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         type: review.output.copy.format,
         stage,
         goal: goalLine.goalText,
-        status: "drafted",
+        // A draft the reviewer rejected outright was not used, which is what
+        // \`skipped\` means in the subject table.
+        status: review.outcome === "rejected" ? "skipped" : "drafted",
         assetKind: "instagram-carousel",
         // The row this post came off, or an honest null. Never invented to
         // avoid a null: a made-up id would make the map look spent.
@@ -16387,6 +16389,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         postsByUs: 1,
         topics: [topicClaim.topic],
       },
+      // Every revision note a reviewer sent at \`09a-batch-review\`, as the
+      // voice lessons the middleware carries into \`client_preferences\`
+      // (Craft 11 §3). X, LinkedIn and Reddit have recorded these since C7;
+      // this agent recorded none, so a note steered one redraft and was then
+      // forgotten by every later run.
+      voiceNotes: review.notes.map((n) => ({ lesson: n.feedback, fromRevision: n.revision })),
       readiness: learning.readiness,
     });
 
