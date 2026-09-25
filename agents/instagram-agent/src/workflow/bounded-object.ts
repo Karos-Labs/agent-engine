@@ -313,7 +313,7 @@ export function deviceFromText(text: string, source: string): RelayoutFigureDevi
   //
   // When the preceding word is a verb ("we saved 4 hours a week") the splice
   // was always right and is untouched.
-  const trailingConnector = /(?:^|\s)(?:to|of|by|at|in|on|for|from|with|than|into|over|under|about|around|per)\s*$/iu;
+  const trailingConnector = /(?:^|\s)(?:to|of|by|at|in|on|for|from|with|than|into|over|under|about|around|per|since|until|after|before)\s*$/iu;
   // ── AND IT ONLY FIRES WHEN THE FIGURE REALLY IS WHAT THE CLAUSE ENDS ON. ──
   //
   // A first version tested the connector alone and cut there whenever it

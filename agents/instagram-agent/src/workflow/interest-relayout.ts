@@ -973,7 +973,12 @@ function deviceShortfallRemedy(slide: InstagramSlideCopy, factCards: readonly Re
 function verbatimDeviceFor(slide: InstagramSlideCopy, factCards: readonly RelayoutFactCard[]): RelayoutFigureDevice | undefined {
   const source = sourceForSlide(slide, factCards);
   if (source === undefined) return undefined;
-  const text = `${slide.headline} ${slide.body}`;
+  // Joined as two SENTENCES (2026-09-25). A headline carries no final period,
+  // so a plain space fused it with the deck and the label was cut out of one
+  // run-on: Hanky Panky's cover (prep batch 4) printed "The lace in your
+  // drawer has been at the Met since Not as inspiration" under 1879.
+  const headline = slide.headline.trim();
+  const text = `${/[.!?…]$/u.test(headline) ? headline : `${headline}.`} ${slide.body}`;
   const device = deviceFromText(text, source);
   if (device === undefined) return undefined;
   // VERBATIM, with the boundaries the text itself declares. `figuresInText`
