@@ -16,6 +16,12 @@ to hold five obsolete descriptions of them as well.
 
 ---
 
+**What changed at v35.** Owner decision 20 on research round #253: a whole plate carries at most 35 words (was 60), and a cover whose photograph fills the plate at most 16 with its deck. Section 7's plate budget and cover rule say so.
+
+**Cost.** INPUT: about +150 prompt characters. OUTPUT: shorter slides.
+
+---
+
 **What changed at v34.** Owner rulings of 2026-09-25 on research round #253: the cover is a photograph of the story's subject by default (a poster); a figure device opens the post only when nothing in it can be pictured (decision 5). The closer never says "link in bio" and never carries a "follow us" line or card (decision 16).
 
 **Cost.** INPUT: about +900 prompt characters. OUTPUT: unchanged.
