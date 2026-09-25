@@ -179,7 +179,9 @@ import { placeAutoMarkBadge } from "./mark-placement.js";
  * a hash of the slides data (a resumed render lands on the same objects); a
  * caller may pass its own. Local `outDir` files are unchanged.
  */
-const TOOL_VERSION = "1.12.0";
+// 1.13.0 — 2026-09-25 (WS-07): the closer's whole panel (`.cl-panel`) is a declared device box, so a
+// panel drawn as a hairline counts by its area, not by a tinted fill.
+const TOOL_VERSION = "1.13.0";
 
 // n/template/fields/images have no existing TSDoc to transcribe (SCRUM-293 flag) — descriptions
 // below synthesized from fillTemplate's/validateRenderInputs' usage of each field.
@@ -948,7 +950,7 @@ export const COLLISION_MIN_PX = 4;
  */
 export const SUBJECT_BOX_GROUPS = {
   hero: [".hero"],
-  device: [".dv", ".cov-device", ".sl-device", ".cl-recap"],
+  device: [".dv", ".cov-device", ".sl-device", ".cl-recap", ".cl-panel"],
   graphic: ["svg", "canvas", ".cl-art"],
 } as const;
 

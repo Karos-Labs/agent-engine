@@ -292,6 +292,17 @@ describe("checkInterestFloor: every clause fires alone", () => {
     expect(kinds(checkInterestFloor(metrics(), passingSlideProbe(1), "cover", { slide: 1 }))).not.toContain("cover-subject");
   });
 
+  it("E — a declared device box counts by its area, so a hairline box with no fill is a device (WS-07, 2026-09-25)", () => {
+    // A closer whose recap sits in a hairline box: almost no device PIXELS,
+    // but a declared box over a sixth of the canvas.
+    const hairline = metrics({ imageryOrDeviceShare: 0.005, flatBackgroundShare: 0.92 });
+    const withBox = checkInterestFloor(hairline, passingSlideProbe(6, { subjectBoxes: { hero: 0, device: 0.16, graphic: 0 } }), "closer", { slide: 6 });
+    expect(kinds(withBox)).not.toContain("no-device");
+    // The premise: the same pixels with no declared box are still refused.
+    const bare = checkInterestFloor(hairline, passingSlideProbe(6, { subjectBoxes: { hero: 0, device: 0.004, graphic: 0 } }), "closer", { slide: 6 });
+    expect(kinds(bare)).toContain("no-device");
+  });
+
   it("C — dead space: one contiguous hole over the role's ceiling, with the rectangle's own corners in the sentence", () => {
     const verdict = check(
       bare({ largestEmptyRect: { x: 0, y: 0, w: 1080, h: 590 }, largestEmptyRectShare: 0.41 }),

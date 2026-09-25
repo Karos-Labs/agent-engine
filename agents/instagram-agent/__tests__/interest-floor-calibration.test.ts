@@ -656,7 +656,15 @@ async function render(input: RenderCarouselInput): Promise<Measured[]> {
   if (outcome.status !== "success") throw new Error(`render failed: ${JSON.stringify(outcome)}`);
   return outcome.result.rendered.map((entry, index) => {
     const metrics = entry.metrics;
-    const probe = entry.probe;
+    // 2026-09-25: the probe the WORKFLOW judges, with the laid-out subject boxes
+    // merged in (`withSubjectBoxes` in create-instagram-agent-workflow.ts), so a
+    // declared device box counts by its area here as it does on a live run
+    // (WS-07: the closer's hairline panel). NOT on the cover: this suite judges
+    // the cover's GROUND layer, including covers with no photograph at all, and
+    // the cover's subject rule (clause I) has its own real-Chromium cases in
+    // `cover-subject.test.ts`.
+    const boxes = index === 0 ? undefined : (entry as { geometry?: { subjectBoxes?: { hero: number; device: number; graphic: number } } }).geometry?.subjectBoxes;
+    const probe = entry.probe === undefined || boxes === undefined ? entry.probe : { ...entry.probe, subjectBoxes: boxes };
     if (metrics === undefined || probe === undefined) throw new Error(`slide ${entry.n} came back without metrics/probe — measure/probe were requested`);
     // `index === 0` is the cover, which is the same convention
     // `checkDefaultRenderRules` and the workflow both use.

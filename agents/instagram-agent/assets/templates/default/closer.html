@@ -1408,13 +1408,26 @@ body.ta-center .plate > .mark-badge { margin-inline: auto; }
   gap: var(--sp-2);
   padding: var(--sp-2);
   border-radius: 4px;
-  background-image: linear-gradient(146deg,
-    color-mix(in srgb, var(--accent) 26%, transparent),
-    color-mix(in srgb, var(--accent) 12%, transparent) 56%,
-    color-mix(in srgb, var(--fg) 16%, transparent) 100%);
-  background-repeat: no-repeat;
+  /* 2026-09-25 (owner feedback D): no accent in the panel. KAROS' closer in
+     prep batch 3 still shipped the brown box the owner named; the other panels
+     went neutral in #280 and the closer was left out. A ramp of the client's
+     own text colour keeps the tone the interest floor measures. No hairline:
+     on the closer it read as ink at the frame edge. */
+  /* A box drawn the way a restrained site draws one: no fill, a hairline in
+     the ink colour (research round #253, WS-07: "1px hairline, radius 6, no
+     fill, never an accent gradient"). A filled neutral panel covering most of
+     the plate made the ink measurement blind to the type size and read the
+     frame edge as clipped ink. */
+  background-image: none;
+  /* A flat, faint fill of the ink colour under the hairline: never a gradient
+     and never the accent. With no fill at all the panel's inside read as the
+     plate's largest empty rectangle on short copy (LER 0.209 against the
+     closer's 0.22 ceiling, which calibration holds with a 15% margin). */
+  background-color: color-mix(in srgb, var(--fg) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 26%, transparent);
+  border-radius: 6px;
 }
-body:not(:has(#takeaway > span:not(:empty))) .cl-panel { background-image: none; }
+body:not(:has(#takeaway > span:not(:empty))) .cl-panel { box-shadow: none; background-color: transparent; }
 .cl-recap {
   margin-block-start: var(--sp-2);
   inline-size: 100%;
@@ -1510,15 +1523,12 @@ body[data-cta="pill"] .cl-cta {
    the outermost 8px as type running off the plate, and a band flush to the
    edge is exactly that. The ramp is DIAGONAL: a vertical one is uniform
    across each row, and its middle measured as a 25-29% flat rectangle. */
+/* 2026-09-25: the block no longer runs to the frame edges (a band 12px short
+   of the frame read as clipped ink once it lost its accent); it is the panel
+   with a heavier hairline and square corners. */
 body[data-closer="block"] .cl-panel {
-  margin-inline: calc((var(--mx) - 12px) * -1);
-  inline-size: calc(100% + (var(--mx) - 12px) * 2);
-  padding-inline: calc(var(--mx) - 12px);
   border-radius: 0;
-  background-image: linear-gradient(158deg,
-    color-mix(in srgb, var(--accent) 42%, transparent),
-    color-mix(in srgb, var(--accent) 16%, transparent) 55%,
-    color-mix(in srgb, var(--fg) 22%, transparent) 100%);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--fg) 30%, transparent);
 }
 /* SPLIT — the takeaway stands on the ground; the panel holds only what
    follows it (the recap and the ask), so the line that matters is set
@@ -1532,12 +1542,11 @@ body[data-closer="split"] .cl-ask {
   inline-size: 100%;
   padding: var(--sp-2);
   border-radius: 4px;
-  background-image: linear-gradient(146deg,
-    color-mix(in srgb, var(--accent) 28%, transparent),
-    color-mix(in srgb, var(--fg) 14%, transparent) 100%);
-  background-repeat: no-repeat;
+  background-image: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 26%, transparent);
+  border-radius: 6px;
 }
-body[data-closer="split"]:not(:has(#takeaway > span:not(:empty))) .cl-ask { background-image: none; }
+body[data-closer="split"]:not(:has(#takeaway > span:not(:empty))) .cl-ask { box-shadow: none; }
 </style>
 </head>
 <body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-ground="{{groundStyle}}" data-tone="{{groundTone}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}" data-anchor="{{compositionAnchor}}" data-figure="{{figurePlacement}}" data-cta="{{ctaForm}}" data-closer="{{closerForm}}">
