@@ -248,6 +248,23 @@ describe("D08: the variant is the product, and the product decides the format", 
 });
 
 describe("tiktok and the learning loop (C7)", () => {
+  it("the client's standing feedback reaches the commentary step beside the run's direction, not inside it", async () => {
+    // It used to travel only as an agent-service context file, which the
+    // engine path never sent.
+    const h = stubTools();
+    const standing = "# Client feedback — TikTok Agent\n\n## Applies to everything this agent makes\n- Never say game-changer.";
+    const result = await run(h, "tt-standing-1", "tiktok-clipping-agent", "clipping", { standingFeedback: standing, customPrompt: "keep it dry" });
+    expect(result.status).toBe("completed");
+    // Every step that was handed the run's direction was handed the standing
+    // feedback with it, and the direction itself is only what was typed.
+    const directed = h.drafting.filter((i) => i.runDirection !== undefined);
+    expect(directed.length).toBeGreaterThan(0);
+    for (const input of directed) {
+      expect(input.clientStandingFeedback).toBe(standing);
+      expect(input.runDirection).toBe("keep it dry");
+    }
+  });
+
   it("with nothing projected, the run completes as before and the record says all seven are absent", async () => {
     const h = stubTools();
     const result = await run(h, "tt-learn-1", "tiktok-clipping-agent", "clipping");

@@ -110,6 +110,16 @@ export interface RunDirection {
    * speaks to.
    */
   modeOverride?: ContentMode;
+  /**
+   * The client's STANDING feedback about this agent (the portal's two-level
+   * client-agent feedback: global direction, then per-template notes), as the
+   * markdown the portal renders for it. Not a per-run request, which is why it
+   * is kept out of \`direction\`: several agents use \`direction\` as a search
+   * query, a takeaway or a revision note, and a standing list must never be
+   * any of those. It reaches the drafting steps as \`clientStandingFeedback\`
+   * through \`runDirectionField\`. Bounded by \`MAX_STANDING_FEEDBACK_CHARS\`.
+   */
+  standingFeedback?: string;
   mediaAssets: readonly MediaAsset[];
   /** Where this run's visuals may come from — see `MediaSource` in core. `"system"` unless the portal said otherwise. */
   mediaSource: MediaSource;
@@ -291,8 +301,12 @@ export function readRunDirection(input: Readonly<Record<string, unknown>> | unde
     .filter((part): part is string => Boolean(part))
     .join("\n\n");
 
+  const standing = readString(input ?? {}, "standingFeedback");
+  const standingFeedback = standing !== undefined && standing.length > 0 ? standing.slice(0, MAX_STANDING_FEEDBACK_CHARS) : undefined;
+
   return {
     ...(direction ? { direction } : {}),
+    ...(standingFeedback !== undefined ? { standingFeedback } : {}),
     ...(topicOverride ? { topicOverride } : {}),
     ...(topicFromNote ? { topicFromNote: true as const } : {}),
     ...(modeOverride ? { modeOverride } : {}),
@@ -312,9 +326,24 @@ export function readRunDirection(input: Readonly<Record<string, unknown>> | unde
  * working without one, exactly as the existing `accountCharter` handling
  * already notes.
  */
-export function runDirectionField(direction: RunDirection): { runDirection?: string } {
-  return direction.direction !== undefined ? { runDirection: direction.direction } : {};
+export function runDirectionField(direction: RunDirection): { runDirection?: string; clientStandingFeedback?: string } {
+  return {
+    ...(direction.direction !== undefined ? { runDirection: direction.direction } : {}),
+    // Beside the run's own direction, never inside it (see \`standingFeedback\`).
+    // Every drafting step already spreads this helper, so the client's standing
+    // notes reach all of them without a per-agent change. Until this, they
+    // reached only the legacy agent-service runner: the engine path dropped the
+    // context file they travelled in.
+    ...(direction.standingFeedback !== undefined ? { clientStandingFeedback: direction.standingFeedback } : {}),
+  };
 }
+
+/**
+ * The most standing feedback a run carries. The portal already caps what it
+ * injects (\`selectInjectedFeedback\`); this is the engine's own bound, so a
+ * caller that does not cannot swamp every prompt of the run.
+ */
+export const MAX_STANDING_FEEDBACK_CHARS = 8000;
 
 /** The longest subject line `recordedSubject` writes. A subject is a table cell, not a paragraph. */
 export const MAX_RECORDED_SUBJECT_CHARS = 100;

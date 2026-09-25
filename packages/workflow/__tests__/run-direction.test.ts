@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CONTENT_MODES, MAX_RECORDED_SUBJECT_CHARS, MODE_CUES, modeFromDirection, readRunDirection, recordedSubject, runDirectionField, selectContentMode, topicLineFromNote } from "../src/index.js";
+import { CONTENT_MODES, MAX_RECORDED_SUBJECT_CHARS, MAX_STANDING_FEEDBACK_CHARS, MODE_CUES, modeFromDirection, readRunDirection, recordedSubject, runDirectionField, selectContentMode, topicLineFromNote } from "../src/index.js";
 
 /**
  * `readRunDirection` — one answer, for every agent, to two questions:
@@ -373,5 +373,30 @@ describe("the subject a run records, when its topic came from a typed note (2026
 
   it("never records an empty subject", () => {
     expect(recordedSubject(":::", { fromNote: true })).toBe(":::");
+  });
+});
+
+describe("standing feedback — the client's notes about this agent, beside the run's direction", () => {
+  const FEEDBACK = "# Client feedback — Instagram Agent\n\n## Applies to everything this agent makes\n- Never use the word synergy.";
+
+  it("reaches the drafting step as clientStandingFeedback, and never enters direction", () => {
+    const d = readRunDirection({ customPrompt: "focus on the product launch", standingFeedback: FEEDBACK });
+    expect(d.direction).toBe("focus on the product launch");
+    expect(d.standingFeedback).toBe(FEEDBACK);
+    expect(runDirectionField(d)).toEqual({ runDirection: "focus on the product launch", clientStandingFeedback: FEEDBACK });
+  });
+
+  it("travels alone when the run carries no direction, and does not become a topic", () => {
+    const d = readRunDirection({ standingFeedback: FEEDBACK });
+    expect(d.direction).toBeUndefined();
+    expect(d.topicOverride).toBeUndefined();
+    expect(runDirectionField(d)).toEqual({ clientStandingFeedback: FEEDBACK });
+  });
+
+  it("is absent for a blank or non-string value, and bounded when huge", () => {
+    expect(runDirectionField(readRunDirection({ standingFeedback: "   " }))).toEqual({});
+    expect(runDirectionField(readRunDirection({ standingFeedback: 42 }))).toEqual({});
+    const huge = readRunDirection({ standingFeedback: "x".repeat(MAX_STANDING_FEEDBACK_CHARS + 500) });
+    expect(huge.standingFeedback).toHaveLength(MAX_STANDING_FEEDBACK_CHARS);
   });
 });
