@@ -708,14 +708,14 @@ body[data-figure="inset"]:has(.plate.slide) .bg {
   inset: auto;
   inset-block-start: calc(var(--zone-mark) + var(--sp));
   inset-inline: var(--mx);
-  block-size: 600px;
+  block-size: var(--inset-h, 600px);
   border-radius: 4px;
   overflow: hidden;
   z-index: 1;
 }
 body[data-figure="inset"]:has(.plate.slide) .bg img { position: absolute; inset: 0; inline-size: 100%; block-size: 100%; object-fit: cover; }
 body[data-figure="inset"]:has(.plate.slide) .scrim { display: none; }
-body[data-figure="inset"]:has(.plate.slide) .plate { padding-block-start: calc(var(--zone-mark) + var(--sp) + 600px + var(--sp-2)); }
+body[data-figure="inset"]:has(.plate.slide) .plate { padding-block-start: calc(var(--zone-mark) + var(--sp) + var(--inset-h, 600px) + var(--sp-2)); }
 
 /* OVER A PHOTOGRAPH THE COPY GOES TO THE FOOT. The scrim is built to darken
    downward, so the bottom of the plate is where type is legible and where it is
