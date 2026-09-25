@@ -179,6 +179,7 @@ const HAPPY_PATH_STEP_IDS = [
   // run: an archive that is empty, unreadable or unregistered still reports
   // that it looked, because a run that skipped the read entirely could not
   // tell an empty archive from a broken one.
+  "05p-precheck-copy-attempt-1",
   "05y-read-media-library",
   // Phase 3 (item S): the run's ONE generation style and image treatment,
   // frozen before the attempt loop so every attempt, every revision and every
