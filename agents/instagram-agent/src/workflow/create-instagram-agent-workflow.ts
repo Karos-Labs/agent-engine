@@ -16205,6 +16205,12 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         postsByUs: 1,
         topics: [topicClaim.topic],
       },
+      // Every revision note a reviewer sent at \`09a-batch-review\`, as the
+      // voice lessons the middleware carries into \`client_preferences\`
+      // (Craft 11 §3). X, LinkedIn and Reddit have recorded these since C7;
+      // this agent recorded none, so a note steered one redraft and was then
+      // forgotten by every later run.
+      voiceNotes: review.notes.map((n) => ({ lesson: n.feedback, fromRevision: n.revision })),
       readiness: learning.readiness,
     });
 

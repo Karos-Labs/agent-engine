@@ -123,6 +123,12 @@ describe("revision loop", () => {
       | { slides: Array<{ fields: Record<string, string> }> }
       | undefined;
     expect(slidesData?.slides[0]?.fields["headline"]).toContain("(revised)");
+
+    // The reviewer's note outlives the redraft: it is on the run's C7 record
+    // as a voice lesson, which the middleware carries into the client's
+    // preferences for every later run, not only this one's round 1.
+    const record = await env.store.readJson<Record<string, unknown>>("acme", ["state", "runs", runId]);
+    expect(record!.voiceNotes).toEqual([{ lesson: "Open with the outcome, not the statistic.", fromRevision: 0 }]);
   }, 60000);
 
   it("passes the reviewer's words into the re-draft, and remembers them for future runs", async () => {
