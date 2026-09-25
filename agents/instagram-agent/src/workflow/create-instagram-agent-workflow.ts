@@ -279,7 +279,7 @@ import {
   withPost,
   type PostArm,
 } from "./post-performance.js";
-import { BUNDLED_SERIES, countComparedEntities, selectSeries, seriesDirectedSlides, seriesDirective, seriesLibraryFor, SERIES_DIRECTIVE_SLIDES } from "./editorial-series.js";
+import { BUNDLED_SERIES, countComparedEntities, remapDirectedSlides, selectSeries, seriesDirectedSlides, seriesDirective, seriesLibraryFor, SERIES_DIRECTIVE_SLIDES } from "./editorial-series.js";
 import {
   buildGateVerdict,
   gateTimeoutFor,
@@ -12486,6 +12486,17 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * a defect that no longer exists.
        */
       let slideStyleOverrides = new Map<number, SlideStyleOverride>();
+      /**
+       * 2026-09-25: the slides the SERIES directed, carried through a
+       * `merge-into-neighbour` renumber like the four structures that branch
+       * already remaps. `seriesDirectedSlides` compares each slide's layout
+       * with the skeleton AT ITS POSITION, so after a merge shifted every later
+       * slide one place, a directed repeat (XO Digital's second list,
+       * pubsub-21255083755108745) no longer matched, lost the singleton
+       * exemption and was degraded to an empty headline plate that promised
+       * "three steps" and showed none. Attempt-scoped for the same reason.
+       */
+      let seriesDirectedCarry: ReadonlySet<number> = new Set<number>();
 
       /**
        * The assembled slides-data for one candidate copy/selection pair, with
@@ -12507,6 +12518,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         selectionsForAssembly: ImageSelection[],
         customIds: ReadonlySet<string>,
         overridesForAssembly: ReadonlyMap<number, SlideStyleOverride> = slideStyleOverrides,
+        directedCarry: ReadonlySet<number> = seriesDirectedCarry,
       ): RenderCarouselInput => {
         // RFC-17 — fresh per assembly, so a re-assembly (the typographic
         // fallback at 08a, the free re-layout's re-render at 08a1c) reports
@@ -12630,7 +12642,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // `seriesDirectedSlides` handles by construction because it compares
           // each slide's CURRENT layout against `skeletonFor`'s entry for that
           // position.
-          ...(series !== undefined ? { seriesDirected: seriesDirectedSlides(series.series, bounded.copy.slides) } : {}),
+          ...(series !== undefined ? { seriesDirected: new Set([...seriesDirectedSlides(series.series, bounded.copy.slides), ...directedCarry]) } : {}),
           slideStyleOverrides: overridesForAssembly,
           ...(effectiveKit?.brandAccent !== undefined ? { brandAccentFallback: effectiveKit.brandAccent } : {}),
           ...(effectiveKit?.handle !== undefined ? { brandHandle: effectiveKit.handle } : {}),
@@ -13364,6 +13376,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           let nextCopy = copy;
           let nextSelections = selections;
           const nextStyleOverrides = new Map(slideStyleOverrides);
+          let nextDirectedCarry: ReadonlySet<number> = seriesDirectedCarry;
           const patchSlide = (n: number, patch: Partial<InstagramCopyOutput["slides"][number]>): void => {
             nextCopy = { ...nextCopy, slides: nextCopy.slides.map((s) => (s.n === n ? { ...s, ...patch } : s)) };
           };
@@ -13389,6 +13402,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 // branch's own comment exists about.
                 const into = nextCopy.slides.find((sl) => sl.n === change.into);
                 if (into === undefined) break;
+                const preMergeSlides = nextCopy.slides;
                 const carried = `${into.body} ${change.carry.headline} ${change.carry.body}`.replace(/\s{2,}/gu, " ").trim();
                 // Owner feedback WS-09: when no neighbour would paint the words,
                 // they go to the caption, never nowhere.
@@ -13415,6 +13429,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 for (const [n, override] of remappedOverrides) nextStyleOverrides.set(n, override);
                 downgradedForImagesThisAttempt = new Set(
                   [...downgradedForImagesThisAttempt].filter((n) => n !== change.slide).map((n) => renumber.get(n) ?? n),
+                );
+                // Read off the PRE-merge copy (the skeleton still lines up
+                // there), then remapped by the same table.
+                nextDirectedCarry = remapDirectedSlides(
+                  [...(series !== undefined ? seriesDirectedSlides(series.series, preMergeSlides) : []), ...nextDirectedCarry],
+                  change.slide,
+                  renumber,
                 );
                 break;
               }
@@ -13512,7 +13533,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           runVisualSystem = systemFor(nextCopy.slides.length);
           await ensureTemplatesOnDisk(nextValidatedCustomArchetypes);
           const relayoutRender = await wf.step.code(rev(`08a1c-render-relayout-attempt-${attempt}${roundSuffix}`), async () => {
-            const assembled = assembleForAttempt(nextCopy, nextSelections, nextValidatedCustomArchetypeIds, nextStyleOverrides);
+            const assembled = assembleForAttempt(nextCopy, nextSelections, nextValidatedCustomArchetypeIds, nextStyleOverrides, nextDirectedCarry);
             // The re-layout may have shortened the carousel, so the zone is
             // re-resolved against the document that is actually being rendered
             // rather than reused from the first render of this attempt.
@@ -13528,6 +13549,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             copy = nextCopy;
             selections = nextSelections;
             slideStyleOverrides = nextStyleOverrides;
+            seriesDirectedCarry = nextDirectedCarry;
             validatedCustomArchetypes = nextValidatedCustomArchetypes;
             validatedCustomArchetypeIds = nextValidatedCustomArchetypeIds;
             slidesDataForQa = relayoutRender.slidesData;

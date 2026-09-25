@@ -263,6 +263,20 @@ export function seriesDirectedSlides(
   return directed;
 }
 
+/**
+ * The directed set after a `merge-into-neighbour` drops slide `removed` and
+ * renumbers the rest by `renumber` (old n -> new n). A directed slide stays
+ * directed under its new number; the merged-away slide leaves the set.
+ */
+export function remapDirectedSlides(directed: Iterable<number>, removed: number, renumber: ReadonlyMap<number, number>): ReadonlySet<number> {
+  const out = new Set<number>();
+  for (const n of directed) {
+    if (n === removed) continue;
+    out.add(renumber.get(n) ?? n);
+  }
+  return out;
+}
+
 /** The evidence a series is chosen from — all of it already on the run before this step. */
 export interface SeriesEvidence {
   /** The angle the run chose, if `04i` produced one. Absent on a run whose angle step failed open. */
