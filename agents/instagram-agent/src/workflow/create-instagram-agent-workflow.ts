@@ -409,6 +409,7 @@ import {
   type PostUsage,
   type RecognisedEntity,
   describedAsPhotograph,
+  mayBeMark,
 } from "./entity-imagery.js";
 import { gradePictureSet, heroScrimCssBlock, imageTreatmentCssBlock, resolveGenerationStyle, type GenerationStyle } from "./style-lock.js";
 import { literalIllustrationOf, planImageBackfill, registerFor, resolveRescuedSelection } from "./image-density.js";
@@ -9457,6 +9458,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               // beats its mark for the slide's picture) and its path is kept, so
               // the render can show it whole on a card instead of cropping it.
               if (step.mark === true) {
+                // 2026-09-25: the mark tier keeps what IS a mark. Its query is
+                // "<name> logo" and the search matches the NAME: for the company
+                // Lusha it returned a photograph of the singer Lusha at a 2010
+                // community event, which then took the vet's rounds on a slide
+                // about a software company. A namesake's photograph is dropped
+                // here; the provider's own photographs of a sign stay, as photos.
+                gained = gained.filter((c) => describedAsPhotograph(c) || mayBeMark(c as ImageCandidate & { licenseConfidence?: string }));
                 // Chosen BEFORE the tag is appended: the tag itself says "logo",
                 // and `looksLikeMark` reads the provider's own title.
                 const badgeCandidate = (gained as Array<ImageCandidate & { licenseConfidence?: string }>).find((c) => isCreditFreeMark(c) && looksLikeMark(c));

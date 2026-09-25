@@ -409,6 +409,21 @@ export function looksLikeMark(c: { path: string; description: string }): boolean
  * it came back from the mark tier, and rendered as a small logo card in the
  * corner of the cover. The same test `looksLikeMark` already applies.
  */
+/**
+ * Whether a candidate from the mark tier can be a mark at all (2026-09-25).
+ * Looser than `looksLikeMark` on purpose: the mark tier's query already says
+ * "logo", so its job is only to drop what is plainly NOT one, such as the
+ * photograph of a namesake (the singer Lusha, returned for the company Lusha).
+ * Substring, so "Logotipo da CVM" and "logotype" pass; an SVG passes; a
+ * credit-free text logo passes.
+ */
+export function mayBeMark(c: { path: string; description: string; licenseConfidence?: string }): boolean {
+  if (/\.svg$/iu.test(c.path) || /\.svg/iu.test(c.description)) return true;
+  if (isCreditFreeMark(c)) return true;
+  const title = c.description.split("[")[0] ?? "";
+  return /logo|wordmark|emblem|brand ?mark|insignia|monogram|symbol|icon|crest|seal/iu.test(title);
+}
+
 export function describedAsPhotograph(c: { description: string }): boolean {
   const title = c.description.split("[")[0] ?? "";
   return /photo of|google places|geo-verified/iu.test(title);
