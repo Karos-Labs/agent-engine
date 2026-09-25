@@ -1,6 +1,6 @@
 import { lintReadableCopy, readableCopySteer } from "./readable-copy.js";
 import { brandMarkZone } from "./brand-render-tokens.js";
-import { buildExemplarLibrary, EXEMPLAR_LIBRARY_BELIEF_KEY, EXEMPLAR_POSTS_PER_ACCOUNT, exemplarLibraryAction, exemplarPatternEvidence, exemplarStudioNotes, failedLibrary, planHarvest, postsToJudge, readExemplarLibrary, type ExemplarLibrary, type HarvestedExemplar } from "./exemplar-library.js";
+import { buildExemplarLibrary, densityFromLibrary, EXEMPLAR_LIBRARY_BELIEF_KEY, EXEMPLAR_POSTS_PER_ACCOUNT, exemplarLibraryAction, exemplarPatternEvidence, exemplarStudioNotes, failedLibrary, planHarvest, postsToJudge, readExemplarLibrary, type ExemplarLibrary, type HarvestedExemplar } from "./exemplar-library.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { readForbiddenTopics, UNIT_PRICING } from "@agent-engine/core";
@@ -1296,7 +1296,20 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           industryDensity = undefined;
         }
       }
-      const pictureDensity = explicitDensity ?? industryDensity;
+      // RFC-26 Phase 4a (2026-09-25): and when neither says, what performs in
+      // the client's niche: a photo-led exemplar library makes the run
+      // photo-first. One beliefs read; a missing library changes nothing.
+      let libraryDensity: ReturnType<typeof densityFromLibrary>;
+      if (explicitDensity === undefined && industryDensity === undefined) {
+        try {
+          const read = await tools["memory.read"]?.execute({ scope: "beliefs" }, { ctx });
+          const beliefs = read?.status === "success" ? (read.result as { beliefs?: Record<string, unknown> }).beliefs : undefined;
+          libraryDensity = densityFromLibrary(readExemplarLibrary(beliefs?.[EXEMPLAR_LIBRARY_BELIEF_KEY]));
+        } catch {
+          libraryDensity = undefined;
+        }
+      }
+      const pictureDensity = explicitDensity ?? industryDensity ?? libraryDensity;
       // 2026-09-23: news mode, the same precedence. A config value that is not
       // a list of strings is ignored rather than guessed at.
       const configModes = Array.isArray(runConfig["instagramPostModes"]) ? (runConfig["instagramPostModes"] as unknown[]).filter((m): m is string => typeof m === "string") : [];
@@ -1338,7 +1351,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               ? ("client-preference" as const)
               : industryDensity !== undefined
                 ? ("industry-default" as const)
-                : undefined;
+                : libraryDensity !== undefined
+                  ? ("exemplar-library" as const)
+                  : undefined;
       // `wf.runId` is already a caller-supplied, globally-unique idempotency
       // key (RFC-01 §9.1 rule 2), so it doubles as `postId` directly — a
       // dedicated sequential-counter tool (RFC-03 §3's suggested

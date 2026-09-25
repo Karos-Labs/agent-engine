@@ -109,3 +109,15 @@ describe("the library", () => {
     expect(exemplarStudioNotes(failedLibrary(now, ["x"]))).toEqual([]);
   });
 });
+
+describe("the library steers picture density (RFC-26 Phase 4a)", () => {
+  it("makes a photo-led niche photo-first, and leaves a text-led or thin library alone", async () => {
+    const { densityFromLibrary } = await import("../src/workflow/exemplar-library.js");
+    const entry = (placement: string, cover = "typographic") => ({ handle: "h", role: "competitor" as const, format: "carousel", frameCount: 6, craft: 4, dna: { picturePlacement: placement, coverType: cover }, standout: "s", hook: "", storedFrames: [] });
+    const lib = (entries: ReturnType<typeof entry>[]) => ({ version: 1 as const, builtAt: "2026-09-25T00:00:00Z", status: "built" as const, problems: [], accounts: [], entries });
+    expect(densityFromLibrary(lib([entry("full-bleed"), entry("inset"), entry("none", "person"), entry("split"), entry("none")]))).toBe("photo-first");
+    expect(densityFromLibrary(lib([entry("none"), entry("none"), entry("none"), entry("inset"), entry("none")]))).toBeUndefined();
+    expect(densityFromLibrary(lib([entry("full-bleed"), entry("inset")]))).toBeUndefined();
+    expect(densityFromLibrary(undefined)).toBeUndefined();
+  });
+});

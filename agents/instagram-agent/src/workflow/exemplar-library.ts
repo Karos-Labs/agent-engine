@@ -268,3 +268,26 @@ export function exemplarPatternEvidence(library: ExemplarLibrary | undefined): {
     templateHints: library.entries.slice(0, 6).map((e) => e.standout),
   };
 }
+
+/**
+ * RFC-26 Phase 4a: the library as a per-client PRIOR, first lever. When the
+ * breakouts judged across the client's niche are photo-led, a client with no
+ * stated preference and no industry default runs photo-first. Owner rulings
+ * still bind: the band only raises the picture share, never lowers the floor.
+ */
+export const PHOTO_LED_SHARE_FOR_PHOTO_FIRST = 0.6;
+
+export function photoLedShare(library: ExemplarLibrary | undefined): number | undefined {
+  if (library === undefined || library.status !== "built" || library.entries.length < 5) return undefined;
+  const photoLed = library.entries.filter((e) => {
+    const placement = typeof e.dna["picturePlacement"] === "string" ? (e.dna["picturePlacement"] as string) : "";
+    const cover = typeof e.dna["coverType"] === "string" ? (e.dna["coverType"] as string) : "";
+    return ["full-bleed", "inset", "split", "mixed"].includes(placement) || /^(photo|person|product)/u.test(cover);
+  }).length;
+  return photoLed / library.entries.length;
+}
+
+export function densityFromLibrary(library: ExemplarLibrary | undefined): "photo-first" | undefined {
+  const share = photoLedShare(library);
+  return share !== undefined && share >= PHOTO_LED_SHARE_FOR_PHOTO_FIRST ? "photo-first" : undefined;
+}
