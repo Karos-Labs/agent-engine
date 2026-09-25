@@ -1150,11 +1150,21 @@ export function trimToSentenceBudget(text: string, maxWords: number): string {
   return kept.join(" ");
 }
 
-function withBodyBudget<T extends { layout?: InstagramSlideLayout | undefined; body: string }>(slide: T): T {
+/**
+ * A quote card's QUOTE, in words (2026-09-25, owner feedback WS-10). KAROS and
+ * Sitti set 50- and 30-word quotes in small type inside a panel: the quote is
+ * the plate's whole point and the fit ladder shrank it to fit. Cut at WHOLE
+ * sentences (a quotation stays verbatim, only shorter); a first sentence over
+ * the budget is kept whole.
+ */
+export const QUOTE_WORD_BUDGET = 30;
+
+function withBodyBudget<T extends { layout?: InstagramSlideLayout | undefined; body: string; quote?: { text: string; attribution: string } | undefined }>(slide: T): T {
   const budget = BODY_WORD_BUDGET[slide.layout ?? "photo"];
-  if (budget === undefined) return slide;
-  const body = trimToSentenceBudget(slide.body, budget);
-  return body === slide.body ? slide : { ...slide, body };
+  const quote = slide.quote !== undefined ? trimToSentenceBudget(slide.quote.text, QUOTE_WORD_BUDGET) : undefined;
+  const body = budget !== undefined ? trimToSentenceBudget(slide.body, budget) : slide.body;
+  if (body === slide.body && (quote === undefined || quote === slide.quote?.text)) return slide;
+  return { ...slide, body, ...(quote !== undefined && slide.quote !== undefined ? { quote: { ...slide.quote, text: quote } } : {}) };
 }
 
 /**
