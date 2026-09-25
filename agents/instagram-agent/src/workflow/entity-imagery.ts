@@ -401,6 +401,19 @@ export function looksLikeMark(c: { path: string; description: string }): boolean
   return /\b(logo|logos|logotype|wordmark|emblem|brand ?mark|icon|symbol)\b/iu.test(title);
 }
 
+/**
+ * A candidate the provider itself describes as a PHOTOGRAPH (2026-09-25): a
+ * Google Places "geo-verified photo of ..." is a picture of a place or a sign,
+ * whatever its caption names. Hanky Panky's cover in prep batch 3 was a
+ * geo-verified photo of "Met's Costume Institute logo", tagged a mark because
+ * it came back from the mark tier, and rendered as a small logo card in the
+ * corner of the cover. The same test `looksLikeMark` already applies.
+ */
+export function describedAsPhotograph(c: { description: string }): boolean {
+  const title = c.description.split("[")[0] ?? "";
+  return /photo of|google places|geo-verified/iu.test(title);
+}
+
 export function isCreditFreeMark(c: { licenseConfidence?: string; description: string }): boolean {
   return c.licenseConfidence === "blanket" || /\[licence:\s*(?:public domain|pd|cc0)/iu.test(c.description);
 }

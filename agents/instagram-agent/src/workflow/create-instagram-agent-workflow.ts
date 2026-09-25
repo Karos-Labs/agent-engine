@@ -408,6 +408,7 @@ import {
   type EntityEvidenceCard,
   type PostUsage,
   type RecognisedEntity,
+  describedAsPhotograph,
 } from "./entity-imagery.js";
 import { gradePictureSet, heroScrimCssBlock, imageTreatmentCssBlock, resolveGenerationStyle, type GenerationStyle } from "./style-lock.js";
 import { literalIllustrationOf, planImageBackfill, registerFor, resolveRescuedSelection } from "./image-density.js";
@@ -9459,8 +9460,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 // Chosen BEFORE the tag is appended: the tag itself says "logo",
                 // and `looksLikeMark` reads the provider's own title.
                 const badgeCandidate = (gained as Array<ImageCandidate & { licenseConfidence?: string }>).find((c) => isCreditFreeMark(c) && looksLikeMark(c));
-                gained = gained.map((c) => ({ ...c, description: `${c.description} ${MARK_CANDIDATE_TAG}` }));
-                for (const c of gained) marks.push(c.path);
+                // A candidate the provider calls a photograph stays a photograph:
+                // it is graded and set like any picture, never shown as a logo card.
+                gained = gained.map((c) => (describedAsPhotograph(c) ? c : { ...c, description: `${c.description} ${MARK_CANDIDATE_TAG}` }));
+                for (const c of gained) if (!describedAsPhotograph(c)) marks.push(c.path);
                 // 2026-09-23: the owner, on the white panel: a logo does not
                 // have to fill the slide or stand alone; it can be a small part
                 // of the post, beside a real photograph. The slide's first
@@ -13125,6 +13128,54 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // problem at all and is reported as the tooling break it actually is.
       let renderResolved = renderOutcome;
       let slidesDataResolved = slidesDataAttempt;
+      // ── ONE MISSING FILE COSTS ONE PICTURE, NOT THE POST (2026-09-25). ──
+      //
+      // Sitti's prep run pubsub-21255146309711587 lost its cover's generated
+      // frame to a worker restart; the render refused on that one path and the
+      // branch below stripped EVERY picture, so a post holding three shipped
+      // with none. First drop only the pictures whose files are gone (read in
+      // a checkpointed step, so a resume makes the same choice) and render
+      // again; the fully typographic plate stays the last resort.
+      if (renderResolved.status === "content_fail") {
+        const missingNs = await wf.step.code(rev(`08a-find-missing-pictures-attempt-${attempt}`), async () => {
+          const gone: number[] = [];
+          for (const sel of selections) {
+            if (sel.imagePath === null) continue;
+            try {
+              await fs.access(path.resolve(options.repoRoot, sel.imagePath));
+            } catch {
+              gone.push(sel.n);
+            }
+          }
+          return gone;
+        });
+        const pictured = selections.filter((sel) => sel.imagePath !== null).length;
+        if (missingNs.length > 0 && missingNs.length < pictured) {
+          const missing = new Set(missingNs);
+          const partialCopy: InstagramCopyOutput = {
+            ...copy,
+            slides: copy.slides.map((s) => (missing.has(s.n) && s.layout === "photo" ? { ...s, layout: "text_only" as const } : s)),
+          };
+          const partialSelections = selections.map((sel) => (missing.has(sel.n) ? { ...sel, imagePath: null } : sel));
+          const partialData = await wf.step.code(rev(`08a-render-fallback-partial-attempt-${attempt}`), () =>
+            assembleForAttempt(partialCopy, partialSelections, validatedCustomArchetypeIds),
+          );
+          runVisualSystem = systemFor(partialCopy.slides.length);
+          await ensureTemplatesOnDisk(validatedCustomArchetypes);
+          const partialRender = await wf.step.code(rev(`08-render-carousel-partial-attempt-${attempt}`), async () =>
+            tools["publish.renderCarousel"]!.execute(
+              { ...partialData, measure: true, probe: true, ...(reservedZone !== undefined ? { reservedZone } : {}) },
+              { ctx },
+            ),
+          );
+          if (partialRender.status === "success") {
+            copy = partialCopy;
+            selections = partialSelections;
+            slidesDataResolved = partialData;
+            renderResolved = partialRender;
+          }
+        }
+      }
       if (renderResolved.status === "content_fail") {
         const strippedCopy: InstagramCopyOutput = {
           ...copy,
