@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { ART_DIRECTOR_SKILL_REF, InstagramArtDirectorAgent } from "../src/agent/instagram-art-director-agent.js";
 import type { BrandTokens } from "../src/workflow/types.js";
 import { GenerateImageInputSchema } from "@agent-engine/tool-karos-media";
-import { buildArtDirection, checkVisualDirection, CLICHE_SCENE_FORBID, IMAGE_FORBID_MAX, mergeForbid, prescribesClicheScene, VISUAL_DIRECTION_BELIEF_KEY, type VisualDirection } from "../src/workflow/visual-direction.js";
+import { buildArtDirection, FEED_READ_NOTE, checkVisualDirection, CLICHE_SCENE_FORBID, IMAGE_FORBID_MAX, mergeForbid, prescribesClicheScene, VISUAL_DIRECTION_BELIEF_KEY, type VisualDirection } from "../src/workflow/visual-direction.js";
 
 /**
  * RFC-13 Phase 3, item Q — the half that finally reads the direction.
@@ -73,6 +73,9 @@ describe("buildArtDirection", () => {
     expect(art["notes"]).not.toContain("Photograph the work itself");
     expect(art["notes"]).toContain("Soft window light");
     expect(art["notes"]).toContain("One subject per frame");
+    // 2026-09-25: the feed read closes every direction, so no brand look can draw a subject lost in murk.
+    expect(String(art["notes"]).endsWith(FEED_READ_NOTE)).toBe(true);
+    expect(buildArtDirection(undefined, direction({ lines: [] }))!["notes"]).toBe(FEED_READ_NOTE);
     expect(art["forbid"]).toEqual(["stock handshakes", "glass-tower skylines", ...CLICHE_SCENE_FORBID]);
     expect(art["styleLock"]).toBe("Warm documentary photography, one subject, soft single-source light, no composite.");
   });

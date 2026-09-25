@@ -1191,6 +1191,10 @@ export function fallbackVisualDirection(tokens: BrandTokens | undefined, brief?:
  * and, with `fallbackVisualDirection` in front of it, unreachable in practice
  * for any client with either a brand kit or a brief.
  */
+/** What every generated frame must do in a phone feed, whatever the brand's look. */
+export const FEED_READ_NOTE =
+  "Made for a phone feed: one clear focal subject that reads in a second, lit and separated from its background, in a bold, simple composition. However dark or muted the style, the subject is never lost in shadow or murk.";
+
 export function buildArtDirection(tokens: BrandTokens | undefined, direction?: VisualDirection): Record<string, unknown> | undefined {
   // ── THE SLIDE DECIDES WHAT IS IN FRAME; THE BRAND DECIDES THE LOOK. ──
   //
@@ -1214,7 +1218,11 @@ export function buildArtDirection(tokens: BrandTokens | undefined, direction?: V
   // field `buildBrief` appends verbatim. Ten lines of at most 200 characters
   // is ~2k characters, which is a rounding error against an image charge.
   const lookLines = (direction?.lines ?? []).filter((l) => !prescribesClicheScene(l.line));
-  const notes = lookLines.length > 0 ? lookLines.map((l) => l.line).join(" ") : undefined;
+  // The feed read goes LAST and rides on every direction, because it is the
+  // one thing no brand look may trade away: karoslabs' lock ("deep shadow
+  // falloff into near-black, gentle desaturation") drew frames whose subject
+  // dissolved into the dark ground (job PCjzJDH10gQW7peazB5n, 2026-09-25).
+  const notes = lookLines.length > 0 ? [...lookLines.map((l) => l.line), FEED_READ_NOTE].join(" ") : direction !== undefined ? FEED_READ_NOTE : undefined;
   // The cliché scenes join every direction's negatives: the generator's own
   // default for "a business picture" is exactly them.
   const forbid = direction !== undefined ? mergeForbid(direction.forbid) : undefined;
