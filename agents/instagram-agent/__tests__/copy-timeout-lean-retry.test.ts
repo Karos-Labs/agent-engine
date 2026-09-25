@@ -27,6 +27,7 @@ describe("the copy drafter after a timeout", () => {
     const src = readFileSync(path.resolve(__dirname, "../src/workflow/create-instagram-agent-workflow.ts"), "utf8");
     expect(src).toContain("new InstagramCopyAgent({ router: options.router, tools, promptStore: options.promptStore }, { omitThought: true })");
     expect(src).toContain("lastCopyAttemptTimedOut ? copyLeanAgent : copyAgent");
-    expect(src).toMatch(/lastCopyAttemptTimedOut = revisedDraft === undefined && copyExec\.status !== "completed" && typeof \(copyExec as \{ timedOutAfterMs\?: unknown \}\)\.timedOutAfterMs === "number";/u);
+    // Sticky: once a run has timed out, every later attempt stays lean.
+    expect(src).toMatch(/lastCopyAttemptTimedOut \|\|= revisedDraft === undefined && copyExec\.status !== "completed" && typeof \(copyExec as \{ timedOutAfterMs\?: unknown \}\)\.timedOutAfterMs === "number";/u);
   });
 });

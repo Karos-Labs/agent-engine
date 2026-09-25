@@ -8733,7 +8733,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // redraft at all. deel's attempts 1 and 3 failed the identical gate on
       // the identical words.
       // Read off the (checkpointed) result, so a resume picks the same drafter.
-      lastCopyAttemptTimedOut = revisedDraft === undefined && copyExec.status !== "completed" && typeof (copyExec as { timedOutAfterMs?: unknown }).timedOutAfterMs === "number";
+      // STICKY for the run (2026-09-25): The Pitch by Deel's prep run
+      // pubsub-21792143927803783 timed out on attempt 1, its lean attempt 2
+      // answered in 171 s but malformed, and attempt 3 went back to the full
+      // drafter and timed out again. Once a run has timed out, it stays lean.
+      lastCopyAttemptTimedOut ||= revisedDraft === undefined && copyExec.status !== "completed" && typeof (copyExec as { timedOutAfterMs?: unknown }).timedOutAfterMs === "number";
       draftAttemptLog.push({
         attempt,
         producedDraft: copyExec.status === "completed",
