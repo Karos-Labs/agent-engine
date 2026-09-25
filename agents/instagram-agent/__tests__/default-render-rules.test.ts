@@ -745,7 +745,16 @@ describe("default:closer-carries-cta — provable when present, never failed whe
     expect(residue).toBeDefined();
     expect(residue!.check).toBe("render");
     expect(residue!.description).toContain(DEFAULT_RENDER_RULES[3]!.description);
-    expect(residue!.description).toContain("no question mark or lexicon CTA found; judge whether the closer invites action");
+    expect(residue!.description).toContain("no question or ask on the closer or in the caption");
+  });
+
+  it("owner decision 16: a closer that ends on its takeaway passes when the caption carries the ask", () => {
+    const { copy, selections } = copyWith([...FIVE_PHOTOS, { hero: true, body: "That is what changed this quarter." }]);
+    const withAsk = { ...copy, caption: `${copy.caption}
+
+Which of these would you change first?` };
+    const result = checkDefaultRenderRules(assemble(withAsk, selections), withAsk);
+    expect(result.residue.map((r) => r.id)).not.toContain("default:closer-carries-cta");
   });
 
   it("a 'single' post is judged on its caption, not on its one slide", () => {

@@ -611,8 +611,9 @@ describe("default render rules through the workflow (WP0-4's workflow-level proo
     const qaInput = qaInputAt(router);
     const ruleIds = (qaInput["renderRules"] as Array<{ id: string }>).map((r) => r.id);
     expect(ruleIds.length).toBeGreaterThan(0);
-    // goodCopyOutput's closer has neither a question mark nor a lexicon CTA, so that rule reaches the judge as residue; the deterministic passes do not.
-    expect(ruleIds).toContain("default:closer-carries-cta");
+    // goodCopyOutput's closer carries no ask, but its CAPTION does ("Save this before your next planning week."), which decision 16
+    // (2026-09-25) accepts: the closer rule is settled deterministically and does not reach the judge.
+    expect(ruleIds).not.toContain("default:closer-carries-cta");
     expect(ruleIds).not.toContain("default:cover-carries-device");
     expect(ruleIds).not.toContain("default:numbers-are-devices");
     // The writer was told the rules it is judged by (the copy input).

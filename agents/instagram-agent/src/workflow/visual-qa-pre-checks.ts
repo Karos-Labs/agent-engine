@@ -376,7 +376,7 @@ export const DEFAULT_RENDER_RULES: StyleRule[] = [
     id: "default:closer-carries-cta",
     check: "render",
     description:
-      "The last slide of a carousel (the caption, for a single) carries a call to action or a question the reader can answer — that is what the `closer` archetype's takeaway plus accent-ruled question line is for.",
+      "The last slide of a carousel (the caption, for a single) closes the post: a takeaway the reader keeps, a question they can answer, or one ask. When the post's ask lives in its caption (owner decision 16, 2026-09-25), a closer that ends on its takeaway passes. Never \"link in bio\" and never a follow line or card.",
   },
   // Phase 3, item R. APPENDED, so the four ids above and their order are
   // untouched. The rule's text and its deterministic check live in
@@ -940,8 +940,12 @@ export function checkDefaultRenderRules(slidesData: RenderCarouselInput, copy: I
   // default:closer-carries-cta — provable when present, never failed when absent.
   const closerText = copy.format === "single" ? copy.caption : proseFieldsOf(slides[slides.length - 1]!).map(([, value]) => value).join(" ");
   const hasCta = QUESTION_MARK.test(closerText) || CTA_LEXICON_LATIN.test(closerText) || CTA_LEXICON_HEBREW.test(closerText);
-  if (!hasCta) {
-    residue.push(withNote(rule("default:closer-carries-cta"), "no question mark or lexicon CTA found; judge whether the closer invites action"));
+  // 2026-09-25 (owner decision 16): the ask may live in the caption, and then
+  // the closer is free to end on its takeaway. Batch 4 failed three closers
+  // that did exactly what copy prompt v34 asked.
+  const captionAsks = copy.format !== "single" && (QUESTION_MARK.test(copy.caption) || CTA_LEXICON_LATIN.test(copy.caption) || CTA_LEXICON_HEBREW.test(copy.caption));
+  if (!hasCta && !captionAsks) {
+    residue.push(withNote(rule("default:closer-carries-cta"), "no question or ask on the closer or in the caption; judge whether the closer closes the post with a takeaway the reader keeps"));
   }
 
   // Phase 3, item R: a slide that chose no picture at all must carry a device.
