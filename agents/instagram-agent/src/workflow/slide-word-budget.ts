@@ -162,7 +162,18 @@ export const MAX_WORDS_PER_BLOCK = 20;
  * perfectly well and come in around 46; the defect is the volume, not the
  * count, and a count rule would refuse the good version of the same plate.
  */
-export const MAX_WORDS_PER_SLIDE_TOTAL = 60;
+/*
+ * ## And 35, since 2026-09-25 (owner decision 20 on research round #253)
+ *
+ * The benchmark study measured what the 60 above let through: the best
+ * posts' interiors carry 0 to 35 words (a16z story slides 0-12, B2B around
+ * 17, startup best median 4), explainers of 25-54 words went 0 of 5 at 2x,
+ * and our own runs shipped 39-44 per slide. The hard cap per rendered slide
+ * is 35; a code-built graphic replaces prose first and the rest folds into
+ * the caption. Three short rows with a one-line note fit; four rows with no
+ * notes fit.
+ */
+export const MAX_WORDS_PER_SLIDE_TOTAL = 35;
 
 /**
  * Rendered slide fields that are a CITATION or a bare figure rather than prose
@@ -209,6 +220,12 @@ export const WORD_BUDGET_RULE_ID = "default:slide-word-budget";
 export const COVER_TITLE_MAX_WORDS = 8;
 export const COVER_DECK_MAX_WORDS = 12;
 export const COVER_TOTAL_MAX_WORDS = 20;
+/**
+ * A cover whose picture fills the plate carries at most 16 words (decision 20,
+ * 2026-09-25): the words sit ON the photograph, and a poster reads in the
+ * half-second the feed gives it. A plate or card cover keeps 20.
+ */
+export const PHOTO_COVER_TOTAL_MAX_WORDS = 16;
 export const HEADLINE_MAX_WORDS = 10;
 
 function sentenceCount(text: string): number {
@@ -232,8 +249,11 @@ export function checkHeadlineCaps(slide: Slide, index: number, lastIndex: number
     if (deck > COVER_DECK_MAX_WORDS || decks > 1) {
       return { ruleId: WORD_BUDGET_RULE_ID, slide: slide.n, measured: { words: deck, limit: COVER_DECK_MAX_WORDS, scope: "cover deck" }, reason: `${where}'s deck reads ${deck} words in ${decks} sentence(s); a cover deck is ONE sentence of at most ${COVER_DECK_MAX_WORDS} words. Move the rest into the caption` };
     }
-    if (title + deck > COVER_TOTAL_MAX_WORDS) {
-      return { ruleId: WORD_BUDGET_RULE_ID, slide: slide.n, measured: { words: title + deck, limit: COVER_TOTAL_MAX_WORDS, scope: "cover total" }, reason: `${where} carries ${title + deck} words; a cover carries at most ${COVER_TOTAL_MAX_WORDS}. Shorten the deck` };
+    const hero = (slide as { images?: Record<string, unknown> }).images?.["hero"];
+    const posterCover = typeof hero === "string" && hero.length > 0 && f["heroKind"] !== "mark" && f["heroKind"] !== "mark-clear" && f["heroKind"] !== "framed" && f["heroKind"] !== "cutout";
+    const coverLimit = posterCover ? PHOTO_COVER_TOTAL_MAX_WORDS : COVER_TOTAL_MAX_WORDS;
+    if (title + deck > coverLimit) {
+      return { ruleId: WORD_BUDGET_RULE_ID, slide: slide.n, measured: { words: title + deck, limit: coverLimit, scope: posterCover ? "photo cover total" : "cover total" }, reason: `${where} carries ${title + deck} words; a ${posterCover ? "cover whose photograph fills the plate" : "cover"} carries at most ${coverLimit}. Shorten the deck` };
     }
     return undefined;
   }
