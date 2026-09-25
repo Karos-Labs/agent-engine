@@ -103,6 +103,32 @@ export const RunRecordSchema = z.object({
    * exactly the abandoned case this field was added to recover.
    */
   leaseOwner: z.string().nullable().optional(),
+  /**
+   * The step a reclaim last found this run sitting on, and how many reclaims
+   * in a row have found it on that same step.
+   *
+   * WHY A COUNTER AND NOT JUST A FLAG. The abandoned-run sweep hands a run
+   * back to a worker when its heartbeat stops, which is right for the routine
+   * case it was written for: a deploy rolls the worker mid-step and the run
+   * picks up from its last checkpoint. It is wrong for a run that KILLS the
+   * worker it is given. That run is handed a fresh worker every tick, kills
+   * that one too, and the sweep keeps feeding it — a loop with a real cost,
+   * since every reclaim occupies a resume slot another run needed.
+   *
+   * Observed the hour the sweep shipped: prep run `pubsub-20296536359058757`
+   * (instagram, hankypanky) was reclaimed, ran, and lost its heartbeat again
+   * on the same step, `00h3-persist-exemplar-library`.
+   *
+   * `reclaimedFromStepId` is what makes the count mean something: a run that
+   * has MOVED since the last reclaim is being helped and its count resets. A
+   * run that has not is not being helped, and a fourth worker will not change
+   * that.
+   *
+   * Both `undefined` on every run that has never been reclaimed, which is
+   * almost all of them.
+   */
+  reclaimedFromStepId: z.string().nullable().optional(),
+  reclaimAttempts: z.number().int().nonnegative().optional(),
 });
 export type RunRecord = z.infer<typeof RunRecordSchema>;
 

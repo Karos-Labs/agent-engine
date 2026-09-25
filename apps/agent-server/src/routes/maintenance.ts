@@ -32,6 +32,19 @@ export interface MaintenanceRouterDeps extends RunsRouterDeps {
  * index for a query that has never yet needed one.
  */
 const SWEEP_SCAN_LIMIT = 1_000;
+
+/**
+ * How many times one run may be handed back to a worker while making no
+ * progress before the sweep stops feeding it.
+ *
+ * Three, spread across three scheduler ticks (minutes apart), and only ever
+ * counted while the run sits on the SAME step -- a run that has moved is being
+ * helped and its count resets. The bar is deliberately low: the case this
+ * sweep exists for is a deploy rolling a worker mid-step, which succeeds on
+ * the first retry. A run that has killed three workers at one step is not that
+ * case, and a fourth will not change it.
+ */
+const MAX_RECLAIMS_AT_ONE_STEP = 3;
 const DEFAULT_MAX_RESUMES = 5;
 
 export interface SweepGateTimeoutsResponse {
@@ -94,6 +107,39 @@ async function sweepAbandonedRuns(
   const reclaimed: NonNullable<SweepGateTimeoutsResponse["reclaimed"]> = [];
   let used = 0;
   for (const run of abandoned) {
+    // ── A RUN THAT KILLS THE WORKER IT IS GIVEN ──
+    //
+    // Reclaiming is right for the case this sweep was written for: a deploy
+    // rolls the worker mid-step and the run resumes from its last checkpoint.
+    // It is wrong for a run that takes its new worker down too -- that one
+    // gets a fresh worker every tick, kills it, and occupies a resume slot
+    // another run needed. Seen within the hour this sweep shipped:
+    // `pubsub-20296536359058757` (instagram, hankypanky) was reclaimed, ran,
+    // and lost its heartbeat again on the same `00h3-persist-exemplar-library`.
+    //
+    // Counted only while the run sits on the SAME step. A run that has moved
+    // is being helped, and its count starts over.
+    const sameStep = run.reclaimedFromStepId != null && run.reclaimedFromStepId === (run.currentStepId ?? null);
+    const attempt = sameStep ? (run.reclaimAttempts ?? 0) + 1 : 1;
+    if (attempt > MAX_RECLAIMS_AT_ONE_STEP) {
+      // FAILED, not left `running`. Leaving it is the exact defect this sweep
+      // closed -- a run nobody will ever move, shown as in progress forever.
+      // `failed` is terminal, visible, carries the reason, and a person can
+      // re-dispatch it; the sweep never touches it again.
+      const detail =
+        `abandoned ${attempt - 1} times at step "${run.currentStepId ?? "unknown"}" without moving past it — ` +
+        `this run takes down the worker it is given, so the sweep stopped handing it one`;
+      logWarning(`abandoned-run sweep: giving up on run ${run.runId} — ${detail}`, {
+        event: "run.sweep.gave_up",
+        runId: run.runId,
+        productId: run.productId,
+        stepId: run.currentStepId ?? null,
+        attempts: attempt - 1,
+      });
+      await deps.durableStore.updateRun(run.runId, { status: "failed", failureReason: detail, updatedAt: clock() });
+      response.skipped.push({ runId: run.runId, reason: detail });
+      continue;
+    }
     if (used >= budget) {
       response.skipped.push({ runId: run.runId, reason: "abandoned, but this tick's resume budget is spent; next tick" });
       continue;
@@ -106,6 +152,10 @@ async function sweepAbandonedRuns(
       productId: run.productId,
       abandonedForMs,
     });
+    // Recorded BEFORE the resume, not after: a resume that takes the worker
+    // down never reaches an "after". Writing it first is the only way the
+    // next tick can know this attempt happened at all.
+    await deps.durableStore.updateRun(run.runId, { reclaimedFromStepId: run.currentStepId ?? null, reclaimAttempts: attempt });
     try {
       const workflowFn = await resolveWorkflowFn(run.productId, deps.runtimeDeps, deps.agentDefinitionStore);
       const contentLanguage = await loadClientContentLanguage(deps.runtimeDeps.workspaceStore, run.clientSlug);
