@@ -1,8 +1,7 @@
 import { keepClientSitePages } from "./site-identity.js";
 import { lintReadableCopy, readableCopySteer } from "./readable-copy.js";
 import { brandMarkZone } from "./brand-render-tokens.js";
-import { buildExemplarLibrary, densityFromLibrary, EXEMPLAR_LIBRARY_BELIEF_KEY, EXEMPLAR_POSTS_PER_ACCOUNT, exemplarLibraryAction, exemplarPatternEvidence, exemplarStudioNotes, failedLibrary, planHarvest, postsToJudge, readExemplarLibrary, type ExemplarLibrary, type HarvestedExemplar } from "./exemplar-library.js";
-import { buildExemplarLibrary, nicheHooksForCopy, EXEMPLAR_LIBRARY_BELIEF_KEY, EXEMPLAR_POSTS_PER_ACCOUNT, exemplarLibraryAction, exemplarPatternEvidence, exemplarStudioNotes, failedLibrary, planHarvest, postsToJudge, readExemplarLibrary, type ExemplarLibrary, type HarvestedExemplar } from "./exemplar-library.js";
+import { buildExemplarLibrary, densityFromLibrary, nicheHooksForCopy, EXEMPLAR_LIBRARY_BELIEF_KEY, EXEMPLAR_POSTS_PER_ACCOUNT, exemplarLibraryAction, exemplarPatternEvidence, exemplarStudioNotes, failedLibrary, planHarvest, postsToJudge, readExemplarLibrary, type ExemplarLibrary, type HarvestedExemplar } from "./exemplar-library.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { readForbiddenTopics, UNIT_PRICING } from "@agent-engine/core";
