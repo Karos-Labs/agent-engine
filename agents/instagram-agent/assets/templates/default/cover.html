@@ -1573,9 +1573,11 @@ body:not(:has(.hero)) .cov-field {
      can see and the floor cannot is not doing either job. The ramp now carries
      tone across the whole band it declares. */
   background-image: linear-gradient(158deg,
-    color-mix(in srgb, var(--accent) 34%, transparent),
-    color-mix(in srgb, var(--accent) 16%, transparent) 54%,
-    color-mix(in srgb, var(--fg) 16%, transparent) 100%);
+    color-mix(in srgb, var(--fg) 17%, transparent),
+    color-mix(in srgb, var(--fg) 8%, transparent) 54%,
+    color-mix(in srgb, var(--fg) 13%, transparent) 100%);
+  /* 2026-09-25 (owner feedback D): the client's accent is no longer mixed into the panel; a neutral ramp of its own text colour keeps the tone the interest floor measures, and a hairline draws the edge. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 18%, transparent);
   background-repeat: no-repeat;
   border-radius: 4px;
   padding: var(--sp-2);
