@@ -1174,6 +1174,35 @@ function withBodyBudget<T extends { layout?: InstagramSlideLayout | undefined; b
 }
 
 /**
+ * The cover's words within its total (2026-09-25, owner decision 20). KAROS'
+ * covers in prep batches 2 and 5 carried a 13-word title over a 24-word,
+ * three-sentence deck; beside a framed picture the fit ladder could only set
+ * them as a column of small type. The word-budget check returns such a cover
+ * to the writer, but a run whose attempts went to timeouts ships it as it is.
+ * So at assembly the DECK yields: it is cut to whole sentences within what the
+ * title leaves of the total, and always keeps its FIRST sentence (a cover
+ * with no deck loses a content element and falls under the interest floor's
+ * cover weight). The title is never cut; it is the post's point.
+ */
+export const COVER_WORD_TOTAL = 20;
+export function withCoverBudget<T extends { headline: string; body: string }>(slide: T, total: number = COVER_WORD_TOTAL): T {
+  const count = (s: string): number => s.split(/\s+/u).filter((w) => w.length > 0).length;
+  const room = total - count(slide.headline);
+  const body = slide.body.trim();
+  if (count(body) <= room) return slide;
+  const sentences = body.split(SENTENCE_END).map((s) => s.trim()).filter((s) => s.length > 0);
+  const kept: string[] = [];
+  let used = 0;
+  for (const sentence of sentences) {
+    const n = count(sentence);
+    if (kept.length > 0 && used + n > room) break;
+    kept.push(sentence);
+    used += n;
+  }
+  return { ...slide, body: kept.join(" ") };
+}
+
+/**
  * WHEN A PHOTOGRAPH IS A BLOCK RATHER THAN THE WHOLE PLATE.
  *
  * `cover` and `photo` paint their picture as the ground and set the copy on
@@ -3089,7 +3118,12 @@ export function assembleSlidesData(params: {
   const layoutByN = new Map<number, InstagramSlideLayout>();
   const slides: Slide[] = params.copy.slides.map((rawSlide, index) => {
     // 2026-09-24: one idea per slide, at a size that reads in a feed.
-    const slide = params.textBudgets === true && index > 0 && index < lastIndex ? withBodyBudget(rawSlide) : rawSlide;
+    const slide =
+      params.textBudgets === true && index > 0 && index < lastIndex
+        ? withBodyBudget(rawSlide)
+        : params.textBudgets === true && index === 0 && rawSlide.layout === "cover"
+          ? withCoverBudget(rawSlide)
+          : rawSlide;
     const selection = selectionByN.get(slide.n);
     // Phase 2, item M: the two positional archetypes need to know where the
     // slide sits, whether a photograph actually arrived, and what came
