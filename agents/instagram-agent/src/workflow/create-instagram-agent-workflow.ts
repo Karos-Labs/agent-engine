@@ -16195,7 +16195,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         type: review.output.copy.format,
         stage,
         goal: goalLine.goalText,
-        status: "drafted",
+        // A draft the reviewer rejected outright was not used, which is what
+        // \`skipped\` means in the subject table.
+        status: review.outcome === "rejected" ? "skipped" : "drafted",
         assetKind: "instagram-carousel",
         // The row this post came off, or an honest null. Never invented to
         // avoid a null: a made-up id would make the map look spent.
