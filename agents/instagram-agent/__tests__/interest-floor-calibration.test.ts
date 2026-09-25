@@ -656,7 +656,12 @@ async function render(input: RenderCarouselInput): Promise<Measured[]> {
   if (outcome.status !== "success") throw new Error(`render failed: ${JSON.stringify(outcome)}`);
   return outcome.result.rendered.map((entry, index) => {
     const metrics = entry.metrics;
-    const probe = entry.probe;
+    // 2026-09-25: the probe the WORKFLOW judges, with the laid-out subject boxes
+    // merged in (`withSubjectBoxes` in create-instagram-agent-workflow.ts). The
+    // raw probe carries none, so every box-reading clause sat out here while it
+    // decided live runs.
+    const boxes = (entry as { geometry?: { subjectBoxes?: { hero: number; device: number; graphic: number } } }).geometry?.subjectBoxes;
+    const probe = entry.probe === undefined || boxes === undefined ? entry.probe : { ...entry.probe, subjectBoxes: boxes };
     if (metrics === undefined || probe === undefined) throw new Error(`slide ${entry.n} came back without metrics/probe — measure/probe were requested`);
     // `index === 0` is the cover, which is the same convention
     // `checkDefaultRenderRules` and the workflow both use.
