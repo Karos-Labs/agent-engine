@@ -1,3 +1,4 @@
+import { keepClientSitePages } from "./site-identity.js";
 import { z } from "zod";
 import { candidateEngine } from "@agent-engine/workflow";
 import {
@@ -933,7 +934,12 @@ export function buildBriefAgentInput(bundle: BriefSourceBundle): BriefAgentInput
   }
 
   const sitePages: BriefAgentInput["sitePages"] = [];
-  for (const page of bundle.sitePages ?? []) {
+  // 2026-09-24 (owner feedback WS-03): a parked, unavailable or challenge page
+  // is never the client's site. Kindly Yours' brief was written from a
+  // for-sale lander.
+  const identity = keepClientSitePages((bundle.sitePages ?? []).filter((p) => typeof p.text === "string"));
+  gaps.push(...identity.gaps);
+  for (const page of identity.kept) {
     const text = typeof page.text === "string" ? page.text.trim() : "";
     if (text.length === 0) continue;
     presentSources.push({ kind: "site", ref: page.url });
