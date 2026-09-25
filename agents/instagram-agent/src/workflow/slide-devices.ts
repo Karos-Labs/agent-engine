@@ -856,7 +856,7 @@ export function deviceCssBlock(): string {
   margin-block-start: calc(18px * var(--ts, 1)); color: color-mix(in srgb, var(--fg) 55%, transparent);
 }
 .dv-note {
-  font-family: var(--f-mono); font-weight: 500; font-size: calc(15px * var(--ts, 1));
+  font-family: var(--f-mono, var(--f-body)); font-weight: 500; font-size: calc(15px * var(--ts, 1));
   letter-spacing: 0.12em; text-transform: uppercase; margin-block-start: calc(18px * var(--ts, 1));
   color: color-mix(in srgb, var(--fg) 45%, transparent);
 }
@@ -939,7 +939,7 @@ export function deviceCssBlock(): string {
    Only \`.dv-bar-row--inset\` rows put a value inside the fill at all
    (share >= DEVICE_VALUE_INSIDE_BAR_THRESHOLD); every other value sits on the
    plate outside the track and keeps the \`--fg\` 80% below. */
-.dv-bar-value { font-family: var(--f-mono); font-weight: 600; font-size: calc(24px * var(--ts, 1)); white-space: nowrap; }
+.dv-bar-value { font-family: var(--f-num, var(--f-display)); font-weight: 600; font-size: calc(24px * var(--ts, 1)); white-space: nowrap; }
 .dv-bar-row:not(.dv-bar-row--inset) .dv-bar-value { color: color-mix(in srgb, var(--fg) 80%, transparent); }
 
 .dv-timeline { display: flex; gap: calc(24px * var(--ts, 1)); }
@@ -951,7 +951,7 @@ export function deviceCssBlock(): string {
   inline-size: calc(14px * var(--ts, 1)); block-size: calc(14px * var(--ts, 1));
   background: var(--dv-ink, var(--dv-quiet)); margin-block-end: calc(16px * var(--ts, 1));
 }
-.dv-tl-at { display: block; font-family: var(--f-mono); font-size: calc(22px * var(--ts, 1)); letter-spacing: 0.1em; }
+.dv-tl-at { display: block; font-family: var(--f-num, var(--f-display)); font-size: calc(22px * var(--ts, 1)); letter-spacing: 0.1em; }
 .dv-tl-what {
   display: block; font-family: var(--f-body); font-size: calc(25px * var(--ts, 1)); line-height: 1.4;
   margin-block-start: calc(10px * var(--ts, 1)); text-wrap: pretty;
@@ -970,7 +970,7 @@ export function deviceCssBlock(): string {
   color: color-mix(in srgb, var(--fg) 82%, transparent);
 }
 .dv-vs-mark {
-  align-self: center; font-family: var(--f-mono); font-size: calc(26px * var(--ts, 1));
+  align-self: center; font-family: var(--f-mono, var(--f-body)); font-size: calc(26px * var(--ts, 1));
   letter-spacing: 0.16em; text-transform: uppercase;
   color: var(--dv-ink, color-mix(in srgb, var(--fg) 45%, transparent));
 }
@@ -993,7 +993,7 @@ export function deviceCssBlock(): string {
 .dv-pm-axis--x { inset-inline: 0; inset-block-start: 50%; block-size: 2px; }
 .dv-pm-axis--y { inset-block: calc(34px * var(--ts, 1)); inset-inline-start: 50%; inline-size: 2px; }
 .dv-pm-end {
-  position: absolute; font-family: var(--f-mono); font-size: calc(17px * var(--ts, 1));
+  position: absolute; font-family: var(--f-mono, var(--f-body)); font-size: calc(17px * var(--ts, 1));
   letter-spacing: 0.12em; text-transform: uppercase; white-space: nowrap;
   color: color-mix(in srgb, var(--fg) 55%, transparent);
 }
@@ -1030,7 +1030,7 @@ export function deviceCssBlock(): string {
 }
 .dv-st-row:last-child { border-block-end: 2px solid color-mix(in srgb, var(--fg) 16%, transparent); }
 .dv-st-label {
-  flex: 0 1 40%; font-family: var(--f-mono); font-size: calc(18px * var(--ts, 1));
+  flex: 0 1 40%; font-family: var(--f-mono, var(--f-body)); font-size: calc(18px * var(--ts, 1));
   letter-spacing: 0.12em; text-transform: uppercase; line-height: 1.4;
   color: color-mix(in srgb, var(--fg) 60%, transparent);
 }

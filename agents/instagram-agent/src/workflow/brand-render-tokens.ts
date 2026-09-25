@@ -1117,12 +1117,12 @@ export function buildBrandHeadHtml(
     [
       ".brand-handle {",
       "  position: absolute; bottom: 44px; inset-inline-start: 44px; z-index: 6;",
-      "  font-family: var(--f-mono); font-size: var(--t-micro, 19px); letter-spacing: 0.08em;",
+      "  font-family: var(--f-mono, var(--f-body)); font-size: var(--t-micro, 19px); letter-spacing: 0.08em;",
       "  color: color-mix(in srgb, var(--fg) 55%, transparent);",
       "}",
       ".brand-badge {",
       "  position: absolute; top: 56px; inset-inline-start: var(--mx, 64px); z-index: 6;",
-      "  font-family: var(--f-mono); font-weight: 600; font-size: var(--t-micro, 19px);",
+      "  font-family: var(--f-mono, var(--f-body)); font-weight: 600; font-size: var(--t-micro, 19px);",
       // THE INK IS THE TEMPLATE'S TO NAME, AND THIS LINE IS WHY.
       //
       // This block lands AFTER the template's own <style> (`composeDocument`
