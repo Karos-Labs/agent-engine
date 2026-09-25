@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { loadClientContentLanguage } from "@agent-engine/core";
 import { describeError, logWarning } from "@agent-engine/telemetry";
-import { parseGateDurationMs, WorkflowConcurrentRunError, WorkflowEngine, type RunRecord } from "@agent-engine/workflow";
+import { isReclaimableRunning, parseGateDurationMs, RUN_LEASE_TTL_MS, WorkflowConcurrentRunError, WorkflowEngine, type RunRecord } from "@agent-engine/workflow";
 import { resolveWorkflowFn } from "../wiring/dynamic-workflows.js";
 import type { RunsRouterDeps } from "./runs.js";
 
@@ -39,6 +39,94 @@ export interface SweepGateTimeoutsResponse {
   due: number;
   resumed: Array<{ runId: string; productId: string; status: string }>;
   skipped: Array<{ runId: string; reason: string }>;
+  /** Abandoned `running` runs this tick picked back up — see `sweepAbandonedRuns`. */
+  reclaimed?: Array<{ runId: string; productId: string; status: string; abandonedForMs: number }>;
+}
+
+/**
+ * ORPHANED `running` RUNS, PICKED BACK UP.
+ *
+ * `WorkflowEngine.run()` has taken over an abandoned run since the lease
+ * landed: `claimRun` accepts a `running` record whose heartbeat stopped more
+ * than `RUN_LEASE_TTL_MS` ago, logs that it reclaimed it, and carries on from
+ * the last checkpoint. It is a complete recovery mechanism with nothing that
+ * triggers it — the same shape as the gate timeout above, and for the same
+ * reason: nothing in this engine calls `run()` unprompted, and the portal only
+ * calls it when a person acts. A run whose worker died is `running` forever,
+ * and the portal shows it as in progress forever.
+ *
+ * Measured in prep on 2026-09-25: SIX instagram runs (thepitchbydeel,
+ * geektime, kindlyyours, hankypanky) stuck `running` since 2026-09-24 with no
+ * reason recorded — a worker roll, which is the routine event this lease was
+ * written to survive. Nothing was ever going to move them.
+ *
+ * It runs BEFORE the gate pass and shares its resume budget. An abandoned run
+ * is strictly the worse state: a gate that has not auto-approved yet is still
+ * waiting correctly, while this one is not waiting for anything.
+ *
+ * The reclaim RULE is not restated here. `isReclaimableRunning` is the engine's
+ * own predicate, shared with both stores, so this sweep cannot come to a
+ * different answer than the claim it is about to attempt.
+ */
+async function sweepAbandonedRuns(
+  deps: MaintenanceRouterDeps,
+  engine: WorkflowEngine,
+  clock: () => number,
+  scanLimit: number,
+  budget: number,
+  response: SweepGateTimeoutsResponse,
+): Promise<number> {
+  if (budget <= 0) return 0;
+  let running: RunRecord[];
+  try {
+    running = await deps.durableStore.listRunsByStatus("running", scanLimit);
+  } catch (err) {
+    // NEVER fatal to the tick. The gate pass below is the older, load-bearing
+    // half of this route, and a failure to list one status must not stop the
+    // other from running at all.
+    logWarning(`abandoned-run sweep could not list running runs: ${describeError(err)}`);
+    return 0;
+  }
+  const cutoff = clock() - RUN_LEASE_TTL_MS;
+  const abandoned = running.filter((run) => isReclaimableRunning(run, cutoff));
+  if (abandoned.length === 0) return 0;
+
+  const reclaimed: NonNullable<SweepGateTimeoutsResponse["reclaimed"]> = [];
+  let used = 0;
+  for (const run of abandoned) {
+    if (used >= budget) {
+      response.skipped.push({ runId: run.runId, reason: "abandoned, but this tick's resume budget is spent; next tick" });
+      continue;
+    }
+    used += 1;
+    const abandonedForMs = clock() - run.updatedAt;
+    logWarning(`abandoned-run sweep: run ${run.runId} has been "running" with no heartbeat for ${Math.round(abandonedForMs / 1000)}s — picking it back up`, {
+      event: "run.sweep.abandoned",
+      runId: run.runId,
+      productId: run.productId,
+      abandonedForMs,
+    });
+    try {
+      const workflowFn = await resolveWorkflowFn(run.productId, deps.runtimeDeps, deps.agentDefinitionStore);
+      const contentLanguage = await loadClientContentLanguage(deps.runtimeDeps.workspaceStore, run.clientSlug);
+      const result = await engine.run(workflowFn, {
+        runId: run.runId,
+        clientSlug: run.clientSlug,
+        productId: run.productId,
+        runKind: run.runKind,
+        ...(contentLanguage !== undefined ? { contentLanguage } : {}),
+      });
+      reclaimed.push({ runId: run.runId, productId: run.productId, status: result.status, abandonedForMs });
+    } catch (err) {
+      // A live worker that heartbeat between our read and our claim wins, and
+      // that is the lease working: we stand down rather than double-execute.
+      const reason = err instanceof WorkflowConcurrentRunError ? "claimed by another caller" : describeError(err);
+      logWarning(`abandoned-run sweep could not resume run ${run.runId}: ${reason}`);
+      response.skipped.push({ runId: run.runId, reason });
+    }
+  }
+  if (reclaimed.length > 0) response.reclaimed = reclaimed;
+  return used;
 }
 
 /**
@@ -84,6 +172,17 @@ export function createMaintenanceRouter(deps: MaintenanceRouterDeps): Router {
   router.post("/api/v1/maintenance/sweep-gate-timeouts", async (_req, res) => {
     const store = deps.durableStore;
     const response: SweepGateTimeoutsResponse = { scanned: 0, due: 0, resumed: [], skipped: [] };
+
+    // ── the abandoned-run pass, FIRST ──
+    //
+    // Deliberately on this route rather than behind a new one. The scheduler
+    // job that calls it already exists in both environments, and ten of this
+    // fleet's fourteen cron routes have no scheduler pointing at them — an
+    // eleventh unwired route would fix nothing on any real deployment.
+    // Widening a sweep we already run costs no infrastructure and starts
+    // working the moment this deploys.
+    const spent = await sweepAbandonedRuns(deps, engine, clock, scanLimit, maxResumes, response);
+
     let waiting: RunRecord[];
     try {
       waiting = await store.listRunsByStatus("awaiting_gate", scanLimit);
@@ -145,7 +244,7 @@ export function createMaintenanceRouter(deps: MaintenanceRouterDeps): Router {
       }
 
       response.due += 1;
-      if (response.resumed.length >= maxResumes) {
+      if (response.resumed.length + spent >= maxResumes) {
         response.skipped.push({ runId: run.runId, reason: `sweep already resumed ${maxResumes} runs; next tick` });
         continue;
       }
