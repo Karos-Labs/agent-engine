@@ -1,0 +1,39 @@
+# ig-dna-geektime
+
+id: ig-dna-geektime · version 1.1 · layer: L3 · kit: ig-kit-tech-business-news (+ facet-archetype, facet-involvement, facet-locale)
+
+classification: publisher | tech-business-news | none | mixed (readers B2C, advertisers and events B2B; events may take a per-run high override, logged) | he (RTL, Hebrew register pack)
+
+## Params
+
+fonts: Open Sans 700-800 in every role, Hebrew and Latin alike (Inter has no Hebrew); H one bold size of 68-76px on 2-3 lines (raised from a ~4.4% line height; photo-hook card override of the 96px floor), optional white bold overline of 7 words or fewer at 0.6x (41-46px) only on navy or a dark flat area; interior single size >=44px for 25-35 words (was ~2.3-2.6% for 30-60); credit line 30px (Hebrew has no caps; was ~14) measured by letter height; palette navy #022330, lime #A5E624, white; lime frame at 2.3% of width; card = rounded white card inside a rounded lime slab 1.9-3.0% of canvas width, 73-80% wide, text centred; logo: variant the white horizontal 'Geektime' wordmark; position the navy tab at the house card's top-right corner (one anchor in both templates, clear of the counter); treatment on the navy tab; size from the L1 equal-area rule (at most 240px wide), never the disc; iconBand 0-2 labelled icons per post, mirrored for RTL; tables none (one comparison per story); formatPrior image 0.5 / carousel-2 0.35 / reel 0.15; slideCountBand 1-2; coverWords 5-9 (TRY cap); captionChars 300-500 (house median 425); hashtags 0; emoji 1 on line 1; register dry news; questionForm none; askSet {house article pointer 'הכתבה המלאה בגיקטיים | לינק בביו' + photo credit (not counted as the ask), comment_finite TRY}; devicesPerSlide 1 comparison; graphicsMix editorial 1-3; screenshotsPerDeck <=2 as the receipt slide; aiImagery concept-labelled with the credit 'תמונה: עיבוד AI'; stock avoid, vendor press first; thirdPartyShare media-high; timezone Asia/Jerusalem with a Friday-Saturday weekend, window from its own grid; freshness 7 days; measurement 24-48 h; upstream registry and first-mover logging DEFAULT (2 firsts a week); RTL layout.
+
+## Lines
+
+1. [DEFAULT][strategy] Every post needs a stake an Israeli reader can act on or feel this week: a shekel price or saving, an Israeli launch or availability date, something free, or a named person's story; global AI-company announcements run only with an Israeli angle or a working demo. (evidence: Geektime L3; global announcements median 0.71x, winners 12.3x and 4.1x)
+2. [DEFAULT][strategy] House programmes (GeekAcademy, Geektime events, Insider) never run as news; one appears only with a sign-up date, a free seat or a named graduate's result, labelled as Geektime's own, with partners such as Microsoft off the cover. (evidence: the reviewed run; Calcalist TECH1 0.09x; partner logos 31.9% of weakest)
+3. [MUST][language] Lead facts are 7 days old or less or dated on the slide; never 'הגיעה' for an old milestone; 'פרסום ראשון!' only for a true scoop that carries a stake. (evidence: LANG-08 geektime; the 20,000 figure from June 2025 presented as news)
+4. [DEFAULT][layout] Two house templates: a full-bleed real photo with the lime frame and the card in the lower third (65-88% of height) and the navy wordmark tab tucked behind the card's top-right corner, or the navy plate over the top 45-50% with the card below and a real photo, screenshot or graphic in the lower half with the credit bottom-left; never a white plate, never text raw on the photo. (evidence: storm-lead L3-06; DS-12 geektime)
+5. [DEFAULT][design] The card is a rounded white card inside a rounded lime slab, never square corners, a thin outline or a card floating in empty space; no full dark or muted plates. (evidence: DS-08/DS-18 geektime; dark 1+/9-, muted 0+/8-)
+6. [MUST][design] Open Sans 700-800 for Hebrew and Latin alike; one headline size of 68-76px on 2-3 lines plus the optional overline at 0.6x as the second size, body at 44px or more, the credit line as the meta at 30px; Hebrew measured by letter height. (evidence: A-1/DS-02/DS-03 geektime; Heebo and Inter painted in the run)
+7. [MUST][logo] The white horizontal wordmark on the navy tab at the house card's top-right corner, one anchor in both templates and clear of the counter, sized by the L1 equal-area rule (at most 240px wide, down from 24-28% of width pending the owner decision on logo sizes); never the profile disc, never top-left. (evidence: E-1/DS-10/DS-13 geektime)
+8. [DEFAULT][imagery] Order of preference: Geektime's own hand-held device photography credited 'צילום: גיקטיים', then vendor press images, then screenshots or receipts, then labelled concept art; never a generated scene of a real event or person (the generated auditorium). (evidence: IMG-04/IMG-02 geektime; photo-dominant 10+/1- p=0.012)
+9. [DEFAULT][graphics] When the story has a number, draw it in navy, lime and white as a giant numeral on navy, a shekel before-and-after bar, a US-versus-Israel launch strip, or the source document on slide 2, with up to 2 labelled icons a post; directional icons mirror for RTL. (evidence: GFX-01/GFX-03 geektime; big number 3+/0-; illustration 1+/6-)
+10. [DEFAULT][format] Single image by default (75% of the feed); a carousel only as hook-then-receipt (2 slides) or when every added slide brings a new fact or photo; reels only with native footage, never sponsored clips. (evidence: FMT-01/SLD-02 geektime; Doom 13.36x; reel -0.27 2+/8-)
+11. [DEFAULT][language] Caption of 300-500 characters: a one-line Hebrew hook with one emoji, ~12-word sentences with digits, one dry aside, and the article pointer plus the photo credit as the close; no hashtags, no first-comment sources, at most one 'לא X.' per caption. (evidence: LANG-06/11/12 geektime; LANG-02 he pack; five 'לא X.' shipped)
+12. [DEFAULT][hook] The cover headline is named actor + active verb + consequence on 2-3 lines with no publisher reach metrics; 5-9 words is a TRY cap, not a rule, because the set's best covers carry three more words. (evidence: H-2/LANG-17 geektime; cover words 9+/2-)
+13. [DEFAULT][process] Upstream registry: company newsrooms and IR pages, TASE (Maya) and SEC filings, the Israel Innovation Authority, Apple and Samsung Israel price pages and importers, founders' and VCs' X and LinkedIn; saturated when three of Calcalist, CTech, Globes, TheMarker or Israel Business ran it in 7 days; post first from it and log first or follower on every news post (target 2 firsts a week, reviewed after 3 weeks at 1.5x the followers' median); measure after 24-48 h in Israel time with a Friday-Saturday weekend. (evidence: TOP-04/X-02/TIM-01 geektime)
+14. [TRY][strategy] Israeli tech-canon anniversaries (exits, IPOs, launches, founding dates checked against filings) with a present-day stake, one a week for 5 weeks on the house template, kept at a median of 1.3x or more. (evidence: X-01; DT story-behind 40% of outliers, 3.5x; Geektime flat posts lack a local stake)
+15. [TRY][language] A named person's quote in their own Hebrew words on the cover within the freshness gate, and one defended position a week on a named source (a regulation, a platform policy, a study) as the desk's reading and the comment lane, 5 posts each. (evidence: X5; Q-4 transfer from Don Techno)
+
+## Resolved values checked against L1 (compileDNA input)
+
+- cover: H 68-76px, T 41-46px, S 30px; interior: T 44-48px, S 30px; meta in tracked caps: no; photo-hook cover: yes
+- cover words <= 20 (card cover); interior words <= 35
+- logo: variant white horizontal wordmark; position navy tab at the house card's top-right corner; treatment on the navy tab; presence every slide; size L1 equal-area
+
+## Kit lines skipped or narrowed (with reason)
+
+- kit Collab invite TRY kept as credit only (TOP-05)
+- kit 'stickers/emoji on covers' recorded only (n=4)
+- kit comment ask stays TRY behind the fixed house pointer

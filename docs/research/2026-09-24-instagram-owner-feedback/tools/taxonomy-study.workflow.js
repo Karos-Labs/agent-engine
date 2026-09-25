@@ -11,7 +11,7 @@ export const meta = {
 }
 
 const A = args
-const ACCTS = A.accounts
+const N = A.n
 
 const FACETS = {
   vertical: ['marketing & advertising', 'tech & business news', 'startups & venture', 'fashion & intimates', 'travel, places & local discovery', 'personal finance & investing', 'music & nightlife', 'other'],
@@ -38,10 +38,11 @@ const LABEL_SCHEMA = {
 }
 
 phase('Label')
-const BATCH = 26
+const BATCH = 25
 const batches = []
-for (let i = 0; i < ACCTS.length; i += BATCH) batches.push(ACCTS.slice(i, i + BATCH))
-const labelsP = parallel(batches.map((b, bi) => () => agent(`Label each Instagram account below with ONE value per facet (exact enum values). Judge the ACCOUNT itself (what kind of organisation or person runs it and what its posts are for), not the Karos client it was benchmarked for. Facets:\n${Object.entries(FACETS).map(([k, v]) => `- ${k}: ${v.join(' | ')}`).join('\n')}\nNotes: involvement = how considered a purchase from this account is (media accounts whose content is the product are "none"). visual_dependency = whether what they sell or cover is itself visual. locale = the language the posts are written in.\n\nAccounts:\n${JSON.stringify(b.map(a => ({ handle: a.handle, followers: a.followers, category: a.category, bio: a.bio, captions: a.captions, format_mix: a.format_mix, benchmarked_for: a.industries })))}`, { label: `label:batch-${bi + 1}`, phase: 'Label', schema: LABEL_SCHEMA, model: 'sonnet' })))
+for (let i = 0; i < N; i += BATCH) batches.push([i, Math.min(N, i + BATCH)])
+const labelsP = parallel(batches.map(([s0, s1], bi) => () => agent(`Label each Instagram account with ONE value per facet (exact enum values). Read accounts ${s0} to ${s1 - 1} (0-based, end inclusive) of the JSON array in ${A.file} (fields: handle, followers, category, bio, captions, format_mix, industries = the client it was benchmarked for). Judge the ACCOUNT itself (what kind of organisation or person runs it and what its posts are for), not the Karos client. Facets:
+${Object.entries(FACETS).map(([k, v]) => `- ${k}: ${v.join(' | ')}`).join('\n')}\nNotes: involvement = how considered a purchase from this account is (media accounts whose content is the product are "none"). visual_dependency = whether what they sell or cover is itself visual. locale = the language the posts are written in. Return one row per account in your range.`, { label: `label:batch-${bi + 1}`, phase: 'Label', schema: LABEL_SCHEMA, model: 'sonnet' })))
 
 phase('Research')
 const RESEARCH = {
@@ -60,54 +61,14 @@ const labelOf = {}
 for (const b of labelBatches.filter(Boolean)) for (const l of b.labels) labelOf[String(l.handle).replace(/^@/, '').toLowerCase()] = l
 
 phase('Test')
-function sizeTier(f) { if (!f) return 'unknown'; if (f < 10000) return '<10k'; if (f < 100000) return '10k-100k'; if (f < 1000000) return '100k-1M'; return '>1M' }
-const accts = ACCTS.filter(a => labelOf[a.handle.toLowerCase()])
-const facts = accts.map(a => Object.assign({ industry: a.industries[0], size: sizeTier(a.followers) }, labelOf[a.handle.toLowerCase()]))
-function skillFast(labels, k) {
-  const values = new Set(); accts.forEach(a => Object.keys(a.vec).forEach(v => values.add(v)))
-  let seT = 0, seG = 0, n = 0
-  for (const v of values) {
-    const idx = [], ds = []
-    accts.forEach((a, i) => { if (a.vec[v] !== undefined) { idx.push(i); ds.push(a.vec[v]) } })
-    if (idx.length < 4) continue
-    const tot = ds.reduce((s, x) => s + x, 0)
-    const gs = {}, gc = {}
-    idx.forEach((i, j) => { const g = labels[i]; gs[g] = (gs[g] || 0) + ds[j]; gc[g] = (gc[g] || 0) + 1 })
-    idx.forEach((i, j) => {
-      const d = ds[j], g = labels[i], gm = (tot - d) / (idx.length - 1), cnt = gc[g] - 1
-      let pred = gm
-      if (cnt > 0) { const sm = (gs[g] - d) / cnt; const w = cnt / (cnt + k); pred = w * sm + (1 - w) * gm }
-      seT += (d - pred) ** 2; seG += (d - gm) ** 2; n++
-    })
-  }
-  return { skill: seG ? 1 - seT / seG : 0, n }
-}
-function prng(seed) { let t = seed >>> 0; return () => { t += 0x6D2B79F5; let r = Math.imul(t ^ (t >>> 15), 1 | t); r ^= r + Math.imul(r ^ (r >>> 7), 61 | r); return ((r ^ (r >>> 14)) >>> 0) / 4294967296 } }
-function permP(labels, observed, k, reps) {
-  const rnd = prng(12345)
-  let ge = 0
-  for (let r = 0; r < reps; r++) {
-    const sh = labels.slice()
-    for (let i = sh.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); const t = sh[i]; sh[i] = sh[j]; sh[j] = t }
-    if (skillFast(sh, k).skill >= observed) ge++
-  }
-  return (ge + 1) / (reps + 1)
-}
-const CANDIDATES = ['industry', 'vertical', 'archetype', 'audience', 'involvement', 'content_job', 'visual_dependency', 'locale', 'size']
-const rows = []
-for (const f of CANDIDATES) {
-  const labels = facts.map(x => x[f])
-  const s = skillFast(labels, 3)
-  rows.push({ grouping: f, groups: new Set(labels).size, skill: Math.round(s.skill * 1000) / 1000, perm_p: permP(labels, s.skill, 3, 199), n: s.n })
-}
-const PAIRS = [['archetype', 'vertical'], ['archetype', 'locale'], ['involvement', 'content_job'], ['archetype', 'involvement'], ['vertical', 'locale'], ['audience', 'content_job'], ['archetype', 'visual_dependency']]
-for (const [f1, f2] of PAIRS) {
-  const labels = facts.map(x => `${x[f1]}|${x[f2]}`)
-  const s = skillFast(labels, 3)
-  rows.push({ grouping: `${f1} x ${f2}`, groups: new Set(labels).size, skill: Math.round(s.skill * 1000) / 1000, perm_p: permP(labels, s.skill, 3, 199), n: s.n })
-}
-rows.sort((a, b) => b.skill - a.skill)
-const distribution = Object.fromEntries(CANDIDATES.map(f => [f, facts.reduce((m, x) => (m[x[f]] = (m[x[f]] || 0) + 1, m), {})]))
+const allLabels = labelBatches.filter(Boolean).flatMap(b => b.labels)
+const testOut = await agent(`Write this JSON array to ${A.labelsFile} exactly as given, then run: python3 ${A.skillScript} ${A.inputFile} ${A.labelsFile}  and return ONLY the script's JSON output, unchanged.
+
+${JSON.stringify(allLabels)}`, { label: 'test:skill', phase: 'Test', model: 'sonnet' })
+let parsed = { skill: [], distribution: {}, accounts: 0 }
+try { parsed = JSON.parse(String(testOut).slice(String(testOut).indexOf('{'), String(testOut).lastIndexOf('}') + 1)) } catch (e) { log('could not parse the skill test output') }
+const rows = parsed.skill, distribution = parsed.distribution
+const accts = { length: parsed.accounts }
 log(`Grouping skill (leave-one-account-out, shrinkage k=3): ${rows.slice(0, 6).map(r => `${r.grouping} ${r.skill} (p=${r.perm_p})`).join('; ')}`)
 
 phase('Design')
@@ -138,4 +99,4 @@ const designs = await parallel(ANGLES.map((ang, i) => () => agent(`${EVIDENCE}\n
 phase('Judge')
 const verdict = await agent(`${EVIDENCE}\n\nThree designs:\n${JSON.stringify(designs.filter(Boolean))}\n\nScore each 1-10 on: fit to the predictive evidence, fit to the research, simplicity to run, and how well it tailors per client. Recommend one structure (graft the best of the others). State plainly what the data says (including if no grouping predicts much, which would mean L1 + L3 carry most of the weight), what the new stack is, the closed lists, where each of the 8 clients lands, and what must be true before adding a layer later.`, { label: 'judge:taxonomy', phase: 'Judge', schema: { type: 'object', properties: { scores: { type: 'array', items: { type: 'object', properties: { design: { type: 'string' }, evidence_fit: { type: 'number' }, research_fit: { type: 'number' }, simplicity: { type: 'number' }, tailoring: { type: 'number' }, comment: { type: 'string' } }, required: ['design', 'evidence_fit', 'research_fit', 'simplicity', 'tailoring', 'comment'] } }, recommended: DESIGN, what_the_data_says: { type: 'string' }, preconditions_for_more_layers: { type: 'string' } }, required: ['scores', 'recommended', 'what_the_data_says'] }, model: 'fable' })
 
-return { skill: rows, distribution, labels: facts.map((x, i) => Object.assign({ handle: accts[i].handle }, x)), research, designs: designs.filter(Boolean), verdict }
+return { skill: rows, distribution, labels: allLabels, research, designs: designs.filter(Boolean), verdict }

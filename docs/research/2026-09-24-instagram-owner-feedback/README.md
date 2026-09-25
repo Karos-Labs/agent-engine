@@ -4,7 +4,8 @@ Albert reviewed Tomer's latest Instagram runs (8 carousels, 7 clients) and gave 
 
 | File | What it is |
 |---|---|
-| [01-owner-feedback-and-consequences.md](01-owner-feedback-and-consequences.md) | Every feedback point, its root cause, what changes, the workstream, and the decisions Albert still needs to make. **Start here.** |
+| [09-architecture-conclusions.md](09-architecture-conclusions.md) | **Start here for the system.** What the research concludes, the layer architecture (platform / thin middle of cards / client DNA), the loops that make it compound, the impact on today's code by repo, build order, cost, and the owner's open decisions. |
+| [01-owner-feedback-and-consequences.md](01-owner-feedback-and-consequences.md) | Every feedback point, its root cause, what changes, the workstream, and the decisions Albert still needs to make. |
 | [02-build-plan.md](02-build-plan.md) | 13 workstreams (WS-01..WS-13), files, tests, overlap with open PRs, data fixes, and the drift review against the brief. |
 | [03-code-audit.md](03-code-audit.md) | Seven auditors' findings with file:line references: fonts, design language, typography and covers, logo, duplicate slides, copy language, graphics. |
 | [04-layer-system.md](04-layer-system.md) | How the L1 platform / L2 industry / L3 client system should work: judged across three designs, with what to build now. |
@@ -12,6 +13,8 @@ Albert reviewed Tomer's latest Instagram runs (8 carousels, 7 clients) and gave 
 | [06-a16z-deep-dive.md](06-a16z-deep-dive.md) | 72 @a16z posts measured slide by slide, the playbook for The Pitch by Deel, and a critique of our Pitch carousel. |
 | [07-don-techno-audit.md](07-don-techno-audit.md) | What the bespoke Don Techno system does that the engine doesn't, plus 13 music-media accounts tagged as a 7th industry. |
 | [08-our-posts-review.md](08-our-posts-review.md) | The eight reviewed runs, the defects found in their renders, and how to rebuild the review sheet. |
+| [guidelines/](guidelines/README.md) | The compiled guideline set: L1 platform rules and parameters, facet cards (archetype, involvement, locale), eight category packs, and one client DNA for each of the 9 clients. `_src/` is the single source; `render.py` regenerates everything with budget checks. |
+| `evidence/` | The data behind the conclusions: within-account statistics over 183 accounts, the grouping tests (89 and 173 accounts), the taxonomy study, the storm's surviving and refuted conclusions, the four system designs, and the 108 audited rows. |
 | `tools/` | The research scripts: ScrappyCoco wrapper, scale tables, review-sheet builder, and the next workflows (taxonomy study, layer auditors, compile). |
 
 ## Headline findings

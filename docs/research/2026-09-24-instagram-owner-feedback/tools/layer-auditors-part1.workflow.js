@@ -12,12 +12,13 @@ export const meta = {
 const A = args
 const FILES = `Evidence files (read what you need; they are large, so use targeted reads/grep):
 - ${A.out}/scale.md: within-account statistics (one vote per account: share of an account's best posts with a tag minus share of its weakest posts), at ALL-ACCOUNTS, per-INDUSTRY and per-CLIENT scale with sign tests; the industry advancement profile; computed transfer candidates. ${A.out}/scale.json has the full tables including per-client.
-- ${A.out}/storm.json: the storm's lead synthesis (survived and killed conclusions with the skeptics' reasons), parameters, industry kits, client syntheses (best creators, best content, patterns, gap vs our post, L3/L2 rules), and platform research (ranking, legibility, Karos archive).
+- ${A.out}/storm-extract.json: the 7 client syntheses (best creators, best content, patterns, gap vs our post, L3/L2 rules) and platform research (legibility, Karos archive).
+- ${A.out}/storm-lead.json: the lead synthesis (conclusions, parameters, industry kits), the ranking research, and the three skeptics' verdicts on each conclusion.
 - ${A.out}/a16z-deep-dive.md: 72-post study of @a16z for The Pitch by Deel (type measurements, templates, what separates outliers).
 - ${A.out}/dt.json: audit of the bespoke Don Techno system (music media) and 13 tagged music-media accounts.
 - ${A.out}/layer-system.json: the judged design for the layer system; key "judge:design".recommended holds the auditor rubric this workflow follows.
 - ${A.out}/audit.json: the code audit and build plan (workstreams WS-01..13) for mapping defects to code.
-Clients (slug: industry): karoslabs: B2B marketing / AI agency; geektime: Tech news media (Hebrew); thepitchbydeel: Startup / founder programs; hankypanky and kindlyyours: Intimate apparel; sitti: Creator economy / city-guide app; xodigital: Fintech / investing (Brazil); dontechno: Music media & nightlife.`
+Clients (slug: industry): karoslabs: B2B marketing / AI agency; geektime: Tech news media (Hebrew); thepitchbydeel: Startup / founder programs; hankypanky and kindlyyours: Intimate apparel; sitti: Creator economy / city-guide app; xodigital: Fintech / investing (Brazil); dontechno: Music media & nightlife; n3: luxury hospitality & residences (N°3 Courchevel, French, three ultra-luxury apartments). Benchmark now 183 accounts incl. ~90 enrichment accounts that break the industry=client confound; the grouping test (robustness-v2.json) ranks involvement, then archetype and audience, then industry; the taxonomy verdict (taxonomy.json, judge:taxonomy) sets a thin middle of standards cards.`
 
 const RUBRIC = `Audit rubric (from the judged layer-system design; apply it to every row):
 1. KIND: defect (an existing requirement was not met: wrong font, duplicate slide, lost words) -> engineering ticket + regression test, no prose rule; data fix (wrong client identity data) -> profile fix; constraint (legal, platform policy, legibility floor, brand integrity) -> hard gate, owner-confirmed; standard (the owner's quality/brand bar) -> applies at once at the scope he states, never waits for replication; performance claim ("this works better") -> must be tested at scale before it widens; preference (one client's taste) -> L3; noise -> recorded, no change.
@@ -25,7 +26,7 @@ const RUBRIC = `Audit rubric (from the judged layer-system design; apply it to e
 3. MECHANISM / VALUE SPLIT: restate each lesson as a mechanism (usually L1: a renderer behaviour or a gate with a parameter) plus a value (a brand kit, industry or client parameter), so clients differ by parameters, not by rules.
 4. SCALE TEST (performance claims only): check the largest scope first. L1 platform only if it holds within accounts across most industries (sign-consistent, not driven by one industry) or has strong primary research; L2 if it holds within one industry's accounts; L3 if only the client's own accounts show it; otherwise TRY (an experiment) or noise. Small n (< ~8 accounts) caps it at TRY.
 5. STRENGTH: MUST (hard, a gate enforces it) / DEFAULT (applies unless overridden) / TRY (experiment slot, measured).
-6. EXTENT PER CLIENT: for each of the 8 clients: applies / adjusted (say how: the twist) / skip (say why).
+6. EXTENT PER CLIENT: for each of the 9 clients: applies / adjusted (say how: the twist) / skip (say why).
 7. LOCALE: note it when a rule is language-specific (Hebrew RTL, Portuguese).`
 
 const OWNER = `The owner's feedback points (this session):
@@ -69,7 +70,7 @@ const ROW = {
 const ROWS_SCHEMA = { type: 'object', properties: { rows: { type: 'array', items: ROW }, notes: { type: 'string' } }, required: ['rows'] }
 
 phase('Feedback audit')
-const fbP = agent(`${RUBRIC}\n\n${OWNER}\n\n${FILES}\n\nAudit EVERY owner point (A-S) as one or more rows. Most execution complaints are defects or standards: do not dress them up as performance claims. Where the storm or a16z data supports or contradicts a point, cite it. Give the per-client extent for all 8 clients.`, { label: 'audit:owner-feedback', phase: 'Feedback audit', schema: ROWS_SCHEMA })
+const fbP = agent(`${RUBRIC}\n\n${OWNER}\n\n${FILES}\n\nAudit EVERY owner point (A-S) as one or more rows. Most execution complaints are defects or standards: do not dress them up as performance claims. Where the storm or a16z data supports or contradicts a point, cite it. Give the per-client extent for all 9 clients.`, { label: 'audit:owner-feedback', phase: 'Feedback audit', schema: ROWS_SCHEMA })
 
 phase('Findings audit')
 const GROUPS = [
@@ -78,7 +79,7 @@ const GROUPS = [
   { key: 'imagery', dims: 'graphics, icons, charts, photos vs AI images vs screenshots, human faces, product shots' },
   { key: 'format', dims: 'format (carousel/reel/image), slide count, series/franchises, cadence, topics and story sourcing, timing' },
 ]
-const findingsP = parallel(GROUPS.map(g => () => agent(`${RUBRIC}\n\n${FILES}\n\nYou audit the research findings for these dimensions: ${g.dims}. Sources: the storm's survived AND killed conclusions (a killed one can still hold at a narrower scope), the within-account scale tables (all/industry/client), the client syntheses, platform research, the a16z deep dive and the Don Techno audit and tags. For each distinct lesson in your dimensions, produce one audited row: find the widest scope where it genuinely holds, mark TRY when evidence is thin, and give the extent for all 8 clients (with the twist when adjusted). Prefer fewer, stronger rows over many weak ones; merge duplicates.`, { label: `audit:findings-${g.key}`, phase: 'Findings audit', schema: ROWS_SCHEMA })))
+const findingsP = parallel(GROUPS.map(g => () => agent(`${RUBRIC}\n\n${FILES}\n\nYou audit the research findings for these dimensions: ${g.dims}. Sources: the storm's survived AND killed conclusions (a killed one can still hold at a narrower scope), the within-account scale tables (all/industry/client), the client syntheses, platform research, the a16z deep dive and the Don Techno audit and tags. For each distinct lesson in your dimensions, produce one audited row: find the widest scope where it genuinely holds, mark TRY when evidence is thin, and give the extent for all 9 clients (with the twist when adjusted). Prefer fewer, stronger rows over many weak ones; merge duplicates.`, { label: `audit:findings-${g.key}`, phase: 'Findings audit', schema: ROWS_SCHEMA })))
 
 phase('Transfer')
 const TRANSFER = {
