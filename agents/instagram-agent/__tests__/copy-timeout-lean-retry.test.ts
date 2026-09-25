@@ -15,12 +15,12 @@ const runtime = { router: {} as never, tools: {}, promptStore: {} as never };
 const configOf = (agent: InstagramCopyAgent) => (agent as unknown as { config: { omitThought?: boolean; maxTokens?: number; id: string } }).config;
 
 describe("the copy drafter after a timeout", () => {
-  it("the lean twin drops `thought` and keeps everything else", () => {
+  it("the drafter is lean by default (2026-09-25), and the planning prose can still be turned back on", () => {
     const normal = configOf(new InstagramCopyAgent(runtime));
-    const lean = configOf(new InstagramCopyAgent(runtime, { omitThought: true }));
-    expect(normal.omitThought).toBeUndefined();
-    expect(lean.omitThought).toBe(true);
-    expect({ ...lean, omitThought: undefined }).toEqual({ ...normal, omitThought: undefined });
+    const planning = configOf(new InstagramCopyAgent(runtime, { omitThought: false }));
+    expect(normal.omitThought).toBe(true);
+    expect(planning.omitThought).toBe(false);
+    expect({ ...planning, omitThought: undefined }).toEqual({ ...normal, omitThought: undefined });
   });
 
   it("the workflow picks the lean twin only after a timed-out attempt, off the checkpointed result", () => {

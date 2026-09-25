@@ -86,7 +86,7 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyDraft> {
    */
   constructor(runtime: ConstructorParameters<typeof BaseAgent<InstagramCopyDraft>>[0], options: { omitThought?: boolean } = {}) {
     super(runtime);
-    if (options.omitThought === true) this.config = { ...this.config, omitThought: true };
+    if (options.omitThought !== undefined) this.config = { ...this.config, omitThought: options.omitThought };
   }
 
   protected readonly config: AgentStepConfig<InstagramCopyDraft> = {
@@ -99,6 +99,14 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyDraft> {
     // unchanged; what changed is what the model is asked to produce.
     outputSchema: InstagramCopyDraftSchema,
     maxTokens: COPY_MAX_TOKENS,
+    // 2026-09-25: LEAN BY DEFAULT. Measured over prep batches 4 and 5: the
+    // drafter's planning prose (`thought`, 84-88% of its output) ran first
+    // attempts past the 600 s step timeout 9 times in 16 (5/12 and 4/4), each
+    // one ten minutes and a redraft the readable-copy lint then could not use.
+    // Every attempt drafted without it finished in 51-247 s and shipped the
+    // batch's best posts (Geektime and KAROS poster covers, batch 5). The
+    // planning buys nothing a reader sees; the attempt it costs does.
+    omitThought: true,
     // Default is 1. A malformed turn on THIS step is a quality event, not a
     // tooling failure: the model answered and its answer did not clear a
     // schema, which `opus-drops-type-discriminator`-class truncation and a
