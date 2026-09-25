@@ -130,39 +130,62 @@ function overlapsCovered(text: string, covered: readonly string[]): boolean {
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
- * Raw engagement on one post, as a single comparable number.
+ * What one post is measured ON (2026-09-25, research round #253, section 3.0,
+ * replacing `log1p(likes + 3*comments + views/50)` z-scored over the account).
  *
- * `likes + 3·comments + views/50`, then `log1p`. The weights say what the
- * signal is worth: a comment is a reader who stopped and typed, worth several
- * likes; views are a reach number the platform inflates, worth a fiftieth.
- * `log1p` because engagement is multiplicative — the gap between 10 and 100 is
- * the interesting one, and without the log a single viral post would set the
- * scale for the whole account and flatten every other post to zero.
- *
- * Missing fields count as 0 (not "unknown"), because `research.socialHistory`
- * omits what the provider did not return, and a post nobody engaged with looks
- * exactly the same as one whose counts were not scraped. The recency
- * tie-breaker in `scoreReferencePosts` is what carries an account whose
- * provider reports no counts at all.
+ * A reel is measured on its plays; a post whose like count is hidden on its
+ * comments alone (the vendor reports a placeholder 3 for the likes); every
+ * other post on likes plus three times its comments. Views are compared only
+ * with views: a still's view count is a reach number the platform inflates,
+ * and mixing it in ranked stills against reels. Missing counts are 0.
  */
-function rawEngagement(post: Pick<SocialHistoryPost, "engagement">): number {
+function engagementBasis(post: Pick<SocialHistoryPost, "engagement" | "likesHidden" | "mediaKind">): number {
   const e = post.engagement ?? {};
-  const likes = typeof e.likes === "number" && Number.isFinite(e.likes) ? Math.max(0, e.likes) : 0;
-  const comments = typeof e.comments === "number" && Number.isFinite(e.comments) ? Math.max(0, e.comments) : 0;
-  const views = typeof e.views === "number" && Number.isFinite(e.views) ? Math.max(0, e.views) : 0;
-  return Math.log1p(likes + 3 * comments + views / 50);
+  const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, v) : 0);
+  if (post.mediaKind === "reel" && n(e.views) > 0) return n(e.views);
+  if (post.likesHidden === true) return n(e.comments);
+  return n(e.likes) + 3 * n(e.comments);
 }
 
-/** An account needs at least this many posts before its own mean and spread mean anything. */
-const MIN_POSTS_FOR_ZSCORE = 3;
+/**
+ * A post under a week old is still climbing, and ranking it raw ranks its
+ * age: on busy pages the 12 newest posts span 11-42 hours and score tracked
+ * age (r = 0.83). Its basis is projected by the share of a week's engagement a
+ * post of that age has usually reached (Don Techno's measured curve, research
+ * round #253). For topic ranking only.
+ */
+const AGE_CURVE: ReadonlyArray<readonly [maxHours: number, share: number]> = [
+  [24, 0.55],
+  [48, 0.72],
+  [72, 0.82],
+  [96, 0.88],
+  [168, 0.95],
+];
+function ageShare(post: Pick<SocialHistoryPost, "publishedAt">, now: Date): number {
+  if (post.publishedAt === undefined) return 1;
+  const at = Date.parse(post.publishedAt);
+  if (Number.isNaN(at)) return 1;
+  const hours = (now.getTime() - at) / 3_600_000;
+  for (const [maxHours, share] of AGE_CURVE) if (hours < maxHours) return share;
+  return 1;
+}
+
+/** Posts that never enter the ranking: pinned (grid position, not choice), paid (bought reach), and comment bait (bought comments). */
+const COMMENT_BAIT = /\b(giveaway|how to enter|tag (?:a|your|\d+) friends?|comment\s+["\u201c\u2018']?[\p{L}\p{N}]+["\u201d\u2019']?\s+(?:and|to|below|for)|comment below to)/iu;
+function rankable(post: SocialHistoryPost): boolean {
+  return post.pinned !== true && post.paidPartnership !== true && !COMMENT_BAIT.test(post.excerpt ?? "");
+}
+
+/** A family needs at least this many posts before its own median means anything. */
+const MIN_POSTS_FOR_BASELINE = 3;
 /**
  * The absolute log scale a one-or-two-post account is measured on: `log1p` of
  * about a thousand interactions reads as 1.0. Only used when there is no
- * within-account distribution to compare against.
+ * within-account baseline to compare against.
  */
 const RAW_ENGAGEMENT_FULL_SCALE = Math.log1p(1000);
-/** A z-score of +2 (two standard deviations above the account's own mean) reads as 1.0. */
-const ZSCORE_FULL_SCALE = 4;
+/** Lift over the account's own median, as a share: 1x reads 0.5, 4x reads 1.0, a quarter reads 0. */
+const LIFT_DOUBLINGS_FULL_SCALE = 4;
 
 function clamp01(n: number): number {
   return Math.min(1, Math.max(0, n));
@@ -182,10 +205,12 @@ function accountKey(post: Pick<SocialHistoryPost, "platform" | "username">): str
  * Normalised WITHIN each account, which is the whole point: a 200k-follower
  * publication's median post out-engages a 2k-follower practitioner's best post
  * every time, and the practitioner's outlier is the one that tells us what
- * this audience actually stops for. So each account's posts are z-scored
- * against that account's own mean and spread, and only then compared across
- * accounts. An account with fewer than three posts has no distribution to
- * score against and falls back to the absolute log scale.
+ * this audience actually stops for. So each post is scored as its lift over
+ * its own account's median for the same kind of post (reels apart from
+ * stills), after a young post's age projection, and only then compared
+ * across accounts: the one scorer `research.harvestInstagramExemplars` uses.
+ * Pinned, paid and comment-bait posts never rank. A family with fewer than
+ * three posts has no baseline and falls back to the absolute log scale.
  *
  * Posts older than 30 days are dropped; a post with no usable date is KEPT
  * (a provider that omits dates must not silently empty the engine).
@@ -212,22 +237,31 @@ export function scoreReferencePosts(posts: readonly SocialHistoryPost[], options
 
   const scored: Array<{ post: SocialHistoryPost; engagementScore: number }> = [];
   for (const bucket of byAccount.values()) {
-    const raws = bucket.map((post) => rawEngagement(post));
-    if (bucket.length >= MIN_POSTS_FOR_ZSCORE) {
-      const mean = raws.reduce((sum, r) => sum + r, 0) / raws.length;
-      const variance = raws.reduce((sum, r) => sum + (r - mean) ** 2, 0) / raws.length;
-      const sd = Math.sqrt(variance);
-      bucket.forEach((post, i) => {
-        // sd === 0: every post performed identically (commonly: the provider
-        // returned no counts at all). Everything sits at the midpoint and the
-        // recency tie-breaker below decides.
-        const z = sd === 0 ? 0 : (raws[i]! - mean) / sd;
-        scored.push({ post, engagementScore: clamp01(0.5 + z / ZSCORE_FULL_SCALE) });
-      });
-    } else {
-      bucket.forEach((post, i) => {
-        scored.push({ post, engagementScore: clamp01(raws[i]! / RAW_ENGAGEMENT_FULL_SCALE) });
-      });
+    // One family per account and kind: reels against reels, stills against stills.
+    const families = new Map<string, SocialHistoryPost[]>();
+    for (const post of bucket.filter(rankable)) {
+      const key = post.mediaKind === "reel" ? "reel" : "still";
+      families.set(key, [...(families.get(key) ?? []), post]);
+    }
+    for (const family of families.values()) {
+      const projected = family.map((post) => engagementBasis(post) / ageShare(post, now));
+      if (family.length >= MIN_POSTS_FOR_BASELINE) {
+        const sorted = [...projected].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        const median = sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+        family.forEach((post, i) => {
+          // median === 0: nothing distinguishes the posts (commonly: the
+          // provider returned no counts). Everything sits at the midpoint and
+          // the recency tie-breaker below decides.
+          const lift = median > 0 ? projected[i]! / median : 1;
+          const score = lift > 0 ? 0.5 + Math.log2(lift) / LIFT_DOUBLINGS_FULL_SCALE : 0;
+          scored.push({ post, engagementScore: clamp01(score) });
+        });
+      } else {
+        family.forEach((post, i) => {
+          scored.push({ post, engagementScore: clamp01(Math.log1p(projected[i]!) / RAW_ENGAGEMENT_FULL_SCALE) });
+        });
+      }
     }
   }
 

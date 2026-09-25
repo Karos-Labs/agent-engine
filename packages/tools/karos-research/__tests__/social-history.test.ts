@@ -96,3 +96,14 @@ describe("research.socialHistory", () => {
     expect((await none.execute({ accounts: [{ platform: "x", username: "acmehq" }] }, { ctx })).status).toBe("not_available");
   });
 });
+
+describe("an Instagram post keeps its shape (research round #253, section 3.0)", () => {
+  it("reads hidden likes, pinned, paid and media kind off the vendor record", async () => {
+    const { instagramShapeFromRecord } = await import("../src/social-history.js");
+    const raw = (json: Record<string, unknown>) => ({ outputs: { json } });
+    expect(instagramShapeFromRecord(raw({ like_and_view_counts_disabled: true, product_type: "feed" }))).toEqual({ likesHidden: true, mediaKind: "image" });
+    expect(instagramShapeFromRecord(raw({ timeline_pinned_user_ids: [1], product_type: "clips" }))).toEqual({ pinned: true, mediaKind: "reel" });
+    expect(instagramShapeFromRecord(raw({ is_paid_partnership: true, carousel_media: [{}] }))).toEqual({ paidPartnership: true, mediaKind: "carousel" });
+    expect(instagramShapeFromRecord({ text: "not an instagram record" })).toEqual({});
+  });
+});

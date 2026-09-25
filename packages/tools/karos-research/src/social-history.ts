@@ -10,7 +10,11 @@ import { latestRunForQuery, writeRunRecord, type RunRecord } from "./runs.js";
 // linkedin.account_posts/company_posts): the accepted platform enum widens,
 // so a 1.0.0 cell rejecting linkedin was answering a genuinely narrower
 // contract, not a bug.
-const TOOL_VERSION = "1.1.0";
+// 1.2.0 — 2026-09-25 (research round #253, section 3.0): an Instagram post
+// keeps its SHAPE — hidden like count, pinned, paid partnership, media kind —
+// read off the vendor record. Formats had been guessed from caption text and
+// a hidden like count read as the vendor's placeholder 3.
+const TOOL_VERSION = "1.2.0";
 
 const SOCIAL_PLATFORMS = ["x", "instagram", "reddit", "tiktok", "linkedin"] as const;
 
@@ -50,6 +54,32 @@ export interface SocialHistoryPost {
   excerpt: string;
   publishedAt?: string;
   engagement?: { likes?: number; comments?: number; views?: number };
+  /** Instagram only, from the vendor record: the like count is hidden and the number reported is a placeholder. */
+  likesHidden?: true;
+  /** Instagram only: pinned to the top of the grid, so its reach is not what the audience chose. */
+  pinned?: true;
+  /** Instagram only: a paid partnership, so its reach was bought. */
+  paidPartnership?: true;
+  /** Instagram only: what the post is, from the record, never from its caption. */
+  mediaKind?: "reel" | "carousel" | "image";
+}
+
+/** The shape fields of one Instagram vendor record (`raw.outputs.json`), or nothing for any other record. */
+export function instagramShapeFromRecord(raw: unknown): Pick<SocialHistoryPost, "likesHidden" | "pinned" | "paidPartnership" | "mediaKind"> {
+  const outputs = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>)["outputs"] : undefined;
+  const json = typeof outputs === "object" && outputs !== null ? (outputs as Record<string, unknown>)["json"] : undefined;
+  if (typeof json !== "object" || json === null) return {};
+  const j = json as Record<string, unknown>;
+  const productType = typeof j["product_type"] === "string" ? j["product_type"] : undefined;
+  const carousel = Array.isArray(j["carousel_media"]) && (j["carousel_media"] as unknown[]).length > 0;
+  const pinnedIds = j["timeline_pinned_user_ids"];
+  const sponsorTags = j["sponsor_tags"];
+  return {
+    ...(j["like_and_view_counts_disabled"] === true ? { likesHidden: true as const } : {}),
+    ...((Array.isArray(pinnedIds) && pinnedIds.length > 0) || j["is_pinned"] === true ? { pinned: true as const } : {}),
+    ...(j["is_paid_partnership"] === true || (Array.isArray(sponsorTags) && sponsorTags.length > 0) ? { paidPartnership: true as const } : {}),
+    ...(productType === "clips" ? { mediaKind: "reel" as const } : carousel || productType === "carousel_container" ? { mediaKind: "carousel" as const } : productType !== undefined ? { mediaKind: "image" as const } : {}),
+  };
 }
 
 export interface SocialHistoryResult {
@@ -131,6 +161,7 @@ export function createSocialHistory(store: WorkspaceStoreLike, scraper?: Scraper
               excerpt: text.length > POST_EXCERPT_CHARS ? `${text.slice(0, POST_EXCERPT_CHARS)}…` : text,
               ...(record.publishedAt ? { publishedAt: record.publishedAt } : {}),
               ...(record.engagement ? { engagement: record.engagement } : {}),
+              ...(account.platform === "instagram" ? instagramShapeFromRecord(record.raw) : {}),
             });
           }
         } catch (error) {
