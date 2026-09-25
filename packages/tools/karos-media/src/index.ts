@@ -18,6 +18,7 @@ import { createMediaLibraryAdd, createMediaLibraryList } from "./media-library.j
 import { createVisualQaGate } from "./visual-qa-gate.js";
 import { createInspectImages } from "./inspect-images.js";
 import { createJudgeExemplars } from "./judge-exemplars.js";
+import { createClassifyClient } from "./classify-client.js";
 import { createHarvestArticleImages } from "./harvest-article-images.js";
 import { createHarvestSiteImages } from "./harvest-site-images.js";
 import { createScreenshotPage, type BrowserLauncher } from "./screenshot-page.js";
@@ -31,6 +32,7 @@ export * from "./providers.js";
 export * from "./providers/index.js";
 export * from "./find-images.js";
 export * from "./judge-exemplars.js";
+export * from "./classify-client.js";
 export * from "./image-floor.js";
 export * from "./image-model-ladder.js";
 export * from "./image-provenance.js";
@@ -331,6 +333,11 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
     }),
     // ── RFC-26 Phase 2 (2026-09-24): craft grade + design DNA for harvested
     // Instagram exemplars; frames copied to the media bucket, reference-only.
+    // ── 2026-09-25: the five-card account classification, automatic for
+    // every client (research round #253). Same Vertex credential as vision.
+    "media.classifyClient": createClassifyClient({
+      ...(visionClient ? { client: visionClient } : {}),
+    }),
     "media.judgeExemplars": createJudgeExemplars({
       ...(visionClient ? { client: visionClient } : {}),
       ...(options.visionModel ? { model: options.visionModel } : {}),

@@ -78,6 +78,8 @@ export function planHarvest(input: {
   ownWebsite?: string | undefined;
   /** The profile's free-text industry, for the benchmark fallback. */
   industry?: string | undefined;
+  /** 2026-09-25, compileDNA v0: the category pack's peers, from the client's classification. Ahead of the industry regex. */
+  peers?: readonly string[] | undefined;
 }): HarvestPlan {
   const accounts = new Map<string, ExemplarRole>();
   for (const own of input.ownAccounts) {
@@ -92,7 +94,8 @@ export function planHarvest(input: {
   }
   // No reference account on file: the industry's benchmark accounts stand in.
   if (![...accounts.values()].includes("reference")) {
-    for (const handle of benchmarksForIndustry(input.industry)) if (!accounts.has(handle)) accounts.set(handle, "reference");
+    const peers = input.peers !== undefined && input.peers.length > 0 ? input.peers : benchmarksForIndustry(input.industry);
+    for (const handle of peers) if (!accounts.has(handle)) accounts.set(handle, "reference");
   }
   const competitorSites: Array<{ name: string; website: string; role?: ExemplarRole }> = [];
   // No Instagram account of the client's own on file: its website names it.

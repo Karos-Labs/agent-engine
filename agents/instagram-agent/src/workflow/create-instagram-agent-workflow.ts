@@ -30,7 +30,7 @@ import {
   type LearningContextLike,
   type ResolvedGoalLine,
 } from "@agent-engine/workflow";
-import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, describeToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, readRunDirection, revisionDirective, runDirectionField, buildClientIntelContext, buildClientVoiceContext, readCrossChannelHistory, crossChannelDirective, crossChannelAvoidTopics, socialAccountsFromClient, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext, distillStylePreferences, varyLearnedStyle, buildTrendQueries, hasTopicSignalMaterial, pullTrendResearch, runTrendScout, researchDigestForScout, selectContentMode, trendCandidateForDrafting, type ContentMode, type DistilledStyle, type FeedbackEntryLike, type StyleVariationEntry, type TrendResearch, type TrendScoutOutput } from "@agent-engine/workflow";
+import { type WorkflowContext, type RevisionNote, WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, describeToolingFailure, runAutoSetup, runReviewCycle, runTopicGuardrail, resolveClientClassification, readRunDirection, revisionDirective, runDirectionField, buildClientIntelContext, buildClientVoiceContext, readCrossChannelHistory, crossChannelDirective, crossChannelAvoidTopics, socialAccountsFromClient, checkOutputDedupe, dedupeRetryDirective, readClientIntelContext, readContextDoc, enforceContextDocPolicy, toAgentContext, distillStylePreferences, varyLearnedStyle, buildTrendQueries, hasTopicSignalMaterial, pullTrendResearch, runTrendScout, researchDigestForScout, selectContentMode, trendCandidateForDrafting, type ContentMode, type DistilledStyle, type FeedbackEntryLike, type StyleVariationEntry, type TrendResearch, type TrendScoutOutput } from "@agent-engine/workflow";
 import type { ClientBrand, ClientBrief, ClientKnowledge, ClientProfile, VoiceRules } from "@agent-engine/tools";
 import type { ConceptMode, ConceptReport, InstagramFormat, InstagramTopicClaim as InstagramTopicClaimShape } from "./types.js";
 import { readConceptMode } from "./types.js";
@@ -239,6 +239,7 @@ import { ceilingFor, defaultPictureDensityFor, enforceImageryBand, imageryShortf
 // ladder consults, so the image floor is enforced where it actually binds.
 import { guaranteedGapCount, partitionGaps } from "./image-gap-partition.js";
 import { carryImageKinds } from "./recovered-image-kinds.js";
+import { compileInstagramDna } from "./compile-dna.js";
 import { planInterestRelayout, type InterestRelayoutPlan } from "./interest-relayout.js";
 // RFC-19 §4 item 17 — the deterministic headline fact cards `04b` falls back to, and the one hold it keeps.
 import { headlineFallbackResearch, NO_READABLE_SOURCE } from "./research-fallback.js";
@@ -1240,6 +1241,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       });
     });
 
+    // ── 00a2: WHAT KIND OF ACCOUNT THIS CLIENT IS (2026-09-25) ──
+    //
+    // Automatic for every client (owner, 2026-09-25): a staff record on the
+    // profile, else the stored belief, else the approved research record,
+    // else one Haiku call, persisted as a client belief every agent reads.
+    // compileDNA v0 reads three decisions off it that used to come from a
+    // regex over free-text industry. Fails open: unclassified keeps the regex.
+    const classificationResolution = await resolveClientClassification(wf, { tools });
+    const clientDna = classificationResolution.classification !== undefined ? compileInstagramDna(classificationResolution.classification) : undefined;
+
     // ── 01: open the run / claim the post number ──
     const runClaim = await wf.step.code("01-open-run", async (): Promise<InstagramRunClaim> => {
       const configOutcome = await tools["client.getConfig"]!.execute({}, { ctx });
@@ -1290,7 +1301,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // visual business (fashion, food, hospitality, ...) is photo-first by
       // default, for every such client, configured or not.
       let industryDensity: ReturnType<typeof defaultPictureDensityFor>;
-      if (explicitDensity === undefined) {
+      // 2026-09-25, compileDNA v0: the category pack first, the regex after.
+      const packDensity = explicitDensity === undefined ? clientDna?.imagery : undefined;
+      if (explicitDensity === undefined && packDensity !== undefined) {
+        industryDensity = packDensity;
+      } else if (explicitDensity === undefined) {
         try {
           const profile = await tools["client.getProfile"]?.execute({}, { ctx });
           industryDensity = defaultPictureDensityFor(profile !== undefined ? industryForSetup(profile) : undefined);
@@ -1351,8 +1366,10 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             ? ("client-config" as const)
             : Object.keys(learned).length > 0
               ? ("client-preference" as const)
-              : industryDensity !== undefined
-                ? ("industry-default" as const)
+              : packDensity !== undefined
+                ? ("category-pack" as const)
+                : industryDensity !== undefined
+                  ? ("industry-default" as const)
                 : libraryDensity !== undefined
                   ? ("exemplar-library" as const)
                   : undefined;
@@ -2422,6 +2439,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     const clientLibrary = seriesLibraryFor({
       clientSlug: wf.clientSlug,
       segments: [...brief.icp.industries, ...brief.offers.map((offer) => offer.name)],
+      ...(clientDna !== undefined ? { affinity: { prefers: clientDna.seriesAffinity, basis: clientDna.basis } } : {}),
     });
 
     // ── The run's ONE target language (Phase 1, closing audit defect 5's second door) ──
@@ -3009,6 +3027,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             competitors: Array.isArray(competitors) ? competitors : [],
             ownWebsite: gatherBriefSourceUrls(profileForHarvest)[0],
             industry: typeof (profileForHarvest as Record<string, unknown> | undefined)?.["industry"] === "string" ? ((profileForHarvest as Record<string, unknown>)["industry"] as string) : undefined,
+            ...(clientDna !== undefined && clientDna.peers.length > 0 ? { peers: clientDna.peers } : {}),
           });
           if (plan.accounts.length === 0 && plan.competitorSites.length === 0) {
             return { ok: false as const, problems: [...problems, "no Instagram account, reference account or competitor website is on file, so there was nothing to harvest"] };

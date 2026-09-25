@@ -39,6 +39,8 @@ const HAPPY_PATH_STEP_IDS = [
   // 2026-09-06: the media-source pre-flight ("only what I upload" with nothing uploaded) refuses before anything is spent.
   "00a-check-media-source",
   "00-auto-setup",
+  // 2026-09-25: the client classification is read before 01 (compileDNA v0).
+  "00a2-read-client-classification",
   "01-open-run",
   "02-freeze-style-config",
   // Phase 1 (RFC-13 item H): the persisted Client Brief's freshness check. It
