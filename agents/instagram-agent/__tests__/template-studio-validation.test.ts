@@ -370,6 +370,11 @@ describe("gate 2 — the slot contract", () => {
     expect(result.failures.find((f) => f.gate === 2)!.reason).toContain('slot "attribution" is declared but the markup never reads');
   });
 
+  it("a declared *Runs twin whose plain twin the markup reads throws nothing away (Sitti's list_takeaway, 2026-09-18/24)", async () => {
+    const result = await validate(statDraft({ slots: ["figure", "subLabel", "body", "sourceLine", "device", "bodyRuns"], sample: { figure: "63%", subLabel: "s", body: "b", sourceLine: "src", device: "d" } }), makeDeps());
+    expect(result.failures.filter((f) => f.gate === 2 && f.reason.includes('"bodyRuns" is declared but'))).toEqual([]);
+  });
+
   it("refuses a slot contentFor cannot supply for THAT archetype", async () => {
     // A quote card has no figure — nothing in the pipeline would ever fill it.
     const draft = statDraft({
