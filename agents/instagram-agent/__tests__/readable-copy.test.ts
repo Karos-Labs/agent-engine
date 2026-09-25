@@ -42,3 +42,14 @@ describe("readable copy", () => {
     expect(steer).toContain('slide 2 "Not sentiment"');
   });
 });
+
+describe("distinct slides (2026-09-25, #253 WS-09)", () => {
+  const s = (n: number, headline: string, body = "", layout?: string, figure?: string) => ({ n, headline, body, ...(layout ? { layout } : {}), ...(figure ? { stat: { figure } } : {}) });
+  it("refuses one figure on three slides, allows two, and ignores years", () => {
+    const hp = [s(1, "One label. 233 substances."), s(2, "The colour on your screen is a guess"), s(3, "Most brands say they care", "", "stat_callout", "233"), s(4, "233 potentially harmful substances tested")];
+    expect(lintReadableCopy(hp).map((f) => f.rule)).toContain("figure-repeated");
+    expect(lintReadableCopy(hp.slice(0, 3)).map((f) => f.rule)).not.toContain("figure-repeated");
+    expect(lintReadableCopy([s(1, "In 2026 we grew"), s(2, "By 2026 teams"), s(3, "2026 is the year")]).map((f) => f.rule)).not.toContain("figure-repeated");
+  });
+
+});

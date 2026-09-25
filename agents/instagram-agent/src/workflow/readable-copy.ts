@@ -14,7 +14,7 @@
  * deliver). It never edits prose itself.
  */
 
-export type ReadableCopyRule = "fragment-opener" | "not-x-it-is-y" | "not-tails" | "staccato" | "closer-length" | "repeated-sentence";
+export type ReadableCopyRule = "fragment-opener" | "not-x-it-is-y" | "not-tails" | "staccato" | "closer-length" | "repeated-sentence" | "figure-repeated";
 
 export interface ReadableCopyFinding {
   rule: ReadableCopyRule;
@@ -28,6 +28,21 @@ interface SlideLike {
   headline: string;
   body: string;
   layout?: string | undefined;
+  stat?: { figure?: string | undefined } | undefined;
+}
+
+/** DISPLAY figures a reader would notice repeated (the headline and the stat, not the body): numbers with a unit or of 3+ digits, never a bare year. */
+function figuresOf(slide: SlideLike): Set<string> {
+  const text = `${slide.headline} ${slide.stat?.figure ?? ""}`;
+  const out = new Set<string>();
+  for (const m of text.matchAll(/(?<![\p{L}\d])(\d[\d,.]*)\s?(%|x|k|m|bn|million|billion)?(?![\p{L}\d])/giu)) {
+    const digits = m[1]!.replace(/[,.]$/u, "");
+    const unit = (m[2] ?? "").toLowerCase();
+    if (/^(?:19|20)\d\d$/u.test(digits) && unit === "") continue;
+    if (unit === "" && digits.replace(/\D/gu, "").length < 3) continue;
+    out.add(`${digits.replace(/,/gu, "")}${unit}`);
+  }
+  return out;
 }
 
 /** Sentences, split on terminal punctuation. Keeps the punctuation off; drops empties. */
@@ -105,6 +120,16 @@ export function lintReadableCopy(slides: readonly SlideLike[], closerN?: number)
         findings.push({ rule: "closer-length", slide: slide.n, text: `${slide.headline} ${slide.body}`.slice(0, 160), fix: `end on ONE short question or line (it has ${total} words in ${questions} sentences)` });
       }
     }
+  }
+  // L7: one figure on three or more slides. Hanky Panky's "233" was the
+  // headline of slides 1, 3 and 4 and the closer's recap (prep 2026-09-25):
+  // a number a reader sees three times stops being news. (#253 WS-09: a figure
+  // on at most two plates.)
+  const figureSlides = new Map<string, number[]>();
+  for (const slide of slides) for (const f of figuresOf(slide)) figureSlides.set(f, [...(figureSlides.get(f) ?? []), slide.n]);
+  for (const [figure, ns] of figureSlides) {
+    const interior = ns.filter((n) => n !== closerN);
+    if (interior.length >= 3) findings.push({ rule: "figure-repeated", slide: interior[2]!, text: figure, fix: `${figure} is on slides ${interior.join(", ")}; keep it on at most two and give the others their own point` });
   }
   if (notTails >= 2 && firstTail !== undefined) {
     findings.push({ rule: "not-tails", slide: firstTail.slide, text: firstTail.text, fix: `${notTails} sentences end on ", not X"; keep at most one` });
