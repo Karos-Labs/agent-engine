@@ -1405,6 +1405,13 @@ body.ta-center .plate > .mark-badge { margin-inline: auto; }
 [data-fit="1"] .me-note  { font-size: var(--t-micro); }
 [data-fit="2"] .me-title { font-size: var(--t-label); }
 [data-fit="2"] .me-note  { font-size: var(--t-micro); }
+/* THE TITLE STAYS A STEP ABOVE ITS ROWS (2026-09-25). At the ladder's last
+   rung the shared rule took the title to `--t-label`, the same size as every
+   row's title, and a display serif at a text grotesk's size reads SMALLER:
+   job PCjzJDH10gQW7peazB5n's "Four moves to calibrate your delegation
+   threshold" sat above four larger-looking rows, the hierarchy inverted. The
+   rows give way first; the title holds `--t-lead`. */
+.me-head[data-fit="2"].r-statement { font-size: var(--t-lead); }
 </style>
 </head>
 <body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-hero-scrim="{{heroScrimStrength}}" data-ground="{{groundStyle}}" data-tone="{{groundTone}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}" data-anchor="{{compositionAnchor}}" data-figure="{{figurePlacement}}">
@@ -1668,7 +1675,14 @@ body.ta-center .plate > .mark-badge { margin-inline: auto; }
            a subpixel layout difference is not the object giving ground. */
         if (objectExtent() < extentBefore - 1) { grown += 1; set(primary, grown); closeInk(); break; }
       }
-      if (overflows()) { grown += 1; set(primary, grown); closeInk(); }
+      /* ONLY A GROWTH IS UNDONE HERE (2026-09-25). When the plate already
+         overflowed at its own step the loop never grew, and this line used to
+         push the PRIMARY alone to step 1: the headline shrank and its rows did
+         not, so a list title landed at its rows' size and a display serif read
+         smaller than the grotesk under it (job PCjzJDH10gQW7peazB5n, slide 2).
+         Overflow at step 0 is the shrink loop's to handle, which steps every
+         host together and keeps the relationship between them. */
+      if (grown < 0 && overflows()) { grown += 1; set(primary, grown); closeInk(); }
     }
 
     /* Shrink: everything together, so the relationship between the headline and
