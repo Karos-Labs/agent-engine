@@ -19,6 +19,7 @@ import { createVisualQaGate } from "./visual-qa-gate.js";
 import { createInspectImages } from "./inspect-images.js";
 import { createJudgeExemplars } from "./judge-exemplars.js";
 import { createClassifyClient } from "./classify-client.js";
+import { createCaptureDesignLanguage } from "./capture-design-language.js";
 import { createHarvestArticleImages } from "./harvest-article-images.js";
 import { createHarvestSiteImages } from "./harvest-site-images.js";
 import { createScreenshotPage, type BrowserLauncher } from "./screenshot-page.js";
@@ -33,6 +34,7 @@ export * from "./providers/index.js";
 export * from "./find-images.js";
 export * from "./judge-exemplars.js";
 export * from "./classify-client.js";
+export * from "./capture-design-language.js";
 export * from "./image-floor.js";
 export * from "./image-model-ladder.js";
 export * from "./image-provenance.js";
@@ -360,6 +362,8 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
     }),
     // ── Tier 1c: a real screenshot of the cited page, the artefact X rewards.
     "media.screenshotPage": createScreenshotPage({ launcher: options.browserLauncher }),
+    // 2026-09-25 (WS-04): the boxes, buttons and lines the client's own site draws.
+    "media.captureDesignLanguage": createCaptureDesignLanguage(options.browserLauncher === null ? { launcher: null } : {}),
     // 2026-09-23 (stage 2): a product lifted off a uniform studio background.
     "media.cutout": createCutout(),
     // ── The hand-off: a chosen cached file becomes a fetchable URL.

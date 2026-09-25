@@ -240,6 +240,7 @@ import { ceilingFor, defaultPictureDensityFor, enforceImageryBand, imageryShortf
 import { guaranteedGapCount, partitionGaps } from "./image-gap-partition.js";
 import { carryImageKinds } from "./recovered-image-kinds.js";
 import { compileInstagramDna } from "./compile-dna.js";
+import { DESIGN_LANGUAGE_BELIEF_KEY, DESIGN_LANGUAGE_RETRY_DAYS, designLanguageAction, readDesignLanguage, type StoredDesignLanguage } from "./design-language.js";
 import { planInterestRelayout, type InterestRelayoutPlan } from "./interest-relayout.js";
 // RFC-19 §4 item 17 — the deterministic headline fact cards `04b` falls back to, and the one hold it keeps.
 import { headlineFallbackResearch, NO_READABLE_SOURCE } from "./research-fallback.js";
@@ -3117,6 +3118,56 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         } else {
           await setupWarn("exemplar-library", `the exemplar library was not built: ${built.problems.slice(0, 3).join("; ")}`);
         }
+      }
+    }
+
+    // ── 00f: THE CLIENT'S DESIGN LANGUAGE, MEASURED OFF ITS OWN SITE (WS-04, 2026-09-25) ──
+    //
+    // The boxes, buttons and lines the client's site draws, so the panels can
+    // be drawn in that language instead of the bundled accent gradient. Once
+    // per 90 days, a week's backoff after a failure, fail-open: a blocked or
+    // blank site is a note, never a hold. Stored as a client belief; the
+    // templates read it in a later step, so on its own this moves no pixel.
+    if (tools["media.captureDesignLanguage"] !== undefined) {
+      const languageCheck = await wf.step.code("00f-check-design-language", async () => {
+        let stored: StoredDesignLanguage | undefined;
+        let website: string | undefined;
+        try {
+          const read = await tools["memory.read"]?.execute({ scope: "beliefs" }, { ctx });
+          if (read?.status === "success") stored = readDesignLanguage((read.result as { beliefs?: Record<string, unknown> }).beliefs?.[DESIGN_LANGUAGE_BELIEF_KEY]);
+          const profile = await tools["client.getProfile"]?.execute({}, { ctx });
+          website = profile?.status === "success" ? gatherBriefSourceUrls(profile.result as ClientProfile)[0] : undefined;
+        } catch (error) {
+          console.error("00f-check-design-language: could not read the beliefs or the profile", error);
+        }
+        return { action: designLanguageAction(stored, new Date()), ...(website !== undefined ? { website } : {}) };
+      });
+      if (languageCheck.action === "measure" && languageCheck.website !== undefined) {
+        const website = languageCheck.website;
+        const measured = await wf.step.code("00f1-capture-design-language", async (): Promise<StoredDesignLanguage> => {
+          const now = new Date().toISOString();
+          let record: StoredDesignLanguage;
+          try {
+            const outcome = await tools["media.captureDesignLanguage"]!.execute({ url: /^https?:\/\//iu.test(website) ? website : `https://${website}` }, { ctx });
+            record =
+              outcome.status === "success"
+                ? { version: 1, measuredAt: now, status: "measured", ...(outcome.result as Pick<StoredDesignLanguage, "url" | "tokens" | "evidence">) }
+                : { version: 1, measuredAt: now, status: "failed", url: website, problem: String((outcome as { reason?: unknown }).reason ?? outcome.status).slice(0, 200) };
+          } catch (error) {
+            record = { version: 1, measuredAt: now, status: "failed", url: website, problem: (error as Error).message.slice(0, 200) };
+          }
+          try {
+            await tools["memory.updateBeliefs"]?.execute({ diff: { [DESIGN_LANGUAGE_BELIEF_KEY]: record } }, { ctx });
+          } catch (error) {
+            console.error("00f1-capture-design-language: the measurement could not be stored", error);
+          }
+          return record;
+        });
+        setupNotes.push(
+          measured.status === "measured" && measured.tokens !== undefined
+            ? `design language: ${measured.tokens.boxStyle} boxes${measured.tokens.boxRadius !== undefined ? `, radius ${measured.tokens.boxRadius}px` : ""}${measured.tokens.pillButtons ? ", pill buttons" : ""} (${measured.evidence?.cards ?? 0} boxes on ${measured.url ?? website})`
+            : `design language: not measured (${measured.problem ?? "unknown"}); the next try is in ${DESIGN_LANGUAGE_RETRY_DAYS} days`,
+        );
       }
     }
 
