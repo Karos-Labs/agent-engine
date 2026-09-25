@@ -513,7 +513,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // bump most often forgets.
     const registry = readFileSync(path.join(PROMPTS_ROOT, "..", "..", "..", "scripts", "prompt-registry.ts"), "utf8");
     expect(registry).toContain(`"14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28"`);
-    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,700}latestVersion: "36"/);
+    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,700}latestVersion: "37"/);
     // Phase 5 (RFC-18 §6.1). The packager's prompt is the one THIS phase added,
     // and the WIP commit this branch inherited had shipped both prompt files
     // with no registry row at all — which `check:prompts` fails on and which
@@ -551,7 +551,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // by nothing.
     const promptStore = makePromptStore();
     const copy = new InstagramCopyAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@36");
+    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@37");
     const packager = new InstagramPostPackagerAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((packager as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-post-package@2");
     const qa = new InstagramVisualQaAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
@@ -573,7 +573,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // its version pin names.
     const promptStore = makePromptStore();
     for (const [promptId, version, h1] of [
-      ["instagram-copy", "36", "# Instagram Copy Craft Guide, v36"],
+      ["instagram-copy", "37", "# Instagram Copy Craft Guide, v37"],
       ["instagram-post-package", "2", "# Instagram Post Package Guide, v2"],
       ["instagram-image-vet", "10", "# Instagram Image Vetting Craft Guide — v10"],
       ["instagram-entities", "1", "# Instagram Entity Extraction — v1"],
@@ -642,8 +642,11 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     const v34 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "34.md"));
     const v35 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "35.md"));
     const v36 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "36.md"));
+    const v37 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "37.md"));
     const latest = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "latest.md"));
-    expect(latest.equals(v36), "latest.md must be byte-identical to 36.md, not merely equivalent").toBe(true);
+    expect(latest.equals(v37), "latest.md must be byte-identical to 37.md, not merely equivalent").toBe(true);
+    // v37 rolls the diet back: v35's text with only the header changed (batch 5 measured v36 longer).
+    expect(v37.toString("utf8").replace("Guide, v37", "Guide, v35")).toBe(v35.toString("utf8"));
     expect(v35.equals(v36), "@35 and @36 are the same file, so the bump changed nothing").toBe(false);
     // v36, the prompt diet: under half the words, every section heading and every identifier kept.
     const words = (b: Buffer) => b.toString("utf8").split(/\s+/u).filter(Boolean).length;

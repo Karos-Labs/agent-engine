@@ -16,6 +16,12 @@ to hold five obsolete descriptions of them as well.
 
 ---
 
+**What changed at v37.** v36 (the prompt diet) is rolled back: v37 is v35's text with only this header changed. Measured on prep batch 5 against batch 4, like for like, v36 made the copy longer: full drafts went from 21.0 to 28.5 words per slide on average (longest slide 26 to 36.5) and word-budget findings from 2.4 to 6.0 per post; lean drafts from 22.7 to 28.8 words. The condensing weakened the brevity and word-limit guidance. The v36 PR promised a rollback if any metric got worse. The diet will be retried with sections 5 and 7's limit guidance kept verbatim.
+
+**Cost.** INPUT: back to v35's size (about +12,700 prompt tokens per attempt against v36). OUTPUT: shorter slides than v36 (measured).
+
+---
+
 **What changed at v36.** The prompt diet (plan phase P, 2026-09-25). The guide went from 17,264 words to 7,740 with every section number and heading kept. Removed: dated incident narratives, rules restated in several sections (visualNeed in §6 and §22; layout in §7, §20 and §29; the ask in §2, §24.3 and §30; sentence craft in §10, §26 and §31), multi-paragraph justifications of rules code enforces, and bad examples that taught the habit they warned against. Kept: every instruction, every backticked identifier (282), every numeric limit, and the pinned sentences. Three contradictions resolved: the `generate` identity rule is one rule; a series gap goes to `unfillable`, never into `body`; `headline_focus` renders a device, as §19 said. The coverage table mapping each v35 instruction to its v36 place is on the PR.
 
 **Cost.** INPUT: about 12,700 fewer prompt tokens per drafting attempt (about $0.04 less per attempt at the pinned model's input price). OUTPUT: expected shorter planning; measured on the next prep batch against batch 4 (copy duration, tokens, readable-copy and word-budget findings). Rolled back to v35 if any is worse.
