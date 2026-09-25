@@ -334,5 +334,15 @@ describe("a merged slide's words are always seen (2026-09-25, owner feedback WS-
     const plan = planInterestRelayout(withNeighbour("quote_card", "Short body."), goodImageVettingOutput().selections, FACTS, [weightFinding(3, "interior")], MERGE_ON);
     const change = plan?.changes.find((c) => c.kind === "merge-into-neighbour") as Extract<InterestRelayoutChange, { kind: "merge-into-neighbour" }> | undefined;
     expect(change?.toCaption).toBe(true);
+describe("a list item's picture is already on screen (2026-09-25)", () => {
+  it("never promotes the picture a headline_focus item slide paints", () => {
+    const copy = goodCopyOutput();
+    const listItem: InstagramCopyOutput = {
+      ...copy,
+      slides: copy.slides.map((s) => (s.n === 5 ? { ...s, layout: "headline_focus" as const } : s)),
+    };
+    const plan = planInterestRelayout(withoutBlocks(listItem, 3), goodImageVettingOutput().selections, FACTS, [weightFinding(3, "interior")]);
+    const promoted = (plan?.changes ?? []).filter((c) => c.kind === "promote-image-to-cover") as Array<Extract<InterestRelayoutChange, { kind: "promote-image-to-cover" }>>;
+    expect(promoted.some((c) => c.fromSlide === 5)).toBe(false);
   });
 });
