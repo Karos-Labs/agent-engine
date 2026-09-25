@@ -146,6 +146,54 @@ describe("scoreReferencePosts", () => {
   });
 });
 
+describe("scoreReferencePosts: the within-account scorer (research round #253, section 3.0)", () => {
+  it("never ranks a pinned, paid or comment-bait post", () => {
+    const quiet = [10, 12, 14, 16].map((likes, i) => post({ username: "peer", engagement: { likes }, publishedAt: daysAgo(i + 8), url: `https://x.test/q${i}` }));
+    const scored = scoreReferencePosts(
+      [
+        ...quiet,
+        post({ username: "peer", engagement: { likes: 900 }, publishedAt: daysAgo(9), pinned: true, url: "https://x.test/pinned" }),
+        post({ username: "peer", engagement: { likes: 800 }, publishedAt: daysAgo(9), paidPartnership: true, url: "https://x.test/paid" }),
+        post({ username: "peer", engagement: { likes: 700, comments: 900 }, publishedAt: daysAgo(9), excerpt: "GIVEAWAY! how to enter: tag 3 friends", url: "https://x.test/bait" }),
+      ],
+      { now: NOW },
+    );
+    expect(scored.map((p) => p.url)).not.toEqual(expect.arrayContaining(["https://x.test/pinned"]));
+    expect(scored.some((p) => ["https://x.test/pinned", "https://x.test/paid", "https://x.test/bait"].includes(p.url))).toBe(false);
+  });
+
+  it("ranks a hidden-like post on its comments, not on the placeholder 3", () => {
+    const scored = scoreReferencePosts(
+      [
+        post({ username: "kindly", engagement: { likes: 3, comments: 4 }, likesHidden: true, publishedAt: daysAgo(8), url: "https://x.test/a" }),
+        post({ username: "kindly", engagement: { likes: 3, comments: 5 }, likesHidden: true, publishedAt: daysAgo(9), url: "https://x.test/b" }),
+        post({ username: "kindly", engagement: { likes: 3, comments: 40 }, likesHidden: true, publishedAt: daysAgo(10), url: "https://x.test/breakout" }),
+      ],
+      { now: NOW },
+    );
+    expect(scored[0]!.url).toBe("https://x.test/breakout");
+    expect(scored[0]!.engagementScore).toBeGreaterThan(0.9);
+  });
+
+  it("measures a reel against reels and a still against stills", () => {
+    const stills = [100, 110, 120].map((likes, i) => post({ username: "acct", engagement: { likes }, publishedAt: daysAgo(i + 8), url: `https://x.test/s${i}` }));
+    const reels = [50_000, 52_000, 54_000].map((views, i) => post({ username: "acct", engagement: { likes: 10, views }, mediaKind: "reel", publishedAt: daysAgo(i + 8), url: `https://x.test/r${i}` }));
+    const scored = scoreReferencePosts([...stills, ...reels], { now: NOW });
+    // A reel's median day does not outrank a still's median day because plays are bigger numbers.
+    const s1 = scored.find((p) => p.url === "https://x.test/s1")!;
+    const r1 = scored.find((p) => p.url === "https://x.test/r1")!;
+    expect(Math.abs(s1.engagementScore - r1.engagementScore)).toBeLessThan(0.05);
+  });
+
+  it("projects a day-old post by its age instead of ranking it on how young it is", () => {
+    const older = [100, 100, 100].map((likes, i) => post({ username: "busy", engagement: { likes }, publishedAt: daysAgo(i + 8), url: `https://x.test/o${i}` }));
+    // 60 likes after one day is on track for ~109 by the week (60 / 0.55).
+    const young = post({ username: "busy", engagement: { likes: 60 }, publishedAt: new Date(NOW.getTime() - 12 * 3_600_000).toISOString(), url: "https://x.test/young" });
+    const scored = scoreReferencePosts([...older, young], { now: NOW });
+    expect(scored.find((p) => p.url === "https://x.test/young")!.engagementScore).toBeGreaterThanOrEqual(0.5);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // Engine 3 — audience questions
 // ─────────────────────────────────────────────────────────────────────────
