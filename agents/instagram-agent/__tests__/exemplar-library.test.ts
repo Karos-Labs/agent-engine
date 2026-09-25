@@ -113,12 +113,24 @@ describe("the library", () => {
 describe("the library steers picture density (RFC-26 Phase 4a)", () => {
   it("makes a photo-led niche photo-first, and leaves a text-led or thin library alone", async () => {
     const { densityFromLibrary } = await import("../src/workflow/exemplar-library.js");
-    const entry = (placement: string, cover = "typographic") => ({ handle: "h", role: "competitor" as const, format: "carousel", frameCount: 6, craft: 4, dna: { picturePlacement: placement, coverType: cover }, standout: "s", hook: "", storedFrames: [] });
+    let n = 0;
+    const entry = (placement: string, cover = "typographic", handle?: string) => ({ handle: handle ?? `h${n++}`, role: "competitor" as const, format: "carousel", frameCount: 6, craft: 4, dna: { picturePlacement: placement, coverType: cover }, standout: "s", hook: "", storedFrames: [] });
     const lib = (entries: ReturnType<typeof entry>[]) => ({ version: 1 as const, builtAt: "2026-09-25T00:00:00Z", status: "built" as const, problems: [], accounts: [], entries });
     expect(densityFromLibrary(lib([entry("full-bleed"), entry("inset"), entry("none", "person"), entry("split"), entry("none")]))).toBe("photo-first");
     expect(densityFromLibrary(lib([entry("none"), entry("none"), entry("none"), entry("inset"), entry("none")]))).toBeUndefined();
     expect(densityFromLibrary(lib([entry("full-bleed"), entry("inset")]))).toBeUndefined();
     expect(densityFromLibrary(undefined)).toBeUndefined();
+  });
+
+  it("counts one vote per account, and needs three accounts outside the client (2026-09-25)", async () => {
+    const { densityFromLibrary } = await import("../src/workflow/exemplar-library.js");
+    const entry = (placement: string, handle: string) => ({ handle, role: "competitor" as const, format: "carousel", frameCount: 6, craft: 4, dna: { picturePlacement: placement, coverType: "typographic" }, standout: "s", hook: "", storedFrames: [] });
+    const lib = (entries: ReturnType<typeof entry>[]) => ({ version: 1 as const, builtAt: "2026-09-25T00:00:00Z", status: "built" as const, problems: [], accounts: [], entries });
+    // One prolific photo-led account and two text-led ones: 1 of 3 votes, not 6 of 8 posts.
+    const prolific = Array.from({ length: 6 }, () => entry("full-bleed", "big"));
+    expect(densityFromLibrary(lib([...prolific, entry("none", "a"), entry("none", "b")]))).toBeUndefined();
+    // All five posts from one account: no prior at all.
+    expect(densityFromLibrary(lib(Array.from({ length: 5 }, () => entry("full-bleed", "only"))))).toBeUndefined();
   });
 });
 

@@ -324,14 +324,28 @@ export function exemplarPatternEvidence(library: ExemplarLibrary | undefined): {
  */
 export const PHOTO_LED_SHARE_FOR_PHOTO_FIRST = 0.6;
 
+/**
+ * One vote per account (2026-09-25, research round #253, section 4.1): an
+ * account with nine breakouts outvoted three accounts with one each, so a
+ * single prolific competitor decided the client's density. Each account's
+ * own photo-led share counts once, and at least three distinct accounts
+ * outside the client must stand behind it.
+ */
+export const MIN_ACCOUNTS_FOR_LIBRARY_PRIOR = 3;
+
 export function photoLedShare(library: ExemplarLibrary | undefined): number | undefined {
   if (library === undefined || library.status !== "built" || library.entries.length < 5) return undefined;
-  const photoLed = library.entries.filter((e) => {
+  const isPhotoLed = (e: LibraryEntry): boolean => {
     const placement = typeof e.dna["picturePlacement"] === "string" ? (e.dna["picturePlacement"] as string) : "";
     const cover = typeof e.dna["coverType"] === "string" ? (e.dna["coverType"] as string) : "";
     return ["full-bleed", "inset", "split", "mixed"].includes(placement) || /^(photo|person|product)/u.test(cover);
-  }).length;
-  return photoLed / library.entries.length;
+  };
+  const byAccount = new Map<string, LibraryEntry[]>();
+  for (const e of library.entries) byAccount.set(e.handle, [...(byAccount.get(e.handle) ?? []), e]);
+  const outside = [...byAccount.values()].filter((entries) => entries.some((e) => e.role !== "client"));
+  if (outside.length < MIN_ACCOUNTS_FOR_LIBRARY_PRIOR) return undefined;
+  const votes = [...byAccount.values()].map((entries) => entries.filter(isPhotoLed).length / entries.length);
+  return votes.reduce((sum, v) => sum + v, 0) / votes.length;
 }
 
 export function densityFromLibrary(library: ExemplarLibrary | undefined): "photo-first" | undefined {

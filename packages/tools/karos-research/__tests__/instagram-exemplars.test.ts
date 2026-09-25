@@ -216,8 +216,8 @@ describe("research.harvestInstagramExemplars", () => {
 });
 
 describe("what the live harvest taught (2026-09-24)", () => {
-  it("never ranks a post whose like count is hidden: the vendor reports a placeholder", () => {
-    const ranked = rankHarvest([post("a", 3, { comments: 131, likesHidden: true }), post("a", 40), post("a", 20)]);
+  it("never ranks a post whose like count is hidden among visible ones: the vendor reports a placeholder", () => {
+    const ranked = rankHarvest([post("a", 3, { comments: 131, likesHidden: true }), post("a", 40), post("a", 20), post("a", 30), post("a", 25)]);
     const hidden = ranked.find((p) => p.likesHidden === true)!;
     expect(hidden.percentile).toBe(0);
     expect(selectExemplars(ranked).some((p) => p.likesHidden === true)).toBe(false);
@@ -258,6 +258,51 @@ describe("what the live harvest taught (2026-09-24)", () => {
     expect(outcome.result.resolvedFromSites[0]!.handles).toEqual(["negative", "semrush"]);
     expect(outcome.result.postCount).toBe(24);
     expect(outcome.result.problems.some((p) => p.includes("@negative"))).toBe(true);
+  });
+});
+
+describe("who is eligible to be ranked (research round #253, section 3.0)", () => {
+  const now = new Date("2026-09-25T12:00:00Z");
+  const old = "2026-09-01T00:00:00Z";
+
+  it("keeps pinned, paid, collab and too-young posts as reference but never ranks them", () => {
+    const quiet = [10, 11, 12, 13, 14].map((l) => post("a", l, { postedAt: old }));
+    const loud = [
+      post("a", 900, { pinned: true, postedAt: old }),
+      post("a", 800, { paidPartnership: true, postedAt: old }),
+      post("a", 700, { coauthors: 1, postedAt: old }),
+      post("a", 600, { postedAt: "2026-09-24T12:00:00Z" }),
+    ];
+    const ranked = rankHarvest([...quiet, ...loud], { now });
+    for (const p of ranked.filter((r) => r.likes >= 600)) {
+      expect(p.outlier).toBe(false);
+      expect(p.percentile).toBe(0);
+    }
+    expect(selectExemplars(ranked).some((p) => p.likes >= 600)).toBe(false);
+  });
+
+  it("an account that hides most like counts ranks every post on comments, and still finds its breakout", () => {
+    const hidden = [4, 5, 6, 5, 4].map((c) => post("teamkindly", 3, { comments: c, likesHidden: true, postedAt: old }));
+    const breakout = post("teamkindly", 3, { comments: 40, likesHidden: true, postedAt: old });
+    const ranked = rankHarvest([...hidden, breakout], { now });
+    const top = ranked.find((p) => p.comments === 40)!;
+    expect(top.outlier).toBe(true);
+    expect(selectExemplars(ranked)[0]!.comments).toBe(40);
+  });
+
+  it("needs five eligible posts before anything can break out", () => {
+    const ranked = rankHarvest([10, 11, 12, 60].map((l) => post("tiny", l)));
+    expect(ranked.some((p) => p.outlier)).toBe(false);
+  });
+
+  it("reads pinned, paid and collab from the vendor record", () => {
+    const base = { id: "1", url: "https://instagram.com/p/x", raw: { outputs: { json: { product_type: "feed", image_versions2: { candidates: [{ url: "https://cdn/x.jpg", width: 1080 }] }, like_count: 5, comment_count: 1 } } } };
+    const withJson = (extra: Record<string, unknown>) =>
+      ({ ...base, raw: { outputs: { json: { ...(base.raw.outputs.json as Record<string, unknown>), ...extra } } } }) as never;
+    expect(instagramPostFromRecord(withJson({ timeline_pinned_user_ids: [123] }), "a", "competitor")?.pinned).toBe(true);
+    expect(instagramPostFromRecord(withJson({ is_paid_partnership: true }), "a", "competitor")?.paidPartnership).toBe(true);
+    expect(instagramPostFromRecord(withJson({ coauthor_producers: [{ username: "b" }] }), "a", "competitor")?.coauthors).toBe(1);
+    expect(instagramPostFromRecord(withJson({}), "a", "competitor")?.pinned).toBeUndefined();
   });
 });
 

@@ -10,7 +10,7 @@ import { fetchHtmlViaFetch, ScraperError, type ScrapedRecord, type ScraperProvid
 // 1.1.0 (2026-09-25): every ranked post carries liftOverBaseline and outlier (2x its account-and-format median, 3x for a reel); the exemplar pool takes breakouts first, stills before reels.
 // 1.2.0 (2026-09-25): a site may carry `role` (default competitor), so the
 // client's OWN website resolves to its own Instagram account the same way.
-const TOOL_VERSION = "1.2.0";
+const TOOL_VERSION = "1.3.0";
 
 /** What one `instagram.account_posts` call bills (ScrappyCoco usage, 2026-09-24, 12 posts per call). */
 export const HARVEST_CALL_COST_USD = 0.0019;
@@ -46,6 +46,16 @@ export interface HarvestedPost {
   likesHidden?: true;
   /** A giveaway or "comment X and I'll DM you" post: its comments were bought, so it ranks on likes alone. */
   commentBait?: true;
+  /**
+   * 2026-09-25 (research round #253, section 3.0): pinned posts ride the top
+   * of the grid (x3.7 on the study's pages) and paid partnerships are bought
+   * reach (x0.68); neither says what the audience chose. Kept as reference
+   * material, never ranked.
+   */
+  pinned?: true;
+  paidPartnership?: true;
+  /** Collab co-authors: a Collab reaches two audiences, so it is never ranked with solo posts. */
+  coauthors?: number;
 }
 
 export interface RankedPost extends HarvestedPost {
@@ -123,6 +133,11 @@ export function instagramPostFromRecord(record: ScrapedRecord, handle: string, r
   const firstLine = caption.split(/\r?\n/u).find((line) => line.trim().length > 0)?.trim() ?? "";
   const takenAt = asNumber(json["taken_at"]);
   const likesHidden = json["like_and_view_counts_disabled"] === true;
+  const pinnedIds = json["timeline_pinned_user_ids"];
+  const pinned = (Array.isArray(pinnedIds) && pinnedIds.length > 0) || json["is_pinned"] === true;
+  const sponsorTags = json["sponsor_tags"];
+  const paidPartnership = json["is_paid_partnership"] === true || (Array.isArray(sponsorTags) && sponsorTags.length > 0);
+  const coauthors = Array.isArray(json["coauthor_producers"]) ? (json["coauthor_producers"] as unknown[]).length : 0;
   const commentBait = COMMENT_BAIT.test(caption);
   const views = format === "reel" ? (asNumber(json["play_count"]) ?? asNumber(json["ig_play_count"]) ?? asNumber(json["view_count"]) ?? record.engagement?.views) : undefined;
 
@@ -141,6 +156,9 @@ export function instagramPostFromRecord(record: ScrapedRecord, handle: string, r
     hook: firstLine.length > HOOK_CHARS ? `${firstLine.slice(0, HOOK_CHARS - 1).trimEnd()}…` : firstLine,
     ...(likesHidden ? { likesHidden: true as const } : {}),
     ...(commentBait ? { commentBait: true as const } : {}),
+    ...(pinned ? { pinned: true as const } : {}),
+    ...(paidPartnership ? { paidPartnership: true as const } : {}),
+    ...(coauthors > 0 ? { coauthors } : {}),
   };
 }
 
@@ -157,10 +175,34 @@ const COMMENT_BAIT =
  * so it counts three (the same weight `media.ingestVisualPatterns` uses). A
  * reel is ranked on plays, which is what a reel is for; likes break ties.
  */
-export function performanceScore(post: HarvestedPost): number {
+export function performanceScore(post: HarvestedPost, basis: "engagement" | "comments" = "engagement"): number {
   if (post.format === "reel" && post.views !== undefined) return post.views + post.likes / 1000;
+  // An account that hides most like counts is ranked on comments alone, for
+  // every post, so hidden and visible posts are measured on one scale.
+  if (basis === "comments") return post.commentBait === true ? 0 : post.comments;
   return post.likes + (post.commentBait === true ? 0 : 3 * post.comments);
 }
+
+/** Posts younger than this are still climbing; ranking them would rank their age (research round #253, section 3.0). */
+export const MIN_AGE_HOURS = 96;
+/** A group with fewer eligible posts than this has no baseline to break out of. */
+export const MIN_ELIGIBLE_FOR_BASELINE = 5;
+/** At or above this share of hidden like counts, an account's stills rank on comments (section 3.0). */
+export const HIDDEN_LIKES_COMMENT_BASIS_SHARE = 0.3;
+
+/** Why a post is kept as reference material but never ranked, or `undefined` when it is eligible. */
+export function ineligibleReason(post: HarvestedPost, now?: Date): "pinned" | "paid" | "collab" | "too-young" | undefined {
+  if (post.pinned === true) return "pinned";
+  if (post.paidPartnership === true) return "paid";
+  if ((post.coauthors ?? 0) > 0) return "collab";
+  if (now !== undefined && post.postedAt !== undefined) {
+    const ageHours = (now.getTime() - Date.parse(post.postedAt)) / 3_600_000;
+    if (Number.isFinite(ageHours) && ageHours < MIN_AGE_HOURS) return "too-young";
+  }
+  return undefined;
+}
+
+const placeholderOnly = (post: HarvestedPost): boolean => post.likesHidden === true && !(post.format === "reel" && post.views !== undefined);
 
 /**
  * Every post's percentile INSIDE ITS OWN ACCOUNT AND FORMAT GROUP (reels
@@ -172,22 +214,36 @@ export function performanceScore(post: HarvestedPost): number {
  * compare each post with its own account's other work, which is the only
  * comparison the harvest can make honestly (the vendor returns no reach).
  */
-export function rankHarvest(posts: readonly HarvestedPost[]): RankedPost[] {
-  const groups = new Map<string, HarvestedPost[]>();
+export function rankHarvest(posts: readonly HarvestedPost[], options: { now?: Date } = {}): RankedPost[] {
+  const unrank = (post: HarvestedPost): RankedPost => ({ ...post, score: 0, percentile: 0, liftOverBaseline: 0, outlier: false });
   const unranked: RankedPost[] = [];
+  const byKey = new Map<string, HarvestedPost[]>();
   for (const post of posts) {
-    // A hidden like count leaves only a placeholder to rank on: kept in the
-    // harvest (its frames are still reference material), never ranked.
-    if (post.likesHidden === true && !(post.format === "reel" && post.views !== undefined)) {
-      unranked.push({ ...post, score: 0, percentile: 0, liftOverBaseline: 0, outlier: false });
+    if (ineligibleReason(post, options.now) !== undefined) {
+      unranked.push(unrank(post));
       continue;
     }
     const key = `${post.handle}|${post.format === "reel" ? "reel" : "still"}`;
-    groups.set(key, [...(groups.get(key) ?? []), post]);
+    byKey.set(key, [...(byKey.get(key) ?? []), post]);
+  }
+  const groups: Array<{ posts: HarvestedPost[]; basis: "engagement" | "comments" }> = [];
+  for (const group of byKey.values()) {
+    const stills = group.filter((p) => !(p.format === "reel" && p.views !== undefined));
+    const hiddenShare = stills.length > 0 ? stills.filter((p) => p.likesHidden === true).length / stills.length : 0;
+    if (hiddenShare >= HIDDEN_LIKES_COMMENT_BASIS_SHARE) {
+      // Most like counts are hidden: every post ranks on comments, hidden or not.
+      groups.push({ posts: group, basis: "comments" });
+      continue;
+    }
+    // A few hidden counts among visible ones: those posts leave only a
+    // placeholder to rank on, so they stay reference material, never ranked.
+    for (const post of group) if (placeholderOnly(post)) unranked.push(unrank(post));
+    groups.push({ posts: group.filter((post) => !placeholderOnly(post)), basis: "engagement" });
   }
   const ranked: RankedPost[] = [];
-  for (const group of groups.values()) {
-    const scored = group.map((post) => ({ post, score: performanceScore(post) })).sort((a, b) => a.score - b.score);
+  for (const { posts: group, basis } of groups) {
+    if (group.length === 0) continue;
+    const scored = group.map((post) => ({ post, score: performanceScore(post, basis) })).sort((a, b) => a.score - b.score);
     // The MEDIAN, not the mean: one viral post would drag a mean up and hide
     // every other breakout on the account.
     const baseline = Math.max(1, median(scored.map((s) => s.score)) ?? 1);
@@ -198,8 +254,8 @@ export function rankHarvest(posts: readonly HarvestedPost[]): RankedPost[] {
         score,
         percentile: scored.length === 1 ? 0.5 : index / (scored.length - 1),
         liftOverBaseline,
-        // An account with fewer than four posts in the group has no baseline to break out of.
-        outlier: scored.length >= 4 && liftOverBaseline >= (post.format === "reel" ? REEL_OUTLIER_LIFT : OUTLIER_LIFT),
+        // An account with fewer than five eligible posts in the group has no baseline to break out of.
+        outlier: scored.length >= MIN_ELIGIBLE_FOR_BASELINE && liftOverBaseline >= (post.format === "reel" ? REEL_OUTLIER_LIFT : OUTLIER_LIFT),
       });
     });
   }
@@ -219,7 +275,7 @@ export function selectExemplars(ranked: readonly RankedPost[], options: { topSha
   const max = options.max ?? 60;
   const byAccount = new Map<string, RankedPost[]>();
   for (const post of ranked) {
-    if (post.likesHidden === true && post.score === 0) continue;
+    if (post.score === 0 && (post.likesHidden === true || ineligibleReason(post) !== undefined)) continue;
     byAccount.set(post.handle, [...(byAccount.get(post.handle) ?? []), post]);
   }
   const queues = [...byAccount.values()].map((posts) => {
@@ -318,7 +374,7 @@ export function summarizeAccounts(posts: readonly HarvestedPost[]): HarvestAccou
     const share = Object.fromEntries(formats.map((f) => [f, Math.round((list.filter((p) => p.format === f).length / list.length) * 100) / 100])) as Record<HarvestFormat, number>;
     const medianScoreByFormat: Partial<Record<HarvestFormat, number>> = {};
     for (const f of formats) {
-      const m = median(list.filter((p) => p.format === f).map(performanceScore));
+      const m = median(list.filter((p) => p.format === f).map((p) => performanceScore(p)));
       if (m !== undefined) medianScoreByFormat[f] = m;
     }
     const frames = median(list.filter((p) => p.format === "carousel").map((p) => p.frameCount));
@@ -424,7 +480,7 @@ export function createInstagramExemplarHarvest(store: WorkspaceStoreLike, scrape
       }
       if (harvested.length === 0) return toolingError(`research.harvestInstagramExemplars: nothing could be harvested — ${problems.join("; ")}`);
 
-      const ranked = rankHarvest(harvested);
+      const ranked = rankHarvest(harvested, { now: new Date() });
       const exemplars = selectExemplars(ranked, { max: input.exemplarsMax });
       const summary = summarizeAccounts(harvested);
       const storedAt = ["exemplars", `harvest-${new Date().toISOString().slice(0, 10)}`];
