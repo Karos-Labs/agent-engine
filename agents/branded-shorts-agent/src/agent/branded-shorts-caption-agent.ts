@@ -33,7 +33,7 @@ export class BrandedShortsCaptionAgent extends BaseAgent<BrandedShortsCopy> {
     // brand kit re-points it at the same vendor's strongest RTL model, the
     // way every other drafting step in the fleet is.
     modelPolicy: resolveModelPolicy("branded-shorts-caption", { policy: "pinned", model: "claude-sonnet-4-6", contentLanguageSensitive: true }),
-    skillRef: "branded-shorts-caption@1",
+    skillRef: "branded-shorts-caption@2",
     selfCritique: {
       gateTool: "gate.lintPost",
       maxRevisions: 1,

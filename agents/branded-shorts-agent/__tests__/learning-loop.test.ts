@@ -107,4 +107,52 @@ describe("branded-shorts (TikTok editing) and the learning loop (C7)", () => {
     expect(result.reason).toMatch(/ship faster/);
     expect(result.reason).toMatch(/nothing was edited in its place/);
   });
+
+  it("hands the caption step what the client did with earlier shorts, their standing preferences, the account's state and the craft", async () => {
+    // The caption is the only free text this product writes, so it is the one
+    // place the loop can change anything. `01b` read all of this before and
+    // used it for never-topics and the stage only.
+    env = await setupTestEnvironment();
+    const envelope = (kind: string, data: unknown) => ({ kind, platform: "tiktok", data, source: SOURCE });
+    await env.store.writeJson("acme", ["context", "learning", "tiktok", "feedback"], envelope("feedback", { rows: [{ action: "change_requested", reason: "caption reads like an ad, say it plainly", at: "2026-09-20" }] }));
+    await env.store.writeJson("acme", ["context", "learning", "tiktok", "platform-state"], envelope("platform-state", { postsByUs: 6, whatWorks: ["a question the speaker answers"], voiceNotes: ["first person plural"] }));
+    await env.store.writeJson("acme", ["context", "learning", "tiktok", "craft"], envelope("craft", { rules: [{ id: "L1-tiktok-001", layer: "L1", kind: "hard", rule: "No hashtag block" }] }));
+    await env.store.writeJson("acme", ["context", "learning", "preferences"], {
+      kind: "preferences",
+      data: { standingInstructions: ["always write in Hebrew"], voiceNotes: [{ lesson: "cut the second adjective" }], likes: [{ why: "posted as written", subject: "why pilots stall" }] },
+      source: SOURCE,
+    });
+
+    const inputs: Array<Record<string, unknown>> = [];
+    const base = smartFakeRouter([goodHighlights(), goodGraphicsPlan(), goodCaption()]);
+    const router = {
+      ...base,
+      async complete(prompt: string, schema: never, policy: never) {
+        try {
+          const parsed = JSON.parse(prompt) as { input?: Record<string, unknown> };
+          if (parsed.input !== undefined) inputs.push(parsed.input);
+        } catch {
+          // not a turn prompt
+        }
+        return base.complete(prompt, schema, policy);
+      },
+    } as typeof base;
+
+    const result = await new WorkflowEngine(new MemoryDurableStepStore()).run(
+      createBrandedShortsAgentWorkflow({ tools: env.tools, promptStore: makePromptStore(), router, autoApprove: true }),
+      { ...params, runId: "branded_shorts_learning_4" },
+    );
+    expect(result.status).toBe("completed");
+
+    const caption = inputs.find((i) => "words" in i && "takeaway" in i && Array.isArray(i.words) && typeof (i.words as unknown[])[0] === "string");
+    expect(caption, "the caption step must have been called").toBeDefined();
+    expect(caption!.clientFeedback).toEqual(["Change requested (2026-09-20): caption reads like an ad, say it plainly"]);
+    expect(caption!.clientPreferences).toMatchObject({
+      standingInstructions: ["always write in Hebrew"],
+      voiceLessons: ["cut the second adjective"],
+      likes: ["Posted as written, no edits: why pilots stall"],
+    });
+    expect(caption!.platformState).toMatchObject({ whatWorks: ["a question the speaker answers"], voiceNotes: ["first person plural"] });
+    expect(caption!.craftRules).toContain("[L1-tiktok-001] No hashtag block");
+  });
 });

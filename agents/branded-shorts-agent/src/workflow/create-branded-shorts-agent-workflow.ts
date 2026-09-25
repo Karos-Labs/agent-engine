@@ -2,7 +2,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentContext, AgentToolRegistry, GateResponse, GateVerdict, ModelRouter, PromptStore } from "@agent-engine/core";
 import { firstAsset, UNIT_PRICING } from "@agent-engine/core";
-import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail, readRunDirection, runDirectionField, readContextDoc, enforceContextDocPolicy, toAgentContext, finalizeDeliverable, readLearningContext, stageForRun, touchesNeverTopic, craftRulesForPrompt, preferencesForDrafting, resolveGoalLine, writeRunState, type LearningContextLike, type ResolvedGoalLine,
+import { WorkflowBlockedIntake, WorkflowHeld, WorkflowToolingFailure, type WorkflowContext, runTopicGuardrail, readRunDirection, runDirectionField, readContextDoc, enforceContextDocPolicy, toAgentContext, finalizeDeliverable, readLearningContext, stageForRun, touchesNeverTopic, craftRulesForPrompt, preferencesForDrafting, feedbackForPrompt, platformStateForDrafting, resolveGoalLine, writeRunState, type LearningContextLike, type ResolvedGoalLine,
 // D08's editing agent catching up with clipping and content design
 // (2026-09-18): the reviewer's revise loop it never had, and the owner's
 // always-deliver rule as the fleet's own primitives rather than a local
@@ -1015,6 +1015,16 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
           takeaway: intake.takeaway,
           ...(clientVoiceContext !== undefined ? { clientVoiceContext } : {}),
           ...(pastFeedback.length > 0 ? { pastFeedback } : {}),
+          // C7's projected learning, the same four inputs the TikTok and X
+          // drafting steps read. This step is the only free text this product
+          // writes, so it is the only place what the client did with earlier
+          // shorts (posted, edited, skipped, sent back) can change anything.
+          // `01b` read all of it and, until now, used it only for never-topics
+          // and the stage.
+          ...(feedbackForPrompt(learning.feedback).length > 0 ? { clientFeedback: feedbackForPrompt(learning.feedback) } : {}),
+          ...(preferencesForDrafting(learning.preferences) !== undefined ? { clientPreferences: preferencesForDrafting(learning.preferences) } : {}),
+          ...(learning.platformState !== undefined ? { platformState: platformStateForDrafting(learning.platformState) } : {}),
+          ...(craftRulesForPrompt(learning.craft) !== undefined ? { craftRules: craftRulesForPrompt(learning.craft) } : {}),
           ...(directive !== undefined ? { revisionRequest: directive } : {}),
         });
         if (captionResult.status !== "completed" && captionResult.status !== "content_fail") {
@@ -1273,13 +1283,22 @@ export function createBrandedShortsAgentWorkflow(options: CreateBrandedShortsAge
         type: "edited-short",
         stage,
         goal: goalLine.goalText,
-        status: "drafted",
+        // A draft the reviewer rejected outright was not used, which is what
+        // \`skipped\` means in the subject table. Written as \`drafted\` it sat
+        // there forever looking like work still in review.
+        status: review.outcome === "rejected" ? "skipped" : "drafted",
         assetKind: "branded-shorts-video",
         // Never a strategy row: this agent picks no subject, so it can never
         // be spending one. See the note at `01b`.
         strategyRowId: null,
       },
       platformStateDelta: { postsByUs: 1, topics: [intake.takeaway] },
+      // Every revision note a reviewer sent on this run, as the voice lessons
+      // the middleware carries into \`client_preferences\` (Craft 11 §3: a
+      // reviewer's note is the signal voice is learned from). X, LinkedIn and
+      // Reddit have recorded these since C7; this agent recorded none, so a
+      // note typed at the gate steered one redraft and was then forgotten.
+      voiceNotes: review.notes.map((n) => ({ lesson: n.feedback, fromRevision: n.revision })),
       readiness: learning.readiness,
     });
 

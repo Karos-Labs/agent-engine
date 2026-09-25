@@ -49,7 +49,12 @@ export interface LearningFeedbackRow {
 
 export interface LearningPreferences {
   neverTopics?: string[];
-  likes?: Array<{ note?: string; postRef?: string }>;
+  /**
+   * What the client published without changing a word. The middleware writes
+   * `{why: "posted as written", subject, runId, at}` (`likes_from_posts`); a
+   * hand-set like may carry a `note` instead. Both shapes are read.
+   */
+  likes?: Array<{ note?: string; postRef?: string; subject?: string; why?: string; runId?: string; at?: string }>;
   voiceNotes?: Array<{ lesson?: string; fromRunId?: string }>;
   standingInstructions?: string[];
   derivedAt?: string;
@@ -492,9 +497,24 @@ export function preferencesForDrafting(preferences: LearningPreferences | undefi
   if (preferences.standingInstructions && preferences.standingInstructions.length > 0) out.standingInstructions = preferences.standingInstructions.slice(0, 10);
   const lessons = (preferences.voiceNotes ?? []).map((n) => n.lesson).filter((l): l is string => typeof l === "string" && l.trim().length > 0);
   if (lessons.length > 0) out.voiceLessons = lessons.slice(-8);
-  const likes = (preferences.likes ?? []).map((l) => l.note).filter((n): n is string => typeof n === "string" && n.trim().length > 0);
+  // The derived likes carry a `subject`, not a `note` (voice_lessons.py
+  // `likes_from_posts`). Reading only `note` dropped every one of them, so the
+  // strongest endorsement the log holds (posted without an edit) never reached
+  // a draft on any platform.
+  const likes = (preferences.likes ?? [])
+    .map((l) => likeLine(l))
+    .filter((n): n is string => n !== undefined);
   if (likes.length > 0) out.likes = likes.slice(-5);
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** One like as a line a writer can use: the hand-written note, else the subject the client posted unchanged. */
+function likeLine(like: { note?: string; subject?: string } | null | undefined): string | undefined {
+  if (!like || typeof like !== "object") return undefined;
+  const note = typeof like.note === "string" ? like.note.trim() : "";
+  if (note.length > 0) return note;
+  const subject = typeof like.subject === "string" ? like.subject.trim() : "";
+  return subject.length > 0 ? `Posted as written, no edits: ${subject}` : undefined;
 }
 
 /**

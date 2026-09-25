@@ -142,7 +142,7 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   // all under it. No `numbersSourced`: a figure may only come from the
   // transcript it is handed, which is a stricter rule than the gate's and is
   // stated as the prompt's one hard rule.
-  { promptId: "branded-shorts-caption", agent: "branded-shorts-agent", versions: ["1"], latestVersion: "1", requires: { languageDirective: true, structuredOutput: true }, structuredOutputFields: ["caption", "about"] },
+  { promptId: "branded-shorts-caption", agent: "branded-shorts-agent", versions: ["1", "2"], latestVersion: "2", requires: { languageDirective: true, structuredOutput: true }, structuredOutputFields: ["caption", "about"] },
   { promptId: "branded-shorts-graphics", agent: "branded-shorts-agent", versions: ["1", "2", "3"], latestVersion: "3" },
   { promptId: "branded-shorts-highlights", agent: "branded-shorts-agent", versions: ["1", "2"], latestVersion: "2" },
   { promptId: "branded-shorts-style-exploration", agent: "branded-shorts-agent", versions: ["1"], latestVersion: "1" },
@@ -426,8 +426,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "tiktok-commentary",
     agent: "tiktok-agent",
-    versions: ["1", "2", "3", "4", "5", "6"],
-    latestVersion: "6",
+    versions: ["1", "2", "3", "4", "5", "6", "7"],
+    latestVersion: "7",
     requires: { languageDirective: true, structuredOutput: true },
     structuredOutputFields: ["caption", "about", "sourceCredit"],
   },
@@ -447,8 +447,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "tiktok-script",
     agent: "tiktok-agent",
-    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"],
-    latestVersion: "12",
+    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13"],
+    latestVersion: "13",
     requires: { languageDirective: true, structuredOutput: true },
     structuredOutputFields: ["hook", "beats", "narration", "onScreenText", "visualBrief", "stockQuery", "seconds", "caption", "about", "format", "formatRationale", "voiceover", "voiceoverRationale", "language"],
   },
