@@ -238,6 +238,7 @@ import { ceilingFor, defaultPictureDensityFor, enforceImageryBand, imageryShortf
 // Phase 5.5, spec §2 A1b — the split every optional-spend gate in the generate
 // ladder consults, so the image floor is enforced where it actually binds.
 import { guaranteedGapCount, partitionGaps } from "./image-gap-partition.js";
+import { carryImageKinds } from "./recovered-image-kinds.js";
 import { planInterestRelayout, type InterestRelayoutPlan } from "./interest-relayout.js";
 // RFC-19 §4 item 17 — the deterministic headline fact cards `04b` falls back to, and the one hold it keeps.
 import { headlineFallbackResearch, NO_READABLE_SOURCE } from "./research-fallback.js";
@@ -10532,7 +10533,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // recovered frame has a NEW repo-relative path. Re-point the
           // selection at it rather than at the address the bytes used to have.
           selections = selections.map((row) => (row.n === sel.n ? { ...row, imagePath: back.path } : row));
-          if (markImagePaths.has(sel.imagePath)) markImagePaths.add(back.path);
+          // The new name is slot-derived, so an earlier attempt's picture may
+          // have held it: carry THIS picture's kinds and clear any stale one.
+          carryImageKinds(sel.imagePath, back.path, [markImagePaths, clearMarkPaths, productCutoutPaths]);
           rehydrated.push(sel.n);
         } catch {
           gone.push(sel.n);
