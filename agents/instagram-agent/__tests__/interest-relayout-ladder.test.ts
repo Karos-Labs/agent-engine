@@ -334,6 +334,9 @@ describe("a merged slide's words are always seen (2026-09-25, owner feedback WS-
     const plan = planInterestRelayout(withNeighbour("quote_card", "Short body."), goodImageVettingOutput().selections, FACTS, [weightFinding(3, "interior")], MERGE_ON);
     const change = plan?.changes.find((c) => c.kind === "merge-into-neighbour") as Extract<InterestRelayoutChange, { kind: "merge-into-neighbour" }> | undefined;
     expect(change?.toCaption).toBe(true);
+  });
+});
+
 describe("a list item's picture is already on screen (2026-09-25)", () => {
   it("never promotes the picture a headline_focus item slide paints", () => {
     const copy = goodCopyOutput();
