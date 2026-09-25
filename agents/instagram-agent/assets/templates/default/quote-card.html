@@ -1666,6 +1666,17 @@ body:not(:has(#quote > span:not(:empty))) .quote-block { background-image: none;
       set(hosts, step);
       closeInk();
     }
+    /* THE HEADLINE TAKES ITS STEP BACK WHEN IT FITS. The set shrank together
+       so the relationship held; if the plate now fits with the primary one
+       step LARGER than the rest, it keeps that step. A first-position list
+       whose rows and title both fell a step measured 24% of air above the
+       title (calibration, 2026-09-25); the title back at its size fills it,
+       and the gap between title and rows widens instead of closing. */
+    if (step > 0 && primary.length) {
+      set(primary, step - 1);
+      closeInk();
+      if (overflows()) { set(primary, step); closeInk(); }
+    }
 
     /* Leave the outcome on the body so a render check, the interest floor and a
        failing test can all see which rung was used without re-deriving it. */
