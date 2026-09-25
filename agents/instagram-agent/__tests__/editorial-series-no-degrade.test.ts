@@ -4,6 +4,16 @@ import { assembleSlidesData, resolveLayout, type SlidePosition } from "../src/wo
 import type { InstagramCopyOutput, InstagramSlideCopy, InstagramSlideLayout } from "../src/workflow/types.js";
 
 /**
+ * `by_the_numbers` as it was when these runs shipped: three stat panels and one
+ * photo. The live skeleton has a second photo since 2026-09-25; the cases in
+ * this file reproduce recorded runs, so they pin the skeleton those runs had.
+ */
+const HISTORIC_BY_THE_NUMBERS = {
+  ...BUNDLED_SERIES.find((s) => s.id === "by_the_numbers")!,
+  middle: ["stat_callout", "photo", "stat_callout", "headline_focus", "stat_callout", "list_takeaway"] as const,
+} as unknown as (typeof BUNDLED_SERIES)[number];
+
+/**
  * PHASE 5.5, BRIEF ITEM E — the series/singleton collision.
  *
  * ## The defect, from the runs the owner judged
@@ -193,7 +203,7 @@ describe("a series-directed layout repeats on purpose", () => {
    * refused for the same reason. One rule, three plates.
    */
   it("reproduces the karoslabs plates, and the exemption removes all three", () => {
-    const byTheNumbers = BUNDLED_SERIES.find((s) => s.id === "by_the_numbers")!;
+    const byTheNumbers = HISTORIC_BY_THE_NUMBERS;
     const copy = copyForSeries(byTheNumbers, 8);
     // Slide 3 is the series' `photo`, and on 16.9 no candidate passed vetting:
     // `07a-downgrade-unfillable-slides` rewrote it through
@@ -252,7 +262,7 @@ describe("the exemption is only from the repeat rule", () => {
    * still degrade, visibly, rather than render an empty 300px figure.
    */
   it("a series-directed stat_callout with no stat still degrades on its missing content", () => {
-    const series = BUNDLED_SERIES.find((s) => s.id === "by_the_numbers")!;
+    const series = HISTORIC_BY_THE_NUMBERS;
     const copy = copyForSeries(series, 8);
     // Slide 6 is the third `stat_callout`; strip the figure it was going to
     // carry and leave everything else exactly as it was.
@@ -299,7 +309,7 @@ describe("the exemption is only from the repeat rule", () => {
    * first and the exemption never reaches it.
    */
   it("a client whose templateDir lacks the archetype still degrades, series or no series", () => {
-    const series = BUNDLED_SERIES.find((s) => s.id === "by_the_numbers")!;
+    const series = HISTORIC_BY_THE_NUMBERS;
     const copy = copyForSeries(series, 8);
     const directed = seriesDirectedSlides(series, copy.slides);
     const legacyDir = new Set<string>(["cover.html", "closer.html"]);
@@ -321,7 +331,7 @@ describe("seriesDirectedSlides", () => {
    * RETURNED value is the model's `n`.
    */
   it("matches by position even when the model's own numbering is wrong", () => {
-    const series = BUNDLED_SERIES.find((s) => s.id === "by_the_numbers")!;
+    const series = HISTORIC_BY_THE_NUMBERS;
     const copy = copyForSeries(series, 6);
     const misnumbered = copy.slides.map((slide, index) => ({ ...slide, n: index === 2 ? 99 : slide.n }));
     const directed = seriesDirectedSlides(series, misnumbered);

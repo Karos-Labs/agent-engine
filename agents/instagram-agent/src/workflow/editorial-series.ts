@@ -108,7 +108,10 @@ export const BUNDLED_SERIES: readonly EditorialSeries[] = [
     id: "by_the_numbers",
     badge: "by the numbers",
     premise: "The story IS the figures: the reader leaves knowing three numbers they did not know.",
-    middle: ["stat_callout", "photo", "stat_callout", "headline_focus", "stat_callout", "list_takeaway"],
+    // 2026-09-25: a second photo in place of the third stat. Three figure panels
+    // and one photo carried a 3-picture floor on the cover alone (prep batch 4:
+    // Geektime, Kindly Yours and Hanky Panky each set three stat panels in a row).
+    middle: ["stat_callout", "photo", "stat_callout", "headline_focus", "photo", "list_takeaway"],
     register:
       "Lead every interior slide with the figure, not the framing. Each number carries its own source. The headline_focus turn is the one place you say what the numbers MEAN, in one sentence, without a number in it.",
   },
@@ -116,7 +119,8 @@ export const BUNDLED_SERIES: readonly EditorialSeries[] = [
     id: "head_to_head",
     badge: "head to head",
     premise: "Two things set against each other, and the reader should be able to say which won and why.",
-    middle: ["comparison_card", "photo", "comparison_card", "stat_callout", "headline_focus", "list_takeaway"],
+    // 2026-09-25: a second photo in place of the statement plate (see by_the_numbers).
+    middle: ["comparison_card", "photo", "comparison_card", "stat_callout", "photo", "list_takeaway"],
     register:
       "Keep the same two sides in the same order on every comparison, so the reader never has to re-learn which column is which. The right side carries the accent, so the later or recommended state goes right. Do not declare a winner before the closer.",
   },
@@ -132,7 +136,9 @@ export const BUNDLED_SERIES: readonly EditorialSeries[] = [
     id: "the_playbook",
     badge: "the playbook",
     premise: "A rule-set the reader can act on: a small number of moves, stated as moves.",
-    middle: ["list_takeaway", "headline_focus", "list_takeaway", "stat_callout", "photo", "list_takeaway"],
+    // 2026-09-25: two lists and two photos, not three lists and one photo (prep
+    // batch 4: KAROS, Sitti and The Pitch set three list plates in one post).
+    middle: ["list_takeaway", "photo", "headline_focus", "stat_callout", "photo", "list_takeaway"],
     register:
       "Every item is an instruction in the imperative, not a topic. A rule that cannot be done tomorrow is an observation and does not belong. The stat exists to prove ONE of the rules, so put it next to the rule it proves.",
   },
