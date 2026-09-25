@@ -449,9 +449,10 @@ describe("05b-source-images", () => {
     const router = fakeRouterSequence([
       finalTurn(goodTrendScoutOutput()), finalTurn(goodResearchOutput()), finalTurn(goodAngleProposal()), finalTurn(DEFAULT_ENTITIES_TURN),
       finalTurn(copy),
-      // Only slide 1 loses its picture, so the ladder is exercised on the cover
-      // without `resolveLayout`'s once-per-carousel rule masking the result.
-      finalTurn(selectionsWithGaps(copy, pool[0]!.path, [1])),
+      // Every slide loses its picture. Since 2026-09-25 a bare cover takes the
+      // best interior picture (`06h4`, `cover-picture.ts`), so the ladder is
+      // only reached on the cover when there is no picture anywhere to move.
+      finalTurn(selectionsWithGaps(copy, pool[0]!.path, copy.slides.map((s) => s.n))),
       finalTurn(goodRelevanceVerdict()), finalTurn(VALUE_TURN_NO_FINDINGS), finalTurn(goodVisualQaOutput()), finalTurn(DEFAULT_PACKAGE_TURN),
     ]);
 
@@ -466,7 +467,7 @@ describe("05b-source-images", () => {
     const downgrade = steps.find((s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-1")?.output as
       | { downgraded: number[]; archetypes: Array<{ slide: number; layout: string }>; reason: string }
       | undefined;
-    expect(downgrade?.downgraded).toEqual([1]);
+    expect(downgrade?.downgraded).toContain(1);
     // The ladder, not `text_only` — and on slide 1 the ladder's answer is
     // `cover`, not `headline_focus`.
     //
@@ -482,7 +483,7 @@ describe("05b-source-images", () => {
     // pipeline can build. (`interest-relayout`'s `colour-block-ground`
     // remedy already moved slide 1 onto `cover` for exactly this finding, one
     // paid render later — this is that answer, reached first.)
-    expect(downgrade?.archetypes).toEqual([{ slide: 1, layout: "cover" }]);
+    expect(downgrade?.archetypes).toContainEqual({ slide: 1, layout: "cover" });
     expect(downgrade?.reason).toContain("1 → cover");
 
     // And what actually rendered says the same thing.

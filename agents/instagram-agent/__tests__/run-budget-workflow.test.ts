@@ -401,7 +401,9 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
     // 2026-09-24: the floor reserve lets attempt 2 buy the frame that settles the
     // run, so the LAST downgrade is read, not attempt 3's by name.
     const downgrade = [...steps].reverse().find((s) => s.stepId.startsWith("07a-downgrade-unfillable-slides-attempt-"))?.output as { downgraded: number[]; reason: string };
-    expect(downgrade.downgraded).toEqual(gaps);
+    // The cover takes the spare vetted picture a typographic slide holds
+    // (`06h4`, 2026-09-25), so it is the one gap that is not downgraded.
+    expect(downgrade.downgraded).toEqual(gaps.filter((n) => n !== 1));
     // Phase 5 (RFC-18 §7.2) moved WHICH budget lever speaks first on this
     // shape, without moving what it does. Four gaps across three attempts with
     // the rescue re-vet is the most expensive run this suite builds, and the
@@ -592,7 +594,8 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
       // It never holds: the run completed above, and the slides took the
       // text-only downgrade exactly as they did before.
       const downgrade = steps.find((s) => s.stepId === "07a-downgrade-unfillable-slides-attempt-1")?.output as { downgraded: number[] } | undefined;
-      expect(downgrade?.downgraded).toEqual(gaps);
+      // The cover takes the spare vetted picture (`06h4`), so it is not downgraded.
+      expect(downgrade?.downgraded).toEqual(gaps.filter((n) => n !== 1));
     });
   });
 });

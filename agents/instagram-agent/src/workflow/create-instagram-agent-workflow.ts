@@ -239,6 +239,7 @@ import { ceilingFor, defaultPictureDensityFor, enforceImageryBand, imageryShortf
 // ladder consults, so the image floor is enforced where it actually binds.
 import { guaranteedGapCount, partitionGaps } from "./image-gap-partition.js";
 import { carryImageKinds } from "./recovered-image-kinds.js";
+import { applyCoverPictureMove, coverPictureMove } from "./cover-picture.js";
 import { compileInstagramDna } from "./compile-dna.js";
 import { DESIGN_LANGUAGE_BELIEF_KEY, DESIGN_LANGUAGE_RETRY_DAYS, designLanguageAction, readDesignLanguage, type StoredDesignLanguage } from "./design-language.js";
 import { planInterestRelayout, type InterestRelayoutPlan } from "./interest-relayout.js";
@@ -11278,6 +11279,25 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       Object.assign(durableUris, floorStaged);
       Object.assign(runDurableUris, floorStaged);
       await recoverMissingImages("-floor");
+
+      // ── 06h4: THE COVER TAKES A PICTURE FIRST (2026-09-25) ──
+      //
+      // Prep batch 5: The Pitch by Deel shipped four interior photographs under
+      // a bare cover whose empty field the judge read as a broken placeholder.
+      // When the cover has no usable picture and an interior slide does, the
+      // best one MOVES up (`cover-picture.ts`), and the slide it left joins
+      // `unfillable` so the downgrade ladder below sets it typographically, as
+      // it would any slide that lost its picture. The count is unchanged.
+      // Only onto a first slide whose archetype PAINTS a picture: a typographic
+      // opener would take the picture and render none of it.
+      const coverPaintsPicture = copy.slides[0] !== undefined && HERO_IMAGE_LAYOUTS.has(resolveLayout(copy.slides[0], availableTemplates).layout);
+      const coverMove = await wf.step.code(rev(`06h4-cover-takes-a-picture-attempt-${attempt}`), () =>
+        coverPaintsPicture ? (coverPictureMove(copy, selections, new Set([...markImagePaths, ...clearMarkPaths, ...productCutoutPaths, ...usedImagesSet])) ?? null) : null,
+      );
+      if (coverMove !== null && copy.slides[0] !== undefined) {
+        selections = applyCoverPictureMove(selections, copy.slides[0].n, coverMove, (n) => typographicSelection({ n, layout: layoutOf(n) }));
+        unfillable = selections.filter(isUnfillable);
+      }
 
       // Guaranteed delivery (2026-08): a slide that survives every tier —
       // retrieval, social scrape, generation — with nothing usable no longer
