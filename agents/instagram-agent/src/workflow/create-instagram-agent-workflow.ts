@@ -13340,7 +13340,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
                 const into = nextCopy.slides.find((sl) => sl.n === change.into);
                 if (into === undefined) break;
                 const carried = `${into.body} ${change.carry.headline} ${change.carry.body}`.replace(/\s{2,}/gu, " ").trim();
-                const kept = nextCopy.slides.filter((sl) => sl.n !== change.slide).map((sl) => (sl.n === change.into ? { ...sl, body: carried } : sl));
+                // Owner feedback WS-09: when no neighbour would paint the words,
+                // they go to the caption, never nowhere.
+                const kept =
+                  change.toCaption === true
+                    ? nextCopy.slides.filter((sl) => sl.n !== change.slide)
+                    : nextCopy.slides.filter((sl) => sl.n !== change.slide).map((sl) => (sl.n === change.into ? { ...sl, body: carried } : sl));
+                if (change.toCaption === true) {
+                  const folded = [change.carry.headline, change.carry.body].map((t) => t.trim()).filter((t) => t.length > 0).join(" ");
+                  nextCopy = { ...nextCopy, caption: `${nextCopy.caption.trimEnd()}\n\n${folded}` };
+                }
                 // Old `n` -> new `n`, built from the surviving order so every
                 // consumer is remapped by one table rather than by four
                 // arithmetic expressions that could disagree.

@@ -55,7 +55,10 @@ describe("the ladder's order: merge, picture, archetype, type step, device", () 
     // The text travels with the change, so the workflow applies a merge this
     // module described rather than one it invents.
     expect(change.carry.headline.length).toBeGreaterThan(0);
-    expect(change.reason).toMatch(/letting the carousel run 5 slides instead of 6/u);
+    // 2026-09-25 (owner feedback WS-09): this fixture's slide 2 is a photo plate whose body
+    // plus the carry is over its budget, so the words go to the caption rather than be cut.
+    expect(change.toCaption).toBe(true);
+    expect(change.reason).toMatch(/the carousel runs 5 slides instead of 6/u);
   });
 
   it("...and never on the cover or the closer, which are positions rather than spare plates", () => {
@@ -313,5 +316,23 @@ describe("a slide that lost its photograph is remedied for the reason it lost it
     // `none` means the plate is not empty, so there is nothing for the SHORTFALL
     // to fix — the floor's own finding still gets its answer.
     expect(plan?.changes[0]?.kind).toBe("merge-into-neighbour");
+  });
+});
+
+describe("a merged slide's words are always seen (2026-09-25, owner feedback WS-09)", () => {
+  const withNeighbour = (layout: string, body: string): InstagramCopyOutput => {
+    const copy = goodCopyOutput();
+    return { ...copy, slides: copy.slides.map((s) => (s.n === 2 ? { ...s, layout: layout as never, body } : s.n === 3 ? { ...s, headline: "One more thing", body: "It ships in May." } : s)) };
+  };
+  it("merges into a neighbour that paints its body and has room", () => {
+    const plan = planInterestRelayout(withNeighbour("photo", "Short body."), goodImageVettingOutput().selections, FACTS, [weightFinding(3, "interior")], MERGE_ON);
+    const change = plan?.changes[0] as Extract<InterestRelayoutChange, { kind: "merge-into-neighbour" }>;
+    expect(change).toMatchObject({ kind: "merge-into-neighbour", slide: 3, into: 2 });
+    expect(change.toCaption).toBeUndefined();
+  });
+  it("sends the words to the caption when the neighbour is a quote card, which never paints a body", () => {
+    const plan = planInterestRelayout(withNeighbour("quote_card", "Short body."), goodImageVettingOutput().selections, FACTS, [weightFinding(3, "interior")], MERGE_ON);
+    const change = plan?.changes.find((c) => c.kind === "merge-into-neighbour") as Extract<InterestRelayoutChange, { kind: "merge-into-neighbour" }> | undefined;
+    expect(change?.toCaption).toBe(true);
   });
 });

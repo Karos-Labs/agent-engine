@@ -1,6 +1,6 @@
 import { prescribesClicheScene } from "./visual-direction.js";
 import { MIN_CLAIM_MATCH, selectionPasses, type ImageSelection, type InstagramCopyOutput, type InstagramSlideCopy, type InstagramSlideLayout } from "./types.js";
-import { fallbackArchetypePreferences, HERO_IMAGE_LAYOUTS, type SlideStyleOverride } from "./slides-data.js";
+import { BODY_WORD_BUDGET, fallbackArchetypePreferences, HERO_IMAGE_LAYOUTS, type SlideStyleOverride } from "./slides-data.js";
 import type { InterestFailureKind, InterestFinding } from "./interest-floor.js";
 import { clampWords, deviceFromText, figuresInText, MAX_DEVICE_LABEL_LENGTH, sentencesOf, type RelayoutFigureDevice } from "./bounded-object.js";
 import { isCompleteClause } from "./slide-devices.js";
@@ -219,6 +219,12 @@ export type InterestRelayoutChange =
       into: number;
       /** The text the merge carries across, so the workflow applies a merge this module described rather than one it invents. */
       carry: { headline: string; body: string };
+      /**
+       * 2026-09-25 (owner feedback WS-09): the words go to the CAPTION instead
+       * of a neighbour, because no neighbour would paint them. `into` is then
+       * the slide the carousel closes up around, and nothing is appended to it.
+       */
+      toCaption?: true;
       reason: string;
     }
   | { kind: "switch-archetype"; slide: number; from: RelayoutArchetype; to: RelayoutArchetype; reason: string }
@@ -793,16 +799,43 @@ function mergeRemedy(
   const position = positionOf(copy, slide.n);
   if (position === undefined || position.index <= 0) return undefined;
   const into = copy.slides[position.index - 1]!;
+  const carry = { headline: slide.headline, body: slide.body };
+  // ── MERGE ONLY WHERE THE WORDS WILL BE SEEN (2026-09-25, owner feedback
+  // WS-09). The carry is appended to the neighbour's BODY, and five archetypes
+  // never paint a body: a quote card paints its quote, a list its rows, a stat
+  // its figure and label, a comparison its columns, a cover its title and
+  // deck. Merged into one of those, a slide's words vanished (Kindly Yours'
+  // and Sitti's lost slides, #253). And a body pushed over its budget is cut
+  // at a sentence later (#243), which loses the carry again. So the neighbour
+  // must paint a body AND hold the words; otherwise they go to the caption.
+  const intoLayout = into.layout ?? "photo";
+  const words = (t: string): number => t.split(/\s+/u).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
+  const fits = words(into.body) + words(carry.headline) + words(carry.body) <= (BODY_WORD_BUDGET[intoLayout] ?? 24);
+  if (MERGE_TARGET_LAYOUTS.has(intoLayout) && fits) {
+    return {
+      kind: "merge-into-neighbour",
+      slide: slide.n,
+      into: into.n,
+      carry,
+      reason:
+        `slide ${slide.n} carries too little to be its own plate; folding it into slide ${into.n} and letting the carousel run ` +
+        `${copy.slides.length - 1} slides instead of ${copy.slides.length}`,
+    };
+  }
   return {
     kind: "merge-into-neighbour",
     slide: slide.n,
     into: into.n,
-    carry: { headline: slide.headline, body: slide.body },
+    carry,
+    toCaption: true,
     reason:
-      `slide ${slide.n} carries too little to be its own plate; folding it into slide ${into.n} and letting the carousel run ` +
-      `${copy.slides.length - 1} slides instead of ${copy.slides.length}`,
+      `slide ${slide.n} carries too little to be its own plate, and slide ${into.n} (${intoLayout}) ${MERGE_TARGET_LAYOUTS.has(intoLayout) ? "has no room for its words" : "would not paint them"}; ` +
+      `its words move to the caption and the carousel runs ${copy.slides.length - 1} slides instead of ${copy.slides.length}`,
   };
 }
+
+/** The archetypes that paint a slide's BODY, so a merged slide's words are seen. */
+export const MERGE_TARGET_LAYOUTS: ReadonlySet<string> = new Set(["photo", "headline_focus", "text_only"]);
 
 /**
  * Rung 2 — put a picture on the plate.
