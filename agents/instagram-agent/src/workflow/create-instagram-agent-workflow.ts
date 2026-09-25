@@ -6422,6 +6422,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // agent here; whether it is ever CALLED is `04l`'s decision alone.
     const conceptAgent = new InstagramConceptAgent({ router: options.router, tools, promptStore: options.promptStore });
     const copyAgent = new InstagramCopyAgent({ router: options.router, tools, promptStore: options.promptStore });
+    // 2026-09-25: the drafter an attempt uses after a timed-out attempt (see `InstagramCopyAgent`'s constructor).
+    const copyLeanAgent = new InstagramCopyAgent({ router: options.router, tools, promptStore: options.promptStore }, { omitThought: true });
+    let lastCopyAttemptTimedOut = false;
     const copyReviseAgent = new InstagramCopyReviseAgent({ router: options.router, tools, promptStore: options.promptStore });
     // Phase 5.5 (spec §3 B3) — `05f`. Constructed unconditionally like every
     // other agent here; whether it is ever CALLED is the writer's decision,
@@ -8457,7 +8460,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // the revision's dollars were booked on its own step above.
       const copyExec = revisedDraft !== undefined
         ? { status: "completed" as const, finalOutput: revisedDraft, totalCostUsd: 0 }
-        : await wf.step.agent(rev(`05-write-copy-attempt-${attempt}`), copyAgent, {
+        : await wf.step.agent(rev(`05-write-copy-attempt-${attempt}`), lastCopyAttemptTimedOut ? copyLeanAgent : copyAgent, {
         ...runDirectionField(runDirection),
         topic: topicClaim.topic,
         // ── C7: what the platform has learned, as INSTRUCTIONS (D41) ──
@@ -8646,6 +8649,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // three times": two consecutive attempts with the same digest are no
       // redraft at all. deel's attempts 1 and 3 failed the identical gate on
       // the identical words.
+      // Read off the (checkpointed) result, so a resume picks the same drafter.
+      lastCopyAttemptTimedOut = revisedDraft === undefined && copyExec.status !== "completed" && typeof (copyExec as { timedOutAfterMs?: unknown }).timedOutAfterMs === "number";
       draftAttemptLog.push({
         attempt,
         producedDraft: copyExec.status === "completed",
