@@ -163,6 +163,75 @@ describe("the sweep picks up runs whose worker died", () => {
     expect(reclaimedIds).toEqual(["run_orphan_a", "run_orphan_b"]);
   }, 90_000);
 
+  it("stops feeding a run that keeps killing the worker it is given, and fails it visibly", async () => {
+    // FOUND BY WATCHING THE SWEEP IN PRODUCTION, an hour after it shipped.
+    // Prep run `pubsub-20296536359058757` (instagram, hankypanky) was one of
+    // the six this sweep recovered: it was reclaimed, it ran, and it lost its
+    // heartbeat AGAIN on the same step, `00h3-persist-exemplar-library`.
+    //
+    // Left alone, that is a loop with a real cost: a fresh worker every tick,
+    // taken down every tick, occupying a resume slot another run needed.
+    // Reclaiming is right for a deploy rolling a worker mid-step, which
+    // succeeds on the first retry. It is wrong for a run that kills workers.
+    const store = env.durableStore;
+    const stale = () => clock - RUN_LEASE_TTL_MS - 60_000;
+    await store.createRunIfNotExists({
+      runId: "run_wedged",
+      clientSlug: "acme",
+      productId: "x-agent",
+      runKind: "recurring",
+      status: "running",
+      createdAt: stale(),
+      updatedAt: stale(),
+      leaseOwner: "worker-that-died",
+      currentStepId: "00h3-persist-exemplar-library",
+      // Three reclaims already spent, every one of them at THIS step.
+      reclaimedFromStepId: "00h3-persist-exemplar-library",
+      reclaimAttempts: 3,
+    });
+
+    const res = await request(app).post("/api/v1/maintenance/sweep-gate-timeouts").send();
+    expect(res.status).toBe(200);
+    expect(res.body.reclaimed).toBeUndefined();
+    expect(res.body.skipped).toHaveLength(1);
+    expect(res.body.skipped[0].reason).toContain("00h3-persist-exemplar-library");
+    expect(res.body.skipped[0].reason).toContain("takes down the worker");
+
+    // FAILED, not left `running`. Leaving it is the exact defect this sweep
+    // closed: a run nobody will ever move, shown as in progress forever.
+    const run = await store.getRun("run_wedged");
+    expect(run?.status).toBe("failed");
+    expect(run?.failureReason).toContain("without moving past it");
+  });
+
+  it("starts the count over for a run that HAS moved since its last reclaim", async () => {
+    // The other half, and what makes the count mean anything: a run being
+    // carried forward one step per reclaim is being helped, however many
+    // reclaims that takes. Counting those would fail a run that is working.
+    const store = env.durableStore;
+    const stale = clock - RUN_LEASE_TTL_MS - 60_000;
+    await store.createRunIfNotExists({
+      runId: "run_moving",
+      clientSlug: "acme",
+      productId: "x-agent",
+      runKind: "recurring",
+      status: "running",
+      createdAt: stale,
+      updatedAt: stale,
+      leaseOwner: "worker-that-died",
+      // Three reclaims spent, but the run has moved on since the last one.
+      currentStepId: "09-check-engagement-cap",
+      reclaimedFromStepId: "00-intake-check",
+      reclaimAttempts: 3,
+    });
+
+    const res = await request(app).post("/api/v1/maintenance/sweep-gate-timeouts").send();
+    expect(res.status).toBe(200);
+    expect(res.body.reclaimed).toHaveLength(1);
+    expect(res.body.reclaimed[0].runId).toBe("run_moving");
+    expect((await store.getRun("run_moving"))?.status).not.toBe("failed");
+  }, 90_000);
+
   it("still reports an empty sweep when nothing is waiting and nothing is abandoned", async () => {
     // `reclaimed` is ABSENT rather than an empty array on a clean tick — the
     // same convention every marker in this fleet follows, so a field that is
