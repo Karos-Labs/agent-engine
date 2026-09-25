@@ -921,7 +921,10 @@ body:has(.hero) .kicker {
   font-weight: 600;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: color-mix(in srgb, var(--fg) 62%, transparent);
+  /* 72%, not 62%: set in the brand's body face (thinner strokes than the
+     system mono it used to fall back to) the eyebrow measured 4.30:1 over the
+     cover's ramp, under the 4.5:1 floor. */
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
   white-space: nowrap;
 }
 .eyebrow:empty, .kicker:empty { display: none; }
