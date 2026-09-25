@@ -290,6 +290,9 @@ export function photoLedShare(library: ExemplarLibrary | undefined): number | un
 export function densityFromLibrary(library: ExemplarLibrary | undefined): "photo-first" | undefined {
   const share = photoLedShare(library);
   return share !== undefined && share >= PHOTO_LED_SHARE_FOR_PHOTO_FIRST ? "photo-first" : undefined;
+}
+
+/**
  * RFC-26 Phase 4c: the hook SHAPES that broke out in this niche, for the
  * writer (copy prompt section 32). Shares of the judged breakouts' hook
  * pattern plus the top transferable techniques. Shapes and techniques only:

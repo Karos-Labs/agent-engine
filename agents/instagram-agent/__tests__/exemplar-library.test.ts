@@ -119,6 +119,9 @@ describe("the library steers picture density (RFC-26 Phase 4a)", () => {
     expect(densityFromLibrary(lib([entry("none"), entry("none"), entry("none"), entry("inset"), entry("none")]))).toBeUndefined();
     expect(densityFromLibrary(lib([entry("full-bleed"), entry("inset")]))).toBeUndefined();
     expect(densityFromLibrary(undefined)).toBeUndefined();
+  });
+});
+
 describe("the writer sees the niche's breakout hook shapes (RFC-26 Phase 4c)", () => {
   it("summarises shapes and techniques, never wording or handles", async () => {
     const { nicheHooksForCopy } = await import("../src/workflow/exemplar-library.js");
