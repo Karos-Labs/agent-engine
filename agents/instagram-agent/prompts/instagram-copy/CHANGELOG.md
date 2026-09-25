@@ -16,6 +16,12 @@ to hold five obsolete descriptions of them as well.
 
 ---
 
+**What changed at v34.** Owner rulings of 2026-09-25 on research round #253: the cover is a photograph of the story's subject by default (a poster); a figure device opens the post only when nothing in it can be pictured (decision 5). The closer never says "link in bio" and never carries a "follow us" line or card (decision 16).
+
+**Cost.** INPUT: about +900 prompt characters. OUTPUT: unchanged.
+
+---
+
 **What changed at v33.** RFC-26 Phase 4c: new section 32 reads the optional
 input `nicheHooks`, the hook shapes and shared techniques of the posts that
 broke out of their own account's baseline in the client's niche (the setup's
