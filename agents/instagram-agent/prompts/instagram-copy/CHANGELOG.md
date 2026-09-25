@@ -16,6 +16,16 @@ to hold five obsolete descriptions of them as well.
 
 ---
 
+**What changed at v33.** RFC-26 Phase 4c: new section 32 reads the optional
+input `nicheHooks`, the hook shapes and shared techniques of the posts that
+broke out of their own account's baseline in the client's niche (the setup's
+exemplar library). Shapes only, never wording or account names.
+
+**Cost.** INPUT: about +700 prompt characters and up to ~300 of input when
+the library exists. OUTPUT: unchanged.
+
+---
+
 **What changed at v32.** Owner feedback round 2026-09-24 (item C, WS-10):
 complete human sentences, and no negation habit. The guide itself taught the
 habit: section 25's model "correction" was "X is not the reason Y happens. Z

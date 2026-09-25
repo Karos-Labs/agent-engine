@@ -513,7 +513,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // bump most often forgets.
     const registry = readFileSync(path.join(PROMPTS_ROOT, "..", "..", "..", "scripts", "prompt-registry.ts"), "utf8");
     expect(registry).toContain(`"14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28"`);
-    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,700}latestVersion: "32"/);
+    expect(registry).toMatch(/promptId: "instagram-copy"[\s\S]{0,700}latestVersion: "33"/);
     // Phase 5 (RFC-18 §6.1). The packager's prompt is the one THIS phase added,
     // and the WIP commit this branch inherited had shipped both prompt files
     // with no registry row at all — which `check:prompts` fails on and which
@@ -551,7 +551,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // by nothing.
     const promptStore = makePromptStore();
     const copy = new InstagramCopyAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
-    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@32");
+    expect((copy as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-copy@33");
     const packager = new InstagramPostPackagerAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
     expect((packager as unknown as { config: { skillRef: string } }).config.skillRef).toBe("instagram-post-package@2");
     const qa = new InstagramVisualQaAgent({ router: fakeRouterSequence([]), tools: {}, promptStore });
@@ -573,7 +573,7 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     // its version pin names.
     const promptStore = makePromptStore();
     for (const [promptId, version, h1] of [
-      ["instagram-copy", "32", "# Instagram Copy Craft Guide, v32"],
+      ["instagram-copy", "33", "# Instagram Copy Craft Guide, v33"],
       ["instagram-post-package", "2", "# Instagram Post Package Guide, v2"],
       ["instagram-image-vet", "10", "# Instagram Image Vetting Craft Guide — v10"],
       ["instagram-entities", "1", "# Instagram Entity Extraction — v1"],
@@ -638,8 +638,11 @@ describe("PromptStore resolution (RFC-01 §16.1) — nothing here is a hardcoded
     const v30 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "30.md"));
     const v31 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "31.md"));
     const v32 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "32.md"));
+    const v33 = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "33.md"));
     const latest = readFileSync(path.join(PROMPTS_ROOT, "instagram-copy", "latest.md"));
-    expect(latest.equals(v32), "latest.md must be byte-identical to 32.md, not merely equivalent").toBe(true);
+    expect(latest.equals(v33), "latest.md must be byte-identical to 33.md, not merely equivalent").toBe(true);
+    expect(v32.equals(v33), "@32 and @33 are the same file, so the bump changed nothing").toBe(false);
+    expect(v33.toString("utf8")).toContain("## 32. What breaks out in this niche");
     expect(v31.equals(v32), "@31 and @32 are the same file, so the bump changed nothing").toBe(false);
     // What @32 adds (2026-09-25, owner feedback WS-10): complete sentences, no
     // negation habit, and the guide no longer models "X is not Y. It is Z.".

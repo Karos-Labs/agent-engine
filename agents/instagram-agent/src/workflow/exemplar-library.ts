@@ -290,4 +290,28 @@ export function photoLedShare(library: ExemplarLibrary | undefined): number | un
 export function densityFromLibrary(library: ExemplarLibrary | undefined): "photo-first" | undefined {
   const share = photoLedShare(library);
   return share !== undefined && share >= PHOTO_LED_SHARE_FOR_PHOTO_FIRST ? "photo-first" : undefined;
+ * RFC-26 Phase 4c: the hook SHAPES that broke out in this niche, for the
+ * writer (copy prompt section 32). Shares of the judged breakouts' hook
+ * pattern plus the top transferable techniques. Shapes and techniques only:
+ * no caption text, no handle, so nothing a competitor wrote can be copied.
+ */
+export function nicheHooksForCopy(library: ExemplarLibrary | undefined): string | undefined {
+  if (library === undefined || library.status !== "built" || library.entries.length < 5) return undefined;
+  const counts = new Map<string, number>();
+  for (const e of library.entries) {
+    const p = typeof e.dna["hookPattern"] === "string" ? (e.dna["hookPattern"] as string) : undefined;
+    if (p !== undefined && p !== "other") counts.set(p, (counts.get(p) ?? 0) + 1);
+  }
+  if (counts.size === 0) return undefined;
+  const shares = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([p, n]) => `${p} ${Math.round((n / library.entries.length) * 100)}%`)
+    .join(", ");
+  const techniques = library.entries
+    .slice(0, 3)
+    .map((e) => e.standout)
+    .filter((t) => typeof t === "string" && t.length > 0);
+  return `Hook shapes of ${library.entries.length} posts that broke out of their own account's baseline in this niche: ${shares}.` +
+    (techniques.length > 0 ? ` Techniques they share: ${techniques.join("; ")}.` : "");
 }
