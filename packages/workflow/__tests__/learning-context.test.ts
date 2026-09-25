@@ -8,6 +8,7 @@ import {
   feedbackForPrompt,
   goalLineBullets,
   pickStrategyRow,
+  preferencesForDrafting,
   preferredByPerformance,
   resolveGoalLine,
   readLearningContext,
@@ -308,5 +309,28 @@ describe("preferredByPerformance", () => {
   it("survives a malformed file without throwing, like every other reader here", () => {
     expect(preferredByPerformance({ outliers: "not an array" }, allowed)).toBeUndefined();
     expect(preferredByPerformance({ outliers: [null, 7, { trait: 12, lift: "high" }] as unknown[] }, allowed)).toBeUndefined();
+  });
+});
+
+describe("preferencesForDrafting — likes as the middleware writes them", () => {
+  it("reads a derived like by its subject, which is the only text it carries", () => {
+    const out = preferencesForDrafting({
+      likes: [{ why: "posted as written", subject: "why pilots stall after month one", runId: "pubsub-1", at: "2026-09-20T10:00:00Z" }],
+    });
+    expect(out?.likes).toEqual(["Posted as written, no edits: why pilots stall after month one"]);
+  });
+
+  it("prefers a hand-written note when a like has one", () => {
+    const out = preferencesForDrafting({ likes: [{ note: "loved the Hebrew hook", subject: "ignored" }] });
+    expect(out?.likes).toEqual(["loved the Hebrew hook"]);
+  });
+
+  it("drops a like with neither text, and says nothing when nothing is left", () => {
+    expect(preferencesForDrafting({ likes: [{ runId: "pubsub-2" }] })).toBeUndefined();
+  });
+
+  it("keeps the five most recent", () => {
+    const likes = Array.from({ length: 7 }, (_, i) => ({ subject: `s${i}` }));
+    expect(preferencesForDrafting({ likes })?.likes).toEqual(["s2", "s3", "s4", "s5", "s6"].map((s) => `Posted as written, no edits: ${s}`));
   });
 });

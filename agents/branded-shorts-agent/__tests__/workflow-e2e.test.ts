@@ -498,6 +498,17 @@ describe("the delivery review is a cycle, not a one-way door (2026-09-18)", () =
     expect(env.runnerCalls.filter((c) => path.basename(c.args[0] ?? "") === "cut_check.py")).toHaveLength(1);
     // …and the planning DID run again, under its own revision-scoped step id.
     expect(await durableStore.getGate(`${runId}__10-delivery-review-r1`)).toBeDefined();
+
+    // Approved on round 1, the reviewer's note outlives the redraft: it is on
+    // the run's C7 record as a voice lesson, which the middleware carries into
+    // the client's preferences for every later run, not only this one's r1.
+    await engine.resolveGate(runId, "10-delivery-review-r1", { decision: "approve", actor: "jane@karoslabs.com", at: at() });
+    const done = await engine.run(workflowFn, { ...params, runId });
+    expect(done.status).toBe("completed");
+    const record = await env.store.readJson<Record<string, unknown>>("acme", ["state", "runs", runId]);
+    expect(record!.voiceNotes).toEqual([
+      { lesson: "The third graphic sits over the speaker's face — move it or drop it.", fromRevision: 0 },
+    ]);
   }, 30_000);
 
   it("holds an unanswered gate rather than auto-approving when the visual QA never watched the short", async () => {

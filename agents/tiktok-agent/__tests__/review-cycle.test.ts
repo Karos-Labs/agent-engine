@@ -108,6 +108,8 @@ interface Harness {
   feedback: Array<Record<string, unknown>>;
   /** Every object path `video.uploadDeliverable` was asked to write. */
   uploadedPaths: string[];
+  /** Every `ledger.writeRunState` payload — the C7 record the middleware collects. */
+  records: Array<Record<string, unknown>>;
 }
 
 /**
@@ -120,6 +122,7 @@ function stubTools(opts: { forbiddenTopics?: string[] } = {}): Harness {
   const deliverables: Array<Record<string, unknown>> = [];
   const feedback: Array<Record<string, unknown>> = [];
   const uploadedPaths: string[] = [];
+  const records: Array<Record<string, unknown>> = [];
   const ok = (result: unknown) => ({ status: "success" as const, result });
   // A REAL gate verdict carries `evidence` and `toolVersion` (GateVerdictSchema);
   // the script and commentary steps now self-critique against `gate.lintPost`
@@ -182,8 +185,12 @@ function stubTools(opts: { forbiddenTopics?: string[] } = {}): Harness {
       return ok({ id: "fb-1" });
     }),
     "memory.readFeedback": tool("memory.readFeedback", () => ok({ entries: [] })),
+    "ledger.writeRunState": tool("ledger.writeRunState", (args) => {
+      records.push(args as unknown as Record<string, unknown>);
+      return ok({ path: "state/runs/x", created: true });
+    }),
   };
-  return { tools: tools as unknown as AgentToolRegistry, calls, deliverables, feedback, uploadedPaths };
+  return { tools: tools as unknown as AgentToolRegistry, calls, deliverables, feedback, uploadedPaths, records };
 }
 
 function makeWorkflow(h: Harness, candidates: readonly unknown[], autoApprove = false) {
@@ -265,6 +272,14 @@ describe("tiktok-agent review cycle (runReviewCycle)", () => {
     // The moment was never released — a clip genuinely shipped.
     expect(h.calls).toContain("topics.commit");
     expect(h.calls).not.toContain("topics.release");
+
+    // The reviewer's note outlives the redraft: it is on the run's C7 record
+    // as a voice lesson, which the middleware carries into the client's
+    // preferences for every later run (not only this one's round 1).
+    expect(h.records).toHaveLength(1);
+    expect(h.records[0]!["record"] ?? h.records[0]).toMatchObject({
+      voiceNotes: [{ lesson: "Shorten the caption and lead with the disagreement, not the number.", fromRevision: 0 }],
+    });
   }, 30000);
 
   it("saves the reviewer's words to client memory, on a revision and on an approval alike", async () => {

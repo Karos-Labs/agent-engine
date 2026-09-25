@@ -4719,6 +4719,12 @@ ${credit}`,
         strategyRowId: strategyRow !== undefined && intake.topicSource === "reserved" && strategyRow.idea === topic ? strategyRow.id : null,
       },
       platformStateDelta: { postsByUs: 1, topics: [topic] },
+      // Every revision note a reviewer sent on this run, as the voice lessons
+      // the middleware carries into \`client_preferences\` (Craft 11 §3: a
+      // reviewer's note is the signal voice is learned from). X, LinkedIn and
+      // Reddit have recorded these since C7; this agent recorded none, so a
+      // note typed at the gate steered one redraft and was then forgotten.
+      voiceNotes: review.notes.map((n) => ({ lesson: n.feedback, fromRevision: n.revision })),
       readiness: learning.readiness,
     });
 
