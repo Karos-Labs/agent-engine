@@ -1573,7 +1573,10 @@ export function createLinkedInAgentWorkflow(options: CreateLinkedInAgentWorkflow
         type: draft.archetype,
         stage: goalLine.goal,
         goal: goalLine.goalText,
-        status: "drafted",
+        // A draft the reviewer rejected outright was not used, which is what
+        // \`skipped\` means in the subject table. Written as \`drafted\` it sat
+        // there forever looking like work still in review.
+        status: review.outcome === "rejected" ? "skipped" : "drafted",
         assetKind: "linkedin-post",
         strategyRowId: selected.strategyRowId ?? null,
       },

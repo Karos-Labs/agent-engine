@@ -4711,7 +4711,10 @@ ${credit}`,
         type: format,
         stage,
         goal: goalLine.goalText,
-        status: "drafted",
+        // A draft the reviewer rejected outright was not used, which is what
+        // \`skipped\` means in the subject table. Written as \`drafted\` it sat
+        // there forever looking like work still in review.
+        status: review.outcome === "rejected" ? "skipped" : "drafted",
         assetKind: "tiktok-clip",
         // Honest null rather than an invented id: a made-up row would make the
         // map look spent. Only a topic that actually came off the map carries

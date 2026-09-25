@@ -351,6 +351,11 @@ describe("tiktok-agent review cycle (runReviewCycle)", () => {
     // paraphrase of it.
     expect(parsedDraft.commentary).toEqual(FIRST_COMMENTARY);
     expect(typeof parsedDraft.renderedPath).toBe("string");
+
+    // The subject table says the draft was not used, rather than leaving it
+    // "drafted" forever as if it were still in review.
+    expect(h.records).toHaveLength(1);
+    expect(h.records[0]!["subjectRow"]).toMatchObject({ status: "skipped" });
   }, 30000);
 
   it("DELIVERS at the revision ceiling rather than re-rendering indefinitely, and gives the moment back", async () => {
