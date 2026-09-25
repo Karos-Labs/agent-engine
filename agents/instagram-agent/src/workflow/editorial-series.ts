@@ -170,7 +170,11 @@ export const BUNDLED_SERIES: readonly EditorialSeries[] = [
     id: "the_list",
     badge: "the list",
     premise: "A countable promise kept one item at a time: N moves, one per slide, worth saving.",
-    middle: ["headline_focus", "headline_focus", "headline_focus", "headline_focus", "headline_focus", "headline_focus"],
+    // 2026-09-25: items alternate a PHOTO plate and a text plate. Six text
+    // plates in a row could not carry a picture, so a list post shipped two
+    // pictures against a floor of three (Hanky Panky, KAROS, prep batch of
+    // 2026-09-25) and read as one slide shown six times.
+    middle: ["photo", "headline_focus", "photo", "headline_focus", "photo", "headline_focus"],
     register:
       "The cover states the count, and the count equals the number of item slides after it. Each item slide is ONE item: the item itself as the headline in a few words, then one short line on why it matters as the body, nothing else, no list inside it. The closer asks the reader to save the post or comment, in a few words.",
   },
@@ -424,7 +428,6 @@ export function selectSeries(evidence: SeriesEvidence, catalogue: readonly Edito
   const pool = eligible.length > 0 ? eligible : catalogue;
   let best = pool[0]!;
   for (const series of pool) if (adjustedOf(series.id) > adjustedOf(best.id)) best = series;
-
   const runnerUp = pool.filter((series) => series.id !== best.id).sort((a, b) => adjustedOf(b.id) - adjustedOf(a.id))[0];
   const margin = runnerUp === undefined ? undefined : adjustedOf(best.id) - adjustedOf(runnerUp.id);
   const why =

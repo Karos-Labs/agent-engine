@@ -303,9 +303,9 @@ describe("the_list", () => {
     expect(selectSeries({ restsOnKinds: ["definition", "definition"], angleId: "what-it-means" }).series.id).toBe("the_playbook");
   });
 
-  it("is one item per slide: every interior is a headline_focus, and the register asks for the count to match", () => {
+  it("is one item per slide, alternating a photo plate and a text plate so a list carries pictures (2026-09-25)", () => {
     const list = BUNDLED_SERIES.find((s) => s.id === "the_list")!;
-    expect(new Set(list.middle)).toEqual(new Set(["headline_focus"]));
+    expect(list.middle).toEqual(["photo", "headline_focus", "photo", "headline_focus", "photo", "headline_focus"]);
     expect(list.register).toContain("the count equals the number of item slides");
   });
 });
