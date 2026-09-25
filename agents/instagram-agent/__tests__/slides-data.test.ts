@@ -570,13 +570,15 @@ describe("cover and closer (item M)", () => {
     const data = assemble(slides, [hero(1), noHero(2), hero(3), noHero(4)]);
     const recap = data.slides[3]!.htmlFragments["recap"]!;
     expect(recap).toContain("rc-strip");
-    expect(recap.match(/rc-plate/g)).toHaveLength(3);
+    // 2026-09-25 (owner feedback WS-10): slide 3's long headline has no complete clause
+    // that fits, so its plate is left out rather than printed with an ellipsis.
+    expect(recap.match(/rc-plate/g)).toHaveLength(2);
     // A figure beats a headline on a plate — a recap is a strip of numbers
     // where the post has them.
     expect(recap).toContain("73%");
     expect(recap).toContain('<div class="rc-n">02</div>');
-    // ...and a long headline is cut at a word boundary rather than wrapped.
-    expect(recap).toContain("…");
+    // ...and the strip never prints an ellipsis.
+    expect(recap).not.toContain("…");
     expect(data.slides[3]!.fields).toMatchObject({ takeaway: "That is the pattern", cta: "Save this for your next planning cycle." });
   });
 

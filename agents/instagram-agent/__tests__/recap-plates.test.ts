@@ -69,3 +69,15 @@ describe("a recap label is a complete clause or a headline, never a stub (2026-0
     expect(html).not.toContain("…");
   });
 });
+
+describe("the strip never prints an ellipsis (2026-09-25, owner feedback WS-10)", () => {
+  it("leaves out a plate whose headline has no complete clause that fits, and keeps the rest", () => {
+    const html = buildRecapFragment([
+      slide({ n: 1, headline: "Your first pin goes live." }),
+      slide({ n: 2, headline: "Onboarding flows quietly lose seventy percent of creators within minutes" }),
+      slide({ n: 3, headline: "Four creator onboarding click taxes" }),
+    ]);
+    expect(html).not.toContain("…");
+    expect(titles(html)).toEqual(["Your first pin goes live.", "Four creator onboarding click taxes"]);
+  });
+});

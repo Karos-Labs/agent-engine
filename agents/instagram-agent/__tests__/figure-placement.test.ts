@@ -163,3 +163,14 @@ describe("trimToSentenceBudget: one idea per slide (2026-09-24)", () => {
     expect(BODY_WORD_BUDGET.stat_callout).toBeLessThanOrEqual(20);
   });
 });
+
+describe("a quote card's quote is cut to whole sentences (2026-09-25)", () => {
+  it("keeps a quotation verbatim, only shorter", async () => {
+    const { QUOTE_WORD_BUDGET } = await import("../src/workflow/slides-data.js");
+    const long = "Call me crazy, but I just don't see the day when a CMO simply and successfully manages 3,000 AI agents. Good marketing and good human relationships are more complex than that. They always were.";
+    const cut = trimToSentenceBudget(long, QUOTE_WORD_BUDGET);
+    expect(long.startsWith(cut)).toBe(true);
+    expect(cut.split(/\s+/u).length).toBeLessThanOrEqual(QUOTE_WORD_BUDGET);
+    expect(cut.endsWith(".")).toBe(true);
+  });
+});
