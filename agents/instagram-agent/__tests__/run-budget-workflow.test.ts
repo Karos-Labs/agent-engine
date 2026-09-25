@@ -523,12 +523,18 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
 
       // THE CLAIM. The gate whose pre-phase form was a bare `continue` over the
       // whole tier now skips the OPTIONAL gaps and falls through with the
-      // guarantee. Four gaps, two guaranteed.
+      // guarantee.
+      //
+      // 2026-09-25 (owner decision 6 on research round #253): the guarantee is
+      // the PICTURE FLOOR, not a quota of generated frames. This fixture lands
+      // two retrieved photographs, so exactly one gap is owed to reach three
+      // pictures; the other gaps are optional and the plan turned optional
+      // work off. Before the ruling this asked for three generated frames.
       expect(stepIds).toContain("06d-generate-images-attempt-1");
-      expect(requested[0]).toHaveLength(MIN_GENERATED_IMAGES_PER_RUN);
+      expect(requested[0]).toHaveLength(1);
       // Lowest-first within the tier — an early picture earns the swipe — and
       // this run carries no concept, which `04m` declines on the canonical story.
-      expect(requested[0]).toEqual(gaps.slice(0, MIN_GENERATED_IMAGES_PER_RUN));
+      expect(requested[0]).toEqual(gaps.slice(0, 1));
 
       // ── THE TWO CONTROLS, both in-band. ──
       // A pre-phase `continue` produces ZERO generate calls; a partition that
@@ -550,13 +556,14 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
       expect(result.status).toBe("completed");
 
       // THE PREMISE: generation ran and produced the guarantee's worth of
-      // candidates, and the vet then refused every one of them.
-      expect(requested[0]).toHaveLength(MIN_GENERATED_IMAGES_PER_RUN);
+      // candidates (one: two photographs landed, the floor is three), and the
+      // vet then refused every one of them.
+      expect(requested[0]).toHaveLength(1);
       const floor = steps.find((s) => s.stepId === "06h-imagery-floor-check-attempt-1")?.output as
         | { action: string; pictureSlides: number; generated: number; reason?: string }
         | undefined;
       expect(floor, "06h did not run").toBeDefined();
-      expect(floor!.generated).toBe(MIN_GENERATED_IMAGES_PER_RUN);
+      expect(floor!.generated).toBe(1);
 
       // THE CLAIM. `pictureSlides` is the OUTCOME and it is under the floor, so
       // the step must not say the floor is met. Before this fix the pass

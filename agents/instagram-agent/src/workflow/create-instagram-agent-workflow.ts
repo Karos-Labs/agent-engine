@@ -9668,8 +9668,19 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
        * generation the run may buy, which is a money question, and money spent
        * is spent whatever the vet then said.
        */
-      const generatedLanded = (): number =>
-        selections.filter((sel) => sel.imagePath !== null && generatedPaths.has(sel.imagePath) && !isUnfillable(sel)).length;
+      /**
+       * ── THE GUARANTEE IS THE PICTURE FLOOR, NOT A QUOTA OF AI FRAMES (2026-09-25). ──
+       *
+       * The owner's decision 6 on research round #253 replaces the 2026-09-18
+       * ruling the comment above records: AI pictures are welcome, never owed.
+       * What is owed is at least `MIN_PICTURE_SLIDES` pictures of ANY source,
+       * the most fitting ones. So the protected (guaranteed) generation is only
+       * what is still missing to reach that floor; every other generated frame
+       * is optional and takes its turn in the run's budget like any other spend.
+       * The research measured why: 33 guaranteed frames bought across 8 runs, 6
+       * landed, about $2.34 of $13.31.
+       */
+      const picturesLanded = (): number => selections.filter((sel) => sel.imagePath !== null && !isUnfillable(sel)).length;
 
       /**
        * Frames this run may still buy at all, floor included.
@@ -10082,7 +10093,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // optional in what the first left.
         /** Skip the optional part of this tier with `reason`, and keep the guaranteed part. Returns false when nothing is left to do. */
         const skipOptional = (reason: string, conceptDecline: string): boolean => {
-          const { guaranteed, optional } = partitionGaps(gaps, generatedLanded(), conceptOnThisTier && conceptSlideN !== undefined ? { conceptSlide: conceptSlideN, ceiling: framesAllowance() } : { ceiling: framesAllowance() });
+          const { guaranteed, optional } = partitionGaps(gaps, picturesLanded(), conceptOnThisTier && conceptSlideN !== undefined ? { conceptSlide: conceptSlideN, floor: MIN_PICTURE_SLIDES, ceiling: framesAllowance() } : { floor: MIN_PICTURE_SLIDES, ceiling: framesAllowance() });
           for (const g of optional) rescueSkipped.set(g.n, reason);
           // ONLY when the concept gap really ended up in `optional`. A concept
           // that survived as a guarantee is still pending and must not be
@@ -10134,7 +10145,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // rather than another number the plan can zero.
         if (tier.id === "generate") {
           const budget = remainingGenerationBudget(generatedSoFar, budgetPlan.generatedImagesCap);
-          const { guaranteed, optional } = partitionGaps(gaps, generatedLanded(), conceptOnThisTier && conceptSlideN !== undefined ? { conceptSlide: conceptSlideN, ceiling: framesAllowance() } : { ceiling: framesAllowance() });
+          const { guaranteed, optional } = partitionGaps(gaps, picturesLanded(), conceptOnThisTier && conceptSlideN !== undefined ? { conceptSlide: conceptSlideN, floor: MIN_PICTURE_SLIDES, ceiling: framesAllowance() } : { floor: MIN_PICTURE_SLIDES, ceiling: framesAllowance() });
           const keep = [...guaranteed, ...optional.slice(0, Math.max(0, budget - guaranteed.length))];
           const kept = new Set(keep.map((g) => g.n));
           for (const over of gaps.filter((g) => !kept.has(g.n))) rescueSkipped.set(over.n, `generation budget for this run spent (${budgetPlan.generatedImagesCap} images)`);
@@ -10853,7 +10864,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // Under the floor the ceiling stretches by `FLOOR_RESERVE_FRAMES`: a
         // carousel always carries enough pictures (the owner, 2026-09-24).
         const guaranteeLeft = Math.min(
-          guaranteedGapCount(generatedLanded()),
+          guaranteedGapCount(withPicture, MIN_PICTURE_SLIDES),
           Math.max(0, GENERATED_IMAGES_PER_RUN_CAP + (withPicture < MIN_PICTURE_SLIDES ? FLOOR_RESERVE_FRAMES : 0) - generatedSoFar),
         );
         // ── THE FLOOR IS A COUNT; THIS ADDS THE ONE THING IT CANNOT SEE. ──
