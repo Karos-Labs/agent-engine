@@ -30,7 +30,33 @@ export type ExemplarRole = "client" | "competitor" | "reference";
 
 export interface HarvestPlan {
   accounts: Array<{ handle: string; role: ExemplarRole }>;
-  competitorSites: Array<{ name: string; website: string }>;
+  competitorSites: Array<{ name: string; website: string; role?: ExemplarRole }>;
+}
+
+/**
+ * BENCHMARK ACCOUNTS BY INDUSTRY, the platform default when a client's record
+ * names no reference account (2026-09-25). The first live setup builds failed
+ * for most lab clients with "nothing to harvest": no Instagram handle in the
+ * config, an empty reference list in the fallback brief, competitors without
+ * websites. The accounts are from the owner-feedback benchmark study (#253,
+ * 87 accounts tagged within-account), which found benchmark accounts, not
+ * clients, to be the replication unit for now. Matched on the profile's
+ * free-text industry; anything else falls back to the owner's own ground-truth
+ * craft references.
+ */
+export const INDUSTRY_BENCHMARKS: ReadonlyArray<{ match: RegExp; handles: readonly string[] }> = [
+  { match: /lingerie|intimate|underwear|\bbras?\b|shapewear|apparel|fashion/iu, handles: ["aerie", "knix", "thirdlove", "wearcommando"] },
+  { match: /fintech|invest|financ|bank|crypto|wealth|tokeni/iu, handles: ["infomoney", "nathfinancas", "hurst.capital", "gcbinvestimentos"] },
+  { match: /news|media|publish|journal|magazine/iu, handles: ["wired", "morningbrew", "visualcap", "evolving.ai"] },
+  { match: /creator|travel|city|guide|food|restaurant|hospitality|local/iu, handles: ["secret_nyc", "beli_eats", "infatuation", "mapstr"] },
+  { match: /startup|founder|venture|accelerator|incubator|pitch|competition/iu, handles: ["ycombinator", "a16z", "sahilbloom", "techstars"] },
+  { match: /marketing|agency|advertis|\bai\b|automation|saas|software|b2b|brand/iu, handles: ["reputeforge", "neilpatel", "becauseofmarketing", "sintra.ai"] },
+];
+export const DEFAULT_BENCHMARKS: readonly string[] = ["reputeforge", "semrush", "buffer"];
+
+export function benchmarksForIndustry(industry: string | undefined): readonly string[] {
+  if (industry === undefined) return DEFAULT_BENCHMARKS;
+  return INDUSTRY_BENCHMARKS.find((b) => b.match.test(industry))?.handles ?? DEFAULT_BENCHMARKS;
 }
 
 function cleanHandle(handle: string): string | undefined {
@@ -48,6 +74,10 @@ export function planHarvest(input: {
   ownAccounts: ReadonlyArray<{ platform: string; username: string }>;
   referenceAccounts: ReadonlyArray<{ platform: string; handle: string }>;
   competitors: ReadonlyArray<{ name?: unknown; website?: unknown }>;
+  /** The client's own website: its instagram.com link names the client's account when the config does not. */
+  ownWebsite?: string | undefined;
+  /** The profile's free-text industry, for the benchmark fallback. */
+  industry?: string | undefined;
 }): HarvestPlan {
   const accounts = new Map<string, ExemplarRole>();
   for (const own of input.ownAccounts) {
@@ -60,7 +90,21 @@ export function planHarvest(input: {
     const handle = cleanHandle(ref.handle);
     if (handle !== undefined && !accounts.has(handle)) accounts.set(handle, "reference");
   }
-  const competitorSites: Array<{ name: string; website: string }> = [];
+  // No reference account on file: the industry's benchmark accounts stand in.
+  if (![...accounts.values()].includes("reference")) {
+    for (const handle of benchmarksForIndustry(input.industry)) if (!accounts.has(handle)) accounts.set(handle, "reference");
+  }
+  const competitorSites: Array<{ name: string; website: string; role?: ExemplarRole }> = [];
+  // No Instagram account of the client's own on file: its website names it.
+  if (![...accounts.values()].includes("client") && typeof input.ownWebsite === "string" && input.ownWebsite.trim().length > 0) {
+    const site = /^https?:\/\//iu.test(input.ownWebsite) ? input.ownWebsite.trim() : `https://${input.ownWebsite.trim()}`;
+    try {
+      new URL(site);
+      competitorSites.push({ name: "the client's own site", website: site, role: "client" });
+    } catch {
+      /* an unusable website is simply not a source */
+    }
+  }
   for (const row of input.competitors) {
     if (typeof row.name !== "string" || typeof row.website !== "string") continue;
     const website = /^https?:\/\//iu.test(row.website) ? row.website : `https://${row.website}`;
@@ -191,6 +235,9 @@ export function readExemplarLibrary(value: unknown): ExemplarLibrary | undefined
 export function exemplarLibraryAction(library: ExemplarLibrary | undefined, now: Date): "reuse" | "wait" | "build" {
   if (library === undefined) return "build";
   const ageDays = (now.getTime() - new Date(library.builtAt).getTime()) / 86_400_000;
+  // "Nothing to harvest" is not a fault to wait out: the benchmark fallback
+  // (2026-09-25) always has accounts, so such a marker rebuilds at once.
+  if (library.status === "failed" && library.problems.some((p) => p.includes("nothing to harvest"))) return "build";
   if (library.status === "failed") return ageDays < EXEMPLAR_LIBRARY_RETRY_DAYS ? "wait" : "build";
   return ageDays < EXEMPLAR_LIBRARY_TTL_DAYS ? "reuse" : "build";
 }

@@ -8,7 +8,9 @@ import { fetchHtmlViaFetch, ScraperError, type ScrapedRecord, type ScraperProvid
 // how each performed inside its own account.
 // 1.0.1: every input property carries a description (the registry test); no behaviour change.
 // 1.1.0 (2026-09-25): every ranked post carries liftOverBaseline and outlier (2x its account-and-format median, 3x for a reel); the exemplar pool takes breakouts first, stills before reels.
-const TOOL_VERSION = "1.1.0";
+// 1.2.0 (2026-09-25): a site may carry `role` (default competitor), so the
+// client's OWN website resolves to its own Instagram account the same way.
+const TOOL_VERSION = "1.2.0";
 
 /** What one `instagram.account_posts` call bills (ScrappyCoco usage, 2026-09-24, 12 posts per call). */
 export const HARVEST_CALL_COST_USD = 0.0019;
@@ -333,10 +335,10 @@ export const HarvestInstagramExemplarsInputSchema = z.object({
     .default([])
     .describe("Instagram accounts to harvest, each labelled with its role."),
   competitorSites: z
-    .array(z.object({ name: z.string().min(1), website: z.string().url() }))
+    .array(z.object({ name: z.string().min(1), website: z.string().url(), role: z.enum(["client", "competitor", "reference"]).optional() }))
     .max(10)
     .default([])
-    .describe("Competitors known only by website: each home page is fetched (free) and its instagram.com link, if any, becomes a competitor account. Never guessed."),
+    .describe("Accounts known only by website (competitors by default; `role: client` for the client's own site): each home page is fetched (free) and its instagram.com link, if any, becomes an account with that role. Never guessed."),
   maxPostsPerAccount: z.number().int().min(12).max(300).default(120).describe("Posts to read per account (12 per billed call, ~$0.0019 each)."),
   sinceDays: z.number().int().min(30).max(1095).default(365).describe("How far back to read; older posts are not harvested."),
   exemplarsMax: z.number().int().min(10).max(120).default(60).describe("How many exemplars to return across all accounts (each account's top quarter, interleaved)."),
@@ -393,7 +395,7 @@ export function createInstagramExemplarHarvest(store: WorkspaceStoreLike, scrape
           problems.push(`${site.name}: no instagram.com link on ${site.website}, so no account was harvested`);
           continue;
         }
-        if (!accounts.has(handles[0]!)) accounts.set(handles[0]!, { role: "competitor", alternates: handles.slice(1, 3), site: site.name });
+        if (!accounts.has(handles[0]!)) accounts.set(handles[0]!, { role: site.role ?? "competitor", alternates: handles.slice(1, 3), site: site.name });
       }
       if (accounts.size === 0) return toolingError("research.harvestInstagramExemplars: no account to harvest — pass accounts or competitor sites with an Instagram link");
 
