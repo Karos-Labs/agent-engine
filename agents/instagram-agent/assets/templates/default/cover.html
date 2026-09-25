@@ -1483,7 +1483,13 @@ body[data-cover="portrait"] .scrim {
     color-mix(in srgb, var(--bg) 62%, transparent) 46%,
     color-mix(in srgb, var(--bg) 96%, transparent) 100%);
 }
-body[data-cover="portrait"] .lockup .headline { max-inline-size: min(13ch, 100%); }
+/* 2026-09-25: a frame floor under the portrait's 13ch, as the general measure
+   has (`max(19ch, 62%)`). `ch` follows the font, so beside a framed picture the
+   fit ladder stepped the title down and the column narrowed with it: KAROS'
+   covers in prep batches 2 and 5 set a 13-word title as a column of small type
+   about 40% of the plate wide. At the portrait's own size 13ch is wider than
+   the floor and nothing moves. */
+body[data-cover="portrait"] .lockup .headline { max-inline-size: min(max(13ch, 62%), 100%); }
 
 /* OBJECT — the subject is presented as an object: the device sits on its own
    panel, held off the ground, the way a product shot is held. */
