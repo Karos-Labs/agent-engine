@@ -231,6 +231,8 @@ const HAPPY_PATH_STEP_IDS = [
   // slide is sourced again rather than left bare. `wf.step.code`, $0, and it
   // runs on every attempt whether or not it finds anything.
   "06f2-one-picture-one-slide-attempt-1",
+  // 2026-09-25: the banned screen scene is released from any source.
+  "06f4-release-cliche-scenes-attempt-1",
   // Whether two GENERATED frames came out of near-identical briefs. A report
   // and nothing else — it cannot remove a picture, because a removed picture
   // becomes a text plate at `07a` and that is the complaint underneath
