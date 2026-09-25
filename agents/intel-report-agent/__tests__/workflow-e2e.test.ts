@@ -17,6 +17,7 @@ const params = { runId: "intel_run_1", clientSlug: "acme", productId: "intel-rep
 // that step exists and is actually readable back.
 const ALL_STEP_IDS = [
   "00-load-client-context",
+  "00b-read-client-classification",
   "01-research-pull",
   "01b-read-past-feedback",
   // The client's projected target-audience and market-strategy context docs

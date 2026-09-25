@@ -26,6 +26,7 @@ import {
   revisionDirective,
   runReviewCycle,
   textGateTimeout,
+  resolveClientClassification,
 } from "@agent-engine/workflow";
 import type { ClientBrand, ClientProfile, Competitor, OnPageAuditSnapshot, PageSignals, TechnicalSeoSnapshot } from "@agent-engine/tools";
 import { isPathDisallowed } from "@agent-engine/tool-karos-scraper";
@@ -302,6 +303,18 @@ export function createIntelReportAgentWorkflow(options: CreateIntelReportAgentWo
         competitors: competitorsOutcome.status === "success" ? (competitorsOutcome.result as Competitor[]) : [],
       };
     });
+
+    // ── 00b: THE CLIENT'S CLASSIFICATION, FOR EVERY CLIENT (owner decision 10, 2026-09-25) ──
+    //
+    // "Approved in prep and prod, and it must be automatic for every new
+    // client." Until now only an Instagram run resolved it (#290), so a client
+    // was classified the first time someone asked for an Instagram post. The
+    // intel report is the run every client gets at onboarding, so it resolves
+    // it here: read from the profile or the stored belief, else one cheap
+    // `media.classifyClient` call, stored for every agent. Fail-open and
+    // checkpointed; the report itself reads nothing from it.
+    const classification = await resolveClientClassification(wf, { tools }, { stepPrefix: "00b" });
+    for (const note of classification.notes) console.log(`intel-report ${wf.runId}: ${note}`);
 
     // ── 01: competitive research pull ──
     //
