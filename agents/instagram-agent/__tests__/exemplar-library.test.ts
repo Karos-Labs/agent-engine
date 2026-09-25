@@ -119,6 +119,9 @@ describe("the library steers picture density (RFC-26 Phase 4a)", () => {
     expect(densityFromLibrary(lib([entry("none"), entry("none"), entry("none"), entry("inset"), entry("none")]))).toBeUndefined();
     expect(densityFromLibrary(lib([entry("full-bleed"), entry("inset")]))).toBeUndefined();
     expect(densityFromLibrary(undefined)).toBeUndefined();
+  });
+});
+
 describe("a client with nothing on file still gets a library (2026-09-25)", () => {
   it("falls back to its industry's benchmark accounts and reads its own account off its website", async () => {
     const { benchmarksForIndustry, DEFAULT_BENCHMARKS } = await import("../src/workflow/exemplar-library.js");
