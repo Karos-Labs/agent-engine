@@ -9,8 +9,8 @@ function fakeClient(replies: Array<string | Error>): VisionAnalysisClient & { pr
   return {
     prompts,
     models: {
-      async generateContent(request) {
-        prompts.push(request.contents[0]?.parts.map((p) => ("text" in p ? p.text : "")).join("") ?? "");
+      async generateContent(request: { contents: Array<{ parts: Array<Record<string, unknown>> }> }) {
+        prompts.push(request.contents[0]?.parts.map((p: Record<string, unknown>) => (typeof p["text"] === "string" ? p["text"] : "")).join("") ?? "");
         const next = replies.shift();
         if (next instanceof Error) throw next;
         return { candidates: [{ content: { parts: [{ text: next ?? "" }] } }] };
