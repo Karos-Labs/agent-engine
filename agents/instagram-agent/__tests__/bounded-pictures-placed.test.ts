@@ -35,11 +35,12 @@ describe("bounded pictures on a cover or photo slide", () => {
       ...(bounded !== undefined ? { boundedPicturePaths: bounded } : {}),
     });
 
-  it("frames a bounded cover picture and sets a bounded interior photo as an inset block", () => {
+  it("keeps a bounded cover picture as the poster (owner decision 5) and sets a bounded interior photo as an inset block", () => {
     const data = run(new Set(["media/cover-frame.png", "media/setting.png"]));
     const byN = new Map(data.slides.map((s) => [s.n, s]));
     expect(byN.get(1)!.images.hero).toBe("media/cover-frame.png");
-    expect(byN.get(1)!.fields.heroKind).toBe("framed");
+    // Owner decision 5 (2026-09-25): the cover is a poster; framed only on contrast failure.
+    expect(byN.get(1)!.fields.heroKind).not.toBe("framed");
     expect(byN.get(2)!.fields.figurePlacement).toBe("inset");
   });
 

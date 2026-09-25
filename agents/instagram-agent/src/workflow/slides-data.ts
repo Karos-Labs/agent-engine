@@ -3341,7 +3341,17 @@ export function assembleSlidesData(params: {
         // over the whole screen"*. `framedHeroFor` is the rule; the plate CSS
         // (`img.hero[data-kind="framed"]`) is the composition.
         // An interior photo already renders as the inset block (`photoAsBlock`); the two compositions never stack on one plate.
-        ...(!photoAsBlock && (framedHeroFor({ layout, headline: slide.headline, body: slide.body, hasPicture: imagePath !== undefined, heroIsMark, isCutout: imagePath !== undefined && params.productCutoutPaths?.has(imagePath) === true }) || (pictureIsBounded && layout === "cover" && !heroIsMark))
+        //
+        // THE COVER IS A POSTER (owner decision 5, 2026-09-25): "poster
+        // (capped full-bleed + anchored shade) is the default; framed only on
+        // contrast failure". The deck rule and the middle-rung rule (#301) used
+        // to frame the cover, and on job PCjzJDH10gQW7peazB5n that was a 540px
+        // photograph over a small title and a dead band, where the owner's
+        // 09-24 reference was the full-bleed poster. The deck is capped by
+        // `withCoverBudget` and the shade follows the words (`anchorScrim`).
+        // A contrast failure has no per-line measure yet (WS-08), so a cover is
+        // never framed here; interior photo plates keep the block.
+        ...(!photoAsBlock && layout !== "cover" && framedHeroFor({ layout, headline: slide.headline, body: slide.body, hasPicture: imagePath !== undefined, heroIsMark, isCutout: imagePath !== undefined && params.productCutoutPaths?.has(imagePath) === true })
           ? { heroKind: "framed" as const }
           : {}),
         // 2026-09-24: which of the three closer forms (`closerFormFor`); only the closer plate reads it.
