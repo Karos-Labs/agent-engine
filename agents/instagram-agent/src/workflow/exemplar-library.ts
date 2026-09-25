@@ -70,6 +70,11 @@ function cleanHandle(handle: string): string | undefined {
  * (the harvest resolves each to the handle the site itself links). Handles
  * are deduplicated; the client's own role wins over any other.
  */
+/** References a harvest aims for, filed ones first: one account is a sample, four is a category. */
+export const MIN_REFERENCE_ACCOUNTS = 4;
+/** Bumped when `planHarvest` changes which accounts it picks, so an old thin library can rebuild. */
+export const HARVEST_PLAN_VERSION = 2;
+
 export function planHarvest(input: {
   ownAccounts: ReadonlyArray<{ platform: string; username: string }>;
   referenceAccounts: ReadonlyArray<{ platform: string; handle: string }>;
@@ -92,10 +97,20 @@ export function planHarvest(input: {
     const handle = cleanHandle(ref.handle);
     if (handle !== undefined && !accounts.has(handle)) accounts.set(handle, "reference");
   }
-  // No reference account on file: the industry's benchmark accounts stand in.
-  if (![...accounts.values()].includes("reference")) {
-    const peers = input.peers !== undefined && input.peers.length > 0 ? input.peers : benchmarksForIndustry(input.industry);
-    for (const handle of peers) if (!accounts.has(handle)) accounts.set(handle, "reference");
+  // FEWER THAN FOUR REFERENCES: the category's peers (else the industry's
+  // benchmarks) fill up to `MIN_REFERENCE_ACCOUNTS`. This used to run only
+  // when NO reference was on file, so one stale or failing handle blocked
+  // them all: Sitti's library held its own 6 posts and a reference with no
+  // post in a year; XO Digital's one handle failed and the harvest returned
+  // nothing (prep, 2026-09-24/25). The owner's ask is hundreds of posts from
+  // the client, its competitors and the best of its category.
+  const referenceCount = (): number => [...accounts.values()].filter((role) => role === "reference").length;
+  if (referenceCount() < MIN_REFERENCE_ACCOUNTS) {
+    const peers = input.peers !== undefined && input.peers.length > 0 ? [...input.peers, ...benchmarksForIndustry(input.industry)] : benchmarksForIndustry(input.industry);
+    for (const handle of peers) {
+      if (referenceCount() >= MIN_REFERENCE_ACCOUNTS) break;
+      if (!accounts.has(handle)) accounts.set(handle, "reference");
+    }
   }
   const competitorSites: Array<{ name: string; website: string; role?: ExemplarRole }> = [];
   // No Instagram account of the client's own on file: its website names it.
@@ -164,6 +179,8 @@ export interface LibraryEntry {
 
 export interface ExemplarLibrary {
   version: 1;
+  /** Which `planHarvest` chose the accounts. Absent: the planner before `MIN_REFERENCE_ACCOUNTS`. */
+  planVersion?: number;
   builtAt: string;
   status: "built" | "failed";
   /** Why a failed build failed, and what a built one could not read. */
@@ -213,6 +230,7 @@ export function buildExemplarLibrary(input: {
     .sort((a, b) => b.craft - a.craft || (b.lift ?? 0) - (a.lift ?? 0));
   return {
     version: 1,
+    planVersion: HARVEST_PLAN_VERSION,
     builtAt: input.now.toISOString(),
     status: entries.length > 0 ? "built" : "failed",
     problems: [...(input.problems ?? []), ...input.harvest.problems, ...(input.judged?.failures ?? []).map((f) => `judge: ${f.reason}`)].slice(0, 20),
@@ -224,7 +242,7 @@ export function buildExemplarLibrary(input: {
 
 /** A failed build, remembered so setup waits `EXEMPLAR_LIBRARY_RETRY_DAYS` instead of re-paying every run. */
 export function failedLibrary(now: Date, problems: readonly string[]): ExemplarLibrary {
-  return { version: 1, builtAt: now.toISOString(), status: "failed", problems: [...problems].slice(0, 20), accounts: [], entries: [] };
+  return { version: 1, planVersion: HARVEST_PLAN_VERSION, builtAt: now.toISOString(), status: "failed", problems: [...problems].slice(0, 20), accounts: [], entries: [] };
 }
 
 export function readExemplarLibrary(value: unknown): ExemplarLibrary | undefined {
@@ -241,6 +259,10 @@ export function exemplarLibraryAction(library: ExemplarLibrary | undefined, now:
   // "Nothing to harvest" is not a fault to wait out: the benchmark fallback
   // (2026-09-25) always has accounts, so such a marker rebuilds at once.
   if (library.status === "failed" && library.problems.some((p) => p.includes("nothing to harvest"))) return "build";
+  // Built by the planner before the four-reference top-up with fewer than
+  // four references: rebuilt once, now, rather than waiting out the old
+  // plan's cooldown (Sitti and XO Digital, 2026-09-25).
+  if (library.planVersion === undefined && library.accounts.filter((a) => a.role === "reference" && a.posts > 0).length < MIN_REFERENCE_ACCOUNTS) return "build";
   if (library.status === "failed") return ageDays < EXEMPLAR_LIBRARY_RETRY_DAYS ? "wait" : "build";
   return ageDays < EXEMPLAR_LIBRARY_TTL_DAYS ? "reuse" : "build";
 }

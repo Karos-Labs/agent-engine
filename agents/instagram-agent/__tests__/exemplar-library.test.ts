@@ -41,10 +41,14 @@ describe("which accounts setup harvests", () => {
       ],
       competitors: [{ name: "Commando", website: "wearcommando.com" }, { name: "No site" }, { name: "Bad", website: "not a url at all" }],
     });
-    expect(plan.accounts).toEqual([
+    // The filed accounts lead, deduplicated; the benchmarks then top the references up to four (2026-09-25).
+    expect(plan.accounts.slice(0, 2)).toEqual([
       { handle: "hankypanky", role: "client" },
       { handle: "reputeforge", role: "reference" },
     ]);
+    // Topped up past the one filed reference (the default benchmarks already hold reputeforge, so three here).
+    expect(plan.accounts.filter((a) => a.role === "reference").length).toBeGreaterThan(1);
+    expect(plan.accounts.map((a) => a.handle)).not.toContain("someone");
     expect(plan.competitorSites).toEqual([{ name: "Commando", website: "https://wearcommando.com" }]);
   });
 });
@@ -144,9 +148,10 @@ describe("a client with nothing on file still gets a library (2026-09-25)", () =
     expect(benchmarksForIndustry("Something unusual")).toEqual(DEFAULT_BENCHMARKS);
   });
 
-  it("does not add benchmarks when the brief names references, nor read the site when the config names the account", () => {
+  it("keeps the brief's references first and tops them up to four, and does not read the site when the config names the account", () => {
     const plan = planHarvest({ ownAccounts: [{ platform: "instagram", username: "karoslabs" }], referenceAccounts: [{ platform: "instagram", handle: "semrush" }], competitors: [], ownWebsite: "karoslabs.com", industry: "AI marketing" });
-    expect(plan.accounts.map((a) => a.handle)).toEqual(["karoslabs", "semrush"]);
+    expect(plan.accounts.map((a) => a.handle).slice(0, 2)).toEqual(["karoslabs", "semrush"]);
+    expect(plan.accounts.filter((a) => a.role === "reference")).toHaveLength(4);
     expect(plan.competitorSites).toEqual([]);
   });
 
