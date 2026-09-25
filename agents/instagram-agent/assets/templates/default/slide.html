@@ -731,14 +731,14 @@ body[data-figure="inset"]:has(.plate.slide) .bg {
   inset: auto;
   inset-block-start: calc(var(--zone-mark) + var(--sp));
   inset-inline: var(--mx);
-  block-size: 600px;
+  block-size: var(--inset-h, 600px);
   border-radius: 4px;
   overflow: hidden;
   z-index: 1;
 }
 body[data-figure="inset"]:has(.plate.slide) .bg img { position: absolute; inset: 0; inline-size: 100%; block-size: 100%; object-fit: cover; }
 body[data-figure="inset"]:has(.plate.slide) .scrim { display: none; }
-body[data-figure="inset"]:has(.plate.slide) .plate { padding-block-start: calc(var(--zone-mark) + var(--sp) + 600px + var(--sp-2)); }
+body[data-figure="inset"]:has(.plate.slide) .plate { padding-block-start: calc(var(--zone-mark) + var(--sp) + var(--inset-h, 600px) + var(--sp-2)); }
 
 /* OVER A PHOTOGRAPH THE COPY GOES TO THE FOOT. The scrim is built to darken
    downward, so the bottom of the plate is where type is legible and where it is
@@ -1673,8 +1673,86 @@ body.ta-center .plate > .mark-badge { margin-inline: auto; }
     document.body.style.setProperty('--scrim-dense', dense.toFixed(1) + '%');
     document.body.setAttribute('data-scrim-dense', dense.toFixed(0));
   }
+  /* THE PICTURE TAKES THE AIR THE COPY LEFT (2026-09-25). A framed cover and an
+     inset photo plate set the picture as a block of a FIXED height (540px,
+     600px) and anchor the copy to the foot, so short copy left a dead band
+     between the two: the owner's Kindly Yours slide 2 ("the picture takes a
+     quarter at the top and the rest is empty") and the Karos cover of job
+     PCjzJDH10gQW7peazB5n (a 330px empty band between the photograph and the
+     title). After the ladder has sized the type, whatever the auto margin above
+     the first block still holds is given to the picture, so the block reaches
+     down to the copy. It only ever GROWS the picture into space that was empty,
+     so it cannot push the copy into the foot band. */
+  var FILL = [
+    { pic: 'img.hero[data-kind="framed"]', prop: '--frame-h' },
+    { pic: '.bg[data-kind="framed"] > img', prop: '--frame-h' },
+    { pic: 'body[data-figure="inset"] .bg', prop: '--inset-h', needs: '.plate.slide' },
+  ];
+  /* The top and bottom of what a reader sees on the plate: visible runs of
+     text and pictures/drawings, not the boxes that hold them. */
+  function inkExtent() {
+    var top = Infinity, bottom = -Infinity;
+    var walker = document.createTreeWalker(plate, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+    var range = document.createRange();
+    for (var node = walker.nextNode(); node; node = walker.nextNode()) {
+      var rect = null;
+      if (node.nodeType === 3) {
+        if (!node.nodeValue || !node.nodeValue.trim()) continue;
+        range.selectNodeContents(node);
+        rect = range.getBoundingClientRect();
+      } else if (/^(IMG|SVG|svg|CANVAS)$/.test(node.tagName)) {
+        rect = node.getBoundingClientRect();
+      } else continue;
+      if (!rect || rect.width === 0 || rect.height === 0) continue;
+      var el = node.nodeType === 3 ? node.parentElement : node;
+      if (el && getComputedStyle(el).visibility === 'hidden') continue;
+      if (rect.top < top) top = rect.top;
+      if (rect.bottom > bottom) bottom = rect.bottom;
+    }
+    return top === Infinity ? null : { top: top, bottom: bottom };
+  }
+  function resetPicture() {
+    document.body.style.removeProperty('--frame-h');
+    document.body.style.removeProperty('--inset-h');
+    document.body.removeAttribute('data-picture-filled');
+  }
+  function fillPicture() {
+    for (var i = 0; i < FILL.length; i++) {
+      var f = FILL[i];
+      if (f.needs && !document.querySelector(f.needs)) continue;
+      var pic = document.querySelector(f.pic);
+      if (!pic || getComputedStyle(pic).display === 'none') continue;
+      /* The slack is measured to the first INK, not to a box: the lockup is a
+         flex item that stretches to the foot and anchors its copy inside
+         itself, so its own top says nothing about where the words start.
+         Ink is a visible run of text or a picture/drawing on the plate. */
+      var start = plate.getBoundingClientRect().top + parseFloat(getComputedStyle(plate).paddingTop || '0');
+      var ink = inkExtent();
+      if (!ink) return;
+      var free = Math.floor(ink.top - start);
+      if (free < 24) return;
+      var h = pic.getBoundingClientRect().height;
+      /* Boxes with no ink above the words (an empty accent, an empty eyebrow)
+         still take their height when the field shortens, so the words can move
+         down by more than the gap closed. Whatever the ink then overshoots the
+         field's foot by is given back, measured, twice at most. */
+      var fieldBottom = function () { var r = plate.getBoundingClientRect(); return r.bottom - parseFloat(getComputedStyle(plate).paddingBottom || '0'); };
+      var grow = free;
+      for (var k = 0; k < 3 && grow >= 24; k++) {
+        document.body.style.setProperty(f.prop, Math.round(h + grow) + 'px');
+        var after = inkExtent();
+        var over = after ? Math.ceil(after.bottom - fieldBottom()) : 0;
+        if (over <= 0) break;
+        grow -= over + 1;
+      }
+      if (grow < 24) { document.body.style.removeProperty(f.prop); return; }
+      document.body.setAttribute('data-picture-filled', String(grow));
+      return;
+    }
+  }
   pass();
-  var done = function () { pass(); anchorScrim(); window.__CAROUSEL_READY__ = true; };
+  fillPicture();
+  var done = function () { resetPicture(); pass(); fillPicture(); anchorScrim(); window.__CAROUSEL_READY__ = true; };
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(done, done);
   else done();
 })();
