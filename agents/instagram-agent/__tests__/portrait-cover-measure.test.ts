@@ -28,7 +28,7 @@ describe.skipIf(!isChromiumInstalled())("a portrait cover's title keeps a frame-
   const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
   let outDir = "";
   afterEach(async () => {
-    if (outDir && !process.env.KEEP_RENDER) await fs.rm(outDir, { recursive: true, force: true });
+    if (outDir) await fs.rm(outDir, { recursive: true, force: true });
   });
 
   it("with the deck yielding to the title, the title sets at a display step, not in fine print", async () => {
