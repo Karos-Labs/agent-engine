@@ -39,7 +39,7 @@ import { InstagramAngleAgent } from "../agent/instagram-angle-agent.js";
 import { InstagramBriefAgent } from "../agent/instagram-brief-agent.js";
 // Phase 4, RFC-16 — the one model step the concept mode adds (`04m`).
 import { InstagramConceptAgent, type ConceptOutput } from "../agent/instagram-concept-agent.js";
-import { InstagramCopyAgent } from "../agent/instagram-copy-agent.js";
+import { InstagramCopyAgent, COPY_STEP_TIMEOUT_MS } from "../agent/instagram-copy-agent.js";
 // The retry that EDITS the previous draft. Attempts 2 and 3 buy this instead of a whole new carousel.
 import { InstagramCopyReviseAgent } from "../agent/instagram-copy-revise-agent.js";
 // Phase 5.5 (spec §3 B3) — `05f`, the markup half of a custom archetype,
@@ -8697,7 +8697,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // construction: it steers a redraft that was already being paid for
         // and never causes one.
         ...(priorSceneSteer !== undefined ? { sceneSteer: priorSceneSteer } : {}),
-      });
+      }, { timeoutMs: COPY_STEP_TIMEOUT_MS });
       // The estimate FLOOR mirrors the estimator's own conditional
       // (`rawEstimate`: `shape.targetLanguage ? c.copyLanguageBrief + …`).
       // `copyLanguageBrief` exists as a separate key precisely because the
