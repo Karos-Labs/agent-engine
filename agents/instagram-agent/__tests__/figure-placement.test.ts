@@ -45,7 +45,8 @@ describe("figurePlacementFor", () => {
         Array.from({ length: 12 }, (_, i) => figurePlacementFor(layout, i + 1, true)),
       ),
     );
-    expect([...drawn].sort()).toEqual(["band", "bleed", "circle", "corner", "foot", "inset", "tall"]);
+    // 2026-09-25: the corner square left the rotation too (owner, Kindly Yours' quote).
+    expect([...drawn].sort()).toEqual(["band", "bleed", "circle", "foot", "inset", "tall"]);
   });
 
   it("never gives two ADJACENT slides the same shape", () => {

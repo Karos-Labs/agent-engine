@@ -1052,7 +1052,13 @@ const FIGURE_SHAPES = ["tall", "corner", "foot", "inset", "bleed", "circle", "ba
 // does not look good yet; maybe a block in the picture with something above
 // and below it". The split leaves the rotation (its CSS stays, unselected);
 // the centred block (`inset`: copy above, picture, copy below) leads it.
-const FIGURE_ROTATION: readonly FigureShape[] = ["inset", "tall", "corner", "inset", "foot", "bleed", "inset", "circle", "band"];
+// 2026-09-25, the owner on Kindly Yours' quote (prep pubsub-21255222065841312,
+// slide 2): the corner square "takes a quarter of the plate, and the half that
+// is left has nothing in it". The square leaves a column beside it that no
+// copy can use, and split between that column and the gap above the panel the
+// hole passes the 22% dead-space rule in pieces. The square leaves the
+// rotation (its CSS stays, unselected); the centred block takes its turn.
+const FIGURE_ROTATION: readonly FigureShape[] = ["inset", "tall", "circle", "inset", "foot", "bleed", "inset", "band"];
 type FigureShape = (typeof FIGURE_SHAPES)[number];
 export type FigurePlacement = FigureShape | "carry-out" | "carry-in";
 /** Every shape `figurePlacementFor` may return for a picture panel, once each. */
@@ -1242,8 +1248,8 @@ const FIGURE_ROTATION_BY_LAYOUT: Partial<Record<InstagramSlideLayout, readonly F
 const EDGE_FIGURE_ROTATION_BY_LAYOUT: Partial<Record<InstagramSlideLayout, readonly FigurePlacement[]>> = {
   list_takeaway: ["tall", "foot", "bleed", "band"],
   comparison_card: ["tall", "foot", "bleed", "band"],
-  stat_callout: ["tall", "circle", "foot", "bleed", "corner", "band"],
-  quote_card: ["tall", "circle", "foot", "bleed", "corner", "band"],
+  stat_callout: ["tall", "circle", "foot", "bleed", "band"],
+  quote_card: ["tall", "circle", "foot", "bleed", "band"],
 };
 const EDGE_FIGURE_ROTATION: readonly FigurePlacement[] = ["tall", "foot", "bleed", "band"];
 
