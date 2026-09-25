@@ -1,5 +1,6 @@
 import { goalLineBullets, type ResolvedGoalLine, type SocialMediaPlan } from "@agent-engine/workflow";
 import type { XPostOutput } from "../agent/x-draft-agent.js";
+import { readEngagementTarget } from "./engagement-target.js";
 
 /**
  * Renders this run's single draft into the exact `DRAFTS.md` shape karosCMO's
@@ -57,8 +58,23 @@ export function renderXDraftsMarkdown(input: {
   const metaBullets: string[] = [...goalLineBullets(goalLine), `**Hook:** ${draft.hook}`];
   // Only an "engagement" lane reply/quote names a target — see x-drafts.ts's
   // own metaTarget() rule: an unlabelled URL is never treated as a target.
-  if (draft.lane === "engagement" && draft.targetPostUrl) {
-    metaBullets.push(`**In reply to:** ${draft.targetPostUrl}`);
+  //
+  // THE LABEL IS A CONTRACT, so it is unchanged: karosCMO's `x-drafts.ts`
+  // matches `^(?:in\s+)?repl(?:y|ying)(?:\s+(?:to|target|post))?$` on the
+  // label, anchored, and that is what decides whether a client's reply gets
+  // ADDRESSED at this URL. Rewording it here to carry a warning would be a
+  // cross-repo break dressed as an improvement.
+  //
+  // What DID change is when the line is printed at all. No tool in this agent
+  // fetches a post; this URL came out of the drafting model and passed a
+  // `z.string().url()` that accepts `https://example.com`. A target that
+  // cannot even be shaped like an X post is now dropped instead of printed
+  // as a citation — a missing line is a gap a reviewer notices, a fabricated
+  // one is a gap they cannot. The gate payload carries the honest wording,
+  // on a surface with no parser contract.
+  const target = readEngagementTarget(draft);
+  if (target.kind === "usable") {
+    metaBullets.push(`**In reply to:** ${target.target.url}`);
   }
   if (draft.firstReplyUrl) {
     metaBullets.push(`**First reply:** ${draft.firstReplyUrl}`);

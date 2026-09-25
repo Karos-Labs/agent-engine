@@ -75,6 +75,7 @@ import type { GateVerdict } from "@agent-engine/core";
 import { MAX_THREAD_PARTS, XDraftAgent, type Lane, type XPostOutput } from "../agent/x-draft-agent.js";
 import { renderPreview, X_CHARACTER_LIMIT, type RenderPreviewResult } from "../tools/render-preview.js";
 import { renderXDraftsMarkdown } from "./render-drafts-markdown.js";
+import { readEngagementTarget, UNVERIFIED_TARGET_NOTE } from "./engagement-target.js";
 import { whyNowFor } from "./learning.js";
 import { countRecentEngagementPosts, ENGAGEMENT_DAILY_CAP, LANES_FOR_MODE, selectLane } from "./lane.js";
 import type {
@@ -1186,6 +1187,30 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
         },
       );
       draft = repaired.post;
+
+      // ── 14f: the post this reply is aimed at, and whether it can be shown ──
+      //
+      // `targetPostHandle`/`targetPostUrl` came out of the drafting model and
+      // NOTHING read them. No tool in this agent fetches a post, the schema's
+      // `z.string().url()` accepts `https://example.com`, and the deliverable
+      // printed the result as `**In reply to:** <url>` — a citation shape over
+      // a claim the run cannot stand behind. Same defect class as an unsourced
+      // figure, one field over.
+      //
+      // This cannot establish that the post exists; that costs an API tier
+      // this agent does not have. It establishes that the URL is shaped like
+      // an X post at all and that the draft does not contradict itself, drops
+      // what fails, and records the drop. A pure read, so it needs no step of
+      // its own and no checkpoint.
+      const engagementTarget = readEngagementTarget(draft);
+      if (engagementTarget.kind === "unusable") {
+        repaired.repairs.push({
+          check: "engagement-target",
+          action: "redacted",
+          detail: `${engagementTarget.reason} — the post ships without naming a target rather than naming an invented one`,
+        });
+      }
+
       // Outside the step body: a checkpointed step is replayed from its stored
       // value on resume and its body never runs again.
       repairsByRevision.set(revision, repaired.repairs);
@@ -1276,6 +1301,10 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
         // the clock a reviewer is racing and the sentence explaining it can
         // never disagree.
         const gateTimeout = textGateTimeout({ repairs: repairsByRevision.get(revision) });
+        // Re-read from THIS round's draft rather than closing over the outer
+        // one: `buildGate` is called per revision with the draft that round
+        // produced, and a target from the previous round is the wrong post.
+        const gateTarget = readEngagementTarget(draft);
         return {
         kind: "batch_review",
         payload: {
@@ -1290,6 +1319,13 @@ export function createXAgentWorkflow(options: CreateXAgentWorkflowOptions) {
           ...(draft.firstReplyUrl ? { firstReplyUrl: draft.firstReplyUrl } : {}),
           ...mediaForDeliverable(draft.mediaPlan),
           ...(selected.trend !== undefined ? { trend: { whyNow: selected.trend.whyNow, brandFitReason: selected.trend.brandFitReason, sourceUrls: selected.trend.sourceUrls } } : {}),
+          // WHAT THIS REPLY IS AIMED AT, and who checked. Nobody did: the URL
+          // is the drafting model's proposal and no tool here can fetch a post.
+          // The gate is the right surface for the warning — the portal paints
+          // any payload key and no parser reads it, unlike the DRAFTS.md label,
+          // which karosCMO's `x-drafts.ts` matches on to decide what a client's
+          // reply gets ADDRESSED at.
+          ...(gateTarget.kind === "usable" ? { replyingTo: gateTarget.target.url, replyingToCheck: UNVERIFIED_TARGET_NOTE } : {}),
           revision,
           // WHY this draft waits as long as it does, in front of the person
           // whose time it is spending.
