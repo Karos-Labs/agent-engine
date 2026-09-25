@@ -1406,13 +1406,7 @@ export function recapSourceSlides(earlier: readonly InstagramSlideCopy[]): Insta
 export function buildRecapFragment(earlier: readonly InstagramSlideCopy[]): string {
   const sources = recapSourceSlides(earlier);
   if (sources.length < MIN_RECAP_PLATES) return "";
-  // 2026-09-25 (owner feedback WS-10): a plate whose text cannot be said as a
-  // complete clause is left out rather than printed with "…" (Sitti's closer:
-  // "One screen before your first pin costs..."). The SELECTION is unchanged,
-  // so the closer's own rules read the same sources; only the strip is shorter.
-  const readable = sources.filter((slide) => !recapTextFor(slide).endsWith("…"));
-  if (readable.length < MIN_RECAP_PLATES) return "";
-  const plates = readable
+  const plates = sources
     .map((slide, index) => {
       const label = recapLabelFor(slide);
       return (
