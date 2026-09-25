@@ -581,7 +581,11 @@ export function sceneFromSlideWords(need: NormalisedVisualNeed, slide?: { headli
   return (
     `A striking conceptual editorial photograph for ${about}. Make the slide's idea visible through ONE concrete physical object or small arrangement that stands for it, ` +
     "the way a magazine art director would illustrate an abstract story: a single clear focal subject a viewer recognises in a second, a bold simple composition, crisp and well lit, contemporary. " +
-    "Not a generic scene of a person, a room or a building. " +
+    // 2026-09-25, prep batch 6: with the slide's own names in the prompt
+    // ("Sarona Partners", "Geektime") the generator drew "four men at a
+    // conference" and "event booklets in a convention lobby", and the vet
+    // refused both. The object is the picture, so the frame is a still life.
+    "A still life: no people, hands, crowds, meetings, stages, conferences or offices, and not a generic room or building. " +
     "No logos, brand names, lettering, laptops, monitors, phones or other screens, and no recognisable real people anywhere in the frame."
   );
 }

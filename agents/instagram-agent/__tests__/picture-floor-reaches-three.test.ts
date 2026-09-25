@@ -48,6 +48,8 @@ describe("a diagram brief under a photographic style is drawn as the slide's wor
     expect(prompt).toMatch(/^A striking conceptual editorial photograph/u);
     expect(prompt).toContain("ONE concrete physical object");
     expect(prompt).not.toContain("real-world setting");
+    // Prep batch 6: names in the slide words drew people at conferences; the frame is a still life.
+    expect(prompt).toContain("A still life: no people");
     expect(prompt).toContain("Two silos, one column");
   });
 
