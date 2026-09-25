@@ -9024,6 +9024,44 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           .join("\n");
       }
 
+      // ── 05p: THE FREE COPY GATES, BEFORE ANY PICTURE IS BOUGHT (2026-09-25) ──
+      //
+      // Prep batch 6: all twelve runs redrafted to their third attempt, each
+      // time on `07b2` (readable copy) or `07i` (the free value floor), two
+      // checks that read nothing but the copy, and both sat AFTER the whole
+      // picture pipeline. So every redraft threw away the pictures it had just
+      // sourced, vetted and generated, and the final attempt re-sourced from
+      // scratch on what the budget had left: Geektime's first attempt held
+      // three pictures and the one that shipped held one; the batch fell from
+      // 3.42 pictures a post to 2.58. The same two checks run here first, on
+      // the attempts that may still redraft, and a refusal goes back to the
+      // writer before a cent is spent on pictures. `07b2` and `07i` still run
+      // in place (they record on the final attempt), and on a draft that
+      // passed here they pass again: the copy is the same.
+      if (!isFinalAttempt) {
+        const early = await wf.step.code(rev(`05p-precheck-copy-attempt-${attempt}`), () => {
+          const lastSlide = copy.slides[copy.slides.length - 1];
+          const readableFindings = lintReadableCopy(copy.slides, lastSlide !== undefined && lastSlide.layout === "closer" ? lastSlide.n : undefined);
+          const signals = checkValueSignals({
+            copy,
+            factCards: promptFacts,
+            brief: { coreTerms: brief.coreTerms, offers: brief.offers },
+            ...(targetLanguage !== undefined ? { targetLanguage } : {}),
+            ...(copy.payloadKind !== undefined ? { payloadKind: copy.payloadKind } : {}),
+          });
+          return {
+            ...(readableFindings.length > 0 ? { readable: readableCopySteer(readableFindings) } : {}),
+            ...(signals.ok ? {} : { value: signals.reason }),
+          };
+        });
+        if (early.readable !== undefined || early.value !== undefined) {
+          returnToCopyWith(
+            [early.readable, early.value !== undefined ? `slide copy failed the free value floor: ${early.value}` : undefined].filter((line): line is string => line !== undefined).join("\n\n"),
+          );
+          continue;
+        }
+      }
+
       // ── 05f: THE MARKUP HALF OF A CUSTOM ARCHETYPE (Phase 5.5, spec §3 B3) ──
       //
       // Until this phase the copy step authored `bodyHtml`, `css` and an

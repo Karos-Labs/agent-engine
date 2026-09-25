@@ -471,7 +471,10 @@ describe("07i — the free value floor refuses a draft every other gate passes, 
     const stepIds = (await durableStore.listSteps(params.runId)).map((s) => s.stepId);
     // ROW 1: the refusal really did cost a redraft, so the floor is wired to
     // the loop and not merely recorded.
-    expect(stepIds).toContain("07i-value-signals-attempt-1");
+    // Since 2026-09-25 the free floor runs first at `05p`, before any picture is bought, so the
+    // attempt-1 refusal lands there and attempt 1 never reaches sourcing at all.
+    expect(stepIds).toContain("05p-precheck-copy-attempt-1");
+    expect(stepIds).not.toContain("05b-source-images-attempt-1");
     expect(stepIds).toContain("05-write-copy-attempt-2");
     // And it cost NOTHING else on attempt 1: the relevance judge and the value
     // judge are both below `07i`, and neither was reached.
