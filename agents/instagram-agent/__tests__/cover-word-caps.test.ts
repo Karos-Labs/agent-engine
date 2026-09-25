@@ -30,4 +30,14 @@ describe("cover and headline caps", () => {
     expect(checkHeadlineCaps(long as never, 7, 7)).toBeUndefined();
     expect(COVER_TITLE_MAX_WORDS).toBeLessThanOrEqual(10);
   });
+
+  it("a cover whose photograph fills the plate carries 16 words; a plate or framed cover keeps 20 (decision 20, 2026-09-25)", () => {
+    // Sitti's cover (19 words as counted): fine on a plate, three too many over a full-bleed photograph.
+    const words = ["By August, the spotlights had real names", "Alix Earle's map and Matt Peterson's NYC picks sold out in days."] as const;
+    const poster = { ...cover(...words), images: { hero: ".media-cache/r/n1.jpg" } };
+    expect(checkHeadlineCaps(poster as never, 0, 7)?.measured).toEqual({ words: 19, limit: 16, scope: "photo cover total" });
+    const framed = { ...poster, fields: { ...poster.fields, heroKind: "framed" } };
+    expect(checkHeadlineCaps(framed as never, 0, 7)).toBeUndefined();
+    expect(checkHeadlineCaps(cover(...words) as never, 0, 7)).toBeUndefined();
+  });
 });

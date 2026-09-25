@@ -180,11 +180,12 @@ describe("checkSlideWordBudget: what each archetype actually renders", () => {
     const spread = check([
       {
         layout: "list_takeaway",
+        // 2026-09-25: four rows inside the 35-word lane (decision 20).
         items: [
-          { title: filler(5), note: filler(6) },
-          { title: filler(5), note: filler(6) },
-          { title: filler(5), note: filler(6) },
-          { title: filler(5), note: filler(6) },
+          { title: filler(4), note: filler(4) },
+          { title: filler(4), note: filler(4) },
+          { title: filler(4), note: filler(4) },
+          { title: filler(4), note: filler(4) },
         ],
       },
     ]);
@@ -211,7 +212,7 @@ describe("checkSlideWordBudget: what each archetype actually renders", () => {
         layout: "comparison_card",
         headline: "Before and after",
         body: "What changed.",
-        comparison: { leftLabel: filler(2), leftBody: filler(16), rightLabel: filler(2), rightBody: filler(16) },
+        comparison: { leftLabel: filler(2), leftBody: filler(12), rightLabel: filler(2), rightBody: filler(12) },
       },
     ]);
     expect(even).toEqual([]);
@@ -290,6 +291,23 @@ describe("slideWordLoad", () => {
  * then, after type size was raised separately, *"a lot of copy on one page is
  * not good either, regardless of small type"*.
  */
+describe("the 35-word lane and the photo cover (decision 20, 2026-09-25)", () => {
+  it("refuses the old 57-word three-row plate", () => {
+    const old = check([
+      {
+        layout: "list_takeaway",
+        headline: filler(6),
+        items: [
+          { title: filler(5), note: filler(12) },
+          { title: filler(5), note: filler(12) },
+          { title: filler(5), note: filler(12) },
+        ],
+      },
+    ]);
+    expect(old.map((f) => f.measured)).toContainEqual({ words: 57, limit: 35, scope: "slide-total" });
+  });
+});
+
 describe("MAX_WORDS_PER_SLIDE_TOTAL", () => {
   it("refuses the shipped plate, and says what it measured", () => {
     const shipped = check([
@@ -312,18 +330,18 @@ describe("MAX_WORDS_PER_SLIDE_TOTAL", () => {
   });
 
   it("admits the three-row shape prompt §7 now asks for", () => {
-    // A six-word headline and three rows of a five-word title and a twelve-word
-    // note: 57. This is the version the guide invites, and a gate that refused
-    // it would be refusing a compliant draft.
+    // 2026-09-25 (decision 20, the 35-word lane): a five-word headline and
+    // three rows of a four-word title and a six-word note: 35. The old
+    // 57-word shape (6 + 3 x (5 + 12)) is exactly what the lane now refuses.
     expect(
       check([
         {
           layout: "list_takeaway",
-          headline: filler(6),
+          headline: filler(5),
           items: [
-            { title: filler(5), note: filler(12) },
-            { title: filler(5), note: filler(12) },
-            { title: filler(5), note: filler(12) },
+            { title: filler(4), note: filler(6) },
+            { title: filler(4), note: filler(6) },
+            { title: filler(4), note: filler(6) },
           ],
         },
       ]),
@@ -339,10 +357,10 @@ describe("MAX_WORDS_PER_SLIDE_TOTAL", () => {
           layout: "list_takeaway",
           headline: filler(5),
           items: [
-            { title: filler(4), note: filler(5) },
-            { title: filler(4), note: filler(5) },
-            { title: filler(4), note: filler(5) },
-            { title: filler(4), note: filler(5) },
+            { title: filler(4), note: filler(3) },
+            { title: filler(4), note: filler(3) },
+            { title: filler(4), note: filler(3) },
+            { title: filler(4), note: filler(3) },
           ],
         },
       ]),
