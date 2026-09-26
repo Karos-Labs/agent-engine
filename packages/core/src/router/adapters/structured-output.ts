@@ -178,6 +178,17 @@ export function parseStructuredOutput<TOutput>(
     return schema.parse(unwrapped);
   } catch (err) {
     if (err instanceof ZodError) {
+      // The turn nested inside its own `output`: `{output: {type: "final",
+      // output: {...}}}`. Only tried after the schema refused, so a payload
+      // that parsed as sent is never rewritten.
+      const denested = unwrapNestedTurn(unwrapped);
+      if (denested !== unwrapped) {
+        try {
+          return schema.parse(denested);
+        } catch {
+          // Fall through to the clamp and the original issue list.
+        }
+      }
       const clamped = clampOversizeValues(unwrapped, err.issues);
       if (clamped !== undefined) {
         try {
@@ -194,6 +205,33 @@ export function parseStructuredOutput<TOutput>(
     }
     throw err;
   }
+}
+
+/**
+ * A turn the model wrapped in a second turn, unwrapped.
+ *
+ * Prep batch 7 (2026-09-25), sitti `pubsub-21797984569162964`: attempts 2 and
+ * 3 of `05-write-copy` (claude-sonnet-4-6) each returned a COMPLETE, valid
+ * carousel as `{"output": {"type": "final", "output": {format, slides,
+ * caption, ...}}}`. The schema read `output.slides` as missing, the repair
+ * turn repeated the shape, and the run held with no draft to deliver,
+ * $0.92 spent on two correct drafts. At most two levels, and only an
+ * `output` that is itself a `{type: "final", output}` envelope.
+ */
+export function unwrapNestedTurn(payload: unknown): unknown {
+  let current = payload;
+  for (let depth = 0; depth < 2; depth++) {
+    if (typeof current !== "object" || current === null || Array.isArray(current)) return current;
+    const record = current as Record<string, unknown>;
+    const inner = record["output"];
+    const outerType = record["type"];
+    if ((outerType === undefined || outerType === "final") && typeof inner === "object" && inner !== null && !Array.isArray(inner) && (inner as Record<string, unknown>)["type"] === "final" && "output" in (inner as Record<string, unknown>)) {
+      current = inner;
+      continue;
+    }
+    break;
+  }
+  return current;
 }
 
 /**
