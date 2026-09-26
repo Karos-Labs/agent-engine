@@ -834,6 +834,12 @@ function mergeRemedy(
   };
 }
 
+/** The body's last sentence when there are at least two, so moving it leaves the slide a body. */
+function lastBodySentence(slide: InstagramSlideCopy): string | undefined {
+  const sentences = sentencesOf(slide.body);
+  return sentences.length >= 2 ? sentences[sentences.length - 1] : undefined;
+}
+
 /** The archetypes that paint a slide's BODY, so a merged slide's words are seen. */
 export const MERGE_TARGET_LAYOUTS: ReadonlySet<string> = new Set(["photo", "headline_focus", "text_only"]);
 
@@ -1027,11 +1033,21 @@ function remedyFor(
       };
 
     case "clipped": {
+      // ONE TYPE SCALE PER POST FIRST (WS-06, #253; 2026-09-26). Dropping one
+      // slide's `fontScale` sets it smaller than its neighbours, which is the
+      // inconsistency the owner named; prep batches 6 and 7 did it on a slide
+      // of most posts. When the body has a sentence to spare, it moves to the
+      // caption (the words stay in the post) and the scale holds; the step down
+      // is kept for a slide with nothing left to move.
+      const spare = lastBodySentence(slide);
+      if (spare !== undefined) {
+        return { kind: "move-sentence-to-caption", slide: slideN, sentence: spare, reason: `slide ${slideN}'s type overflowed its box; moving its last sentence to the caption so the post keeps one type scale` };
+      }
       const from = scaleOf(slideN, opts);
       const to = stepScale(from, -1);
       return to === undefined
         ? undefined
-        : { kind: "font-scale", slide: slideN, from, to, reason: `slide ${slideN}'s type overflowed its box; dropping its fontScale from ${from} to ${to}` };
+        : { kind: "font-scale", slide: slideN, from, to, reason: `slide ${slideN}'s type overflowed its box and has no sentence to move; dropping its fontScale from ${from} to ${to}` };
     }
 
     case "no-device":
@@ -1192,19 +1208,18 @@ function remedyFor(
     }
 
     case "text-wall": {
+      // Words first, type second (WS-06, 2026-09-26): too many glyphs is too
+      // many words, and the caption is where a sentence that does not fit on a
+      // plate belongs. The step down only when there is nothing to move.
+      const spare = lastBodySentence(slide);
+      if (spare !== undefined) {
+        return { kind: "move-sentence-to-caption", slide: slideN, sentence: spare, reason: `slide ${slideN} filled the frame with glyphs; moving its last sentence to the caption so the post keeps one type scale` };
+      }
       const from = scaleOf(slideN, opts);
       const to = stepScale(from, -1);
-      if (to !== undefined) {
-        return { kind: "font-scale", slide: slideN, from, to, reason: `slide ${slideN} filled the frame with glyphs; dropping its fontScale from ${from} to ${to}` };
-      }
-      // Already at the smallest type, so the slide has too many words rather
-      // than words that are too big. The caption is where a sentence that
-      // does not fit on a plate belongs.
-      const sentences = sentencesOf(slide.body);
-      const last = sentences.length >= 2 ? sentences[sentences.length - 1] : undefined;
-      return last === undefined
+      return to === undefined
         ? undefined
-        : { kind: "move-sentence-to-caption", slide: slideN, sentence: last, reason: `slide ${slideN} is already at the smallest type; moving its last sentence to the caption` };
+        : { kind: "font-scale", slide: slideN, from, to, reason: `slide ${slideN} filled the frame with glyphs and has one sentence left; dropping its fontScale from ${from} to ${to}` };
     }
 
     // ── NO FREE REMEDY, DELIBERATELY. ──
