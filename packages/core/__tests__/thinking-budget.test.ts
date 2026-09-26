@@ -50,23 +50,41 @@ describe("thinkingBudget: bounding what the model bills for thinking", () => {
     expect(capture.config?.["thinkingConfig"]).toEqual({ thinkingBudget: 6_000 });
   });
 
-  it("sends NO thinkingConfig when none is set, so every existing caller is byte-identical", async () => {
-    // The field is opt-in. A caller that never heard of it must produce the
-    // same request it produced before the field existed — otherwise this is a
-    // silent behaviour change to every Gemini step in the repo.
+  it("sends NO thinkingConfig when none is set, so reasoning stays as unbounded as it always was", async () => {
+    // The CAP is opt-in and stays opt-in: a caller that never heard of the
+    // field must not suddenly have its reasoning bounded, because that would
+    // change what the step produces, not just what it survives.
     const capture: { config?: Record<string, unknown> | undefined } = {};
     await adapterWith(capture).complete({ prompt: "p", schema, model: "gemini-3.1-pro-preview" });
     expect(capture.config).toBeDefined();
     expect("thinkingConfig" in (capture.config ?? {})).toBe(false);
+    // The CEILING is not opt-in, and this is the one thing about such a caller
+    // that did change on 2026-09-26. `gemini-3.1-pro-preview` reasons whether
+    // or not anyone configured it to, so the default 16,384 of answer room now
+    // gets the reserve added on top rather than being quietly shared with it.
+    // More room, never less — the request is not byte-identical, and that is
+    // the point.
+    expect(capture.config?.["maxOutputTokens"]).toBe(16_384 + 8_192);
   });
 
   it("keeps the budget independent of maxTokens, because they buy different things", async () => {
     // On Gemini thoughts count against `maxOutputTokens` too, so one number
     // cannot say "think this much AND answer this much". A shared ceiling is
     // how `04b-research-extract-facts` truncated with 3,059 visible tokens.
+    //
+    // Which is why this asserted the wrong number until 2026-09-26. It sent
+    // the step's 20,000 as the ceiling and the 6,000 as the budget, and called
+    // them independent — but a 6,000-token budget drawn from a 20,000-token
+    // ceiling leaves the ANSWER 14,000, so the two were never independent at
+    // all. The prose above described the fix; the assertion below encoded the
+    // defect. `maxOutputTokens` is now the sum, which is the only shape in
+    // which `maxTokens: 20_000` still means twenty thousand tokens of answer.
     const capture: { config?: Record<string, unknown> | undefined } = {};
     await adapterWith(capture).complete({ prompt: "p", schema, model: "gemini-3.1-pro-preview", maxTokens: 20_000, thinkingBudget: 6_000 });
-    expect(capture.config?.["maxOutputTokens"]).toBe(20_000);
+    expect(capture.config?.["maxOutputTokens"]).toBe(26_000);
+    // The budget itself is still forwarded verbatim — the reserve buys the
+    // answer its room, the budget is what actually bounds the reasoning, and
+    // this step is the one that needs both.
     expect(capture.config?.["thinkingConfig"]).toEqual({ thinkingBudget: 6_000 });
   });
 });

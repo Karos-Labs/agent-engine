@@ -73,9 +73,35 @@ export type LanguageStrength = "basic" | "strong" | "multilingual-strong";
 /** Right-to-left script (Hebrew, Arabic) quality — the dimension AU33's geektime incident found entirely missing. */
 export type RtlSupport = "none" | "basic" | "strong";
 
+/**
+ * What this model does when the request carries NO thinking parameter at all.
+ *
+ * This exists because that answer is not a constant, and the place it changes
+ * is a model upgrade. Omitting `thinking` means "no reasoning" on
+ * `claude-sonnet-4-6` and `claude-opus-4-8`, and "adaptive reasoning, on" on
+ * `claude-sonnet-5` and `claude-opus-5` — so a swap that touches nothing but
+ * the model id silently turns reasoning on for every step that inherits the
+ * default. Reasoning is billed as output AND counted against the output
+ * ceiling on both vendors, so the step that used to fit its answer in
+ * `maxTokens` now shares that budget with an invisible second writer. A
+ * `maxTokens: 1_200` step does not survive that, and the failure arrives as a
+ * truncated, unparseable payload rather than as anything naming the cause.
+ *
+ * `MessagesApiAdapter` reads this to decide whether it must state the policy
+ * explicitly, and never guesses from the model id's shape.
+ */
+export type ThinkingDefault = "off" | "on";
+
 export interface ModelCapabilities {
   /** Which vendor actually serves this id — checked by `assertModelCatalogued` against a policy's resolved vendor. */
   readonly vendor: ModelVendor;
+  /**
+   * Whether omitting the vendor's thinking parameter leaves reasoning ON.
+   * Required, not optional-with-a-default: the whole hazard this field
+   * describes is a value nobody stated (see {@link ThinkingDefault}), and a
+   * new row that silently inherited `"off"` would reproduce it exactly.
+   */
+  readonly thinkingDefault: ThinkingDefault;
   readonly languageStrength: LanguageStrength;
   readonly rtlSupport: RtlSupport;
   readonly modality: readonly ModelModality[];
@@ -106,6 +132,7 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   // ── Anthropic ─────────────────────────────────────────────────────────
   "claude-opus-4-8": {
     vendor: "anthropic",
+    thinkingDefault: "off",
     languageStrength: "multilingual-strong",
     rtlSupport: "strong",
     modality: ["text", "image"],
@@ -116,6 +143,7 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   },
   "claude-opus-4-7": {
     vendor: "anthropic",
+    thinkingDefault: "off",
     languageStrength: "multilingual-strong",
     rtlSupport: "strong",
     modality: ["text", "image"],
@@ -126,6 +154,7 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   },
   "claude-sonnet-4-6": {
     vendor: "anthropic",
+    thinkingDefault: "off",
     languageStrength: "strong",
     rtlSupport: "strong",
     modality: ["text", "image"],
@@ -140,6 +169,7 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   // spelling verbatim).
   "claude-haiku-4-5-20251001": {
     vendor: "anthropic",
+    thinkingDefault: "off",
     languageStrength: "basic",
     rtlSupport: "basic",
     modality: ["text", "image"],
@@ -150,6 +180,7 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   },
   "claude-haiku-4-5": {
     vendor: "anthropic",
+    thinkingDefault: "off",
     languageStrength: "basic",
     rtlSupport: "basic",
     modality: ["text", "image"],
@@ -160,6 +191,7 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   },
   "claude-3-5-sonnet-20241022": {
     vendor: "anthropic",
+    thinkingDefault: "off",
     languageStrength: "strong",
     rtlSupport: "basic",
     modality: ["text", "image"],
@@ -170,6 +202,7 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   },
   "claude-3-5-sonnet-v2-20241022": {
     vendor: "anthropic",
+    thinkingDefault: "off",
     languageStrength: "strong",
     rtlSupport: "basic",
     modality: ["text", "image"],
@@ -180,6 +213,7 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   },
   "claude-3-5-haiku-20241022": {
     vendor: "anthropic",
+    thinkingDefault: "off",
     languageStrength: "basic",
     rtlSupport: "basic",
     modality: ["text"],
@@ -190,6 +224,7 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   },
   "claude-3-opus-20240229": {
     vendor: "anthropic",
+    thinkingDefault: "off",
     languageStrength: "strong",
     rtlSupport: "basic",
     modality: ["text", "image"],
@@ -200,6 +235,7 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   },
   "claude-3-haiku-20240307": {
     vendor: "anthropic",
+    thinkingDefault: "off",
     languageStrength: "basic",
     rtlSupport: "none",
     modality: ["text", "image"],
@@ -224,6 +260,7 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   // id — or a stored run being re-read — resolves rather than throws.
   "gemini-3.1-pro-preview": {
     vendor: "gemini",
+    thinkingDefault: "on",
     languageStrength: "multilingual-strong",
     rtlSupport: "strong",
     modality: ["text", "image", "audio", "video"],
@@ -238,6 +275,7 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   // `karos-media`'s own client had to stop defaulting to that region.
   "gemini-3.8-flash": {
     vendor: "gemini",
+    thinkingDefault: "on",
     // `strong`, not `multilingual-strong` — the same rating 2.5 Flash carried,
     // kept deliberately so this migration moves model IDS and nothing else. A
     // flash row rated multilingual-strong would outrank 3.1 Pro on cost for
@@ -253,6 +291,7 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   },
   "gemini-2.5-pro": {
     vendor: "gemini",
+    thinkingDefault: "on",
     languageStrength: "multilingual-strong",
     rtlSupport: "strong",
     modality: ["text", "image", "audio", "video"],
@@ -263,6 +302,7 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   },
   "gemini-2.5-flash": {
     vendor: "gemini",
+    thinkingDefault: "on",
     languageStrength: "strong",
     rtlSupport: "strong",
     modality: ["text", "image", "audio", "video"],
@@ -275,6 +315,7 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   // ── OpenAI-compatible ─────────────────────────────────────────────────
   "gpt-4o": {
     vendor: "openai-compatible",
+    thinkingDefault: "off",
     languageStrength: "strong",
     rtlSupport: "basic",
     modality: ["text", "image"],
@@ -285,6 +326,7 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   },
   "gpt-4o-mini": {
     vendor: "openai-compatible",
+    thinkingDefault: "off",
     languageStrength: "strong",
     rtlSupport: "basic",
     modality: ["text", "image"],
@@ -297,6 +339,7 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   // ── Model Garden (MaaS) ───────────────────────────────────────────────
   "llama-3.3-70b-instruct-maas": {
     vendor: "model-garden",
+    thinkingDefault: "off",
     languageStrength: "basic",
     rtlSupport: "none",
     modality: ["text"],
@@ -307,6 +350,7 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   },
   "mistral-small-2503": {
     vendor: "model-garden",
+    thinkingDefault: "off",
     languageStrength: "basic",
     rtlSupport: "none",
     modality: ["text"],
@@ -317,6 +361,7 @@ export const MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = {
   },
   "mistral-medium-3": {
     vendor: "model-garden",
+    thinkingDefault: "off",
     languageStrength: "strong",
     rtlSupport: "basic",
     modality: ["text"],

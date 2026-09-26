@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { FinishReason, BlockedReason, type GoogleGenAI } from "@google/genai";
-import { GeminiAdapter, GEMINI_DEFAULT_MAX_TOKENS } from "../src/router/adapters/gemini-adapter.js";
+import { GeminiAdapter, GEMINI_DEFAULT_MAX_TOKENS, GEMINI_DEFAULT_THINKING_RESERVE_TOKENS } from "../src/router/adapters/gemini-adapter.js";
 import type { CompletionRequest } from "../src/router/adapters/types.js";
-import { StructuredOutputValidationError } from "../src/router/adapters/structured-output.js";
+import { OutputLimitExceededError, StructuredOutputValidationError } from "../src/router/adapters/structured-output.js";
 
 // A discriminated union at the schema root, exactly the shape
 // `BaseAgent.buildTurnSchema()` produces — forces `toRootObjectJsonSchema` to
@@ -65,16 +65,21 @@ describe("GeminiAdapter", () => {
     expect(generateContent.mock.calls[0]![0].config.systemInstruction).toBeUndefined();
   });
 
-  it("uses the step's maxTokens when set, and the shared default otherwise", async () => {
+  it("gives the step's maxTokens to the ANSWER and adds the reasoning reserve on top", async () => {
+    // `gemini-2.5-pro` reasons whether or not the step asked it to, and Gemini
+    // charges that reasoning to `maxOutputTokens`. So the step's number is the
+    // answer's room and the reserve is added to it — otherwise `maxTokens: 500`
+    // would mean "500 tokens shared between thinking and answering", which is
+    // a number nobody chose and, at that size, is no answer at all.
     const generateContent = vi.fn().mockResolvedValue(goodResponse());
     const adapter = new GeminiAdapter({ client: fakeClient(generateContent), retryOptions: { delay: () => Promise.resolve() } });
 
     await adapter.complete(request());
-    expect(generateContent.mock.calls[0]![0].config.maxOutputTokens).toBe(GEMINI_DEFAULT_MAX_TOKENS);
+    expect(generateContent.mock.calls[0]![0].config.maxOutputTokens).toBe(GEMINI_DEFAULT_MAX_TOKENS + GEMINI_DEFAULT_THINKING_RESERVE_TOKENS);
 
     generateContent.mockClear();
     await adapter.complete(request({ maxTokens: 500 }));
-    expect(generateContent.mock.calls[0]![0].config.maxOutputTokens).toBe(500);
+    expect(generateContent.mock.calls[0]![0].config.maxOutputTokens).toBe(500 + GEMINI_DEFAULT_THINKING_RESERVE_TOKENS);
   });
 
   it("throws a clear, actionable error when the model hits MAX_TOKENS before completing", async () => {
@@ -85,8 +90,11 @@ describe("GeminiAdapter", () => {
     });
     const adapter = new GeminiAdapter({ client: fakeClient(generateContent), retryOptions: { delay: () => Promise.resolve() } });
 
+    // The limit named is the one actually sent — answer room plus the reserve —
+    // because that is the number the provider enforced and the only one that
+    // makes the message reconcilable with the request.
     await expect(adapter.complete(request())).rejects.toThrow(
-      new RegExp(`google-gemini.*gemini-2\\.5-pro.*${GEMINI_DEFAULT_MAX_TOKENS}-token output limit`, "s"),
+      new RegExp(`google-gemini.*gemini-2\\.5-pro.*${GEMINI_DEFAULT_MAX_TOKENS + GEMINI_DEFAULT_THINKING_RESERVE_TOKENS}-token output limit`, "s"),
     );
   });
 
@@ -108,7 +116,55 @@ describe("GeminiAdapter", () => {
     });
     const adapter = new GeminiAdapter({ client: fakeClient(generateContent), retryOptions: { delay: () => Promise.resolve() } });
 
-    await expect(adapter.complete(request())).rejects.toThrow(/google-gemini.*returned no text content.*finishReason: OTHER/s);
+    const err = await adapter.complete(request()).catch((e: unknown) => e);
+    expect((err as Error).message).toMatch(/google-gemini.*returned no text content.*finishReason: OTHER/s);
+    // A turn that emitted nothing, with no reasoning to blame, is a malformed
+    // turn — so it earns the one repair turn rather than ending the step.
+    expect(err).toBeInstanceOf(StructuredOutputValidationError);
+  });
+
+  it("treats an empty answer that reasoning consumed as a ceiling failure, so the step can be re-asked with more room", async () => {
+    // Google's documented behaviour for a thinking model that runs out of room
+    // is a truncated OR EMPTY candidate, and the empty one does not always
+    // arrive as MAX_TOKENS. Without this branch that turn was a bare `Error`:
+    // no ceiling raise, no recovery, and a client who gets nothing because the
+    // model spent its budget thinking. The thoughts in `usageMetadata` are the
+    // evidence that this is a budget problem wearing a different finish reason.
+    const generateContent = vi.fn().mockResolvedValue({
+      candidates: [{ finishReason: FinishReason.STOP }],
+      text: undefined,
+      usageMetadata: { promptTokenCount: 400, candidatesTokenCount: 0, thoughtsTokenCount: 15_000 },
+    });
+    const adapter = new GeminiAdapter({ client: fakeClient(generateContent), retryOptions: { delay: () => Promise.resolve() } });
+
+    const err = await adapter.complete(request()).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(OutputLimitExceededError);
+    expect((err as Error).message).toMatch(/spending 15000 tokens reasoning/);
+    // The ANSWER's room, not the provider ceiling — `raisedOutputLimit` doubles
+    // what it is handed, so a number carrying the reserve would compound it.
+    expect((err as OutputLimitExceededError).attemptedMaxTokens).toBe(GEMINI_DEFAULT_MAX_TOKENS);
+    // The reasoning was billed, and it is the whole cost of this turn.
+    expect((err as OutputLimitExceededError).usage?.outputTokens).toBe(15_000);
+  });
+
+  it("keeps a safety block a plain failure, because more room produces the same refusal", async () => {
+    const generateContent = vi.fn().mockResolvedValue({
+      candidates: [],
+      text: undefined,
+      promptFeedback: { blockReason: BlockedReason.SAFETY },
+      usageMetadata: { promptTokenCount: 400, candidatesTokenCount: 0, thoughtsTokenCount: 9_000 },
+    });
+    const adapter = new GeminiAdapter({ client: fakeClient(generateContent), retryOptions: { delay: () => Promise.resolve() } });
+
+    const err = await adapter.complete(request()).catch((e: unknown) => e);
+
+    // Even with reasoning tokens on the clock: a refusal is not a budget, and
+    // classifying it as one would spend a second full ceiling to be refused
+    // again. The block reason is checked first for exactly that reason.
+    expect(err).not.toBeInstanceOf(OutputLimitExceededError);
+    expect(err).not.toBeInstanceOf(StructuredOutputValidationError);
+    expect((err as Error).message).toMatch(/blocked: SAFETY/);
   });
 
   // Non-JSON text is a malformed *turn*, not a dead provider — it surfaces as

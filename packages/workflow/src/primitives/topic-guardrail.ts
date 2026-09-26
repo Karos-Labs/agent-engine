@@ -3,6 +3,7 @@ import {
   GUARDRAIL_OUTPUT_FIELDS,
   GUARDRAIL_STEP_ID,
   GuardrailViolationError,
+  resolveModelPolicy,
   buildGuardrailInput,
   buildGuardrailSystemPrompt,
   buildOutputSchema,
@@ -135,7 +136,15 @@ export async function runTopicGuardrail(
       // "commodity" is this codebase's own tier for classification work, which
       // is what checking a draft against a fixed list is. It also keeps the
       // cost of having guardrails on at all close to nothing.
-      modelPolicy: { policy: "commodity", model: "claude-haiku-4-5-20251001" },
+      //
+      // Resolved through `resolveModelPolicy` like the other forty-nine steps
+      // in this engine, rather than declared inline. Inline was not a smaller
+      // way of saying the same thing: it put this one step outside BOTH
+      // switching mechanisms at once — no `MODEL_STEP_TOPIC_GUARDRAIL_*` env
+      // pair, and no Studio `stageModels` pick — so the guardrail was the
+      // single model choice in the system an operator could not move without
+      // a deploy.
+      modelPolicy: resolveModelPolicy(GUARDRAIL_STEP_ID, { policy: "commodity", model: "claude-haiku-4-5-20251001" }),
       maxSteps: 1,
     },
     buildGuardrailSystemPrompt([...forbiddenTopics]),

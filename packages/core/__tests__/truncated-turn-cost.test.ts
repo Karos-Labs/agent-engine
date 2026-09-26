@@ -9,6 +9,7 @@ import {
   DefaultModelRouter,
   GeminiAdapter,
   GEMINI_DEFAULT_MAX_TOKENS,
+  GEMINI_DEFAULT_THINKING_RESERVE_TOKENS,
   MockAgent,
   OutputLimitExceededError,
   computeStepCostUsd,
@@ -236,11 +237,18 @@ describe("the Gemini route: a truncated turn carries its usage", () => {
     expect(result.outputTokens).toBe(5_459);
   });
 
-  it("keeps the actionable message every existing caller reads", async () => {
+  it("keeps the actionable message every existing caller reads, and now says where the ceiling went", async () => {
     const adapter = new GeminiAdapter({ client: geminiTruncation(), retryOptions: { delay: () => Promise.resolve() } });
 
+    // `gemini-2.5-flash` reasons by default, so the ceiling it hit is the
+    // answer's room plus the reserve. The message names the split because a
+    // reader who sees only the total cannot tell a step that genuinely needs
+    // more room from one whose reasoning ran away — which are opposite fixes.
     await expect(adapter.complete({ prompt: "p", schema: OutputSchema, model: "gemini-2.5-flash" })).rejects.toThrow(
-      new RegExp(`google-gemini: model "gemini-2\\.5-flash" hit the ${GEMINI_DEFAULT_MAX_TOKENS}-token output limit`),
+      new RegExp(
+        `google-gemini: model "gemini-2\\.5-flash" hit the ${GEMINI_DEFAULT_MAX_TOKENS + GEMINI_DEFAULT_THINKING_RESERVE_TOKENS}-token output limit ` +
+          `\\(${GEMINI_DEFAULT_MAX_TOKENS} for the answer \\+ ${GEMINI_DEFAULT_THINKING_RESERVE_TOKENS} reserved for reasoning\\)`,
+      ),
     );
   });
 });

@@ -69,6 +69,16 @@ jobs:
       - name: Model pricing coverage
         run: npm run check:pricing
 
+      # Every declared output ceiling must be one `raisedOutputLimit` can
+      # raise. A step whose `maxTokens` sits at or above OUTPUT_LIMIT_RETRY_CEILING
+      # has no recovery from a truncated turn: the first cut-off payload is a
+      # `tooling_error` and the client's run ends with nothing, which is the one
+      # outcome this engine is not allowed to produce. Nothing is over the line
+      # today; this is what stops the next larger number from crossing it
+      # silently, since until now the rule lived only in a comment.
+      - name: Output ceilings are recoverable
+        run: npm run check:ceilings
+
       # AU11 (SCRUM-296): every `defineTool()` call's TOOL_VERSION travels
       # into telemetry (RFC-01 §9.1 rule 5); ~50 of them were "1.0.0" since
       # creation because nothing ever forced a bump. This fails a push that
