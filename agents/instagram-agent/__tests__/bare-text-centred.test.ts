@@ -29,3 +29,15 @@ describe("a bare text plate is a centred block", () => {
     expect(run({ device: { kind: "figure", value: "0.05%", label: "final selection rate", source: "Business Wire, 2026" } })).not.toBe("centre");
   });
 });
+
+describe("a kicker that is only a series name is dropped (2026-09-26)", () => {
+  it("recognises the badge and the id in any case, bracket or isolate, and keeps a topical kicker", async () => {
+    const { isSeriesName } = await import("../src/workflow/slides-data.js");
+    expect(isSeriesName("by the numbers")).toBe(true);
+    expect(isSeriesName("BY THE NUMBERS")).toBe(true);
+    expect(isSeriesName("\u2068by the numbers\u2069")).toBe(true);
+    expect(isSeriesName("{ FIELD NOTES }")).toBe(true);
+    expect(isSeriesName("CREATOR ECONOMY")).toBe(false);
+    expect(isSeriesName("Samsung C&T")).toBe(false);
+  });
+});

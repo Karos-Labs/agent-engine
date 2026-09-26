@@ -1,3 +1,4 @@
+import { BUNDLED_SERIES } from "./editorial-series.js";
 import type { AgentContext, AgentToolRegistry, GateVerdict } from "@agent-engine/core";
 import { WorkflowToolingFailure } from "@agent-engine/workflow";
 import type { RenderCarouselInput, Slide } from "@agent-engine/tool-karos-publish";
@@ -2207,6 +2208,11 @@ function contentFor(
   const eyebrowText: string | undefined = ((): string | undefined => {
     const raw = slide.kicker?.trim();
     if (raw === undefined || raw.length === 0) return undefined;
+    // 2026-09-26: the series name is the internal label the badge slot was
+    // deleted for, and it came back through the writer's own kicker (Geektime,
+    // prep batch 8: "by the numbers" over slide 2). A kicker that IS a series
+    // name is not a topical line.
+    if (isSeriesName(raw)) return undefined;
     if (context?.eyebrowSlides !== undefined && !context.eyebrowSlides.has(slide.n)) return undefined;
     return clampEyebrow(raw);
   })();
@@ -2923,6 +2929,16 @@ export function coverCompositionForHeadline(requested: "poster" | "sandwich" | "
 }
 /** The contrast a stat's figure needs to be set in the accent: WCAG's large-text floor. */
 export const FIGURE_INK_MIN_CONTRAST = 3;
+
+/** Case, brackets, punctuation and bidi isolates do not make a series name a different label. */
+function labelKey(text: string): string {
+  return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+const SERIES_NAMES: ReadonlySet<string> = new Set(BUNDLED_SERIES.flatMap((s) => [labelKey(s.badge), labelKey(s.id.replace(/_/g, " "))]));
+/** Whether a kicker is only an editorial series' name (an internal label, never a topical line). */
+export function isSeriesName(kicker: string): boolean {
+  return SERIES_NAMES.has(labelKey(kicker));
+}
 
 export function assembleSlidesData(params: {
   clientSlug: string;
