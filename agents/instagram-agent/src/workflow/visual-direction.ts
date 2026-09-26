@@ -695,6 +695,37 @@ export function sceneNamesForbiddenSubject(scene: string, forbid: readonly strin
   return FORBIDDABLE_SUBJECTS.some((family) => family.names.test(scene) && forbid.some((line) => family.trigger.test(line)));
 }
 
+/**
+ * A SCREEN THAT BELONGS TO THE STORY (owner, 2026-09-26).
+ *
+ * Every lab client's direction bans screens, because a generated laptop in a
+ * dark room is the feed's cliche. The owner draws the line at relevance: a
+ * post about ChatGPT, LinkedIn or a WhatsApp flow may show that product's own
+ * screen (a chat, a feed, an inbox), generated, when it looks good; an
+ * unrelated screen stays banned, and one that comes out badly is refused by
+ * the vet and dropped. A brief qualifies when it asks for an interface AND
+ * names a product or company the post itself is about (04b3's entities); it
+ * is then not rewritten into a still life, the screen family is lifted from
+ * that generation's negatives, and the brief is told how the screen must look.
+ */
+const INTERFACE_WORDS = /\b(screens?|interfaces?|app|apps|dashboards?|UI|chat|chats|feed|inbox|thread|profile page|notification|browser|window)\b/iu;
+
+export function isRelatedScreenBrief(scene: string, entities: ReadonlyArray<{ name: string; kind: string }>): boolean {
+  if (!INTERFACE_WORDS.test(scene)) return false;
+  const lower = scene.toLowerCase();
+  return entities.some((e) => (e.kind === "product" || e.kind === "company") && e.name.trim().length >= 3 && lower.includes(e.name.trim().toLowerCase()));
+}
+
+/** How a related screen must be drawn to read at feed size: its text is the part generators garble. */
+export const RELATED_SCREEN_STYLE =
+  "Show it as a clean, modern app interface seen straight on or at a slight angle: flat UI, large simple shapes, very few short words, no real logos or trademarks, crisp and evenly lit.";
+
+/** The negatives without the screen family, for a generation that draws a related screen. */
+export function forbidWithoutScreens(forbid: readonly string[]): string[] {
+  const screens = FORBIDDABLE_SUBJECTS[0]!.trigger;
+  return forbid.filter((line) => !screens.test(line));
+}
+
 /** Added to every direction's negatives for generation. */
 export const CLICHE_SCENE_FORBID: readonly string[] = [
   "a person at a laptop or desk in a dark room",
