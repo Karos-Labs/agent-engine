@@ -203,11 +203,12 @@ describe("the score (§1.4)", () => {
     expect(terms.map((t) => t.term).sort()).toEqual(["distance>=0.6", "hot-news", "interest>=4", "numbers"]);
     expect(terms.every((t) => t.points === 1)).toBe(true);
     expect(score).toBe(4);
-    expect(score).toBeLessThan(CONCEPT_MIN_SCORE);
+    expect(score).toBeGreaterThanOrEqual(CONCEPT_MIN_SCORE); // 2026-09-26: over the lowered threshold, and still refused below for having no shape term
 
     const verdict = conceptEligibility(eligibilityInput(signals));
     expect(verdict.eligible).toBe(false);
-    expect(verdict.reason).toContain(`score 4 is under the ${CONCEPT_MIN_SCORE} threshold`);
+    // 2026-09-26: the shape is required by name, so this now declines for having no move rather than on arithmetic.
+    expect(verdict.reason).toContain("score 4 carries no reversal, figure or contest");
     expect(verdict.rule).toContain("→ not eligible");
 
     // And the control: the SAME story with one of the three 2-point shape
@@ -871,7 +872,8 @@ describe("the verdict (§1.5, §1.7)", () => {
     expect(verdict.recognition.entities.length).toBeGreaterThan(0);
     expect(verdict.grounding).toMatchObject({ basis: "trend", brandFit: 5, floor: 4 });
     expect(verdict.subjects.length).toBeGreaterThan(0);
-    expect(verdict.rule).toMatch(/^score 3 < 5, entities\(/u);
+    // 2026-09-26: 3 now clears the lowered threshold; the decline is the missing shape term, named in the rule.
+    expect(verdict.rule).toMatch(/^score 3 ≥ 3, entities\(.*no reversal, figure or contest/u);
   });
 
   it("fails OFF when there is no selected angle", () => {
