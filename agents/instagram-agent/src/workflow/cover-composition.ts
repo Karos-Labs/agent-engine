@@ -1,3 +1,4 @@
+import { exemplarVoteWeight } from "./exemplar-look.js";
 import type { ExemplarLibrary } from "./exemplar-library.js";
 
 /**
@@ -57,7 +58,8 @@ const FROM_COVER_TYPE: Record<string, Partial<CoverWeights>> = {
 
 export function coverWeightsFor(library: ExemplarLibrary | undefined): { weights: CoverWeights; basis: string } {
   if (library === undefined || library.status !== "built") return { weights: DEFAULT_COVER_WEIGHTS, basis: "the owner's default (no exemplar library)" };
-  const entries = library.entries.filter((e) => e.role !== "client" && typeof e.dna["coverType"] === "string");
+  // S1 (2026-09-26): the client's own strong posts vote too, twice (`exemplarVoteWeight`).
+  const entries = library.entries.filter((e) => exemplarVoteWeight(e) > 0 && typeof e.dna["coverType"] === "string");
   if (entries.length < MIN_ENTRIES) return { weights: DEFAULT_COVER_WEIGHTS, basis: `the owner's default (${entries.length} exemplar cover(s), fewer than ${MIN_ENTRIES})` };
   const seen: CoverWeights = { poster: 0, sandwich: 0, framed: 0 };
   const types = new Map<string, number>();
@@ -66,7 +68,7 @@ export function coverWeightsFor(library: ExemplarLibrary | undefined): { weights
     const type = e.dna["coverType"] as string;
     const map = FROM_COVER_TYPE[type];
     if (map === undefined) continue;
-    const w = Math.max(1, e.craft) * Math.max(1, Math.min(10, e.lift ?? 1));
+    const w = Math.max(1, e.craft) * Math.max(1, Math.min(10, e.lift ?? 1)) * exemplarVoteWeight(e);
     for (const c of COVER_COMPOSITIONS) seen[c] += (map[c] ?? 0) * w;
     types.set(type, (types.get(type) ?? 0) + 1);
     total += w;

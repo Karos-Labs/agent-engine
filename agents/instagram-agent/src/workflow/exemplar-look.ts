@@ -22,6 +22,24 @@ export interface ExemplarLook {
 
 /** An axis needs at least this many exemplars behind its most common value, and a plurality. */
 const MIN_VOTES = 2;
+
+/**
+ * The client's OWN posts lead when they are good (2026-09-26, S1).
+ *
+ * Owner: "Deel's own recent posts are prettier". The look and the cover mix
+ * were voted by competitors and references only, so a client whose feed the
+ * judge graded 5/5 on every post (Hanky Panky, prep batch 8: six of six) was
+ * styled after other accounts. A client post graded at least this well votes,
+ * and votes twice: it is the brand's own proven look.
+ */
+export const CLIENT_LEAD_MIN_CRAFT = 4;
+export const CLIENT_LEAD_WEIGHT = 2;
+
+/** Whether an entry votes, and how many times: references once, the client's own strong posts twice, its weaker ones not at all. */
+export function exemplarVoteWeight(entry: { role: string; craft: number }): number {
+  if (entry.role !== "client") return 1;
+  return entry.craft >= CLIENT_LEAD_MIN_CRAFT ? CLIENT_LEAD_WEIGHT : 0;
+}
 /** The strongest exemplars only: craft first, then lift. */
 const MAX_ENTRIES = 12;
 
@@ -63,11 +81,13 @@ function vote<T extends string>(values: ReadonlyArray<T | undefined>): { value: 
 
 export function exemplarLook(library: ExemplarLibrary | undefined): ExemplarLook | undefined {
   if (library === undefined || library.status !== "built") return undefined;
-  const entries = [...library.entries]
-    .filter((e) => e.role !== "client")
+  const ranked = [...library.entries]
+    .filter((e) => exemplarVoteWeight(e) > 0)
     .sort((a, b) => b.craft - a.craft || (b.lift ?? 0) - (a.lift ?? 0))
     .slice(0, MAX_ENTRIES);
-  if (entries.length < MIN_VOTES) return undefined;
+  if (ranked.length < MIN_VOTES) return undefined;
+  // A strong client post is listed twice, so it counts twice in every vote.
+  const entries = ranked.flatMap((e) => Array.from({ length: exemplarVoteWeight(e) }, () => e));
   const dna = (key: string): Array<string | undefined> => entries.map((e) => (typeof e.dna[key] === "string" ? (e.dna[key] as string) : undefined));
   const ground = vote(dna("groundStyle").map((v) => (v === undefined ? undefined : GROUND[v])));
   const accent = vote(dna("emphasis").map((v) => (v === undefined ? undefined : ACCENT[v])));

@@ -35,8 +35,8 @@ describe("cover composition", () => {
     expect(drawn.poster).toBeGreaterThanOrEqual(DEFAULT_COVER_WEIGHTS.poster);
   });
 
-  it("ignores the client's own posts and thin libraries", () => {
-    expect(coverWeightsFor(library([entry("collage", 5, 3, "client"), entry("collage", 5, 3, "client"), entry("collage", 5, 3, "client")])).weights).toEqual(DEFAULT_COVER_WEIGHTS);
+  it("ignores the client's own WEAK posts (craft under 4, S1) and thin libraries", () => {
+    expect(coverWeightsFor(library([entry("collage", 3, 3, "client"), entry("collage", 3, 3, "client"), entry("collage", 3, 3, "client")])).weights).toEqual(DEFAULT_COVER_WEIGHTS);
     expect(coverWeightsFor(library([entry("collage"), entry("collage")])).weights).toEqual(DEFAULT_COVER_WEIGHTS);
   });
 

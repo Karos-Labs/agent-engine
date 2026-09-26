@@ -77,6 +77,14 @@ export const HARVEST_PLAN_VERSION = 2;
 
 export function planHarvest(input: {
   ownAccounts: ReadonlyArray<{ platform: string; username: string }>;
+  /**
+   * S1 (2026-09-26): the client's handles on OTHER platforms, tried on
+   * Instagram before the website's link. The Pitch by Deel has no Instagram
+   * account in its config, so its site (deel.com) named @getdeel, the parent
+   * brand, and the harvest read the wrong feed; its own handle is `deelpitch`
+   * on X, and on Instagram too.
+   */
+  ownHandlesElsewhere?: readonly string[] | undefined;
   referenceAccounts: ReadonlyArray<{ platform: string; handle: string }>;
   competitors: ReadonlyArray<{ name?: unknown; website?: unknown }>;
   /** The client's own website: its instagram.com link names the client's account when the config does not. */
@@ -91,6 +99,19 @@ export function planHarvest(input: {
     if (own.platform !== "instagram") continue;
     const handle = cleanHandle(own.username);
     if (handle !== undefined) accounts.set(handle, "client");
+  }
+  if (![...accounts.values()].includes("client")) {
+    const elsewhere = [
+      ...input.ownAccounts.filter((a) => a.platform !== "instagram").map((a) => a.username),
+      ...(input.ownHandlesElsewhere ?? []),
+    ];
+    for (const raw of elsewhere) {
+      const handle = cleanHandle(raw);
+      if (handle !== undefined && !accounts.has(handle)) {
+        accounts.set(handle, "client");
+        break;
+      }
+    }
   }
   for (const ref of input.referenceAccounts) {
     if (ref.platform !== "instagram") continue;
