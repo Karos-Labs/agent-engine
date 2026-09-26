@@ -256,6 +256,9 @@ const HAPPY_PATH_STEP_IDS = [
   // nothing. The second of the floor's two enforcements; the first is
   // `partitionGaps` at the three optional-spend gates in the rescue ladder.
   "06h-imagery-floor-check-attempt-1",
+  // 2026-09-26: the fixture's seeded cover is a sandwich, so 06h26 offers the
+  // cover picture to the lift (object-on-ground cover).
+  "06h26-lift-product-cutouts-attempt-1",
   // 2026-09-23: the floor frames staged out of RAM too (runs every attempt;
   // on the happy path it has nothing new to stage).
   "06h3-stage-floor-images-attempt-1",
