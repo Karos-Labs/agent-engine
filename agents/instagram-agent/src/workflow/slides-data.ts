@@ -2921,6 +2921,8 @@ export function coverCompositionForHeadline(requested: "poster" | "sandwich" | "
   const words = headline.trim().split(/\s+/u).filter((w) => w.length > 0).length;
   return words > POSTER_MAX_HEADLINE_WORDS ? "sandwich" : "poster";
 }
+/** The contrast a stat's figure needs to be set in the accent: WCAG's large-text floor. */
+export const FIGURE_INK_MIN_CONTRAST = 3;
 
 export function assembleSlidesData(params: {
   clientSlug: string;
@@ -3486,6 +3488,8 @@ export function assembleSlidesData(params: {
         })(),
         // 2026-09-24: which of the three closer forms (`closerFormFor`); only the closer plate reads it.
         ...(layout === "closer" ? { closerForm: closerFormFor(`${params.clientSlug}:${params.paletteSeed ?? ""}`) } : {}),
+        // 2026-09-26: a stat's figure in the accent, where the accent reads on this ground as large type (3:1).
+        ...(layout === "stat_callout" && slideAccentColor !== undefined && effectiveGround !== undefined && contrastRatio(slideAccentColor, effectiveGround) >= FIGURE_INK_MIN_CONTRAST ? { figureInk: "accent" } : {}),
         ...(photoCredit !== undefined ? { photoCredit } : {}),
         ...(groundTone !== undefined ? { groundTone } : {}),
         // `auto`: the renderer looks at the slide and places it (publish.renderCarousel 1.11.0).
