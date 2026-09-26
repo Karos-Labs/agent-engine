@@ -207,7 +207,8 @@ describe("partitionGaps — the guarantee the three generation gates may not ski
    * item A1 is that the guaranteed ones no longer can.
    */
   it("partitioning twice in a row is idempotent, so chained gates skip the OPTIONAL gaps only", () => {
-    const gaps = [gap(1), gap(4), gap(5), gap(6)];
+    // Five gaps: with the guarantee at 4 (2026-09-26) four would all be guaranteed and the split below vacuous.
+    const gaps = [gap(1), gap(4), gap(5), gap(6), gap(7)];
 
     /** A LOCAL MODEL of the two optional-spend gates' shape. It reads no workflow code and observes none. */
     const runGate = (
@@ -238,9 +239,9 @@ describe("partitionGaps — the guarantee the three generation gates may not ski
     // Concept first, then slide order, cut at the floor — derived, because the
     // floor moved 2 -> 3 on 2026-09-18 and a literal here would have gone red
     // saying nothing about idempotence, which is this test's actual subject.
-    expect(both.generated).toEqual([5, 1, 4, 6].slice(0, MIN_GENERATED_IMAGES_PER_RUN));
+    expect(both.generated).toEqual([5, 1, 4, 6, 7].slice(0, MIN_GENERATED_IMAGES_PER_RUN));
     expect(both.generated).toHaveLength(MIN_GENERATED_IMAGES_PER_RUN);
-    expect(both.skipped).toEqual([1, 4, 5, 6].filter((n) => !both.generated.includes(n)));
+    expect(both.skipped).toEqual([1, 4, 5, 6, 7].filter((n) => !both.generated.includes(n)));
     // …and the split is a real one, or the idempotence below is vacuous.
     expect(both.skipped.length).toBeGreaterThan(0);
     // The second gate is a NO-OP on what the first one left: it re-partitions
@@ -248,7 +249,7 @@ describe("partitionGaps — the guarantee the three generation gates may not ski
     // makes three gates safe to wire to one helper.
     expect(runGate(real, "cheapest-path", false).generated).toEqual(both.generated);
     // A run in normal posture with the full plan generates everything.
-    expect(runGate(real, "normal", true).generated).toEqual([1, 4, 5, 6]);
+    expect(runGate(real, "normal", true).generated).toEqual([1, 4, 5, 6, 7]);
 
     // ── THE CONTROL. Break the partition — return everything as optional, the
     // ── pre-Phase-5.5 behaviour — and the simulation must produce the defect.
@@ -257,7 +258,7 @@ describe("partitionGaps — the guarantee the three generation gates may not ski
     const broken = (g: readonly ImageGap[]) => ({ guaranteed: [] as ImageGap[], optional: [...g] });
     const brokenRun = runGate(broken, "essential-only", false);
     expect(brokenRun.generated).toEqual([]);
-    expect(brokenRun.skipped).toEqual([1, 4, 5, 6]);
+    expect(brokenRun.skipped).toEqual([1, 4, 5, 6, 7]);
     expect(brokenRun.generated.length).toBeLessThan(both.generated.length);
   });
 
@@ -303,8 +304,8 @@ describe("imageryShortfallsFor — the loss stops being silent (item A5)", () =>
     // owner's *"some of the slides are empty"*, and this is the record that
     // ends it.
     const band = enforceImageryBand(eightSlideDraft());
-    expect(band.promotions.map((p) => p.slide)).toEqual([5, 6]);
-    expect(band.after).toBe(3);
+    expect(band.promotions.map((p) => p.slide)).toEqual([5, 6, 7]);
+    expect(band.after).toBe(4);
 
     const shortfalls = imageryShortfallsFor(
       [{ slide: 5, wanted: "stock", got: "text_only", why: "no candidate cleared the vet (subjectMatch 2)" }],

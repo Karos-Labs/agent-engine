@@ -584,12 +584,13 @@ describe("estimateRunCost — every term priced off what the run actually bills"
       "optional rescue re-vets skipped",
       "trend evidence reduced to the one cached industry query",
       "duplicate vision passes skipped (candidates and slides are inspected once, not once per attempt)",
-      "images capped at 4",
+      "images capped at 4 — the floor no lever may cross",
     ]);
     expect(decision.estimate.estimatedUsd).toBeCloseTo(1.6865, 6);
     expect(decision.estimate.estimatedUsd).toBeLessThanOrEqual(TARGET_RUN_SPEND_USD);
     expect(decision.estimate.estimatedUsd).toBeLessThan(MAX_RUN_SPEND_USD);
-    expect(decision.plan.generatedImagesCap).toBeGreaterThan(MIN_GENERATED_IMAGES_PER_RUN);
+    // At the floor since 2026-09-26, when the guarantee rose to 4 with the picture floor.
+    expect(decision.plan.generatedImagesCap).toBeGreaterThanOrEqual(MIN_GENERATED_IMAGES_PER_RUN);
   });
 
   it("money already billed before the plan is money the plan cannot spend: the target left is what it fits", () => {
@@ -716,8 +717,8 @@ describe("planRunBudget — the owner's levers, in order, never a hold", () => {
       "optional rescue re-vets skipped",
       "trend evidence reduced to the one cached industry query",
       "duplicate vision passes skipped (candidates and slides are inspected once, not once per attempt)",
-      "images capped at 4",
-      "images capped at 3 — the floor no lever may cross",
+      // One images rung since 2026-09-26: the floor and the guarantee are both 4.
+      "images capped at 4 — the floor no lever may cross",
     ]);
     // The three rungs that fire BEFORE any picture is given up, in order, and
     // the fact that no image rung appears among them.
@@ -734,7 +735,8 @@ describe("planRunBudget — the owner's levers, in order, never a hold", () => {
     });
     expect(decision.adaptations.at(-1)).toMatch(/the floor no lever may cross/);
     expect(decision.estimate.estimatedUsd).toBeGreaterThan(TARGET_RUN_SPEND_USD);
-    expect(decision.estimate.estimatedUsd).toBeCloseTo(2.133675, 6);
+    // One more guaranteed frame since the floor rose to 4 (2026-09-26).
+    expect(decision.estimate.estimatedUsd).toBeCloseTo(2.190225, 6);
     expect(decision.note).toMatch(/running anyway/);
     // Over target and still under the hard max, so nothing about this plan puts
     // the run on the cheapest path before it has drawn a breath.
@@ -763,12 +765,8 @@ describe("planRunBudget — the owner's levers, in order, never a hold", () => {
       "optional rescue re-vets skipped",
       "trend evidence reduced to the one cached industry query",
       "duplicate vision passes skipped (candidates and slides are inspected once, not once per attempt)",
-      "images capped at 4",
-      // One rung shorter since MIN_GENERATED_IMAGES_PER_RUN moved 2 -> 3: the
-      // guarantee could not satisfy MIN_PICTURE_SLIDES from zero, and a run
-      // that cannot buy three pictures ships the post the owner read on
-      // 2026-09-18 and called a failure.
-      "images capped at 3 — the floor no lever may cross",
+      // One images rung since 2026-09-26: the floor and the guarantee are both 4.
+      "images capped at 4 — the floor no lever may cross",
     ];
 
     // Nothing spent on the warm calibrated shape: the full plan, every picture,

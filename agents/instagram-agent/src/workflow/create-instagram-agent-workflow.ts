@@ -10936,6 +10936,28 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         return { duplicates };
       });
 
+      // ── 06h4: THE COVER TAKES A PICTURE FIRST (2026-09-25) ──
+      // (Moved ahead of `06h` on 2026-09-26: prep batch 7's karoslabs floor counted three
+      // pictures, then this move ran after it and the post shipped two. The floor
+      // must count the post the cover move leaves.)
+      //
+      // Prep batch 5: The Pitch by Deel shipped four interior photographs under
+      // a bare cover whose empty field the judge read as a broken placeholder.
+      // When the cover has no usable picture and an interior slide does, the
+      // best one MOVES up (`cover-picture.ts`), and the slide it left joins
+      // `unfillable` so the downgrade ladder below sets it typographically, as
+      // it would any slide that lost its picture. The count is unchanged.
+      // Only onto a first slide whose archetype PAINTS a picture: a typographic
+      // opener would take the picture and render none of it.
+      const coverPaintsPicture = copy.slides[0] !== undefined && HERO_IMAGE_LAYOUTS.has(resolveLayout(copy.slides[0], availableTemplates).layout);
+      const coverMove = await wf.step.code(rev(`06h4-cover-takes-a-picture-attempt-${attempt}`), () =>
+        coverPaintsPicture ? (coverPictureMove(copy, selections, new Set([...markImagePaths, ...clearMarkPaths, ...productCutoutPaths, ...usedImagesSet])) ?? null) : null,
+      );
+      if (coverMove !== null && copy.slides[0] !== undefined) {
+        selections = applyCoverPictureMove(selections, copy.slides[0].n, coverMove, (n) => typographicSelection({ n, layout: layoutOf(n) }));
+        unfillable = selections.filter(isUnfillable);
+      }
+
       const floorCheck = await wf.step.code(rev(`06h-imagery-floor-check-attempt-${attempt}`), () => {
         const withPictureNs = new Set(selections.filter((sel) => sel.imagePath !== null && !isUnfillable(sel)).map((sel) => sel.n));
         const withPicture = withPictureNs.size;
@@ -11018,10 +11040,33 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // Slides that failed come first: they described a picture, the run
         // already tried to buy it, and a second attempt is the cheapest fix.
         // `planImageBackfill` supplies the rest, bounded plates first.
-        const fromFailed: FloorGap[] = selections
+        // ── A MADE FRAME GOES WHERE IT CAN PASS (2026-09-26). ──
+        //
+        // A generated frame cannot show a real company or person, and the vet
+        // refuses an unnamed picture under a headline that names one (the
+        // unnamed-subject rule): prep batch 7's Geektime floor frame for a slide
+        // about "Sarona Partners" and Hanky Panky's for a quote by Anne Teresa
+        // De Keersmaeker were both refused, and both posts shipped two pictures.
+        // Failed slides that name no entity of the post come first, then the
+        // backfill's plates, and the entity-naming slides take what is left.
+        const namesPostEntity = (n: number): boolean => {
+          const slide = copy.slides.find((sl) => sl.n === n);
+          if (slide === undefined) return false;
+          const text = `${slide.headline} ${slide.body}`.toLowerCase();
+          return postEntityNames.some((name) => name.trim().length >= 3 && text.includes(name.trim().toLowerCase()));
+        };
+        const failedNs = selections
           .filter(isUnfillable)
           .map((sel) => sel.n)
-          .sort((a, b) => a - b)
+          .sort((a, b) => a - b);
+        const toFloorGap = (n: number): FloorGap[] => {
+          const slide = copy.slides.find((sl) => sl.n === n);
+          if (slide === undefined) return [];
+          const need = normaliseVisualNeed(slide);
+          return [{ n, prompt: generationPromptFor(need, slide, { rewrite: rewritesScene }), backfilled: generationRewrites(need, { rewrite: rewritesScene }) }];
+        };
+        const fromFailed: FloorGap[] = failedNs
+          .filter((n) => !namesPostEntity(n))
           .slice(0, want)
           .flatMap((n) => {
             const slide = copy.slides.find((sl) => sl.n === n);
@@ -11060,6 +11105,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // pubsub-21255292697877233 shipped one picture in eight).
           ...(series?.series.id === "the_list" ? { itemPictures: true } : {}),
         }).map((candidate) => ({ n: candidate.n, prompt: candidate.prompt, backfilled: true }));
+        const takenNs = new Set([...fromFailed, ...backfilled].map((gap) => gap.n));
+        const fromNamedFailed: FloorGap[] = failedNs
+          .filter((n) => namesPostEntity(n) && !takenNs.has(n))
+          .slice(0, Math.max(0, want - fromFailed.length - backfilled.length))
+          .flatMap(toFloorGap);
         // ── STEER THE BRIEFS APART BEFORE PAYING FOR THEM (2026-09-20) ──
         //
         // thepitchbydeel's two shipped pictures were both "a founder at a desk
@@ -11077,7 +11127,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // The briefs of frames this run has already ACCEPTED are part of the
         // comparison, not just the batch: a second attempt must not re-ask for
         // the picture attempt one already got.
-        const diversified = diversifySceneBriefs([...fromFailed, ...backfilled], {
+        const diversified = diversifySceneBriefs([...fromFailed, ...backfilled, ...fromNamedFailed], {
           alreadyChosenBriefs: selections
             .filter((sel) => sel.imagePath !== null)
             .map((sel) => sel.reason)
@@ -11329,24 +11379,6 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       Object.assign(runDurableUris, floorStaged);
       await recoverMissingImages("-floor");
 
-      // ── 06h4: THE COVER TAKES A PICTURE FIRST (2026-09-25) ──
-      //
-      // Prep batch 5: The Pitch by Deel shipped four interior photographs under
-      // a bare cover whose empty field the judge read as a broken placeholder.
-      // When the cover has no usable picture and an interior slide does, the
-      // best one MOVES up (`cover-picture.ts`), and the slide it left joins
-      // `unfillable` so the downgrade ladder below sets it typographically, as
-      // it would any slide that lost its picture. The count is unchanged.
-      // Only onto a first slide whose archetype PAINTS a picture: a typographic
-      // opener would take the picture and render none of it.
-      const coverPaintsPicture = copy.slides[0] !== undefined && HERO_IMAGE_LAYOUTS.has(resolveLayout(copy.slides[0], availableTemplates).layout);
-      const coverMove = await wf.step.code(rev(`06h4-cover-takes-a-picture-attempt-${attempt}`), () =>
-        coverPaintsPicture ? (coverPictureMove(copy, selections, new Set([...markImagePaths, ...clearMarkPaths, ...productCutoutPaths, ...usedImagesSet])) ?? null) : null,
-      );
-      if (coverMove !== null && copy.slides[0] !== undefined) {
-        selections = applyCoverPictureMove(selections, copy.slides[0].n, coverMove, (n) => typographicSelection({ n, layout: layoutOf(n) }));
-        unfillable = selections.filter(isUnfillable);
-      }
 
       // Guaranteed delivery (2026-08): a slide that survives every tier —
       // retrieval, social scrape, generation — with nothing usable no longer

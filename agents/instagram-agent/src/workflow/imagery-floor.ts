@@ -116,7 +116,14 @@ import type { InstagramCopyOutput, InstagramSlideLayout } from "./types.js";
  * five. What it refuses is the shape this module was written for — a post with
  * one or none.
  */
-export const MIN_PICTURE_SLIDES = 3;
+/**
+ * 4 since 2026-09-26. The owner, on prep batch 7 (most posts at 2-3 pictures):
+ * *"we set 3 to 5 pictures, and even more"*. His 2026-09-15 rule was pictures on
+ * 3 to 5 slides; with the floor at 3 the fill stopped at 3 and the band rarely
+ * went past it. `ceilingFor` still keeps a short carousel's floor and ceiling
+ * from arguing.
+ */
+export const MIN_PICTURE_SLIDES = 4;
 
 /**
  * How many slides of a carousel may carry a full-bleed picture.

@@ -207,8 +207,8 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
       "optional rescue re-vets skipped",
       "trend evidence reduced to the one cached industry query",
       "duplicate vision passes skipped (candidates and slides are inspected once, not once per attempt)",
-      "images capped at 4",
-      "images capped at 3 — the floor no lever may cross",
+      // One images rung since 2026-09-26: the floor and the guarantee are both 4.
+      "images capped at 4 — the floor no lever may cross",
     ]);
     // THE FLOOR, not zero. This is the single number the owner's "there are no
     // images although we said there would be" complaint reduces to.
@@ -533,10 +533,11 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
       // pictures; the other gaps are optional and the plan turned optional
       // work off. Before the ruling this asked for three generated frames.
       expect(stepIds).toContain("06d-generate-images-attempt-1");
-      expect(requested[0]).toHaveLength(1);
+      // Floor 4 since 2026-09-26: two photographs landed, so two gaps are owed.
+      expect(requested[0]).toHaveLength(2);
       // Lowest-first within the tier — an early picture earns the swipe — and
       // this run carries no concept, which `04m` declines on the canonical story.
-      expect(requested[0]).toEqual(gaps.slice(0, 1));
+      expect(requested[0]).toEqual(gaps.slice(0, 2));
 
       // ── THE TWO CONTROLS, both in-band. ──
       // A pre-phase `continue` produces ZERO generate calls; a partition that
@@ -558,14 +559,14 @@ describe("run budget: estimate, adapt, meter, learn — never a hold (owner's ru
       expect(result.status).toBe("completed");
 
       // THE PREMISE: generation ran and produced the guarantee's worth of
-      // candidates (one: two photographs landed, the floor is three), and the
+      // candidates (two: two photographs landed, the floor is four), and the
       // vet then refused every one of them.
-      expect(requested[0]).toHaveLength(1);
+      expect(requested[0]).toHaveLength(2);
       const floor = steps.find((s) => s.stepId === "06h-imagery-floor-check-attempt-1")?.output as
         | { action: string; pictureSlides: number; generated: number; reason?: string }
         | undefined;
       expect(floor, "06h did not run").toBeDefined();
-      expect(floor!.generated).toBe(1);
+      expect(floor!.generated).toBe(2);
 
       // THE CLAIM. `pictureSlides` is the OUTCOME and it is under the floor, so
       // the step must not say the floor is met. Before this fix the pass
