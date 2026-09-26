@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { coverWeightsFor, DEFAULT_COVER_WEIGHTS, pickCoverComposition, COVER_COMPOSITIONS } from "../src/workflow/cover-composition.js";
+import { coverCompositionForHeadline, POSTER_MAX_HEADLINE_WORDS } from "../src/workflow/slides-data.js";
 import type { ExemplarLibrary } from "../src/workflow/exemplar-library.js";
 import { assembleSlidesData } from "../src/workflow/slides-data.js";
 import type { ImageSelection, InstagramCopyOutput } from "../src/workflow/types.js";
@@ -75,5 +76,22 @@ describe("cover composition", () => {
     // 06h26 offers the cover to the lift only on a sandwich run, and never a client upload.
     const src = readFileSync(new URL("../src/workflow/create-instagram-agent-workflow.ts", import.meta.url), "utf8");
     expect(src).toMatch(/coverChoice\.composition === "sandwich"\s*\?\s*selections\.find\(\(sel\) => sel\.n === 1[^\n]*!tier0Slots\.has\(1\)\)/u);
+  });
+});
+
+describe("a poster carries a short headline; a long one takes the sandwich (2026-09-26)", () => {
+  it("keeps the poster for the short lines that read over a photograph, and moves the long ones", () => {
+    expect(coverCompositionForHeadline("poster", "The 3,000-agent CMO fallacy")).toBe("poster");
+    expect(coverCompositionForHeadline(undefined, "You're briefing your underwear wrong.")).toBe("poster");
+    // Prep batch 8's unreadable covers: 10, 9 and 8 words.
+    expect(coverCompositionForHeadline("poster", "Geography is not the disqualifier. nybl won Paris from the UAE.")).toBe("sandwich");
+    expect(coverCompositionForHeadline("poster", "96% of creator search value goes to the top 10%")).toBe("sandwich");
+    expect(coverCompositionForHeadline("poster", "O piloto é institucional. A distribuição já é sua.")).toBe("sandwich");
+    expect(POSTER_MAX_HEADLINE_WORDS).toBe(7);
+  });
+
+  it("never overrides a composition the run chose on purpose", () => {
+    expect(coverCompositionForHeadline("framed", "Geography is not the disqualifier. nybl won Paris from the UAE.")).toBe("framed");
+    expect(coverCompositionForHeadline("sandwich", "Short line")).toBe("sandwich");
   });
 });

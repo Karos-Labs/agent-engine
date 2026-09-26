@@ -2889,6 +2889,29 @@ export function withoutRepeatedDevices(slides: readonly InstagramSlideCopy[]): I
   });
 }
 
+/**
+ * The longest headline a POSTER cover sets over its photograph (2026-09-26).
+ *
+ * Re-rendered locally from prep batch 8, the three covers a reader could not
+ * read at feed size were all posters with a long headline: The Pitch by Deel
+ * (10 words), Sitti (9) and XO Digital (8) climbed four and five lines up into
+ * the bright half of the photograph, past where the shade is dense. The ones
+ * that read were short: karoslabs (4), Hanky Panky (5). The owner's
+ * references never set a long line over a busy picture; they put the picture
+ * above and the words on a clean ground (the deelpitch cover). A longer
+ * headline therefore takes the sandwich. The poster stays the default for the
+ * short, strong line it suits.
+ */
+export const POSTER_MAX_HEADLINE_WORDS = 7;
+
+/** The cover composition a headline can carry: a requested poster (or none) with a long headline becomes the sandwich. */
+export function coverCompositionForHeadline(requested: "poster" | "sandwich" | "framed" | undefined, headline: string): "poster" | "sandwich" | "framed" {
+  const chosen = requested ?? "poster";
+  if (chosen !== "poster") return chosen;
+  const words = headline.trim().split(/\s+/u).filter((w) => w.length > 0).length;
+  return words > POSTER_MAX_HEADLINE_WORDS ? "sandwich" : "poster";
+}
+
 export function assembleSlidesData(params: {
   clientSlug: string;
   postId: string;
@@ -3439,9 +3462,11 @@ export function assembleSlidesData(params: {
         // 2026-09-26: the poster is the default, not the only cover. The run's
         // composition (drawn from the harvest's cover types) may set the picture
         // in the middle of the words, or as a block over them.
-        ...(layout === "cover" && imagePath !== undefined && !heroIsMark && params.productCutoutPaths?.has(imagePath) !== true && (params.coverComposition === "sandwich" || params.coverComposition === "framed")
-          ? { heroKind: params.coverComposition }
-          : {}),
+        ...((): Record<string, string> => {
+          if (layout !== "cover" || imagePath === undefined || heroIsMark || params.productCutoutPaths?.has(imagePath) === true) return {};
+          const composition = coverCompositionForHeadline(params.coverComposition, slide.headline);
+          return composition === "sandwich" || composition === "framed" ? { heroKind: composition } : {};
+        })(),
         // 2026-09-24: which of the three closer forms (`closerFormFor`); only the closer plate reads it.
         ...(layout === "closer" ? { closerForm: closerFormFor(`${params.clientSlug}:${params.paletteSeed ?? ""}`) } : {}),
         ...(photoCredit !== undefined ? { photoCredit } : {}),
