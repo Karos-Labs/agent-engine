@@ -1369,6 +1369,18 @@ body.ta-center .plate > .mark-badge { margin-inline: auto; }
   gap: var(--sp);
 }
 .hf-headline { max-inline-size: min(16ch, 100%); }
+/* ONE HERO PER PLATE (2026-09-26). With a figure device above it, a display-size
+   headline made two heroes on one plate: karoslabs' 200px "42%" over a 124px "Output
+   was never the bottleneck.", the owner's "two slides in one". The owner's
+   references keep one dominant element. The figure stays the hero and the headline
+   sets one rung down and never grows past it, so it reads as the figure's line. */
+/* And the hero figure in the slide accent where it clears 3:1 on this ground (`figureInk`), as on the stat card. */
+body[data-figure-ink="accent"] .hf-device .dv-figure { color: var(--accent, currentColor); }
+body:has(.hf-device .dv-figure) .hf-headline.r-display { font-size: var(--t-statement); }
+body:has(.hf-device .dv-figure) [data-fit="-1"].hf-headline.r-display,
+body:has(.hf-device .dv-figure) [data-fit="-2"].hf-headline.r-display { font-size: var(--t-statement); }
+body:has(.hf-device .dv-figure) [data-fit="1"].hf-headline.r-display,
+body:has(.hf-device .dv-figure) [data-fit="2"].hf-headline.r-display { font-size: var(--t-lead); }
 .hf-lockup .body-text { max-inline-size: min(26em, 100%); }
 /* A LIST ITEM'S NUMBER (2026-09-23, the_list series). The item is the slide,
    and its number is how a reader keeps their place in a countable promise, so
@@ -1414,7 +1426,7 @@ body.ta-center .plate > .mark-badge { margin-inline: auto; }
 .plate.focus .hf-device[data-fit] .dv-label { font-size: var(--t-label); }
 </style>
 </head>
-<body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-ground="{{groundStyle}}" data-tone="{{groundTone}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}" data-anchor="{{compositionAnchor}}" data-figure="{{figurePlacement}}">
+<body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-ground="{{groundStyle}}" data-tone="{{groundTone}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}" data-anchor="{{compositionAnchor}}" data-figure="{{figurePlacement}}" data-figure-ink="{{figureInk}}">
   <div class="ground" aria-hidden="true"></div>
 
   <div class="zone-mark">
