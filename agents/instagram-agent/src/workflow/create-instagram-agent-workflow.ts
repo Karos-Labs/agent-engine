@@ -11344,8 +11344,21 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // the photograph it is), and only when the product is an object in the
       // frame: a cut-out that keeps most of the frame was a scene, not a
       // product on a backdrop, and keeps its photograph.
+      // 2026-09-26 (owner reference covers: the Karos Labs Liquid Death can,
+      // @zbalosch's lightbulb): a cover drawn as the picture-over-type
+      // sandwich (04p1) also tries its picture as an OBJECT on the plate. The
+      // lift refuses any frame whose border is not one colour, so a busy
+      // photograph stays the photograph it was; a still life on a seamless
+      // ground becomes the object-on-ground cover. Never a client's upload.
+      const coverObjectCandidate =
+        coverChoice.composition === "sandwich"
+          ? selections.find((sel) => sel.n === 1 && sel.imagePath !== null && !markImagePaths.has(sel.imagePath) && !tier0Slots.has(1))
+          : undefined;
       const productSelections = selections.filter(
-        (sel) => sel.imagePath !== null && !markImagePaths.has(sel.imagePath) && /client's own published website imagery/iu.test(sel.license ?? ""),
+        (sel) =>
+          sel.imagePath !== null &&
+          !markImagePaths.has(sel.imagePath) &&
+          (/client's own published website imagery/iu.test(sel.license ?? "") || sel === coverObjectCandidate),
       );
       if (productSelections.length > 0) {
         const cutouts = await wf.step.code(rev(`06h26-lift-product-cutouts-attempt-${attempt}`), async () => {

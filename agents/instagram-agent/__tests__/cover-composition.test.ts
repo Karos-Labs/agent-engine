@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { coverWeightsFor, DEFAULT_COVER_WEIGHTS, pickCoverComposition, COVER_COMPOSITIONS } from "../src/workflow/cover-composition.js";
 import type { ExemplarLibrary } from "../src/workflow/exemplar-library.js";
@@ -56,5 +57,16 @@ describe("cover composition", () => {
     expect(run("sandwich")).toBe("sandwich");
     expect(run("framed")).toBe("framed");
     expect(run("poster")).toBeUndefined();
+
+    // A sandwich cover whose picture lifted clean is the object-on-ground cover (owner references, 2026-09-26).
+    const lifted = assembleSlidesData({
+      clientSlug: "k", postId: "p", repoRoot: "/r", brandTokens: { templateDir: "t", slideTemplate: "slide.html" }, copy,
+      selections: [sel(1, "media/cover-cut.png"), sel(2, null)], canvas: { w: 1080, h: 1440, scale: 2, slides_min: 1, slides_max: 8 }, paletteSeed: "cc",
+      coverComposition: "sandwich", productCutoutPaths: new Set(["media/cover-cut.png"]),
+    }).slides[0]!.fields.heroKind;
+    expect(lifted).toBe("cutout");
+    // 06h26 offers the cover to the lift only on a sandwich run, and never a client upload.
+    const src = readFileSync(new URL("../src/workflow/create-instagram-agent-workflow.ts", import.meta.url), "utf8");
+    expect(src).toMatch(/coverChoice\.composition === "sandwich"\s*\?\s*selections\.find\(\(sel\) => sel\.n === 1[^\n]*!tier0Slots\.has\(1\)\)/u);
   });
 });
