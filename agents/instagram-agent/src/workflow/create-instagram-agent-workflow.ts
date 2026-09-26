@@ -418,7 +418,7 @@ import {
   describedAsPhotograph,
   mayBeMark,
 } from "./entity-imagery.js";
-import { DRAWN_STYLE_LINE, drawnDisplayFontCssBlock, drawnGenerationStyle, drawnPostDecision, gradePictureSet, heroScrimCssBlock, imageTreatmentCssBlock, resolveGenerationStyle, type GenerationStyle } from "./style-lock.js";
+import { ABSTRACT_STYLE_LINE, abstractGenerationStyle, DRAWN_STYLE_LINE, drawnDisplayFontCssBlock, drawnGenerationStyle, drawnPostDecision, gradePictureSet, heroScrimCssBlock, imageTreatmentCssBlock, resolveGenerationStyle, type GenerationStyle } from "./style-lock.js";
 import { literalIllustrationOf, planImageBackfill, registerFor, resolveRescuedSelection } from "./image-density.js";
 import { describeRepairs, repairMechanicalTells } from "./mechanical-repair.js";
 import {
@@ -5886,9 +5886,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         forbid: visualDirection?.forbid ?? [],
       }),
     );
-    const drawnPost = postTreatment.drawn;
+    // A MADE post (drawn, or S8's abstract renders) generates every picture in its one line.
+    const madeTreatment = postTreatment.treatment ?? (postTreatment.drawn ? "drawn" : "photo");
+    const drawnPost = madeTreatment !== "photo";
     const frozenStyle: GenerationStyle = await wf.step.code("04k-freeze-generation-style", async () =>
-      drawnPost ? drawnGenerationStyle() : resolveGenerationStyle(visualDirection, effectiveKit, brief),
+      madeTreatment === "drawn" ? drawnGenerationStyle() : madeTreatment === "abstract" ? abstractGenerationStyle() : resolveGenerationStyle(visualDirection, effectiveKit, brief),
     );
 
     // ── 04q: THE PRODUCT CAMPAIGN'S PLAN (2026-09-24, stage 4 of the reference-looks plan) ──
@@ -6169,7 +6171,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         heroScrimCssBlock(),
         markCssBlock(markScript, runMarkRing()),
         // S6: a drawn post sets its display line in a handwriting face (Latin scripts only).
-        drawnPost && markScript === undefined ? drawnDisplayFontCssBlock() : "",
+        madeTreatment === "drawn" && markScript === undefined ? drawnDisplayFontCssBlock() : "",
         // WS-07: the client's own corners, lines and buttons, when its site was measured.
         designLanguageCssBlock(runDesignLanguage),
         // RFC-20 Part 11: MOUNTED NOWHERE — see `GROUND_MATERIAL_MOUNTED`.
@@ -11170,7 +11172,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         const backfilled: FloorGap[] = planImageBackfill(copy, withPictureNs, want - fromFailed.length, {
           ...(frozenStyle.treatment !== undefined ? { treatment: frozenStyle.treatment } : {}),
           // A drawn post's gap frames are drawn in the post's own line, not a rotating register.
-          register: drawnPost ? ({ id: "ink", phrase: DRAWN_STYLE_LINE } as unknown as ReturnType<typeof registerFor>) : registerFor(ctx.runId),
+          register: drawnPost ? ({ id: madeTreatment, phrase: madeTreatment === "abstract" ? ABSTRACT_STYLE_LINE : DRAWN_STYLE_LINE } as unknown as ReturnType<typeof registerFor>) : registerFor(ctx.runId),
           ...(drawnSubjects.length > 0 ? { subjects: drawnSubjects } : {}),
           // 2026-09-24: a list post's items may carry pictures (thepitchbydeel
           // pubsub-21255292697877233 shipped one picture in eight).
