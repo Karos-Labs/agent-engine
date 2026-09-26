@@ -99,6 +99,30 @@ export function raisedOutputLimit(attemptedMaxTokens: number): number | undefine
 }
 
 /**
+ * Clamps a reasoning reserve so `answerTokens + reserve` can never exceed
+ * {@link OUTPUT_LIMIT_RETRY_CEILING}.
+ *
+ * The reserve exists to stop reasoning from eating the answer's room, and the
+ * obvious way to provide it — add it on top — can overshoot what the model
+ * will accept. Gemini 3's output cap is 64k; `landing-build` declares 60,000;
+ * an unclamped 8,192 reserve would build a request the provider rejects
+ * outright, turning a change meant to prevent a recoverable truncation into an
+ * unrecoverable 400.
+ *
+ * `OUTPUT_LIMIT_RETRY_CEILING` is reused rather than a second constant added,
+ * because it is already this repo's answer to "the largest output ceiling
+ * every served vendor accepts" — it is why the retry ladder stops there. Two
+ * numbers meaning that would drift.
+ *
+ * A step already at or above the ceiling gets a reserve of zero, which leaves
+ * it exactly the request it sends today.
+ */
+export function clampThinkingReserve(answerTokens: number, reserveTokens: number): number {
+  if (reserveTokens <= 0) return 0;
+  return Math.max(0, Math.min(reserveTokens, OUTPUT_LIMIT_RETRY_CEILING - answerTokens));
+}
+
+/**
  * A turn the model was still writing when its output budget ran out. The JSON
  * is cut mid-object and unparseable, so this is NOT a `StructuredOutputValidationError`:
  * re-asking the same question inside the same budget produces the same cut.

@@ -5,7 +5,8 @@ import { toRootObjectJsonSchema } from "./root-object-schema.js";
 // `BaseAgent` discriminates on it both to raise the ceiling and to book a
 // cut-off turn's spend, and a per-adapter copy would mean the Gemini leg
 // silently kept reporting $0 the day the Anthropic leg was fixed.
-import { OutputLimitExceededError, parseStructuredOutput, parseStructuredOutputText } from "./structured-output.js";
+import { OutputLimitExceededError, StructuredOutputValidationError, clampThinkingReserve, parseStructuredOutput, parseStructuredOutputText } from "./structured-output.js";
+import { lookupModelCapabilities } from "../model-capabilities.js";
 import { withRetry, type RetryOptions } from "./retry.js";
 
 /**
@@ -15,6 +16,17 @@ import { withRetry, type RetryOptions } from "./retry.js";
  * staying well under any served model's own ceiling.
  */
 export const GEMINI_DEFAULT_MAX_TOKENS = 16384;
+
+/**
+ * Room added to `maxOutputTokens`, on top of the step's own `maxTokens`, for a
+ * model that reasons by default and whose step named no `thinkingBudget`.
+ *
+ * Larger than the Anthropic side's 4,096 because Gemini's reasoning is
+ * dynamic and unbounded here by design (see the call site on why this change
+ * does not start capping it), so the headroom has to be generous enough to be
+ * worth having rather than exactly sized to an effort level.
+ */
+export const GEMINI_DEFAULT_THINKING_RESERVE_TOKENS = 8_192;
 
 /**
  * A client per canonical model id. Needed for the same reason
@@ -90,7 +102,23 @@ export class GeminiAdapter implements ModelAdapter {
   async complete<TOutput>(req: CompletionRequest<TOutput>): Promise<CompletionResult<TOutput>> {
     const { schema: jsonSchema, wrapped } = toRootObjectJsonSchema(req.schema);
     const client = this.resolveClient(req.model);
-    const maxOutputTokens = req.maxTokens ?? GEMINI_DEFAULT_MAX_TOKENS;
+    // The step's own number is the room for the ANSWER. Reasoning is charged
+    // to `maxOutputTokens` as well (see the usage comment below), so a shared
+    // ceiling makes every `maxTokens` decision in the repo quietly depend on
+    // how much the model happened to think — which is how
+    // `04b-research-extract-facts` truncated on geektime while returning 3,059
+    // visible tokens. The reserve is added on top instead, so the answer keeps
+    // exactly the room it was sized for. Mirrors `messages-api-adapter.ts`.
+    const answerTokens = req.maxTokens ?? GEMINI_DEFAULT_MAX_TOKENS;
+    // Deliberately NOT a cap where the caller set none: bounding reasoning a
+    // step never asked to bound would change what that step produces, and this
+    // change is only allowed to change what it survives. A step that wants the
+    // cap sets `thinkingBudget`, which is still forwarded verbatim below.
+    const reserveTokens = clampThinkingReserve(
+      answerTokens,
+      req.thinkingBudget ?? (lookupModelCapabilities(req.model)?.thinkingDefault === "on" ? GEMINI_DEFAULT_THINKING_RESERVE_TOKENS : 0),
+    );
+    const maxOutputTokens = answerTokens + reserveTokens;
 
     const response = await withRetry(
       () =>
@@ -153,18 +181,46 @@ export class GeminiAdapter implements ModelAdapter {
     // call it exists to account for.
     if (finishReason === FinishReason.MAX_TOKENS) {
       throw new OutputLimitExceededError(
-        `google-gemini: model "${req.model}" hit the ${maxOutputTokens}-token output limit before completing its structured output`,
-        { attemptedMaxTokens: maxOutputTokens, usage: reportedUsage },
+        `google-gemini: model "${req.model}" hit the ${maxOutputTokens}-token output limit` +
+          (reserveTokens > 0 ? ` (${answerTokens} for the answer + ${reserveTokens} reserved for reasoning)` : "") +
+          " before completing its structured output",
+        // The answer's own room, not the provider ceiling — `raisedOutputLimit`
+        // doubles what it is given and `BaseAgent` feeds it back as `maxTokens`,
+        // so a number carrying the reserve would compound it on every rung.
+        { attemptedMaxTokens: answerTokens, usage: reportedUsage },
       );
     }
 
     const raw = response.text;
     if (raw === undefined) {
       const blockReason = response.promptFeedback?.blockReason;
-      throw new Error(
-        `google-gemini: model "${req.model}" returned no text content` +
-          (blockReason ? ` — blocked: ${blockReason}` : finishReason ? ` — finishReason: ${finishReason}` : ""),
-      );
+      // A safety block is a refusal, not a budget. More room produces the same
+      // refusal, and a repair turn re-sends the prompt that was blocked — so
+      // this one stays a plain failure, which is the honest classification.
+      if (blockReason) {
+        throw new Error(`google-gemini: model "${req.model}" returned no text content — blocked: ${blockReason}`);
+      }
+      // Everything else here is a turn that emitted no answer. If the usage
+      // shows reasoning tokens, the reasoning consumed the turn — Google's
+      // documented behaviour for a thinking model that runs out of room is a
+      // truncated OR EMPTY candidate, and the empty one does not always arrive
+      // as MAX_TOKENS. That is a ceiling failure wearing a different finish
+      // reason, and it gets the ceiling failure's recovery rather than ending
+      // the step. With no reasoning to blame it is a turn that answered with
+      // nothing, which is a malformed turn and earns one repair.
+      const thoughtTokens = usage?.thoughtsTokenCount ?? 0;
+      const detail = finishReason ? ` — finishReason: ${finishReason}` : "";
+      if (thoughtTokens > 0) {
+        throw new OutputLimitExceededError(
+          `google-gemini: model "${req.model}" returned no text content after spending ${thoughtTokens} tokens reasoning` +
+            ` against a ${maxOutputTokens}-token output limit${detail}`,
+          { attemptedMaxTokens: answerTokens, usage: reportedUsage },
+        );
+      }
+      throw new StructuredOutputValidationError(`google-gemini: model "${req.model}" returned no text content${detail}`, {
+        rawPayload: response.candidates?.[0]?.content ?? null,
+        usage: reportedUsage,
+      });
     }
 
     const parseContext = { providerId: "google-gemini", model: req.model, usage: reportedUsage };

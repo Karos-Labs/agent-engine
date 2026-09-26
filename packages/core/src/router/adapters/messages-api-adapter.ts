@@ -1,7 +1,8 @@
-import type { Message, MessageCreateParamsNonStreaming, Tool } from "@anthropic-ai/sdk/resources/messages";
+import type { Message, MessageCreateParamsNonStreaming, ThinkingConfigParam, Tool } from "@anthropic-ai/sdk/resources/messages";
 import type { CompletionRequest, CompletionResult, MessagesApiClient, ModelAdapter } from "./types.js";
 import { toRootObjectJsonSchema } from "./root-object-schema.js";
-import { OutputLimitExceededError, parseStructuredOutput } from "./structured-output.js";
+import { OutputLimitExceededError, StructuredOutputValidationError, clampThinkingReserve, parseStructuredOutput } from "./structured-output.js";
+import { lookupModelCapabilities } from "../model-capabilities.js";
 import { withRetry, type RetryOptions } from "./retry.js";
 
 const STRUCTURED_OUTPUT_TOOL_NAME = "emit_output";
@@ -26,6 +27,87 @@ const STRUCTURED_OUTPUT_TOOL_NAME = "emit_output";
  * Sonnet's own ceiling; a step needing more sets `maxTokens` explicitly.
  */
 export const DEFAULT_MAX_TOKENS = 16384;
+
+/**
+ * Room added to `max_tokens`, on top of the step's own `maxTokens`, for a
+ * model that reasons before it answers.
+ *
+ * ## Why the two numbers cannot be one
+ *
+ * `max_tokens` is a ceiling on everything the model emits, reasoning
+ * included. A step's `maxTokens` was sized against its ANSWER — eleven short
+ * fields for `instagram-concept`'s 1,200, a whole single-file page for
+ * `landing-build`'s 60,000 — by someone who measured the answer, not the
+ * reasoning. Charging reasoning to the same budget silently reprices every
+ * one of those decisions, and the way it fails is a payload cut mid-JSON:
+ * unparseable, and pointing nowhere near the cause.
+ *
+ * So `maxTokens` keeps meaning exactly what it has always meant — room for
+ * the answer — and this is the separate allowance for the reasoning, added on
+ * top. A step that wants a different allowance sets `thinkingBudget`, the
+ * field that already exists for precisely this on the Gemini side
+ * (`CompletionRequest.thinkingBudget`); this constant is only the default for
+ * a step that has said nothing and is running on a model that reasons anyway.
+ *
+ * 4,096 is sized for `effort: "low"`, which is what that unconfigured step
+ * gets (see {@link resolveThinking}).
+ */
+export const DEFAULT_THINKING_RESERVE_TOKENS = 4_096;
+
+/** What one turn's reasoning policy resolves to: the parameter to send, the effort to pair with it, and the ceiling headroom it needs. */
+interface ResolvedThinking {
+  readonly thinking: ThinkingConfigParam | undefined;
+  readonly effort: "low" | undefined;
+  readonly reserveTokens: number;
+}
+
+const THINKING_OFF: ResolvedThinking = { thinking: { type: "disabled" }, effort: undefined, reserveTokens: 0 };
+/** Send nothing at all — the pre-2026-09-26 request, byte for byte. */
+const THINKING_UNSTATED: ResolvedThinking = { thinking: undefined, effort: undefined, reserveTokens: 0 };
+
+/**
+ * Decides this turn's reasoning policy from the step's `thinkingBudget` and
+ * the model's own default.
+ *
+ * The rule, and the reason for each branch:
+ *
+ * - **A step that set `thinkingBudget: 0`** wants no reasoning, on any model,
+ *   and says so explicitly — `{type: "disabled"}`.
+ * - **A step that set a positive `thinkingBudget`** wants reasoning bounded at
+ *   roughly that size. The 4.6-and-later models removed `budget_tokens` (it is
+ *   a 400 on 4.7+), so the number cannot be sent as a cap; it is honoured as
+ *   the ceiling HEADROOM instead, which is the half of it that protects the
+ *   answer.
+ * - **A step that said nothing, on a model that does not reason by default**
+ *   gets the request it has always got: no `thinking` field, no headroom, no
+ *   behaviour change whatsoever. This is every step in the repo today.
+ * - **A step that said nothing, on a model that DOES reason by default**
+ *   (`claude-sonnet-5`, `claude-opus-5`) is the case this function exists for.
+ *   It gets reasoning stated explicitly at the cheapest setting, plus the
+ *   headroom to pay for it — rather than inheriting reasoning silently and
+ *   spending the answer's budget on it.
+ *
+ * Note what that last branch deliberately does NOT do: turn reasoning OFF.
+ * `{type: "disabled"}` on the 5 generation has a documented failure mode where
+ * the model writes its tool call into visible text instead of a `tool_use`
+ * block — the turn succeeds, the call never happens, and nothing raises. This
+ * adapter requires that block, so choosing "disabled" as the default would
+ * trade a truncation we can retry for a silent wrong answer we cannot detect.
+ * Low effort is both cheaper than the truncation and safer than the silence.
+ *
+ * A model with no catalog row is treated as "does not reason by default",
+ * which is the conservative reading: it sends nothing and changes nothing.
+ * `assertModelCatalogued` already refuses an uncatalogued model at selection,
+ * so in practice this branch is reached only by a test's stub id.
+ */
+export function resolveThinking(modelId: string, thinkingBudget: number | undefined): ResolvedThinking {
+  if (thinkingBudget !== undefined) {
+    return thinkingBudget <= 0 ? THINKING_OFF : { thinking: { type: "adaptive" }, effort: "low", reserveTokens: thinkingBudget };
+  }
+  const thinksByDefault = lookupModelCapabilities(modelId)?.thinkingDefault === "on";
+  if (!thinksByDefault) return THINKING_UNSTATED;
+  return { thinking: { type: "adaptive" }, effort: "low", reserveTokens: DEFAULT_THINKING_RESERVE_TOKENS };
+}
 
 /**
  * Translates model ids between this codebase's canonical Claude API spelling
@@ -107,9 +189,18 @@ export class MessagesApiAdapter implements ModelAdapter {
     const { schema: jsonSchema, wrapped } = toRootObjectJsonSchema(req.schema);
     const providerModel = this.modelIds.toProvider(req.model);
     const client = this.resolveClient(req.model);
-    const maxTokens = req.maxTokens ?? DEFAULT_MAX_TOKENS;
+    // Two ceilings, two jobs — the same split `CompletionRequest.thinkingBudget`
+    // already draws on the Gemini side. `answerTokens` is the room the STEP
+    // asked for and the only number the retry ladder reasons about;
+    // `reserveTokens` is what reasoning may additionally spend on a model that
+    // reasons. See `DEFAULT_THINKING_RESERVE_TOKENS`.
+    const answerTokens = req.maxTokens ?? DEFAULT_MAX_TOKENS;
+    const resolved = resolveThinking(req.model, req.thinkingBudget);
+    const { thinking, effort } = resolved;
+    const reserveTokens = clampThinkingReserve(answerTokens, resolved.reserveTokens);
+    const maxTokens = answerTokens + reserveTokens;
 
-    const request = this.buildRequest(req, providerModel, maxTokens, jsonSchema);
+    const request = this.buildRequest(req, providerModel, maxTokens, jsonSchema, thinking, effort);
 
     // STREAM WHENEVER THE CLIENT CAN, which in production is always.
     //
@@ -180,9 +271,16 @@ export class MessagesApiAdapter implements ModelAdapter {
     // 16k ceiling on Sonnet actually costs instead of $0.
     if (response.stop_reason === "max_tokens") {
       throw new OutputLimitExceededError(
-        `${this.providerId}: model "${req.model}" hit the ${maxTokens}-token output limit before completing its structured output` +
+        `${this.providerId}: model "${req.model}" hit the ${maxTokens}-token output limit` +
+          (reserveTokens > 0 ? ` (${answerTokens} for the answer + ${reserveTokens} reserved for reasoning)` : "") +
+          " before completing its structured output" +
           describeTruncatedFields(response.content),
-        { attemptedMaxTokens: maxTokens, usage: reportedUsage },
+        // `answerTokens`, NOT the provider ceiling: `raisedOutputLimit` doubles
+        // whatever it is handed and `BaseAgent` feeds the result back as the
+        // step's `maxTokens`, so the ladder has to stay denominated in the
+        // answer's own room. Handing it a number with the reasoning reserve
+        // baked in would compound the reserve on every rung.
+        { attemptedMaxTokens: answerTokens, usage: reportedUsage },
       );
     }
 
@@ -191,7 +289,22 @@ export class MessagesApiAdapter implements ModelAdapter {
         block.type === "tool_use" && block.name === STRUCTURED_OUTPUT_TOOL_NAME,
     );
     if (!toolUse) {
-      throw new Error(`${this.providerId}: model "${req.model}" did not return a "${STRUCTURED_OUTPUT_TOOL_NAME}" tool_use block`);
+      // A turn that answered in prose instead of calling the tool. This used
+      // to be a bare `Error`, which `BaseAgent` can only report as
+      // `tooling_error` — the step ends, the client gets nothing, and the one
+      // thing that would have fixed it (telling the model what it got wrong
+      // and asking again) never happens. It is the same class of failure as a
+      // missing `type` discriminator or a stringified payload, so it is
+      // classified the same way and gets the same one bounded repair turn.
+      //
+      // Not hypothetical on the 5 generation: with reasoning disabled those
+      // models occasionally write the tool call into visible text. That is why
+      // `resolveThinking` never disables reasoning on its own — and why this
+      // branch has to be survivable for the times something else does.
+      throw new StructuredOutputValidationError(
+        `${this.providerId}: model "${req.model}" did not return a "${STRUCTURED_OUTPUT_TOOL_NAME}" tool_use block`,
+        { rawPayload: response.content, usage: reportedUsage },
+      );
     }
 
     const output = parseStructuredOutput(req.schema, toolUse.input, wrapped, {
@@ -220,6 +333,8 @@ export class MessagesApiAdapter implements ModelAdapter {
     providerModel: string,
     maxTokens: number,
     jsonSchema: unknown,
+    thinking: ThinkingConfigParam | undefined,
+    effort: "low" | undefined,
   ): MessageCreateParamsNonStreaming {
     const cacheControl = { type: "ephemeral" } as const;
     const hasSystem = req.system !== undefined;
@@ -245,7 +360,16 @@ export class MessagesApiAdapter implements ModelAdapter {
         : {}),
       messages: [{ role: "user", content: req.prompt }],
       tools: [tool],
+      // Forced tool use, still. It is rejected on Claude Fable 5.1 and Claude
+      // Opus 5.5 but accepted on everything this engine's catalog serves, and
+      // pairing it with reasoning is a Bedrock-only restriction — on the
+      // Agent Platform route (and the direct Anthropic one) the two compose.
       tool_choice: { type: "tool", name: STRUCTURED_OUTPUT_TOOL_NAME },
+      // Omitted entirely unless `resolveThinking` had something to say, so a
+      // step on a model that does not reason by default sends the identical
+      // request body it sent before this field existed.
+      ...(thinking !== undefined ? { thinking } : {}),
+      ...(effort !== undefined ? { output_config: { effort } } : {}),
     };
   }
 }
