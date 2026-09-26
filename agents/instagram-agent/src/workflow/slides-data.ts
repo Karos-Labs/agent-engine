@@ -1146,7 +1146,9 @@ export const BODY_WORD_BUDGET: Partial<Record<InstagramSlideLayout, number>> = {
   text_only: 28,
 };
 
-const SENTENCE_END = /(?<=[.!?\u061F\u3002])\s+(?=\S)/u;
+// 2026-09-26: never after an initial ("J.P. Morgan", "U.S.", "e.g."): the cover budget cut The Pitch's
+// deck to "Judges from a16z and J.P." (the local re-render of prep batch 8).
+const SENTENCE_END = /(?<=[.!?\u061F\u3002])(?<!(?:^|[^\p{L}])\p{L}\.)\s+(?=\S)/u;
 
 export function trimToSentenceBudget(text: string, maxWords: number): string {
   const sentences = text.split(SENTENCE_END).map((s) => s.trim()).filter((s) => s.length > 0);
@@ -1192,6 +1194,28 @@ function withBodyBudget<T extends { layout?: InstagramSlideLayout | undefined; b
  * cover weight). The title is never cut; it is the post's point.
  */
 export const COVER_WORD_TOTAL = 20;
+/** Case and punctuation do not make a sentence different words. */
+function echoKey(text: string): string {
+  return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+/**
+ * The body without the sentences it opens with that the headline already says
+ * (2026-09-26). A revision promoted the deck's first two sentences to Hanky
+ * Panky's headline ("You own twelve. You reach for three.") and left them at the
+ * head of the body, so the cover printed them twice. Leading sentences contained
+ * in the headline are dropped; a body that would be emptied is kept as it was.
+ */
+export function withoutHeadlineEcho<T extends { headline: string; body: string }>(slide: T): T {
+  const head = echoKey(slide.headline);
+  if (head.length === 0) return slide;
+  const sentences = slide.body.split(SENTENCE_END).map((s) => s.trim()).filter((s) => s.length > 0);
+  let drop = 0;
+  while (drop < sentences.length && echoKey(sentences[drop]!).length > 0 && head.includes(echoKey(sentences[drop]!))) drop++;
+  if (drop === 0 || drop === sentences.length) return slide;
+  return { ...slide, body: sentences.slice(drop).join(" ") };
+}
+
 export function withCoverBudget<T extends { headline: string; body: string }>(slide: T, total: number = COVER_WORD_TOTAL): T {
   const count = (s: string): number => s.split(/\s+/u).filter((w) => w.length > 0).length;
   const room = total - count(slide.headline);
@@ -2918,7 +2942,11 @@ export function withoutRepeatedDevices(slides: readonly InstagramSlideCopy[]): I
  * headline therefore takes the sandwich. The poster stays the default for the
  * short, strong line it suits.
  */
-export const POSTER_MAX_HEADLINE_WORDS = 7;
+// 2026-09-26, second measurement (the local re-render of all eleven batch-8 posts):
+// seven words still set four lines over the busy half of a photograph (Hanky Panky's
+// "You own twelve. You reach for three.", The Pitch's "Your 'Why Now' slide wins the
+// room."); every poster that read was four or five words.
+export const POSTER_MAX_HEADLINE_WORDS = 5;
 
 /** The pictures a post must keep elsewhere before its cover may go typographic. */
 export const TYPOGRAPHIC_COVER_MIN_OTHER_PICTURES = 3;
@@ -3254,7 +3282,9 @@ export function assembleSlidesData(params: {
 
   /** Each slide's RESOLVED layout, kept for the carry pass after the map (resolveLayout is stateful, so it runs once). */
   const layoutByN = new Map<number, InstagramSlideLayout>();
-  const slides: Slide[] = params.copy.slides.map((rawSlide, index) => {
+  const slides: Slide[] = params.copy.slides.map((echoedSlide, index) => {
+    // 2026-09-26: a body that opens by repeating the headline loses the repeat (`withoutHeadlineEcho`).
+    const rawSlide = withoutHeadlineEcho(echoedSlide);
     // 2026-09-24: one idea per slide, at a size that reads in a feed.
     const slide =
       params.textBudgets === true && index > 0 && index < lastIndex

@@ -88,7 +88,10 @@ describe("a poster carries a short headline; a long one takes the sandwich (2026
     expect(coverCompositionForHeadline("poster", "Geography is not the disqualifier. nybl won Paris from the UAE.")).toBe("sandwich");
     expect(coverCompositionForHeadline("poster", "96% of creator search value goes to the top 10%")).toBe("sandwich");
     expect(coverCompositionForHeadline("poster", "O piloto é institucional. A distribuição já é sua.")).toBe("sandwich");
-    expect(POSTER_MAX_HEADLINE_WORDS).toBe(7);
+    expect(POSTER_MAX_HEADLINE_WORDS).toBe(5);
+    // The two 7-word posters the second re-render could not read.
+    expect(coverCompositionForHeadline("poster", "You own twelve. You reach for three.")).toBe("sandwich");
+    expect(coverCompositionForHeadline("poster", "Your 'Why Now' slide wins the room.")).toBe("sandwich");
   });
 
   it("never overrides a composition the run chose on purpose", () => {
