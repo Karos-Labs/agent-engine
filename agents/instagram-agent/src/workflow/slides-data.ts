@@ -2929,6 +2929,12 @@ export function assembleSlidesData(params: {
    * an inset block: a picture inside the plate, never its ground.
    */
   boundedPicturePaths?: ReadonlySet<string> | undefined;
+  /**
+   * How the cover is composed this run (`cover-composition.ts`, 2026-09-26):
+   * `poster` (the default), `sandwich` (title, picture, deck) or `framed`.
+   * Only a photographic cover hero takes it; a logo or a cutout keeps its own.
+   */
+  coverComposition?: "poster" | "sandwich" | "framed" | undefined;
   /** 2026-09-24: interior slide bodies are cut to whole sentences within `BODY_WORD_BUDGET` (the workflow sets it). */
   textBudgets?: boolean | undefined;
   /** 2026-09-24: client product photos lifted off their backdrop; set as objects (`heroKind: "cutout"`). */
@@ -3375,6 +3381,12 @@ export function assembleSlidesData(params: {
         // never framed here; interior photo plates keep the block.
         ...(!photoAsBlock && layout !== "cover" && framedHeroFor({ layout, headline: slide.headline, body: slide.body, hasPicture: imagePath !== undefined, heroIsMark, isCutout: imagePath !== undefined && params.productCutoutPaths?.has(imagePath) === true })
           ? { heroKind: "framed" as const }
+          : {}),
+        // 2026-09-26: the poster is the default, not the only cover. The run's
+        // composition (drawn from the harvest's cover types) may set the picture
+        // in the middle of the words, or as a block over them.
+        ...(layout === "cover" && imagePath !== undefined && !heroIsMark && params.productCutoutPaths?.has(imagePath) !== true && (params.coverComposition === "sandwich" || params.coverComposition === "framed")
+          ? { heroKind: params.coverComposition }
           : {}),
         // 2026-09-24: which of the three closer forms (`closerFormFor`); only the closer plate reads it.
         ...(layout === "closer" ? { closerForm: closerFormFor(`${params.clientSlug}:${params.paletteSeed ?? ""}`) } : {}),

@@ -2,6 +2,7 @@ import { keepClientSitePages } from "./site-identity.js";
 import { lintReadableCopy, readableCopySteer } from "./readable-copy.js";
 import { brandMarkZone } from "./brand-render-tokens.js";
 import { exemplarLook } from "./exemplar-look.js";
+import { coverWeightsFor, pickCoverComposition } from "./cover-composition.js";
 import { buildExemplarLibrary, densityFromLibrary, nicheHooksForCopy, EXEMPLAR_LIBRARY_BELIEF_KEY, EXEMPLAR_POSTS_PER_ACCOUNT, exemplarLibraryAction, exemplarPatternEvidence, exemplarStudioNotes, failedLibrary, planHarvest, postsToJudge, readExemplarLibrary, type ExemplarLibrary, type HarvestedExemplar } from "./exemplar-library.js";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -7443,6 +7444,17 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // the changed sheet and re-materialises before the first render.
       runVisualSystem = visualSystem;
       shippedSystemId = visualSystem.systemId;
+      // ── 04p1: HOW THE COVER IS COMPOSED THIS RUN (2026-09-26) ──
+      //
+      // The poster is the owner's default (decision 5), not the only cover: the
+      // weights move toward the cover types the client's harvested exemplars
+      // open with, and the run draws one (`cover-composition.ts`). A news
+      // cover keeps its own frame.
+      const coverChoice = await wf.step.code(rev("04p1-cover-composition"), () => {
+        if (newsCover) return { composition: "poster" as const, basis: "a news cover keeps its own frame" };
+        const chosen = coverWeightsFor(exemplarLibrary);
+        return { composition: pickCoverComposition(chosen.weights, `${wf.clientSlug}:${wf.runId}`), weights: chosen.weights, basis: chosen.basis };
+      });
       /**
        * The same system, resolved for a REAL slide count. Pure and seeded, so
        * `systemId`, `ground`, `accentForm` and `coverForm` are identical to
@@ -12887,6 +12899,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           clearMarkPaths,
           interiorPhotosAsBlocks: true,
           boundedPicturePaths,
+          coverComposition: coverChoice.composition,
           textBudgets: true,
           productCutoutPaths,
           markBadges: markBadgeBySlide,

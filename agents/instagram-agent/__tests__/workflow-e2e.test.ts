@@ -216,6 +216,7 @@ const HAPPY_PATH_STEP_IDS = [
   // owner's "the orange lines are the biggest sign a post was made with AI" and
   // to "on some slides there is a number and on some there is not".
   "04p-resolve-visual-system",
+  "04p1-cover-composition",
   "05-write-copy-attempt-1",
   "06-vet-images-attempt-1",
   // The chosen bytes, copied off this instance's in-RAM media cache and into
