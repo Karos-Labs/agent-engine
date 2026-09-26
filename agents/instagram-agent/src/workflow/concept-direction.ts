@@ -90,8 +90,21 @@ import type { SpendPosture } from "./run-budget.js";
  * `auto` path. The selector is TIGHTER than §1.6's ~17% design intent — the
  * safe direction for "sometimes, not always", and the first prep sweep's
  * measured rate should be read against 7, not 10.
+ *
+ * 2026-09-26, measured: prep batches 6-8 selected a concept on 1 of 36 runs
+ * (3%), against the ~17% design intent; 31 of the 35 declines were this
+ * threshold. The owner's two highest-liked reference covers that day (a scale
+ * for "hype vs reality", two bunches side by side for "how to choose") are
+ * exactly the `scale` / `before-after` moves this selector exists to find.
+ * The threshold drops to 3, and the SHAPE is now required by name instead of
+ * by arithmetic (`CONCEPT_SHAPE_TERMS`): a story with no reversal, figure or
+ * contest still never qualifies however many 1-point signals it carries. The
+ * cooldown and the window are unchanged and still cap the rate at 25%.
  */
-export const CONCEPT_MIN_SCORE = 5;
+export const CONCEPT_MIN_SCORE = 3;
+
+/** The 2-point terms that give a story a MOVE to draw. At least one must score; 1-point signals alone are heat, not a metaphor. */
+export const CONCEPT_SHAPE_TERMS: ReadonlySet<string> = new Set(["reversal", "scale", "contest"]);
 
 /** Mirrors `TREND_JACK_MIN_BRAND_FIT` (`topic-selection.ts:78`) — the trend-jack band, already the minority of scouted stories. */
 export const CONCEPT_MIN_BRAND_FIT = 4;
@@ -1720,6 +1733,9 @@ export function conceptEligibility(input: ConceptEligibilityInput): ConceptEligi
 
   // ── the story itself, which `"on"` may override ──
   if (!forced) {
+    if (!terms.some((t) => CONCEPT_SHAPE_TERMS.has(t.term))) {
+      return decline(`score ${score} carries no reversal, figure or contest, so the story has no move to draw`);
+    }
     if (score < CONCEPT_MIN_SCORE) {
       return decline(`score ${score} is under the ${CONCEPT_MIN_SCORE} threshold`);
     }
