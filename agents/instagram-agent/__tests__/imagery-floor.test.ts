@@ -104,7 +104,7 @@ describe("where the pictures land, run to run (2026-09-20)", () => {
   });
 
   it("with no seed, keeps the old slide order exactly — a fixture must not move because a run would have", () => {
-    expect(placed(undefined)).toEqual([2, 3]);
+    expect(placed(undefined)).toEqual([2, 3, 4]);
   });
 });
 
@@ -166,8 +166,10 @@ describe("enforceImageryBand", () => {
 
     const out = enforceImageryBand(shipped);
     expect(out.before).toBe(0);
-    expect(out.after).toBe(MIN_PICTURE_SLIDES);
-    expect(out.shortfallReason).toBeUndefined();
+    // Floor 4 since 2026-09-26: this draft has only three promotable plates, so
+    // it reaches 3 and says so rather than converting a designed archetype.
+    expect(out.after).toBe(3);
+    expect(out.shortfallReason).toMatch(/only 3 of 4/u);
     // Lowest slide number first: an early photograph is what earns the swipe.
     expect(out.promotions.map((p) => p.slide)).toEqual([2, 4, 6]);
     expect(layoutsOf(out.copy)).toEqual(["headline_focus", "photo", "custom", "photo", "headline_focus", "photo", "closer", "custom"]);
@@ -188,11 +190,11 @@ describe("enforceImageryBand", () => {
   it("stops the moment the floor is met, and never promotes one slide more than it needs", () => {
     const one = carousel("cover", "text_only", "text_only", "text_only", "text_only", "text_only", "text_only", "closer");
     const out = enforceImageryBand(one);
-    // One capable slide already (the cover), so exactly two promotions.
+    // One capable slide already (the cover), so exactly three promotions (floor 4).
     expect(out.before).toBe(1);
-    expect(out.promotions.map((p) => p.slide)).toEqual([2, 3]);
+    expect(out.promotions.map((p) => p.slide)).toEqual([2, 3, 4]);
     expect(out.after).toBe(MIN_PICTURE_SLIDES);
-    expect(layoutsOf(out.copy).filter((l) => l === "text_only")).toHaveLength(4);
+    expect(layoutsOf(out.copy).filter((l) => l === "text_only")).toHaveLength(3);
   });
 
   it("NEVER promotes a designed archetype, because its content would have nowhere to go", () => {
@@ -215,7 +217,7 @@ describe("enforceImageryBand", () => {
     const out = enforceImageryBand(dense);
     expect(out.promotions.map((p) => p.slide)).toEqual([8]);
     expect(out.after).toBe(1);
-    expect(out.shortfallReason).toMatch(/only 1 of 3/u);
+    expect(out.shortfallReason).toMatch(/only 1 of 4/u);
     expect(out.shortfallReason).toMatch(/throw away the content/u);
   });
 
@@ -234,7 +236,7 @@ describe("enforceImageryBand", () => {
     expect(twice.promotions).toEqual([]);
   });
 
-  it("the floor is 3 and that is a COMPOSITION number, not the budget's", () => {
+  it("the floor is 4 and that is a COMPOSITION number, not the budget's", () => {
     // `DEFAULT_RUN_SHAPE.photoSlides` is 6 — what the run may SPEND on
     // sourcing. Enforcing six here would make three quarters of every carousel
     // a photograph and produce the post the copy prompt warns against: "one
@@ -242,9 +244,10 @@ describe("enforceImageryBand", () => {
     // direction (`budgets-adapt-never-hold`); the composition floor is a
     // different question and gets its own number, from the restraint
     // reference's own count of roughly every third plate.
-    expect(MIN_PICTURE_SLIDES).toBe(3);
+    // 4 since 2026-09-26 (the owner: "3 to 5 pictures, and even more").
+    expect(MIN_PICTURE_SLIDES).toBe(4);
     const eight = carousel("cover", "text_only", "text_only", "text_only", "text_only", "text_only", "text_only", "closer");
-    expect(enforceImageryBand(eight).after, "the floor became a target — every carousel is now mostly photographs").toBe(3);
+    expect(enforceImageryBand(eight).after, "the floor became a target — every carousel is now mostly photographs").toBe(4);
   });
 
   it("takes the floor as a parameter, so the sweep above is a real range and not one number twice", () => {
@@ -288,8 +291,8 @@ describe("enforceImageryBand", () => {
     // ledger tells a change from a no-op by whether it got a new object back,
     // and a step that rewrote the copy every run would checkpoint a new draft
     // on every attempt.
+    // The band is 4 to 5 since 2026-09-26; a draft at 3 is promoted, so it is no longer a no-op case.
     const cases: ReadonlyArray<readonly [number, InstagramCopyOutput]> = [
-      [3, carousel("cover", "photo", "text_only", "photo", "stat_callout", "headline_focus", "text_only", "closer")],
       [4, carousel("cover", "photo", "photo", "photo", "stat_callout", "headline_focus", "text_only", "closer")],
       [5, carousel("cover", "photo", "photo", "photo", "photo", "headline_focus", "text_only", "closer")],
     ];
@@ -341,7 +344,8 @@ describe("enforceImageryBand", () => {
     expect(ceilingFor(8)).toBe(5);
     expect(ceilingFor(7)).toBe(5);
     expect(ceilingFor(6)).toBe(4);
-    expect(ceilingFor(5)).toBe(3);
+    // max(floor 4, min(5, 5 - 2)): the floor takes the tie on a five-slide post.
+    expect(ceilingFor(5)).toBe(4);
     // THE FLOOR TAKES TIES. Below five slides `slides - MIN_QUIET_SLIDES` drops
     // under the floor, and a ceiling under the floor is a gate that argues with
     // itself: promote to 3, demote to 2, and whichever ran last wins. The outer
@@ -359,8 +363,8 @@ describe("enforceImageryBand", () => {
     expect(six.demotions.map((d) => d.slide)).toEqual([5, 6]);
   });
 
-  it("the band is 3 to 5, and the two ends cannot fight", () => {
-    expect(MIN_PICTURE_SLIDES).toBe(3);
+  it("the band is 4 to 5, and the two ends cannot fight", () => {
+    expect(MIN_PICTURE_SLIDES).toBe(4);
     expect(MAX_PICTURE_SLIDES).toBe(5);
     expect(MIN_PICTURE_SLIDES, "a floor at or above the ceiling would make one of them unreachable").toBeLessThan(MAX_PICTURE_SLIDES);
 
@@ -387,12 +391,12 @@ describe("enforceImageryBand", () => {
 // 2026-09-23: a photo-led client. The owner's Deel reference carousels carry a
 // real photograph on four slides of five; the standard band demotes one.
 describe("picture density: photo-first", () => {
-  it("keeps four photographs in a five-slide carousel where the standard band keeps three", () => {
+  it("keeps four photographs in a five-slide carousel, and so does the standard band now that its floor is 4", () => {
     const copy = carousel("cover", "photo", "photo", "photo", "closer");
     expect(pictures(copy)).toBe(4);
     const standard = PICTURE_BANDS.standard;
     const photoFirst = PICTURE_BANDS["photo-first"];
-    expect(pictures(enforceImageryBand(copy, standard.floor, standard.ceiling, undefined, standard.quiet).copy)).toBe(3);
+    expect(pictures(enforceImageryBand(copy, standard.floor, standard.ceiling, undefined, standard.quiet).copy)).toBe(4);
     expect(pictures(enforceImageryBand(copy, photoFirst.floor, photoFirst.ceiling, undefined, photoFirst.quiet).copy)).toBe(4);
   });
 

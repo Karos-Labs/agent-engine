@@ -186,9 +186,9 @@ export const TARGET_RUN_SPEND_USD = 1.8;
  *
  * A guarantee that cannot satisfy the floor is not a guarantee, and the gap
  * between the two numbers was never argued for anywhere: it is what 2 was
- * before `MIN_PICTURE_SLIDES` moved to 3.
+ * before `MIN_PICTURE_SLIDES` moved to 3, and it moved with the floor to 4 on 2026-09-26.
  */
-export const MIN_GENERATED_IMAGES_PER_RUN = 3;
+export const MIN_GENERATED_IMAGES_PER_RUN = 4;
 
 /**
  * The owner's hard max per Instagram run. **Its purpose is to break an
