@@ -290,3 +290,16 @@ describe("parseStructuredOutput — a turn nested inside its own output (prep ba
     expect(() => parseStructuredOutput(noToolTurn, { output: { type: "final", output: { caption: 3 } } }, false, ctx)).toThrow(StructuredOutputValidationError);
   });
 });
+
+describe("an over-long string is cut at a whole piece, never mid-word (2026-09-26)", () => {
+  it("cuts at the last clause in the allowance, then at the last word, and hard only when there is no space", async () => {
+    const { cutAtBoundary } = await import("../src/router/adapters/structured-output.js");
+    // XO Digital prep batch 8: an 80-character label cut to "...impulsionadas p".
+    const label = "das emissões de renda fixa digital em 2025 abaixo de R$ 500 mil, impulsionadas por novos investidores";
+    expect(cutAtBoundary(label, 80)).toBe("das emissões de renda fixa digital em 2025 abaixo de R$ 500 mil");
+    expect(cutAtBoundary("one two three four five six seven eight", 20)).toBe("one two three four");
+    expect(cutAtBoundary("x".repeat(214), 200)).toHaveLength(200);
+    expect(cutAtBoundary("short", 80)).toBe("short");
+    for (const t of [label, "a, b, c, d, e, f, g, h, i, j, k, l", "word ".repeat(40)]) expect(cutAtBoundary(t, 30).length).toBeLessThanOrEqual(30);
+  });
+});

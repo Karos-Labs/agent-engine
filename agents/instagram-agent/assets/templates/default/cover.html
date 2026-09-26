@@ -1684,9 +1684,11 @@ body:has(img.hero[data-kind="sandwich"]) .plate::after { display: none; }
 body:has(img.hero[data-kind="sandwich"]) .plate > * { margin-block-start: 0; }
 body:has(img.hero[data-kind="sandwich"]) .lockup { flex: 1 1 auto; display: flex; flex-direction: column; }
 body:has(img.hero[data-kind="sandwich"]) .lockup > .body-text { margin-block-start: auto; }
+/* 2026-09-26: the cover's figure device in the slide accent where it clears 3:1 (`figureInk`), as on the stat card: on a typographic cover it is the object. */
+body[data-figure-ink="accent"] .cov-device .dv-figure { color: var(--accent, currentColor); }
 </style>
 </head>
-<body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-hero-scrim="{{heroScrimStrength}}" data-ground="{{groundStyle}}" data-tone="{{groundTone}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}" data-anchor="{{compositionAnchor}}" data-figure="{{figurePlacement}}">
+<body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-hero-scrim="{{heroScrimStrength}}" data-ground="{{groundStyle}}" data-tone="{{groundTone}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}" data-anchor="{{compositionAnchor}}" data-figure="{{figurePlacement}}" data-figure-ink="{{figureInk}}">
   <div class="ground" aria-hidden="true"></div>
   <img class="hero" data-kind="{{heroKind}}" src="{{image:hero}}" onerror="this.remove()" alt="" />
   <div class="scrim" aria-hidden="true"></div>
