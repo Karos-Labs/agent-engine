@@ -413,3 +413,11 @@ describe("the news-frame cover is reachable only through news mode", () => {
     expect(news.reason).toContain("news mode sets the cover");
   });
 });
+
+describe("the display word space is paid back with the tracking (2026-09-26)", () => {
+  it("sets word-spacing in proportion to the negative tracking wherever the tracking is written", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(new URL("../src/workflow/visual-system.ts", import.meta.url), "utf8");
+    expect(src).toContain("letter-spacing: var(--display-tracking, -0.012em); word-spacing: calc(var(--display-tracking, -0.012em) * -3);");
+  });
+});
