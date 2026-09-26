@@ -371,6 +371,9 @@ import {
   finaliseVisualDirection,
   prescribesAbstractGraphic,
   prescribesClicheScene,
+  forbidWithoutScreens,
+  isRelatedScreenBrief,
+  RELATED_SCREEN_STYLE,
   sceneNamesForbiddenSubject,
   styleIsNonPhotographic,
   // Phase 5.5 (spec §5 D1) — the same vocabulary the studio marker uses; the
@@ -9883,8 +9886,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // screen"): the generator drew neither and the floor vet refused it
       // every attempt (`sceneNamesForbiddenSubject`).
       const directionForbid = visualDirection?.forbid ?? [];
+      // 2026-09-26 (owner): a screen the story is about (the post names the product) is
+      // drawn, not rewritten; an unrelated one still is (`isRelatedScreenBrief`).
+      const relatedScreen = (scene: string): boolean => isRelatedScreenBrief(scene, postEntities);
       const rewritesScene = (scene: string): boolean =>
-        prescribesClicheScene(scene) || (!styleIsNonPhotographic(frozenStyle.line) && prescribesAbstractGraphic(scene)) || sceneNamesForbiddenSubject(scene, directionForbid);
+        prescribesClicheScene(scene) ||
+        (!styleIsNonPhotographic(frozenStyle.line) && prescribesAbstractGraphic(scene)) ||
+        (sceneNamesForbiddenSubject(scene, directionForbid) && !relatedScreen(scene));
 
       if (attemptPool.length === 0) {
         // An empty pool has exactly one possible vetting verdict, so asking a
@@ -10190,10 +10198,13 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           buildArgs: (gaps, forConcept) => {
             // Computed once, above the literal, per this block's own rule.
             const permitted = forConcept !== undefined ? conceptPermittedSubjects(forConcept, likenessPermit) : { marks: [], figures: [] };
+            // A related screen is drawn with its look spelled out, and its batch drops the screen family from the negatives.
+            const screenGaps = new Set(gaps.filter((g) => relatedScreen(g.prompt)).map((g) => g.n));
+            const baseArt = buildArtDirection(frozen.brandTokens, visualDirection);
             return {
             repoRoot: options.repoRoot,
             runId: wf.runId,
-            needs: gaps,
+            needs: gaps.map((g) => (screenGaps.has(g.n) ? { ...g, prompt: `${g.prompt} ${RELATED_SCREEN_STYLE}` } : g)),
             // The real canvas, not a hardcoded default: a generated slide that
             // renders at a different ratio to the template gets cropped, and a
             // crop is exactly how a carefully-composed frame loses its subject.
@@ -10201,7 +10212,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             // Phase 3, items Q + S, and Phase 4's concept override — see the
             // block above `rescueTiers` for both.
             art: {
-              ...buildArtDirection(frozen.brandTokens, visualDirection),
+              ...baseArt,
+              ...(screenGaps.size > 0 && Array.isArray(baseArt?.["forbid"]) ? { forbid: forbidWithoutScreens(baseArt["forbid"] as string[]) } : {}),
               ...(forConcept !== undefined ? buildConceptArtDirection(frozen.brandTokens, visualDirection, forConcept) : {}),
               ...(frozenStyle.line !== undefined ? { styleLock: frozenStyle.line } : {}),
               // §5.3/§5.4 — see the `permitted` note above `rescueTiers`.
