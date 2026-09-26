@@ -273,3 +273,20 @@ describe("parseStructuredOutput — a cap the answer overshoots is applied, not 
     );
   });
 });
+
+describe("parseStructuredOutput — a turn nested inside its own output (prep batch 7, 2026-09-25)", () => {
+  // `BaseAgent`'s no-tool turn: `type` defaults to "final".
+  const noToolTurn = z.object({ type: z.literal("final").default("final"), output: z.object({ caption: z.string(), slides: z.array(z.string()) }) });
+  const ctx = { providerId: "google-agent-platform", model: "claude-sonnet-4-6" };
+
+  it("unwraps {output: {type: 'final', output: draft}} and returns the draft sitti's copy step threw away twice", () => {
+    const raw = { output: { type: "final", output: { caption: "c", slides: ["one", "two"] } } };
+    expect(parseStructuredOutput(noToolTurn, raw, false, ctx)).toEqual({ type: "final", output: { caption: "c", slides: ["one", "two"] } });
+  });
+
+  it("never rewrites a payload that parses as sent, and still refuses one that is wrong for another reason", () => {
+    const fine = { type: "final", output: { caption: "c", slides: ["a"] } };
+    expect(parseStructuredOutput(noToolTurn, fine, false, ctx)).toEqual(fine);
+    expect(() => parseStructuredOutput(noToolTurn, { output: { type: "final", output: { caption: 3 } } }, false, ctx)).toThrow(StructuredOutputValidationError);
+  });
+});
