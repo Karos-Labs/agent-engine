@@ -3032,6 +3032,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           const plan = planHarvest({
             ownAccounts: socialAccountsFromClient(config, brandKit),
             referenceAccounts: brief.referenceAccounts,
+            // S1: the brief names the client's own presence on other platforms ("The client's own X presence").
+            ownHandlesElsewhere: brief.referenceAccounts.filter((r) => r.platform !== "instagram" && /client'?s own/iu.test(r.why ?? "")).map((r) => r.handle),
             competitors: Array.isArray(competitors) ? competitors : [],
             ownWebsite: gatherBriefSourceUrls(profileForHarvest)[0],
             industry: typeof (profileForHarvest as Record<string, unknown> | undefined)?.["industry"] === "string" ? ((profileForHarvest as Record<string, unknown>)["industry"] as string) : undefined,

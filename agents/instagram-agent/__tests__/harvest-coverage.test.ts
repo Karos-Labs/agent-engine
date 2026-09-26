@@ -28,7 +28,11 @@ describe("the harvest reads a category, not one account", () => {
     const thin: ExemplarLibrary = { version: 1, builtAt: "2026-09-25T00:00:00Z", status: "built", problems: [], accounts: [{ handle: "sitti.app", role: "client", posts: 6 }], entries: [] };
     expect(exemplarLibraryAction(thin, now)).toBe("build");
     const rich: ExemplarLibrary = { ...thin, accounts: ["r1", "r2", "r3", "r4"].map((handle) => ({ handle, role: "reference" as const, posts: 100 })) };
-    expect(exemplarLibraryAction(rich, now)).toBe("reuse");
+    // 2026-09-26: a library from before plan 3 rebuilds once however rich; built by the current plan it is reused.
+    expect(exemplarLibraryAction(rich, now)).toBe("build");
+    expect(exemplarLibraryAction({ ...rich, planVersion: HARVEST_PLAN_VERSION }, now)).toBe("reuse");
     expect(exemplarLibraryAction({ ...thin, planVersion: HARVEST_PLAN_VERSION }, now)).toBe("reuse");
+    // 2026-09-26: a library from plan 2 rebuilds once (wrong own feed, older judge vocabulary).
+    expect(exemplarLibraryAction({ ...thin, planVersion: 2 }, now)).toBe("build");
   });
 });

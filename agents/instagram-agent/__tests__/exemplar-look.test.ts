@@ -28,7 +28,8 @@ describe("exemplarLook", () => {
   it("says nothing on a tie, a thin library, the client's own posts only, or a failed build", () => {
     expect(exemplarLook(library([entry({ groundStyle: "flat-dark" }), entry({ groundStyle: "texture" })]))).toBeUndefined();
     expect(exemplarLook(library([entry({ groundStyle: "flat-dark" })]))).toBeUndefined();
-    expect(exemplarLook(library([entry({ groundStyle: "flat-dark" }, 5, "client"), entry({ groundStyle: "flat-dark" }, 5, "client")]))).toBeUndefined();
+    // S1 (2026-09-26): the client's own posts vote only when the judge graded them 4+; weaker ones never do.
+    expect(exemplarLook(library([entry({ groundStyle: "flat-dark" }, 3, "client"), entry({ groundStyle: "flat-dark" }, 3, "client")]))).toBeUndefined();
     expect(exemplarLook({ ...library([]), status: "failed" })).toBeUndefined();
     expect(exemplarLook(undefined)).toBeUndefined();
   });
@@ -55,5 +56,31 @@ describe("pickVisualSystem with the exemplars' preference", () => {
 
   it("no preference is today's draw, byte for byte", () => {
     expect(pickVisualSystem({ ...base })).toEqual(pickVisualSystem({ ...base, preferred: undefined }));
+  });
+});
+
+describe("the client's own strong posts lead (S1, owner 2026-09-26: Deel's own posts are prettier)", () => {
+  it("a client post graded 4+ votes twice, so two of them outvote three references", () => {
+    const look = exemplarLook(library([
+      entry({ groundStyle: "flat-light" }, 5, "client"),
+      entry({ groundStyle: "flat-light" }, 4, "client"),
+      entry({ groundStyle: "texture" }),
+      entry({ groundStyle: "texture" }),
+      entry({ groundStyle: "texture" }),
+    ]))!;
+    expect(look.ground).toBe("flat");
+    expect(look.basis[0]).toMatch(/ground flat \(4 of 7/u);
+  });
+
+  it("the harvest tries the client's handle from another platform before its website's link", async () => {
+    const { planHarvest } = await import("../src/workflow/exemplar-library.js");
+    const plan = planHarvest({ ownAccounts: [{ platform: "x", username: "deelpitch" }], referenceAccounts: [], competitors: [], ownWebsite: "https://deel.com" });
+    expect(plan.accounts.find((a) => a.role === "client")?.handle).toBe("deelpitch");
+    expect(plan.competitorSites.some((c) => c.role === "client")).toBe(false);
+    const fromBrief = planHarvest({ ownAccounts: [], ownHandlesElsewhere: ["deelpitch"], referenceAccounts: [], competitors: [], ownWebsite: "https://deel.com" });
+    expect(fromBrief.accounts.find((a) => a.role === "client")?.handle).toBe("deelpitch");
+    // An Instagram account on file still wins outright.
+    const onFile = planHarvest({ ownAccounts: [{ platform: "instagram", username: "thepitch" }, { platform: "x", username: "deelpitch" }], referenceAccounts: [], competitors: [] });
+    expect(onFile.accounts.filter((a) => a.role === "client").map((a) => a.handle)).toEqual(["thepitch"]);
   });
 });

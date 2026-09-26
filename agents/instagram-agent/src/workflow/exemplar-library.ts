@@ -73,10 +73,21 @@ function cleanHandle(handle: string): string | undefined {
 /** References a harvest aims for, filed ones first: one account is a sample, four is a category. */
 export const MIN_REFERENCE_ACCOUNTS = 4;
 /** Bumped when `planHarvest` changes which accounts it picks, so an old thin library can rebuild. */
-export const HARVEST_PLAN_VERSION = 2;
+// 3 (2026-09-26, S1 + judge 1.2.0): the client's handle from other platforms, and the reference-look vocabulary; every library rebuilds once.
+export const HARVEST_PLAN_VERSION = 3;
+/** Libraries built by a plan older than this rebuild once, whatever their age. */
+export const REBUILD_BELOW_PLAN_VERSION = 3;
 
 export function planHarvest(input: {
   ownAccounts: ReadonlyArray<{ platform: string; username: string }>;
+  /**
+   * S1 (2026-09-26): the client's handles on OTHER platforms, tried on
+   * Instagram before the website's link. The Pitch by Deel has no Instagram
+   * account in its config, so its site (deel.com) named @getdeel, the parent
+   * brand, and the harvest read the wrong feed; its own handle is `deelpitch`
+   * on X, and on Instagram too.
+   */
+  ownHandlesElsewhere?: readonly string[] | undefined;
   referenceAccounts: ReadonlyArray<{ platform: string; handle: string }>;
   competitors: ReadonlyArray<{ name?: unknown; website?: unknown }>;
   /** The client's own website: its instagram.com link names the client's account when the config does not. */
@@ -91,6 +102,19 @@ export function planHarvest(input: {
     if (own.platform !== "instagram") continue;
     const handle = cleanHandle(own.username);
     if (handle !== undefined) accounts.set(handle, "client");
+  }
+  if (![...accounts.values()].includes("client")) {
+    const elsewhere = [
+      ...input.ownAccounts.filter((a) => a.platform !== "instagram").map((a) => a.username),
+      ...(input.ownHandlesElsewhere ?? []),
+    ];
+    for (const raw of elsewhere) {
+      const handle = cleanHandle(raw);
+      if (handle !== undefined && !accounts.has(handle)) {
+        accounts.set(handle, "client");
+        break;
+      }
+    }
   }
   for (const ref of input.referenceAccounts) {
     if (ref.platform !== "instagram") continue;
@@ -263,6 +287,8 @@ export function exemplarLibraryAction(library: ExemplarLibrary | undefined, now:
   // four references: rebuilt once, now, rather than waiting out the old
   // plan's cooldown (Sitti and XO Digital, 2026-09-25).
   if (library.planVersion === undefined && library.accounts.filter((a) => a.role === "reference" && a.posts > 0).length < MIN_REFERENCE_ACCOUNTS) return "build";
+  // S1 + judge 1.2.0 (2026-09-26): an older plan read the wrong own feed (The Pitch by Deel read @getdeel) and judged without the reference-look vocabulary.
+  if (library.status === "built" && (library.planVersion ?? 1) < REBUILD_BELOW_PLAN_VERSION) return "build";
   if (library.status === "failed") return ageDays < EXEMPLAR_LIBRARY_RETRY_DAYS ? "wait" : "build";
   return ageDays < EXEMPLAR_LIBRARY_TTL_DAYS ? "reuse" : "build";
 }
