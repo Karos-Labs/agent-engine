@@ -3367,7 +3367,14 @@ export function assembleSlidesData(params: {
         // `COMPOSITION_ANCHOR` rather than a ternary spelled out here: this
         // mapping is the axis reaching the plate, and a copy of it in this
         // file is a copy the render sweeps cannot reach. See its own note.
-        compositionAnchor: COMPOSITION_ANCHOR[params.visualSystem?.compositionGrammar ?? "bottom-column"],
+        // 2026-09-26: a BARE text plate (no picture, no device) is a centred block. Re-rendered
+        // prep batch 8: bottom-anchored, The Pitch by Deel's "The judge panel is the credential"
+        // left the top 45% of the plate as flat ground; the owner prefers the centred block
+        // (2026-09-24 layout verdict). A plate with an object keeps the run's grammar.
+        compositionAnchor:
+          (layout === "headline_focus" || layout === "text_only") && (selection?.imagePath ?? null) === null && slide.device === undefined
+            ? "centre"
+            : COMPOSITION_ANCHOR[params.visualSystem?.compositionGrammar ?? "bottom-column"],
         coverForm: params.visualSystem?.coverForm ?? "figure",
         accentForm: params.visualSystem?.accentForm ?? "rule",
         ...(eyebrowSlides !== undefined ? { eyebrowSlides } : {}),
