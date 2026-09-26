@@ -9,7 +9,14 @@ import { DEFAULT_VISION_MODEL, type VisionAnalysisClient, type VisionPart } from
 // bucket first, because Instagram's CDN links are signed and expire.
 // 1.0.1: every input property carries a description (the registry test); no behaviour change.
 // 1.1.0 (2026-09-25): grades are calibrated on the benchmark accounts' breakouts (calibrateCraft), raw kept alongside; an exemplar is a breakout or top quarter with calibrated craft 4+.
-const TOOL_VERSION = "1.1.0";
+// 1.2.0 (2026-09-26, owner reference covers): the cover vocabulary names the
+// looks the owner's high-like references use and the renderer is growing
+// (annotated-photo, doodle, ui-collage, object-on-ground, abstract-3d), and a
+// new `coverIdea` records WHAT the cover shows about the post: the two
+// highest-liked references drew the post's idea literally (a scale for "hype
+// vs reality", two bunches side by side for "how to choose"). A value the
+// judge was not asked for still reads as `other`, so older entries parse.
+const TOOL_VERSION = "1.2.0";
 
 const MAX_IMAGE_BYTES = 4_000_000;
 const RATE_LIMIT_RETRIES = 3;
@@ -56,7 +63,8 @@ export type JudgeExemplarsInput = z.input<typeof JudgeExemplarsInputSchema>;
  * and a closed enum threw the whole judgement away for one unfamiliar word.
  */
 export const DNA_VALUES = {
-  coverType: ["photo-full-bleed", "photo-framed", "person", "product", "typographic", "illustration", "screenshot", "logo", "collage", "moodboard", "other"],
+  coverType: ["photo-full-bleed", "photo-framed", "person", "product", "typographic", "illustration", "screenshot", "logo", "collage", "moodboard", "annotated-photo", "doodle", "ui-collage", "object-on-ground", "abstract-3d", "other"],
+  coverIdea: ["literal-metaphor", "side-by-side", "bold-claim", "big-number", "question", "person", "product-shot", "topic-photo", "other"],
   picturePlacement: ["full-bleed", "inset", "split", "none", "mixed", "other"],
   textDensity: ["none", "low", "medium", "high"],
   typeStyle: ["serif", "sans", "mixed", "script", "mono", "none", "other"],
@@ -75,6 +83,7 @@ function lenientEnum<const T extends readonly [string, ...string[]]>(values: T) 
 /** What one post's frames are made of. Every field is a CATEGORY a template can act on, never prose to copy. */
 export const DesignDnaSchema = z.object({
   coverType: lenientEnum(DNA_VALUES.coverType),
+  coverIdea: lenientEnum(DNA_VALUES.coverIdea),
   picturePlacement: lenientEnum(DNA_VALUES.picturePlacement),
   elementGroupsPerSlide: z.coerce.number().int().min(0).max(12),
   textDensity: lenientEnum(DNA_VALUES.textDensity),
@@ -197,8 +206,10 @@ export function judgeInstructions(post: z.output<typeof JudgeExemplarsInputSchem
     "dna: the categories that describe how the frames are BUILT (read them from the pixels, not the caption).",
     "standout: one sentence naming the single transferable technique (e.g. 'one highlighted word per headline in the brand colour'). Never a topic.",
     post.hook.length > 0 ? `The caption's first line, for hookPattern only: "${post.hook.slice(0, 160)}"` : "No caption line was supplied; hookPattern reads the cover's headline.",
+    "coverType: annotated-photo = a photo with drawn labels or arrows pointing into it; doodle = hand-drawn line illustration or handwritten type; ui-collage = product screens or UI cards arranged around the headline; object-on-ground = one isolated object or cutout on a plain ground beside or above the type; abstract-3d = an abstract rendered form (glass, gradient, glow) as the hero.",
+    "coverIdea: what the cover SHOWS about the post. literal-metaphor = the picture draws the post's claim (a scale for a trade-off, a maze for complexity); side-by-side = two things compared in one frame; bold-claim = the headline alone carries it; big-number = one figure dominates; topic-photo = a picture merely related to the subject.",
     `Allowed dna values (use exactly one of each list): ${Object.entries(DNA_VALUES).map(([k, v]) => `${k}=${v.join("|")}`).join("; ")}; elementGroupsPerSlide is an integer; palette is up to five #rrggbb colours.`,
-    'Return JSON: {"craft":n,"craftReason":"...","standout":"...","dna":{"coverType":"...","picturePlacement":"...","elementGroupsPerSlide":n,"textDensity":"...","typeStyle":"...","emphasis":"...","device":"...","groundStyle":"...","palette":["#rrggbb"],"hookPattern":"..."}}',
+    'Return JSON: {"craft":n,"craftReason":"...","standout":"...","dna":{"coverType":"...","coverIdea":"...","picturePlacement":"...","elementGroupsPerSlide":n,"textDensity":"...","typeStyle":"...","emphasis":"...","device":"...","groundStyle":"...","palette":["#rrggbb"],"hookPattern":"..."}}',
   ].join("\n");
 }
 
@@ -218,7 +229,7 @@ export function createJudgeExemplars(options: { client?: VisionAnalysisClient | 
   return defineTool<JudgeExemplarsInput, JudgeExemplarsResult>({
     name: "media.judgeExemplars",
     description:
-      "A vision model grades the CRAFT (1-5, separate from engagement) of harvested Instagram posts and records each one's design DNA (cover type, picture placement, element groups, text density, type, emphasis, device, ground, palette, hook pattern). Frames are copied to the media bucket first, reference-only. Marks exemplar = top quarter of its account AND craft 4+.",
+      "A vision model grades the CRAFT (1-5, separate from engagement) of harvested Instagram posts and records each one's design DNA (cover type, cover idea, picture placement, element groups, text density, type, emphasis, device, ground, palette, hook pattern). Frames are copied to the media bucket first, reference-only. Marks exemplar = top quarter of its account AND craft 4+.",
     version: TOOL_VERSION,
     inputSchema: JudgeExemplarsInputSchema,
     async execute(rawInput, { ctx }) {

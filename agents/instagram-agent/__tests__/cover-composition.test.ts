@@ -27,6 +27,13 @@ describe("cover composition", () => {
     expect(basis).toMatch(/4 exemplar covers/u);
   });
 
+  it("the reference looks judge 1.2.0 names vote for the nearest composition the renderer has", () => {
+    const objects = coverWeightsFor(library([entry("object-on-ground"), entry("ui-collage"), entry("abstract-3d")])).weights;
+    expect(objects.sandwich).toBeGreaterThan(DEFAULT_COVER_WEIGHTS.sandwich);
+    const drawn = coverWeightsFor(library([entry("doodle"), entry("annotated-photo"), entry("doodle")])).weights;
+    expect(drawn.poster).toBeGreaterThanOrEqual(DEFAULT_COVER_WEIGHTS.poster);
+  });
+
   it("ignores the client's own posts and thin libraries", () => {
     expect(coverWeightsFor(library([entry("collage", 5, 3, "client"), entry("collage", 5, 3, "client"), entry("collage", 5, 3, "client")])).weights).toEqual(DEFAULT_COVER_WEIGHTS);
     expect(coverWeightsFor(library([entry("collage"), entry("collage")])).weights).toEqual(DEFAULT_COVER_WEIGHTS);

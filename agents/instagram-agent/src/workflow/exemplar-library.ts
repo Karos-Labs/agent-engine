@@ -325,6 +325,7 @@ export function exemplarPatternEvidence(library: ExemplarLibrary | undefined): {
           `${label} (${entries.length} judged breakouts):`,
           `- picture placement: ${share(entries, "picturePlacement")}`,
           `- cover: ${share(entries, "coverType")}`,
+          `- cover idea: ${share(entries, "coverIdea")}`,
           `- text density: ${share(entries, "textDensity")}; emphasis: ${share(entries, "emphasis")}`,
           `- ground: ${share(entries, "groundStyle")}`,
         ];

@@ -44,6 +44,15 @@ const FROM_COVER_TYPE: Record<string, Partial<CoverWeights>> = {
   moodboard: { sandwich: 1 },
   logo: { framed: 1 },
   typographic: { framed: 0.5, sandwich: 0.5 },
+  // Judge 1.2.0 (2026-09-26). Until the renderer grows these looks, each
+  // votes for the nearest composition it has: a picture at bleed for a
+  // marked-up photo or a drawing, the picture-over-type sandwich for an
+  // isolated object, a rendered form or a screen collage.
+  "annotated-photo": { poster: 1 },
+  doodle: { poster: 1 },
+  "ui-collage": { sandwich: 1 },
+  "object-on-ground": { sandwich: 1 },
+  "abstract-3d": { sandwich: 1 },
 };
 
 export function coverWeightsFor(library: ExemplarLibrary | undefined): { weights: CoverWeights; basis: string } {

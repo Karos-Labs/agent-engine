@@ -186,3 +186,25 @@ describe("the scale is anchored on the benchmark accounts' proven hits (2026-09-
     expect(outcome.result.judged.filter((j) => j.role === "reference").every((j) => j.craft >= 4 && j.exemplar)).toBe(true);
   });
 });
+
+describe("the owner's reference covers (judge 1.2.0, 2026-09-26)", () => {
+  it("names the new cover looks and what the cover shows, and an entry judged before 1.2.0 still parses", async () => {
+    const { DesignDnaSchema } = await import("../src/judge-exemplars.js");
+    const drawn = DesignDnaSchema.parse({ ...DNA, coverType: "doodle", coverIdea: "literal-metaphor" });
+    expect(drawn.coverType).toBe("doodle");
+    expect(drawn.coverIdea).toBe("literal-metaphor");
+    for (const cover of ["annotated-photo", "ui-collage", "object-on-ground", "abstract-3d"]) {
+      expect(DesignDnaSchema.parse({ ...DNA, coverType: cover }).coverType).toBe(cover);
+    }
+    // A library entry stored by judge 1.1.0 has no coverIdea at all.
+    expect(DesignDnaSchema.parse(DNA).coverIdea).toBe("other");
+  });
+
+  it("defines the new values in the prompt, so a scale drawn for a trade-off reads as literal-metaphor", () => {
+    const post = JudgeExemplarsInputSchema.parse({ posts: [{ ref: "p", handle: "h", role: "reference", format: "carousel", frames: ["https://x/1.jpg"] }] }).posts[0]!;
+    const text = judgeInstructions(post, 1);
+    expect(text).toMatch(/coverIdea=literal-metaphor\|side-by-side/u);
+    expect(text).toMatch(/literal-metaphor = the picture draws the post's claim/u);
+    expect(text).toMatch(/object-on-ground = one isolated object/u);
+  });
+});
