@@ -44,7 +44,8 @@ describe("cover composition", () => {
   it("is seeded (a resume re-renders the same cover) and, across runs, opens more than one way", () => {
     expect(pickCoverComposition(DEFAULT_COVER_WEIGHTS, "karoslabs:run-1")).toBe(pickCoverComposition(DEFAULT_COVER_WEIGHTS, "karoslabs:run-1"));
     const seen = new Set(Array.from({ length: 40 }, (_, i) => pickCoverComposition(DEFAULT_COVER_WEIGHTS, `karoslabs:run-${i}`)));
-    for (const c of COVER_COMPOSITIONS) expect(seen.has(c), c).toBe(true);
+    // Every composition the default weights allow appears; `typographic` (weight 0) only ever comes from a harvest.
+    for (const c of COVER_COMPOSITIONS) expect(seen.has(c), c).toBe(DEFAULT_COVER_WEIGHTS[c] > 0);
   });
 
   it("assembleSlidesData sets a photographic cover as the run's composition, and leaves the poster when told poster", () => {
@@ -93,5 +94,31 @@ describe("a poster carries a short headline; a long one takes the sandwich (2026
   it("never overrides a composition the run chose on purpose", () => {
     expect(coverCompositionForHeadline("framed", "Geography is not the disqualifier. nybl won Paris from the UAE.")).toBe("framed");
     expect(coverCompositionForHeadline("sandwich", "Short line")).toBe("sandwich");
+    // An unhonoured typographic cover (it kept its photograph) is a poster, so a long headline still takes the sandwich.
+    expect(coverCompositionForHeadline("typographic", "Geography is not the disqualifier. nybl won Paris from the UAE.")).toBe("sandwich");
+    expect(coverCompositionForHeadline("typographic", "The 3,000-agent CMO fallacy")).toBe("poster");
+  });
+});
+
+describe("the typographic cover: the owner's type references (2026-09-26)", () => {
+  const sel = (n: number, imagePath: string | null): ImageSelection => ({ n, imagePath, reason: "r", license: "CC0", rightsUsable: true, watermarkFree: true, claimMatch: 5, claimMatchReason: "r" });
+  const cover = (device: boolean) => ({ n: 1, headline: "O piloto é institucional.", body: "Em 2025, 45,8% do volume.", visualNeed: "v", sourceRef: "c", layout: "cover", ...(device ? { device: { kind: "figure", value: "45,8%", label: "das emissões de renda fixa digital em 2025", source: "Cointelegraph" } } : {}) });
+  const run = (device: boolean, others: number) =>
+    assembleSlidesData({
+      clientSlug: "k", postId: "p", repoRoot: "/r", brandTokens: { templateDir: "t", slideTemplate: "slide.html" },
+      copy: { format: "carousel", caption: "c", slides: [cover(device), ...[2, 3, 4, 5].map((n) => ({ n, headline: `Slide ${n} headline`, body: "b", visualNeed: "v", sourceRef: "c", layout: "photo" })), { n: 6, headline: "Close", body: "Is this for you?", visualNeed: "v", sourceRef: "c", layout: "closer" }] } as unknown as InstagramCopyOutput,
+      selections: [sel(1, "media/cover.jpg"), ...[2, 3, 4, 5].map((n) => sel(n, n - 1 <= others ? `media/${n}.jpg` : null)), sel(6, null)],
+      canvas: { w: 1080, h: 1440, scale: 2, slides_min: 1, slides_max: 8 }, paletteSeed: "cc", coverComposition: "typographic",
+    }).slides[0]!;
+  it("sets no photograph when the cover carries its own figure and the post keeps three pictures elsewhere", () => {
+    expect(run(true, 3).images?.["hero"]).toBeUndefined();
+  });
+  it("keeps the photograph without a figure (type on bare ground is what the floor refuses) or without enough pictures elsewhere", () => {
+    expect(run(false, 4).images?.["hero"]).toBe("media/cover.jpg");
+    expect(run(true, 2).images?.["hero"]).toBe("media/cover.jpg");
+  });
+  it("is weight 0 by default and moves only with a harvest of typographic covers", () => {
+    expect(DEFAULT_COVER_WEIGHTS.typographic).toBe(0);
+    expect(coverWeightsFor(library([entry("typographic"), entry("typographic"), entry("typographic")])).weights.typographic).toBeGreaterThan(0);
   });
 });

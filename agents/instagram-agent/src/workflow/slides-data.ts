@@ -2920,9 +2920,14 @@ export function withoutRepeatedDevices(slides: readonly InstagramSlideCopy[]): I
  */
 export const POSTER_MAX_HEADLINE_WORDS = 7;
 
+/** The pictures a post must keep elsewhere before its cover may go typographic. */
+export const TYPOGRAPHIC_COVER_MIN_OTHER_PICTURES = 3;
+
 /** The cover composition a headline can carry: a requested poster (or none) with a long headline becomes the sandwich. */
-export function coverCompositionForHeadline(requested: "poster" | "sandwich" | "framed" | undefined, headline: string): "poster" | "sandwich" | "framed" {
-  const chosen = requested ?? "poster";
+export function coverCompositionForHeadline(requested: "poster" | "sandwich" | "framed" | "typographic" | undefined, headline: string): "poster" | "sandwich" | "framed" | "typographic" {
+  // A typographic cover that still has a photograph (no figure of its own, see the
+  // imagePath rule) is a poster, and takes the same long-headline rule.
+  const chosen = requested === undefined || requested === "typographic" ? "poster" : requested;
   if (chosen !== "poster") return chosen;
   const words = headline.trim().split(/\s+/u).filter((w) => w.length > 0).length;
   return words > POSTER_MAX_HEADLINE_WORDS ? "sandwich" : "poster";
@@ -3037,7 +3042,7 @@ export function assembleSlidesData(params: {
    * `poster` (the default), `sandwich` (title, picture, deck) or `framed`.
    * Only a photographic cover hero takes it; a logo or a cutout keeps its own.
    */
-  coverComposition?: "poster" | "sandwich" | "framed" | undefined;
+  coverComposition?: "poster" | "sandwich" | "framed" | "typographic" | undefined;
   /** 2026-09-24: interior slide bodies are cut to whole sentences within `BODY_WORD_BUDGET` (the workflow sets it). */
   textBudgets?: boolean | undefined;
   /** 2026-09-24: client product photos lifted off their backdrop; set as objects (`heroKind: "cutout"`). */
@@ -3432,7 +3437,17 @@ export function assembleSlidesData(params: {
     // "mark"` so the plate contains it on a clean panel instead of cropping
     // it (`_design-system.css`, "THE MARK AS A TILE").
     const heroIsMark = chosenPath !== undefined && params.markImagePaths?.has(chosenPath) === true;
-    const imagePath = chosenPath;
+    // A TYPOGRAPHIC cover sets no photograph: the headline is the cover (the owner's
+    // web_pros/zbalosch/natasha references). Every one of those still carries an
+    // object (a graphic, a 3D object, a motif), and a cover of type on bare ground is
+    // what the floor refuses, so it is honoured only when the cover has its own device
+    // (the figure takes the object's place), and only when the post keeps at least
+    // `TYPOGRAPHIC_COVER_MIN_OTHER_PICTURES` pictures elsewhere, so the picture floor
+    // is not paid for by the cover. Otherwise the cover keeps its picture.
+    const imagePath =
+      layout === "cover" && params.coverComposition === "typographic" && slide.device !== undefined && params.selections.filter((sel) => sel.n !== slide.n && sel.imagePath !== null).length >= TYPOGRAPHIC_COVER_MIN_OTHER_PICTURES
+        ? undefined
+        : chosenPath;
     const pictureIsBounded = imagePath !== undefined && params.boundedPicturePaths?.has(imagePath) === true;
     const photoAsBlock = (params.interiorPhotosAsBlocks === true || pictureIsBounded) && layout === "photo" && index > 0 && index < lastIndex && imagePath !== undefined && !heroIsMark;
     const badgePath: string | undefined = undefined;
@@ -3505,7 +3520,7 @@ export function assembleSlidesData(params: {
         // 2026-09-24: which of the three closer forms (`closerFormFor`); only the closer plate reads it.
         ...(layout === "closer" ? { closerForm: closerFormFor(`${params.clientSlug}:${params.paletteSeed ?? ""}`) } : {}),
         // 2026-09-26: a stat's figure in the accent, where the accent reads on this ground as large type (3:1).
-        ...((layout === "stat_callout" || (layout === "headline_focus" && slide.device?.kind === "figure")) && slideAccentColor !== undefined && effectiveGround !== undefined && contrastRatio(slideAccentColor, effectiveGround) >= FIGURE_INK_MIN_CONTRAST ? { figureInk: "accent" } : {}),
+        ...((layout === "stat_callout" || ((layout === "headline_focus" || layout === "cover") && slide.device?.kind === "figure")) && slideAccentColor !== undefined && effectiveGround !== undefined && contrastRatio(slideAccentColor, effectiveGround) >= FIGURE_INK_MIN_CONTRAST ? { figureInk: "accent" } : {}),
         ...(photoCredit !== undefined ? { photoCredit } : {}),
         ...(groundTone !== undefined ? { groundTone } : {}),
         // `auto`: the renderer looks at the slide and places it (publish.renderCarousel 1.11.0).

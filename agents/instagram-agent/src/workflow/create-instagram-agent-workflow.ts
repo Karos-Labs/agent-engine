@@ -11020,7 +11020,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // opener would take the picture and render none of it.
       const coverPaintsPicture = copy.slides[0] !== undefined && HERO_IMAGE_LAYOUTS.has(resolveLayout(copy.slides[0], availableTemplates).layout);
       const coverMove = await wf.step.code(rev(`06h4-cover-takes-a-picture-attempt-${attempt}`), () =>
-        coverPaintsPicture ? (coverPictureMove(copy, selections, new Set([...markImagePaths, ...clearMarkPaths, ...productCutoutPaths, ...usedImagesSet])) ?? null) : null,
+        // A typographic cover takes no picture (2026-09-26): moving one there would only strip an interior slide.
+        coverPaintsPicture && coverChoice.composition !== "typographic" ? (coverPictureMove(copy, selections, new Set([...markImagePaths, ...clearMarkPaths, ...productCutoutPaths, ...usedImagesSet])) ?? null) : null,
       );
       if (coverMove !== null && copy.slides[0] !== undefined) {
         selections = applyCoverPictureMove(selections, copy.slides[0].n, coverMove, (n) => typographicSelection({ n, layout: layoutOf(n) }));

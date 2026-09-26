@@ -21,13 +21,17 @@ import type { ExemplarLibrary } from "./exemplar-library.js";
  * craft and its lift over its own account. Seeded on the run, so a resume
  * re-renders the same cover, and a different run can open differently.
  */
-export const COVER_COMPOSITIONS = ["poster", "sandwich", "framed"] as const;
+// 2026-09-26: `typographic` is the owner's reference type covers (web_pros, zbalosch,
+// natasha): no photograph, the headline IS the cover, one word or number in the
+// brand colour. Weight 0 by default; only a harvest whose strongest covers are
+// typographic moves it (see FROM_COVER_TYPE and the recipes).
+export const COVER_COMPOSITIONS = ["poster", "sandwich", "framed", "typographic"] as const;
 export type CoverComposition = (typeof COVER_COMPOSITIONS)[number];
 
 export type CoverWeights = Record<CoverComposition, number>;
 
 /** The owner's default: a poster most of the time, the other two for rhythm. */
-export const DEFAULT_COVER_WEIGHTS: CoverWeights = { poster: 0.6, sandwich: 0.25, framed: 0.15 };
+export const DEFAULT_COVER_WEIGHTS: CoverWeights = { poster: 0.6, sandwich: 0.25, framed: 0.15, typographic: 0 };
 
 /** How much of the mix the harvest may move: half, so the default never disappears. */
 const LIBRARY_SHARE = 0.5;
@@ -44,7 +48,7 @@ export const FROM_COVER_TYPE: Record<string, Partial<CoverWeights>> = {
   collage: { sandwich: 1 },
   moodboard: { sandwich: 1 },
   logo: { framed: 1 },
-  typographic: { framed: 0.5, sandwich: 0.5 },
+  typographic: { typographic: 0.6, framed: 0.2, sandwich: 0.2 },
   // Judge 1.2.0 (2026-09-26). Until the renderer grows these looks, each
   // votes for the nearest composition it has: a picture at bleed for a
   // marked-up photo or a drawing, the picture-over-type sandwich for an
@@ -61,7 +65,7 @@ export function coverWeightsFor(library: ExemplarLibrary | undefined): { weights
   // S1 (2026-09-26): the client's own strong posts vote too, twice (`exemplarVoteWeight`).
   const entries = library.entries.filter((e) => exemplarVoteWeight(e) > 0 && typeof e.dna["coverType"] === "string");
   if (entries.length < MIN_ENTRIES) return { weights: DEFAULT_COVER_WEIGHTS, basis: `the owner's default (${entries.length} exemplar cover(s), fewer than ${MIN_ENTRIES})` };
-  const seen: CoverWeights = { poster: 0, sandwich: 0, framed: 0 };
+  const seen: CoverWeights = { poster: 0, sandwich: 0, framed: 0, typographic: 0 };
   const types = new Map<string, number>();
   let total = 0;
   for (const e of entries) {
@@ -74,7 +78,7 @@ export function coverWeightsFor(library: ExemplarLibrary | undefined): { weights
     total += w;
   }
   if (total === 0) return { weights: DEFAULT_COVER_WEIGHTS, basis: "the owner's default (no mappable exemplar cover types)" };
-  const weights: CoverWeights = { poster: 0, sandwich: 0, framed: 0 };
+  const weights: CoverWeights = { poster: 0, sandwich: 0, framed: 0, typographic: 0 };
   for (const c of COVER_COMPOSITIONS) weights[c] = (1 - LIBRARY_SHARE) * DEFAULT_COVER_WEIGHTS[c] + LIBRARY_SHARE * (seen[c] / total);
   const basis = `the owner's default blended with ${entries.length} exemplar covers (${[...types.entries()].map(([t, n]) => `${t} ${n}`).join(", ")})`;
   return { weights, basis };

@@ -277,7 +277,7 @@ export function clampOversizeValues(payload: unknown, issues: ZodError["issues"]
 
     let replacement: unknown;
     if (typeof current === "string" && current.length > limit) {
-      replacement = current.slice(0, limit).trimEnd();
+      replacement = cutAtBoundary(current, limit);
     } else if (Array.isArray(current) && current.length > limit) {
       replacement = current.slice(0, limit);
     } else {
@@ -291,6 +291,27 @@ export function clampOversizeValues(payload: unknown, issues: ZodError["issues"]
   }
 
   return changed ? working : undefined;
+}
+
+/**
+ * A string cut to `limit` characters at the last whole piece that fits (2026-09-26).
+ *
+ * Cutting at exactly the limit printed half words: XO Digital's cover device
+ * read "...abaixo de R$ 500 mil, impulsionadas p" (a label written past its
+ * 80-character cap). A clause boundary in the last 40% of the allowance is
+ * preferred (", ", "; ", " - ", ". "), then the last space in the last half;
+ * only a string with neither (a URL, a token) is cut hard. Trailing commas,
+ * semicolons and colons left by the cut are dropped. Never longer than `limit`.
+ */
+export function cutAtBoundary(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const head = text.slice(0, limit);
+  const clauseMarks = [", ", "; ", " — ", " - ", ". "];
+  let clause = -1;
+  for (const mark of clauseMarks) clause = Math.max(clause, head.lastIndexOf(mark));
+  const cutAt = clause >= Math.floor(limit * 0.6) ? clause : head.lastIndexOf(" ") >= Math.floor(limit * 0.5) ? head.lastIndexOf(" ") : -1;
+  const cut = cutAt > 0 ? head.slice(0, cutAt) : head;
+  return cut.trimEnd().replace(/[,;:—-]+$/u, "").trimEnd();
 }
 
 function valueAtPath(root: unknown, path: readonly PropertyKey[]): unknown {
