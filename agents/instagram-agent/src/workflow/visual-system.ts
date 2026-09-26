@@ -788,6 +788,13 @@ export interface PickVisualSystemParams {
    * post; everything else about the system is still picked as it always was.
    */
   forcedCoverForm?: CoverForm | undefined;
+  /**
+   * The axes the client's exemplar library agrees on (`exemplarLook`,
+   * 2026-09-26). Applied AFTER the variety holds: among the systems still in
+   * the pool, the ones matching the most axes are kept and the seed draws
+   * among them. Absent, or matching nothing, leaves today's uniform draw.
+   */
+  preferred?: { ground?: SystemGround | undefined; accentForm?: AccentForm | undefined; typeScale?: TypeScaleFlavour | undefined } | undefined;
 }
 
 /**
@@ -821,8 +828,18 @@ export function pickVisualSystem(params: PickVisualSystemParams): CarouselVisual
 
   const notOwn = roleOk.filter((entry) => !ownHeld.has(entry.id));
   const notEither = notOwn.filter((entry) => !crossHeld.has(entry.id));
-  const pool = notEither.length > 0 ? notEither : notOwn.length > 0 ? notOwn : roleOk;
+  const heldPool = notEither.length > 0 ? notEither : notOwn.length > 0 ? notOwn : roleOk;
   const relaxed = notEither.length > 0 ? undefined : notOwn.length > 0 ? "cross-client" : "own-history";
+  // The category's taste narrows what the holds left, never the holds.
+  const preferred = params.preferred;
+  const score = (entry: (typeof VISUAL_SYSTEM_CATALOG)[number]): number =>
+    preferred === undefined
+      ? 0
+      : (preferred.ground !== undefined && entry.ground === preferred.ground ? 1 : 0) +
+        (preferred.accentForm !== undefined && entry.accentForm === preferred.accentForm ? 1 : 0) +
+        (preferred.typeScale !== undefined && entry.typeScale === preferred.typeScale ? 1 : 0);
+  const best = Math.max(0, ...heldPool.map(score));
+  const pool = best > 0 ? heldPool.filter((entry) => score(entry) === best) : heldPool;
 
   const seed = `${params.clientSlug}:${params.paletteSeed ?? ""}:${params.seriesId ?? ""}`;
   const entry = pool[fnv1a32(seed) % pool.length]!;
@@ -853,7 +870,8 @@ export function pickVisualSystem(params: PickVisualSystemParams): CarouselVisual
     gutter: entry.gutter,
     reason:
       `visual system "${entry.id}": ${role} accent, ${entry.ground} ground, ${params.forcedCoverForm ?? entry.coverForm} cover` +
-      `${params.forcedCoverForm !== undefined ? ` (the client's news mode sets the cover; the catalog entry's is ${entry.coverForm})` : ""}${heldNote}`,
+      `${params.forcedCoverForm !== undefined ? ` (the client's news mode sets the cover; the catalog entry's is ${entry.coverForm})` : ""}${heldNote}` +
+      `${best > 0 ? ` (matches ${best} axis/axes the client's best exemplars share)` : ""}`,
   };
 }
 
