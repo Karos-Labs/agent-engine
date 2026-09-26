@@ -14,7 +14,8 @@ describe("the scrim is anchored to the measured copy", () => {
 
   it("measures after the last fit pass and before the ready flag, never below 22%", () => {
     const js = readFileSync(path.join(DIR, "_ds-fit.js"), "utf8");
-    expect(js).toContain("var done = function () { resetPicture(); pass(); fillPicture(); placeSandwich(); anchorScrim(); window.__CAROUSEL_READY__ = true; };");
+    // 2026-09-26: the callouts are drawn after the scrim is anchored, and ready waits for them (the picture must decode).
+    expect(js).toContain("var done = function () { resetPicture(); pass(); fillPicture(); placeSandwich(); anchorScrim(); placeCallouts(function () { window.__CAROUSEL_READY__ = true; }); };");
     expect(js).toContain("Math.max(22, Math.min(80, fromBottom))");
     for (const plate of ["cover.html", "slide.html"]) expect(readFileSync(path.join(DIR, plate), "utf8")).toContain("anchorScrim");
   });

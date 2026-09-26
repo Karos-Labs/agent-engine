@@ -1332,4 +1332,23 @@ body.ta-center .plate > .mark-badge { margin-inline: auto; }
 [data-fit="1"] .mark-badge:has(img[src]:not([src=""])) { block-size: 92px; }
 [data-fit="2"] .mark-badge:has(img[src]:not([src=""])) { block-size: 80px; padding: 14px 20px; }
 
+/* ---- CALLOUTS (2026-09-26) ----------------------------------------------
+   A label with an arrow into the picture (`placeCallouts` in _ds-fit.js). Set in
+   the display face, light on the picture with a soft shade under it so it reads
+   on any photograph, the way the owner's grapes reference labels its two bunches. */
+.callout-layer { position: absolute; inset: 0; pointer-events: none; z-index: 6; }
+.callout-arrows { position: absolute; inset: 0; overflow: visible; }
+.callout-arrows path { fill: none; stroke: var(--callout-ink, #ffffff); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 2px 4px var(--callout-shade, rgba(0, 0, 0, 0.55))); }
+.callout-label {
+  position: absolute;
+  transform: translateX(-50%);
+  font-family: var(--f-display, var(--f-body, system-ui, sans-serif));
+  font-weight: var(--display-weight, 700);
+  font-size: var(--t-lead);
+  line-height: 1.1;
+  color: var(--callout-ink, #ffffff);
+  white-space: nowrap;
+  text-shadow: 0 2px 10px var(--callout-shade, rgba(0, 0, 0, 0.6)), 0 0 2px var(--callout-shade, rgba(0, 0, 0, 0.5));
+}
+
 /* @ds:end-of-source */

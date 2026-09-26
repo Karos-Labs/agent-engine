@@ -410,10 +410,76 @@
       return;
     }
   }
+  /* CALLOUTS (2026-09-26, the owner's grapes reference): up to two labels, each
+     with an arrow into the thing it names in the slide's picture. The boxes come
+     from `media.locateInImage` in the picture's own 0..1 coordinates, so they
+     are mapped through the picture's `object-fit` crop to where it actually
+     paints; a target the crop cut away is not labelled. The label sits above its
+     target when there is room, below it otherwise, and never outside the
+     picture. Drawn on its own layer above the plate, so no measurement of the
+     copy moves. Ready is signalled only once the picture has decoded. */
+  function placeCallouts(then) {
+    var raw = document.body.getAttribute('data-callouts');
+    var items = null;
+    try { items = raw ? JSON.parse(raw) : null; } catch (e) { items = null; }
+    var img = document.querySelector('img.hero[src]:not([src=""]), .bg img[src]:not([src=""]), .sc-figure-band img[src]:not([src=""])');
+    if (!items || !items.length || !img) { then(); return; }
+    var draw = function () {
+      if (!img.naturalWidth || !img.naturalHeight) { then(); return; }
+      var r = img.getBoundingClientRect();
+      var fit = getComputedStyle(img).objectFit;
+      var nw = img.naturalWidth, nh = img.naturalHeight;
+      var scale = fit === 'contain' ? Math.min(r.width / nw, r.height / nh) : Math.max(r.width / nw, r.height / nh);
+      var dw = nw * scale, dh = nh * scale, ox = r.left + (r.width - dw) / 2, oy = r.top + (r.height - dh) / 2;
+      var layer = document.createElement('div');
+      layer.className = 'callout-layer';
+      var svgNs = 'http://www.w3.org/2000/svg';
+      var svg = document.createElementNS(svgNs, 'svg');
+      svg.setAttribute('class', 'callout-arrows');
+      svg.setAttribute('width', String(document.documentElement.clientWidth));
+      svg.setAttribute('height', String(document.documentElement.clientHeight));
+      layer.appendChild(svg);
+      for (var i = 0; i < items.length && i < 2; i++) {
+        var b = items[i] && items[i].box;
+        var text = items[i] && items[i].label;
+        if (!b || !text) continue;
+        var cx = ox + ((b.x0 + b.x1) / 2) * dw;
+        var top = oy + b.y0 * dh, bottom = oy + b.y1 * dh;
+        if (cx < r.left + 24 || cx > r.right - 24 || bottom < r.top + 24 || top > r.bottom - 24) continue;
+        var above = top - r.top > 150;
+        var label = document.createElement('div');
+        label.className = 'callout-label';
+        label.appendChild(document.createTextNode(text));
+        layer.appendChild(label);
+        document.body.appendChild(layer);
+        var lw = label.getBoundingClientRect().width, lh = label.getBoundingClientRect().height;
+        var lx = Math.max(r.left + 12 + lw / 2, Math.min(r.right - 12 - lw / 2, cx));
+        var ly = above ? Math.max(r.top + 12, top - 110 - lh) : Math.min(r.bottom - 12 - lh, bottom + 60);
+        label.style.left = lx + 'px';
+        label.style.top = ly + 'px';
+        var x1 = lx, y1 = above ? ly + lh + 8 : ly - 8;
+        var x2 = cx, y2 = above ? Math.max(top + 6, y1 + 30) : Math.min(bottom - 6, y1 - 30);
+        var path = document.createElementNS(svgNs, 'path');
+        var mx = (x1 + x2) / 2 + (above ? 24 : -24);
+        path.setAttribute('d', 'M' + x1 + ' ' + y1 + ' Q' + mx + ' ' + (y1 + y2) / 2 + ' ' + x2 + ' ' + y2);
+        svg.appendChild(path);
+        var head = document.createElementNS(svgNs, 'path');
+        var ang = Math.atan2(y2 - (y1 + y2) / 2, x2 - mx);
+        var hx1 = x2 - 22 * Math.cos(ang - 0.45), hy1 = y2 - 22 * Math.sin(ang - 0.45);
+        var hx2 = x2 - 22 * Math.cos(ang + 0.45), hy2 = y2 - 22 * Math.sin(ang + 0.45);
+        head.setAttribute('d', 'M' + hx1 + ' ' + hy1 + ' L' + x2 + ' ' + y2 + ' L' + hx2 + ' ' + hy2);
+        svg.appendChild(head);
+      }
+      if (layer.parentNode) document.body.setAttribute('data-callouts-drawn', String(svg.childNodes.length / 2));
+      then();
+    };
+    if (img.complete) draw();
+    else { img.addEventListener('load', draw, { once: true }); img.addEventListener('error', function () { then(); }, { once: true }); }
+  }
   pass();
   fillPicture();
   placeSandwich();
-  var done = function () { resetPicture(); pass(); fillPicture(); placeSandwich(); anchorScrim(); window.__CAROUSEL_READY__ = true; };
+  var done = function () { resetPicture(); pass(); fillPicture(); placeSandwich(); anchorScrim(); placeCallouts(function () { window.__CAROUSEL_READY__ = true; }); };
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(done, done);
   else done();
 })();

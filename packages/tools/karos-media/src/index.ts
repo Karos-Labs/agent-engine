@@ -18,6 +18,7 @@ import { createMediaLibraryAdd, createMediaLibraryList } from "./media-library.j
 import { createVisualQaGate } from "./visual-qa-gate.js";
 import { createInspectImages } from "./inspect-images.js";
 import { createJudgeExemplars } from "./judge-exemplars.js";
+import { createLocateInImage } from "./locate-in-image.js";
 import { createClassifyClient } from "./classify-client.js";
 import { createCaptureDesignLanguage } from "./capture-design-language.js";
 import { createHarvestArticleImages } from "./harvest-article-images.js";
@@ -34,6 +35,7 @@ export * from "./providers/index.js";
 export * from "./find-images.js";
 export * from "./judge-exemplars.js";
 export * from "./classify-client.js";
+export * from "./locate-in-image.js";
 export * from "./capture-design-language.js";
 export * from "./image-floor.js";
 export * from "./image-model-ladder.js";
@@ -339,6 +341,11 @@ export function createKarosMediaTools(options: KarosMediaToolsOptions = {}): Age
     // every client (research round #253). Same Vertex credential as vision.
     "media.classifyClient": createClassifyClient({
       ...(visionClient ? { client: visionClient } : {}),
+    }),
+    // ── 2026-09-26: where named things sit in a picture, for a slide that labels them with an arrow.
+    "media.locateInImage": createLocateInImage({
+      ...(visionClient ? { client: visionClient } : {}),
+      ...(options.visionModel ? { model: options.visionModel } : {}),
     }),
     "media.judgeExemplars": createJudgeExemplars({
       ...(visionClient ? { client: visionClient } : {}),

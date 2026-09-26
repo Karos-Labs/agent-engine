@@ -511,6 +511,6 @@ export class InstagramCopyAgent extends BaseAgent<InstagramCopyDraft> {
     // five obsolete descriptions of them too.
     // @29 (2026-09-23): section 19 gains `position_map` and `spec_table`, and
     // sections 7 and 22 read the optional `pictureDensity` input.
-    skillRef: "instagram-copy@38",
+    skillRef: "instagram-copy@39",
   };
 }
