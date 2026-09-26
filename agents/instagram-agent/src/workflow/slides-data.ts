@@ -137,6 +137,12 @@ export const HERO_IMAGE_LAYOUTS: ReadonlySet<InstagramSlideLayout> = new Set<Ins
   "quote_card",
   "comparison_card",
   "list_takeaway",
+  // S3 (2026-09-26): the closer too. The owner on karoslabs batch 8: the last
+  // slides are boring and repetitive; every closer in batches 7 and 8 (22/22)
+  // filled its middle with a recap of numbers the post had already shown.
+  // A NEW picture is the third element that is not a repeat; the recap stays
+  // the fallback for a closer that gets none.
+  "closer",
 ]);
 
 /**
@@ -2344,7 +2350,8 @@ function contentFor(
       });
     }
     case "closer": {
-      const recap = buildRecapFragment(context?.position?.earlier ?? []);
+      // S3: a closer carrying its own picture needs no recap, which only repeats the post.
+      const recap = context?.position?.hasHeroImage === true ? "" : buildRecapFragment(context?.position?.earlier ?? []);
       const built = deviceFragment();
       // ── ONE ELASTIC MIDDLE, TWO POSSIBLE CODE-BUILT FRAGMENTS, AND THE
       //    DESIGNED OBJECT NOW WINS IT. ──

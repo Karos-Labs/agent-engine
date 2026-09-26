@@ -87,9 +87,10 @@ describe("the weighted content floor reproduces the owner's own verdicts (2026-0
     // ── THE CLOSER (slide 8) PASSES AT 3.0, AND THAT IS THE CORRECTION. ──
     //
     // This package shipped `CONTENT_WEIGHT_FLOOR.closer` at 4.0, which is
-    // unreachable for a closer (`closer` is not in `HERO_IMAGE_LAYOUTS`, so the
-    // archetype declares no `{{image:hero}}` slot and can never carry the 2.0 a
-    // hero is worth), and wave-2 integration corrected it to 3.5. With the
+    // unreachable for a closer (`closer` was not in `HERO_IMAGE_LAYOUTS` then, so
+    // it declared no `{{image:hero}}` slot and could never carry the 2.0 a hero
+    // is worth; since S3, 2026-09-26, it does, and a pictured closer weighs 4.0),
+    // and wave-2 integration corrected it to 3.5. With the
     // recap priced at `device` (1.5) that 3.5 was ALSO exactly what every
     // closer this agent produces weighs, so the floor sat on the one value it
     // could ever see and separated nothing — which is what this case used to
