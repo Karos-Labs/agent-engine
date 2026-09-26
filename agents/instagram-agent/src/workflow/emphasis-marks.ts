@@ -611,6 +611,8 @@ function buildRingAgainstGrounds(
 
   const accepted: string[] = [];
   const acceptedKinds: MarkKind[][] = [];
+  /** Legible members refused ONLY for sitting on the accent; the ring falls back to them when nothing else survives. */
+  const accentOnly: Array<{ hex: string; kinds: MarkKind[] }> = [];
   for (const hex of candidates) {
     if (accepted.length >= MARK_RING_MAX) break;
     // ── THE HONEST CULL, AND IT IS DELIBERATELY UNCHANGED (RFC-20 §6.2 item 1).
@@ -640,6 +642,7 @@ function buildRingAgainstGrounds(
     const clash = accents.find((a) => markColourDistance(hex, a) < ACCENT_EXCLUSION);
     if (clash !== undefined) {
       notes.push(`${hex} was dropped — it is within ${ACCENT_EXCLUSION} of the accent ${clash} and a mark must never be pixel-confused with accent furniture`);
+      accentOnly.push({ hex, kinds: verdict.kinds });
       continue;
     }
     // Pairwise separability: the LATER member drops, so the ring's order is
@@ -651,6 +654,24 @@ function buildRingAgainstGrounds(
     }
     accepted.push(hex);
     acceptedKinds.push(verdict.kinds);
+  }
+
+  // ── A ONE-COLOUR BRAND MARKS IN ITS OWN COLOUR (2026-09-26). ──
+  //
+  // The exclusion above keeps a mark apart from accent furniture. On a kit
+  // whose ring is the accent alone it removed EVERY candidate: prep batch 8
+  // painted a marked word on 1 of 11 carousels (the one multi-colour kit)
+  // although the copy declared emphasis on 8 of 8 slides of every post, and
+  // the owner's verdict on karoslabs was "missing the orange". The owner's
+  // own reference sets the orange kicker and the orange highlight block in
+  // the same colour. When nothing but the accent survives, the accent is the
+  // mark colour; a kit with any other legible colour is unchanged.
+  const accentIsTheMark = accepted.length === 0 && accentOnly.length > 0;
+  if (accentIsTheMark) {
+    const only = accentOnly[0]!;
+    accepted.push(only.hex);
+    acceptedKinds.push(only.kinds);
+    notes.push(`${only.hex} marks after all — it is the kit's only legible colour, and a brand with one colour emphasises in it`);
   }
 
   if (accepted.length >= MIN_HUE_RING) {
@@ -683,7 +704,7 @@ function buildRingAgainstGrounds(
       if (surfaces.some((s) => markColourDistance(resolved, s) <= MARK_TOL)) continue;
       const verdict = admit(resolved);
       if ("note" in verdict) continue;
-      if (accents.some((a) => markColourDistance(resolved, a) < ACCENT_EXCLUSION)) continue;
+      if (!accentIsTheMark && accents.some((a) => markColourDistance(resolved, a) < ACCENT_EXCLUSION)) continue;
       if (tintHexes.some((prev) => markColourDistance(resolved, prev) < MARK_SEPARATION)) continue;
       tintHexes.push(resolved);
       tintCss.push(`color-mix(in srgb, ${member} ${step}%, var(--bg))`);
@@ -761,13 +782,20 @@ export function ringIndexesFor(
   // would admit garbage into the ring instead. The two callers want opposite
   // fallbacks, so the check belongs at the call site.
   const accent = accentHex !== undefined && parseHex(accentHex) !== undefined ? accentHex : undefined;
-  const allowed: number[] = [];
-  ring.hexes.forEach((hex, index) => {
-    if (accent !== undefined && markColourDistance(hex, accent) < ACCENT_EXCLUSION) return;
-    if (slide !== undefined && markCapabilitiesFor(hex, slide.groundHex, slide.fgHex, slide).length === 0) return;
-    allowed.push(index);
-  });
-  return allowed;
+  const pass = (excludeAccent: boolean): number[] => {
+    const allowed: number[] = [];
+    ring.hexes.forEach((hex, index) => {
+      if (excludeAccent && accent !== undefined && markColourDistance(hex, accent) < ACCENT_EXCLUSION) return;
+      if (slide !== undefined && markCapabilitiesFor(hex, slide.groundHex, slide.fgHex, slide).length === 0) return;
+      allowed.push(index);
+    });
+    return allowed;
+  };
+  const allowed = pass(true);
+  // 2026-09-26: when the slide's accent is the only colour the ring holds
+  // (a one-colour brand, see `buildMarkRing`), the accent marks too rather
+  // than the slide marking nothing.
+  return allowed.length > 0 ? allowed : pass(false);
 }
 
 /**
