@@ -2837,6 +2837,42 @@ export async function repairSourceRefs(
  * `(clientSlug, postId)` so re-running this on resume lands on the same
  * output directory rather than a fresh one each attempt.
  */
+/** A figure as a reader compares two of them: case, spaces and thousands separators do not make it a new number. */
+function figureKey(figure: string): string {
+  return figure.toLowerCase().replace(/[\s,\u00a0\u202f]/gu, "");
+}
+
+/**
+ * The copy with every device that only REPEATS a number dropped (2026-09-26).
+ *
+ * Owner, on karoslabs prep batch 8 (`pubsub-21797283999138829`): the last
+ * slides are boring and repetitive, and one of them "looks like two slides in
+ * one". Slide 6 was a 32% stat; slide 7 was a headline, "How the 32% actually
+ * builds it.", with a device painting 32% AGAIN at figure size above it. A
+ * device is a second hero on its plate, so it earns the space only with a
+ * number the reader has not already been shown large. Dropped when every
+ * figure it paints is already in the slide's own headline, or was the hero of
+ * an earlier slide (a stat's figure, or a device kept there). The slide keeps
+ * its words; a device with a new number is untouched.
+ */
+export function withoutRepeatedDevices(slides: readonly InstagramSlideCopy[]): InstagramSlideCopy[] {
+  const shown = new Set<string>();
+  return slides.map((slide) => {
+    let next = slide;
+    if (slide.device !== undefined) {
+      const figures = deviceFigureValues(slide.device).map(figureKey).filter((f) => f.length > 0);
+      const headline = figureKey(slide.headline);
+      if (figures.length > 0 && figures.every((f) => shown.has(f) || headline.includes(f))) {
+        const { device: _repeated, ...rest } = slide;
+        next = rest as InstagramSlideCopy;
+      }
+    }
+    if (next.stat?.figure !== undefined) shown.add(figureKey(next.stat.figure));
+    if (next.device !== undefined) for (const f of deviceFigureValues(next.device)) shown.add(figureKey(f));
+    return next;
+  });
+}
+
 export function assembleSlidesData(params: {
   clientSlug: string;
   postId: string;
@@ -3069,6 +3105,8 @@ export function assembleSlidesData(params: {
    */
   visualSystem?: CarouselVisualSystem | undefined;
 }): RenderCarouselInput {
+  // 2026-09-26: a device that only repeats a number is dropped before anything reads the copy (`withoutRepeatedDevices`).
+  params = { ...params, copy: { ...params.copy, slides: withoutRepeatedDevices(params.copy.slides) } };
   const selectionByN = new Map(params.selections.map((s) => [s.n, s]));
 
   // The default template (agents/instagram-agent/assets/templates/default/slide.html,
