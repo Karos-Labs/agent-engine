@@ -16,6 +16,12 @@ to hold five obsolete descriptions of them as well.
 
 ---
 
+**What changed at v39.** Section 28 gains the optional `callouts` (2026-09-26, the owner's grapes reference): one or two labels with an arrow into a slide's picture, each a printed `label` and the `target` it points at. `media.locateInImage` finds the target in the picture that ships; an unseen target is not labelled.
+
+**Cost.** INPUT: about +200 prompt tokens. OUTPUT: a few tokens on the slides that use it; one vision call per such slide.
+
+---
+
 **What changed at v38.** Section 28 only (2026-09-26, owner on karoslabs prep batch 8: "missing the orange"). Emphasis is one or two strings taken from the display line (the headline, the quotation or a list row), never the body: the renderer now drops a body mark, because rendered locally a wavy underline in a 22px body line read as a spellcheck squiggle and sat across the cover's face. Batch 8's drafts put about half their spans in the body.
 
 **Cost.** INPUT: about +90 prompt tokens. OUTPUT: unchanged (fewer strings).

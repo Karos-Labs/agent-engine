@@ -3043,6 +3043,8 @@ export function assembleSlidesData(params: {
    * Only a photographic cover hero takes it; a logo or a cutout keeps its own.
    */
   coverComposition?: "poster" | "sandwich" | "framed" | "typographic" | undefined;
+  /** 2026-09-26: per slide, callout labels located in its picture (0..1 boxes), drawn with an arrow by the plate's fit script. */
+  callouts?: ReadonlyMap<number, ReadonlyArray<{ label: string; box: { x0: number; y0: number; x1: number; y1: number } }>> | undefined;
   /** 2026-09-24: interior slide bodies are cut to whole sentences within `BODY_WORD_BUDGET` (the workflow sets it). */
   textBudgets?: boolean | undefined;
   /** 2026-09-24: client product photos lifted off their backdrop; set as objects (`heroKind: "cutout"`). */
@@ -3519,6 +3521,8 @@ export function assembleSlidesData(params: {
         })(),
         // 2026-09-24: which of the three closer forms (`closerFormFor`); only the closer plate reads it.
         ...(layout === "closer" ? { closerForm: closerFormFor(`${params.clientSlug}:${params.paletteSeed ?? ""}`) } : {}),
+        // 2026-09-26: the located callouts, as JSON the plate's fit script reads (`placeCallouts`). Only with a picture to point into.
+        ...(imagePath !== undefined && (params.callouts?.get(slide.n)?.length ?? 0) > 0 ? { callouts: JSON.stringify(params.callouts!.get(slide.n)!.map((c) => ({ label: c.label, box: c.box }))) } : {}),
         // 2026-09-26: a stat's figure in the accent, where the accent reads on this ground as large type (3:1).
         ...((layout === "stat_callout" || ((layout === "headline_focus" || layout === "cover") && slide.device?.kind === "figure")) && slideAccentColor !== undefined && effectiveGround !== undefined && contrastRatio(slideAccentColor, effectiveGround) >= FIGURE_INK_MIN_CONTRAST ? { figureInk: "accent" } : {}),
         ...(photoCredit !== undefined ? { photoCredit } : {}),

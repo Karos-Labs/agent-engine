@@ -861,6 +861,9 @@ export const MAX_MARK_CHARS = 48;
 export const SlideEmphasisSchema = z.array(z.string().min(2).max(MAX_MARK_CHARS)).max(8);
 export type SlideEmphasis = z.infer<typeof SlideEmphasisSchema>;
 
+export const SlideCalloutsSchema = z.array(z.object({ label: z.string().min(1).max(28), target: z.string().min(1).max(60) })).max(2);
+export type SlideCallouts = z.infer<typeof SlideCalloutsSchema>;
+
 export const InstagramSlideCopySchema = z.object({
   n: z.number().int().positive(),
   headline: z.string().min(1).max(200),
@@ -957,6 +960,15 @@ export const InstagramSlideCopySchema = z.object({
    * hold or fail a run.
    */
   emphasis: SlideEmphasisSchema.optional(),
+  /**
+   * 2026-09-26 (the owner's grapes reference): up to two short labels drawn
+   * with an arrow onto the slide's picture, each pointing at the thing it
+   * names (`target`, in the words a viewer would use for that part of the
+   * picture). Located by `media.locateInImage` in the picture actually
+   * chosen; a target it cannot see clearly is simply not labelled. Optional:
+   * absent renders exactly as before, and nothing here can hold a run.
+   */
+  callouts: SlideCalloutsSchema.optional(),
 });
 export type InstagramSlideCopy = z.infer<typeof InstagramSlideCopySchema>;
 

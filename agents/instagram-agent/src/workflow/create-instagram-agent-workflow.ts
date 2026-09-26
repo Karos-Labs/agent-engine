@@ -1150,6 +1150,8 @@ export async function loadStudioDesignSystem(repoRoot: string): Promise<StudioDe
 }
 
 /** A lifted product covering more of its frame than this was a scene, not a product on a backdrop. */
+/** A callout target the vision call placed with less confidence than this is not labelled (2026-09-26). */
+export const CALLOUT_MIN_CONFIDENCE = 0.6;
 export const PRODUCT_CUTOUT_MAX_COVERAGE = 0.75;
 /** Less than this and the lift kept a fragment (a reflection, a label), not the product. */
 export const PRODUCT_CUTOUT_MIN_COVERAGE = 0.06;
@@ -8008,6 +8010,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       const clearMarkPaths = new Set<string>();
       /** 2026-09-24: client product photos lifted off their backdrop by 06h26, set as objects. */
       const productCutoutPaths = new Set<string>();
+      /** 2026-09-26: per slide, the callout labels located in its chosen picture (06h5), drawn with an arrow at render. */
+      const calloutsBySlide = new Map<number, Array<{ label: string; box: { x0: number; y0: number; x1: number; y1: number } }>>();
       /** 2026-09-23: per slide, the credit-free mark of the entity it pictures (05b1), shown as a small badge. */
       const markBadgeBySlide = new Map<number, string>();
       /** Records why this attempt failed AND hands that finding to the next draft. */
@@ -11630,6 +11634,45 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         };
       }
 
+      // ── 06h5: THE CALLOUTS, LOCATED IN THE PICTURE THAT SHIPS (2026-09-26) ──
+      //
+      // The owner's grapes reference labels two bunches in one photograph with
+      // arrows. A slide whose copy names `callouts` gets each target located in
+      // its FINAL picture (after every move and downgrade above); a target the
+      // vision call cannot see clearly (or at under `CALLOUT_MIN_CONFIDENCE`)
+      // is not labelled, and a slide with no picture, a mark or no vision
+      // deployment renders exactly as before. One call per such slide.
+      calloutsBySlide.clear();
+      const calloutSlides = copy.slides.filter((s) => (s.callouts?.length ?? 0) > 0 && (selections.find((sel) => sel.n === s.n)?.imagePath ?? null) !== null);
+      const locateTool = tools["media.locateInImage"];
+      if (calloutSlides.length > 0 && locateTool !== undefined) {
+        const located = await wf.step.code(rev(`06h5-locate-callouts-attempt-${attempt}`), async () => {
+          const rows: Array<{ n: number; items: Array<{ label: string; box: { x0: number; y0: number; x1: number; y1: number } }>; note?: string }> = [];
+          for (const slide of calloutSlides) {
+            const imagePath = selections.find((sel) => sel.n === slide.n)?.imagePath;
+            if (imagePath === null || imagePath === undefined || markImagePaths.has(imagePath) || clearMarkPaths.has(imagePath)) continue;
+            const callouts = slide.callouts ?? [];
+            try {
+              const outcome = await locateTool.execute({ repoRoot: options.repoRoot, image: imagePath, targets: callouts.map((c) => c.target) }, { ctx });
+              if (outcome.status !== "success") {
+                rows.push({ n: slide.n, items: [], note: `not located (${(outcome as { reason?: string }).reason ?? outcome.status})` });
+                continue;
+              }
+              const found = (outcome.result as { located: Array<{ found: boolean; confidence: number; box?: { x0: number; y0: number; x1: number; y1: number } }> }).located;
+              const items = callouts.flatMap((c, i) => {
+                const hit = found[i];
+                return hit?.found === true && hit.box !== undefined && hit.confidence >= CALLOUT_MIN_CONFIDENCE ? [{ label: c.label, box: hit.box }] : [];
+              });
+              rows.push({ n: slide.n, items });
+            } catch (error) {
+              rows.push({ n: slide.n, items: [], note: `not located (${(error as Error).message.slice(0, 120)})` });
+            }
+          }
+          return rows;
+        });
+        for (const row of located) if (row.items.length > 0) calloutsBySlide.set(row.n, row.items);
+      }
+
       // RFC-19 Mechanism B, depth 2 — this attempt got a picture decision for every slide. The copy recorded
       // here is the POST-DOWNGRADE copy (07a may have re-laid-out slides that lost their photograph), which
       // is the version that would actually ship.
@@ -12960,6 +13003,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           coverComposition: coverChoice.composition,
           textBudgets: true,
           productCutoutPaths,
+          ...(calloutsBySlide.size > 0 ? { callouts: calloutsBySlide } : {}),
           markBadges: markBadgeBySlide,
           // IGSTYLE-7, §7a — wires `paletteForSlide`'s already-built, already-
           // seeded rotation into the render path for the first time. Seeded

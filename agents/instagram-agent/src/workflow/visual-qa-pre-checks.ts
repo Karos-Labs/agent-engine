@@ -412,6 +412,8 @@ export const LAYOUT_FIELD_KEYS: ReadonlySet<string> = new Set([
   "accentColor",
   // 2026-09-26: whether a stat's figure is set in the accent (it clears 3:1 on its ground). Metadata, never prose.
   "figureInk",
+  // 2026-09-26: located callout labels as JSON for the plate's fit script. Metadata; the labels it draws are short and never the slide's copy.
+  "callouts",
   "dir",
   "brandHandle",
   "seriesBadge",
