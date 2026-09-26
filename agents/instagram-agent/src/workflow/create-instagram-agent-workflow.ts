@@ -3275,7 +3275,16 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           let scraperExecutions = 0;
 
           let posts: StudioReferencePost[] = [];
-          const accounts = brief.referenceAccounts.slice(0, 6).map((row) => ({ platform: row.platform, username: row.handle }));
+          // 2026-09-26: Instagram first. The studio designs Instagram templates, but it read
+          // whatever the brief listed, and for karoslabs that was reddit/@marketing and
+          // x/@lennysan (prep batch 7). The harvest's own Instagram accounts (competitors and
+          // the category's famous accounts) lead, then the brief's Instagram rows, then the rest.
+          const harvestAccounts = (exemplarLibrary?.status === "built" ? exemplarLibrary.accounts : [])
+            .filter((a) => a.role !== "client" && a.posts > 0)
+            .map((a) => ({ platform: "instagram", username: a.handle }));
+          const briefRows = brief.referenceAccounts.map((row) => ({ platform: row.platform, username: row.handle }));
+          const ordered = [...harvestAccounts, ...briefRows.filter((r) => r.platform === "instagram"), ...briefRows.filter((r) => r.platform !== "instagram")];
+          const accounts = ordered.filter((r, i) => ordered.findIndex((o) => o.platform === r.platform && o.username.toLowerCase() === r.username.toLowerCase()) === i).slice(0, 6);
           const socialHistory = tools["research.socialHistory"];
           if (accounts.length === 0) {
             problems.push("the client brief names no reference accounts, so no competitor formats could be read");
