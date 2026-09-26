@@ -1,0 +1,683 @@
+{
+ "survived": [
+  {
+   "id": "L1-01",
+   "layer": "L1 platform",
+   "scope": "all Instagram feed posts",
+   "dimension": "imagery",
+   "claim": "Photo-led slides (real photography dominating the frame) outperform muted or neutral designed plates within the same account.",
+   "evidence": "scale.md all accounts: color_mood=photo-dominant +0.16 over 69 accts, 44+/16-, sign p=0.0004; muted/neutral -0.12 over 77 accts, 19+/39-, p=0.0119. Tech news Hebrew 10+/1- p=0.0117; startup real photo place/scene 5+/2-. Karoslabs synthesis photo-dominant lift 2.08. Confound: photo-dominant posts are also the ones with a famous subject, so part of the effect is subject, not treatment.",
+   "probability": "very likely",
+   "agent_change": "Default cover and at least one in three interior slides to a full-bleed real photo of the subject; count only real photographs toward the imagery floor; set MIN_GENERATED_IMAGES_PER_RUN 3 to 0; when no rights-clean subject photo of 1440px short edge exists, switch to a data or typographic format instead of a generated scene."
+  },
+  {
+   "id": "L1-02",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "imagery",
+   "claim": "Stock-looking and generic AI-looking imagery sits with the weakest posts in every industry; the only AI imagery that wins is an owned character (XO capybara, sintra mascots).",
+   "evidence": "Pitch set: AI-looking 0 of 78 best vs 4 of 78 weakest, stock 0 vs 6. Intimates: 0 of 144 tagged posts AI or stock; Aerie #NotAI pledge is the most-liked post scraped (45,841). Karoslabs lift 0.29; fintech 2.8% vs 11.1%; Geektime AI-labelled posts median 0.79x; a16z 0 of 17 outliers illustrated. scale.md stock 8+/17- (p=0.108, direction only). Mosseri 2025-12-31 memo on synthetic content; April 2026 originality rule.",
+   "probability": "very likely",
+   "agent_change": "Take 'generate' off the picture ladder for people, places and events; allow generation only for a client-owned character or a clearly labelled illustration; add a guard that fails any slide whose main visual is generated and presented as real, and any slide built from third-party media with only a crop or border."
+  },
+  {
+   "id": "L1-04",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "hook",
+   "claim": "A named, recognisable subject with a concrete reader stake beats abstract advice, frameworks and the brand's own promotion in every industry studied.",
+   "evidence": "a16z: 13 of 17 outliers centre a famous founder or company; explainers and charts 0 of 12 at 2x. Geektime: same iPhone topic 12.3x median with an Israeli price or date vs 0.75x without (n=4 vs 5). Pitch: techstars aphorisms 0.36-0.51x vs named founder 8.4x; founderspodcast best 6/6 open on a proper noun. Karoslabs: internal posts weakest in nearly every account. Fintech: abstract-question carousels 0 of 13 outliers at Hurst. Sitti: framework carousels 0.15-0.23x. House promotion: Calcalist 0.09x, WIRED 0.07x, VisualCap partner posts 10/10 below median.",
+   "probability": "very likely",
+   "agent_change": "Cover gate: the display headline names a real subject (proper noun, product, place) and states a checkable fact or the reader's stake; demote house-programme and partner-logo topics unless they carry a date, a price, a free thing or a named person; at least 1 in 3 posts built from the client's own material."
+  },
+  {
+   "id": "L1-05",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "language",
+   "claim": "Complete, spoken sentences with one checkable fact win; fragment stacks, 'X is not A. It is B.' contrasts and open-ended teasers read as AI and lose.",
+   "evidence": "scale.md sentence_form=mixed +0.09 over 71 accts, 43+/15-, p=0.0003; fragments/labels -0.07 over 83, 24+/42-, p=0.0356. Intimates mixed 12+/2- p=0.0129. Fintech conversational 30.6% vs 19.4%; karoslabs conversational lift 2.15. Antler same-episode A/B: complete quote card 2.06-2.26x vs fragment 0.45-0.58x. DT corpus: 32 of 36 builders shared one fragment rhythm; all 7 of our gap reports flag 4-5 'not X, Y' frames per post. The engine's own copy prompt \u00a725/\u00a726 and value-signals.ts:419 instruct the frame.",
+   "probability": "very likely",
+   "agent_change": "Delete the fragment and contrast recipes from the copy prompt and value gates; adopt the one-sentence headline rule (6-14 words, one period, subject verb object, a year/place/number/name); regex fragment-stack check (two or more sentence-final periods with sentences of 4 words or fewer); at most one antithesis per post; copy rules as YAML per industry and client."
+  },
+  {
+   "id": "L1-06",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "font sizes",
+   "claim": "Four or more distinct text sizes on a slide marks the weak posts; winners use one to three sizes with the largest type always the message.",
+   "evidence": "scale.md distinct_text_sizes=4+ -0.10 over 42 accts, 10+/26-, p=0.0113; startup 0+/5-; fintech 3+/7-. Syntheses: fintech 30.6% of weakest vs 13.9% of best; pitch 24.4% vs 14.1%; sitti 12.1% vs 5.6%. a16z measured: manifestos 1 size, everything else 2 plus meta, ratio 2-2.5:1 (4:1 with meta). Our runs: 7-14 distinct sizes, ratios 8.8-14.7:1, a 220px decorative numeral over an 84px headline. Owner feedback C. NN/g: max 3 sizes.",
+   "probability": "very likely",
+   "agent_change": "TYPE-SIZES gate on the rendered 1080 file: 3 or fewer computed sizes per slide, neighbouring sizes at least 1.35x apart, headline at least 2x body and at most 2.5:1 between the two main sizes; remove decorative index numerals; a hero figure is allowed only inside a data device and only for a real number."
+  },
+  {
+   "id": "L1-08",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "design",
+   "claim": "Text over a photo must sit on a measured dark shade; medium contrast loses, high contrast wins.",
+   "evidence": "scale.md text_contrast=medium -0.09 over 55 accts, 14+/35-, p=0.0038; high +0.05 over 85, 39+/19-, p=0.0119; Hebrew medium 0+/8- p=0.0078, high 6+/0- p=0.031. a16z: median background luminance behind text 7-34/255 vs 71 on our Pitch cover. Karoslabs archive: orange labels under 3:1 on 29 of 54 photo slides. Geektime: medium contrast 1.4% of best vs 19.4% of weakest. NN/g: 30% overlay too weak, 50%+ needed. Owner feedback H.",
+   "probability": "very likely",
+   "agent_change": "Always-on bottom gradient under any type on a photo (clear above ~42% of height, ~88% black at the edge), never tinted with a light brand ground; a CONTRAST gate that samples the worst 5% of background pixels under each text box and requires 4.5:1 (3:1 for text 72px+); a top micro-veil for the mark when the top 15% is bright."
+  },
+  {
+   "id": "L1-09",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "graphics",
+   "claim": "Decorative furniture (boxes, cards, pills, badges, versus strips) loses; a graphic wins only when it carries data or the product itself.",
+   "evidence": "scale.md graphic_devices=boxes/cards -0.09 over 57 accts, 14+/29-, p=0.0315; pills/badges -0.08 over 41, 10+/24-, p=0.0243; none +0.07 (35+/23-); startup none 8+/0- p=0.0078. Pitch: no device 62.8% of best vs 32.1% of weakest. But data graphics win: fintech chart/table covers lift 3, icons 2.7; Geektime big number 9.7% vs 1.4%; intimates swatch quiz 10.69x, product grids 2.09-2.91x; VisualCap organic charts 1.89x median. Karoslabs: graphics belong inside, not on the cover (icons lift 0.44, charts 0.4 on covers). Owner feedback D and M.",
+   "probability": "very likely",
+   "agent_change": "Turn off the bundled archetype devices (stat-callout, versus, list-takeaway, gradient panels) as defaults; allow at most one graphic per interior slide and only when it encodes a fact (before/after bars, ranked logos, product cut-outs, real UI, a diagram) with a sentence title; build every container from the client's own design language captured at onboarding; no devices on the cover except a scrim."
+  },
+  {
+   "id": "L1-10",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "logo",
+   "claim": "A corner logo on every slide marks weak posts; winners carry a small fixed mark, or none, and never a plate, pill or handle footer.",
+   "evidence": "scale.md logo_position=top-left -0.12 over 45 accts, 12+/27-, p=0.0237; none +0.08 (31+/21-); B2B none 8+/1- p=0.039. Intimates: no mark on any of Hanky Panky's 19 slides, name appears physically in scene. Karoslabs: 69% of best covers carry no logo (lift 1.62). a16z: 9.6% width muted wordmark, absent on 2 of its 3 biggest carousels. Our runs: 16 marks in one Hanky Panky post, deel. plate on 8 Pitch slides, 5.8% white box on XO. Confound: reels and photo dumps rarely carry logos. Owner feedback E, F, G.",
+   "probability": "likely",
+   "agent_change": "Onboarding sets one mark file (uploaded beats scraped), one size and one position per client as a rule, with background handling decided there; default to cover and closer only, never a plate, pill, drop shadow or @handle; render the kit SVG/PNG byte for byte, never live text."
+  },
+  {
+   "id": "L1-13",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "layout",
+   "claim": "Interior slides in winning carousels carry far fewer words than ours, and every slide adds one new fact; repetition and recap slides are a defect in all 7 of our runs.",
+   "evidence": "a16z story slides 0-12 words, explainers 25-54 went 0 of 5; startup best median 4 words per interior slide (n=17); intimates 0 (n=19-20); B2B 17 (n=21); fintech 33 (n=13); news 29.5 (n=16). Ours: 39-44 per slide, 240-352 words per post. Sitti run: slides 7 and 8 identical; Kindly: byte-identical renders; XO: one idea on 5 of 8 slides; Karos: 500M+ twice, 713M never explained. Legibility: users read ~20% of words; 35 words is ~9 s.",
+   "probability": "very likely",
+   "agent_change": "Per-industry word budget gate on the rendered file (cover 8, interior per kit, hard cap 50); fact-level dedupe (numbers, names) not only trigram text; image hash dedupe; fail on ellipsis truncation, empty brackets or unlabelled numbers; no recap slide; close on the last item, a source, or a one-line generalisation containing a specific."
+  },
+  {
+   "id": "L1-15",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "design",
+   "claim": "Rendering with fonts that are not the client's is the single most consistent defect and the cheapest fix.",
+   "evidence": "7 of 7 reviewed runs used Space Grotesk/Inter/IBM Plex Mono or Georgia/Helvetica instead of the client's faces (Gaegu, Plus Jakarta Sans, Open Sans, Relais Display/Fabriga, GT Walsheim, Spectral jobs, Inter-only v4). Root causes: brand-render-tokens.ts emits only Google Fonts css2 links; the site reader took Hanky Panky's font from a Yotpo widget and Geektime's from a Cloudflare 403 page; Inter has no Hebrew glyphs so Geektime fell to a serif. DT treats a fallback face as a hard failure. Owner feedback A.",
+   "probability": "very likely",
+   "agent_change": "Capture font files at onboarding (site @font-face or uploaded kit) and store them with the kit; emit @font-face before any Google link; after document.fonts.ready verify every brand family loaded and treat a fallback as a failed render; fix the site font reader to ignore third-party widget selectors and error pages; require a script-capable face for Hebrew, Portuguese and French."
+  },
+  {
+   "id": "L1-16",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "other",
+   "claim": "Instagram Collab posts with the featured person or partner are the largest free reach lever in the data.",
+   "evidence": "Program accounts: Collab median 1.38x vs 0.85x solo, 40% vs 15% at 2x (n=47 vs 185). Music pages 1.37 vs 0.98; artist-owned collab reels 4.26 (n=7). Intimates collab 68th vs 48th percentile in 4 of 5 accounts. a16z Flock collab 1.38M plays vs 77k median; @getdeel co-posts 9.9-17.8k plays vs 354 solo median. Confound: mechanical (two audiences) and it reversed on one music page.",
+   "probability": "very likely",
+   "agent_change": "PostPackageSchema gains collaborator (handle to invite, only when a source confirms the account) and credit fields, filled from entity extraction and image provenance and shown in the portal calendar note; source the subject's own media first."
+  },
+  {
+   "id": "L1-17",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "other",
+   "claim": "The engine's competitor and own-post scoring is wrong today: hidden likes read as 3, posts under 72h are ranked, and a 12-post window tracks age; every 'weakest' bucket in the study is contaminated.",
+   "evidence": "Hidden likes on 22-77% of posts on the 9 music pages, all 36 @deelpitch, all 36 @teamkindly, 32/36 Felina, 35/36 Natori; 20 of 66 sitti weakest are placeholders; 2 of the 3 'worst' a16z posts were under a day old; on @edmmusic score-vs-age r=0.83, only 6 of 112 real outliers inside the 12-post window; social-history.ts drops shape fields. Kindly: comments correlate 0.18 with reel views.",
+   "probability": "very likely",
+   "agent_change": "Score each post as a multiple of its own account's median at comparable age; never read like_and_view_counts_disabled as a number; exclude pinned, promo and posts under 96h (or age-project); compare views only with views; keep media kind, slide count and coauthor fields; a weekly own-grid read (~$0.01/client) as the producer of what-works."
+  },
+  {
+   "id": "L1-18",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "layout",
+   "claim": "Slide 2 must work as a second cover and the deck is scored on completion, so slide count is not a lever in itself; within accounts it shows no signal.",
+   "evidence": "Meta Feed ranking card (June 2026) scores carousel completion with card count as an input; Mosseri: unengaged carousels are re-served starting on slide 2. scale.md slides median(best-worst)=0 over 89 accts (25+/21-). Karos: 5-7 slides 1.43x vs 2-4 1.00x vs 11+ 0.98x (163 carousels, low confidence); music: 2 slides beat 3-5 in 4 of 4 pages; a16z 4-6 slides 1.75x vs 9-12 0.66x; Eden longer-is-better is correlational.",
+   "probability": "likely",
+   "agent_change": "Gate slide 2 with the same size and word rules as the cover and require the strongest image or number there; set slide count per industry kit rather than a global default; never pad; cut any slide that neither advances the argument nor adds a fact."
+  },
+  {
+   "id": "L1-20",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "format",
+   "claim": "Typeface register (condensed display vs light serif vs handwritten) is industry-specific and reverses across industries, so it belongs in L2/L3, not L1.",
+   "evidence": "Fintech condensed/display sans +0.29, 7+/1- (p=0.07) vs startup condensed -0.23, 0+/9- (p=0.0039, driven by all-caps auto-caption reels); B2B handwritten 3+/0-, sans -0.20; karoslabs plain sans 30.8% best vs 47.4% weakest; serif +0.10 over 21 accts (10+/7-, ns). Legibility research: humanist sans reads faster at a glance; thin weights fail under JPEG re-encode.",
+   "probability": "likely",
+   "agent_change": "Never set a display register globally; the industry kit picks the register and the client kit overrides with the client's own faces; enforce weight floors (Regular-Semibold for body, no Thin/Light) and reserve condensed or square faces for 96px and up."
+  },
+  {
+   "id": "L1-21",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "other",
+   "claim": "Meta's April 2026 originality rule and the June 2026 ranking card make reposted or lightly edited third-party media an account-level risk and completion, sends and saves the targets.",
+   "evidence": "Primary: transparency.meta.com IG Feed card (carousel completion prediction, overlay-text signal), Mosseri 30 Apr 2026 originality extension to photos and carousels (majority of recent posts over 30 days), Jan 2025 top signals watch time, likes per reach, sends per reach; carousels 9x saves of single images (Metricool 24.4M posts).",
+   "probability": "very likely",
+   "agent_change": "Add an originality guard at package time (own design, own copy, credited media with material edit); the analytics loop optimises saves and sends per reach, not likes; single-image posts become the exception; attach licensed music when the brand allows for Reels-tab eligibility."
+  },
+  {
+   "id": "L2-01",
+   "layer": "L2 industry",
+   "scope": "Startup / founder programs (The Pitch by Deel)",
+   "dimension": "hook",
+   "claim": "Named people and real event photography beat every designed plate; covers deliver the payoff in about 5 words; quotes must be complete sentences.",
+   "evidence": "Cover words best median 5 vs weakest 8 (n=78 each); real place/scene 21.8% vs 10.3%; no device 62.8% vs 32.1%; question hooks 2.6% vs 5.1%; event recap lift 2.67; Antler quote cards 2.06-2.26x vs fragments 0.45-0.58x; startupworldcup 150x check photo as Collab. a16z archival 5 for 5 at 2x (median 9.5x), manifestos 3 of 4.",
+   "probability": "very likely",
+   "agent_change": "Route every Pitch topic through a pillar and a named source; three carousel shapes only (payoff on slide 1 plus proof frame; wordless photo sequence; one line per slide to a turn); Collab with judge, winner or partner; no question headlines, no aphorisms."
+  },
+  {
+   "id": "L2-05",
+   "layer": "L2 industry",
+   "scope": "Tech news media, Hebrew (Geektime)",
+   "dimension": "language",
+   "claim": "What changes for the reader (price, availability, free, deadline, named person) decides the result; headlines are actor + verb + consequence in one bold size inside a card or dark band; house and partner promotion sinks.",
+   "evidence": "Geektime iPhone with stake 12.3x vs 0.75x without; named-person stories median 4.11x vs global AI news 0.71x; photo-dominant 10+/1- p=0.0117; medium contrast 0+/8-; dark 1+/9-; partner logos 31.9% of weakest vs 12.5% of best; VisualCap partner posts 10/10 below median; question hooks 5.6% vs 13.9%; 2-slide hook-then-receipt winners 26.5x, 7.61x.",
+   "probability": "likely",
+   "agent_change": "Freshness gate (lead fact 7 days old or dated on slide); headline 5-9 words with a named actor; one headline size plus optional 0.55x overline; single image default, carousel only hook-then-receipt or one new fact per slide; Hebrew-capable font and RTL logo placement; caption 300-500 chars with article pointer and credit."
+  },
+  {
+   "id": "L2-07",
+   "layer": "L2 industry",
+   "scope": "Music media & nightlife (Don Techno)",
+   "dimension": "design",
+   "claim": "Winners are bright, real footage with one plain sentence in the lower third over a dark scrim and a small logo; authoritative register and long captions win, hype and saturated designed colour lose; 2-slide claim-plus-proof beats 3-5 slides.",
+   "evidence": "hype 0+/7- p=0.0156; authoritative/expert 7+/0- p=0.0156; long captions 6+/0- p=0.031; bright/saturated 0+/6- p=0.031; 2 slides 1.17 vs 3 slides 0.91 in 4 of 4 pages, both periods; all-video carousels 1.52 (n=45); 40% of 144 outliers are 'story behind a record' at median 3.5x; collab 1.37 vs 0.98. n=9 accounts, likes hidden on 22-77%.",
+   "probability": "likely",
+   "agent_change": "Adopt the DT STORY parameters as the L2 kit (eyebrow 32px source\u00b7date, kicker \u226422 chars, NAME largest, body 60px, always-on scrim, no accent colour, credit in caption, no forced ask); add 2-slide and video-slide shapes, an anniversary engine and an upstream-source registry; 1 position post a week max."
+  },
+  {
+   "id": "L3-01",
+   "layer": "L3 client",
+   "scope": "The Pitch by Deel",
+   "dimension": "design",
+   "claim": "Render only with the v4 kit (Inter only, Stage #131313 / Paper #FFFBF4, hairline cards, outlined pills, the four raster graphics, ThePitch lockup top-right ~13% width with no plate); the reviewed run used the retired Bagoss, #201547 and the parent 'deel.' mark.",
+   "evidence": "brand.yaml v4 (2026-09-17) and live posts DdrG8zuCLWU, Ddl95slCO4v; run pubsub-21255292697877233 measured 14 sizes, 340 words, invented judging criteria, AI stage silhouette at 71/255 luminance behind type; @deelpitch likes hidden since 2026-08-18 so its own best/worst are noise (reel views median 354).",
+   "probability": "very likely",
+   "agent_change": "Sync the v4 kit into the portal brand record including graphic files (add a field to ProjectedBrand); three sizes (headline ~4.5% of height, body ~2%, rail ~1%); never state what judges score unless sourced; waitlist pill on closers only; Collab with judges and verified winners; rank by views and Insights."
+  },
+  {
+   "id": "L3-02",
+   "layer": "L3 client",
+   "scope": "Karos Labs",
+   "dimension": "layout",
+   "claim": "The July 2026 grid is the spec: one system (charcoal, Spectral/Hanken/DM Mono with fixed jobs, top-left lockup, top-right orange eyebrow, one orange marker phrase), 5-7 slides with one graphic per interior slide and a 12-word closer.",
+   "evidence": "Karos archive: 9 live carousels; Jordan 4.67x is the tightest (5 slides, 11-word closer); Five rules one scale at 5% headline / 1.94% body; our Wrapped run used 8 sizes, 246px Hanken numerals, rust gradient panels, icon-only top-right mark, 294 words. Live account 22 followers, median 3 likes, so its multiples cannot rank design.",
+   "probability": "likely",
+   "agent_change": "No preset rotation for Karos; interior headline 64-72px same position every slide, body 29-37px, one stat size; devices from the archive library (delta cards, chain, 2x2, timeline) with one accent mark each; ration the marker to half the slides; 1 in 3 posts from Karos-owned material; name the subject in the display headline."
+  },
+  {
+   "id": "L3-03",
+   "layer": "L3 client",
+   "scope": "Hanky Panky",
+   "dimension": "imagery",
+   "claim": "Client-library photography in saturated Signature Lace colours with candid faces is the whole system; on-image text is an exception of 8 words at ~52-60px in Relais Display, no logo, captions under 150 characters.",
+   "evidence": "Client's 6 best covers median 64% vivid pixels vs 39% weakest; carousels 1.15x vs reels 0.71x; 36 captions median 45.5 chars, max 148, zero hashtags; B6 the only text overlay (8 white words, ~56px); our run used Georgia/Helvetica/Plex Mono, 9 sizes, AI lace on a rack, 16 marks, 647-char caption, shame framing the kit bans.",
+   "probability": "very likely",
+   "agent_change": "Set kit fonts Relais Display/Fabriga 400-500; word budget 8 per slide, 25 per carousel; no panels, gradients, logo or handle; close on the product-visible frame; graphics only as swatch quiz, flat lay or leader-line label; make word-budget and value-judge failures blocking; exempt from the contrast-frame template."
+  },
+  {
+   "id": "L3-04",
+   "layer": "L3 client",
+   "scope": "Kindly Yours (@teamkindly)",
+   "dimension": "other",
+   "claim": "The portal record is the wrong business (a parked gifting domain); nothing should ship until it carries the lab profile, GT Walsheim or Fraunces/Nunito, the circle-based kit and the size range as the proof point.",
+   "evidence": "Prep record vj8pJxRGLtiN2YbBuPwR points at kindlyyours.com (GoDaddy for-sale page); run produced wedding-favour content with Plus Jakarta Sans tracking collapse, 7 size tiers, byte-identical slides 7-8; 0 of 36 captions state the S-XXXL range; comment asks 67th vs 47th percentile category-wide and Kindly has 0; reels \u226414 s got 2,937 views vs 294 median.",
+   "probability": "very likely",
+   "agent_change": "Gate the agent on a corrected record; two sizes (headline 5-7% of height, support 3-3.5%); Ink #231F20, Coral once per slide, dots and arcs not boxes; logo SVG bottom-centre on cover and last slide over a colour field; one rotated ask per post; wordless interior slides; two body sizes per set; claims from the truth table only."
+  },
+  {
+   "id": "L3-05",
+   "layer": "L3 client",
+   "scope": "XO Digital",
+   "dimension": "design",
+   "claim": "XO's real system is navy/cream alternation, Plus Jakarta Sans ExtraBold two-tone headlines with a gold second line, mono eyebrows, 01/02/03 rows, outlined CVM badges and a WhatsApp mockup; the run rendered from a contaminated kit and presented a CVM proposal as law.",
+   "evidence": "'O que \u00e9 a XO Digital?' 2.33x sets the house system; kit in 02c (#050520, #06cf9c, Space Grotesk) conflicts with guidelines (#0b2644, #c9a861) and site; template studio kept 0 of 6 XO templates; run used the CVM logo as decoration with a CC BY string on slide; capybara reels are the only reach (9,902 views on 385 followers).",
+   "probability": "likely",
+   "agent_change": "Reconcile tokens (navy #0b2644, cream ~#f3ecdc, gold accent), seed the template studio with DdmQQ6JG6Rc, record feed consent; three sizes (5.5% / 2.6% / 1.8%); status badge on every slide mentioning a proposal; closer with CTA, XOd\u00f3 line and risk line; capybara once at most in carousels; no regulator marks."
+  },
+  {
+   "id": "L3-06",
+   "layer": "L3 client",
+   "scope": "Geektime",
+   "dimension": "logo",
+   "claim": "Geektime's exact template is measurable (lime frame 2.3% width, navy #022330 plate or full-bleed photo, rounded white card in a lime slab 73-80% wide, white wordmark 24-28% width right of centre, Open Sans 700-800); our run used a white plate, a 3% profile-disc glyph top-left and an AI auditorium.",
+   "evidence": "Measured on B1, B2, B4, B6, W4-W6; kit lists Inter (no Hebrew) and charcoal #272a35; font resolver read a Cloudflare 403; spec line silently dropped at render; caption 678 chars with five '\u05dc\u05d0 X.' fragments vs house median 425 and \u22641.",
+   "probability": "very likely",
+   "agent_change": "Fix the kit (Open Sans, #022330, horizontal wordmark with white variant); render the card exactly; fail render when spec text is missing; Hebrew proofing gate; caption 300-500 chars with article pointer and photo credit; real product photography first, AI only labelled."
+  },
+  {
+   "id": "L3-07",
+   "layer": "L3 client",
+   "scope": "Sitti",
+   "dimension": "design",
+   "claim": "Sitti is Gaegu lowercase, coral on cream and yellow on photos, pin + venue tags, a dashed swipe arrow and a 'mapped by sitti' lockup placed by slide type; the run used Space Grotesk, maroon body copy, peach panels and a square app tile on every slide with a framework topic.",
+   "evidence": "sitti.app root html carries only the Gaegu variable; both sampled carousels lowercase Gaegu; run had 9 sizes, contradictory percentages (weights summing to 70%), duplicate closers, stock men in studios; founder reels 8,620 views = 14x followers.",
+   "probability": "likely",
+   "agent_change": "Kit: Gaegu only, 2 sizes at 1.5-2:1, nothing under 36px; cover text on cream with photo in rounded frame; interiors one spot on a real photo with a top gradient and \u22647 words; lockup and slice as kit files; disable stat, versus and boxed devices; hot-news mode off; fact reconciliation gate."
+  }
+ ],
+ "refuted": [
+  {
+   "id": "L1-03",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "hook",
+   "claim": "A post with no hook is the most reliable loser; story or narrative hooks and an emotional or personal register win; hype and neutral-informational registers lose.",
+   "evidence": "scale.md: hook_type=none -0.23 over 16 accts, 1+/14-, p=0.001; story/narrative +0.09 over 61 accts, 34+/15-, p=0.0094; emotional/personal +0.12 over 52, 31+/13-, p=0.0096; hype -0.12 over 58, 16+/36-, p=0.0078; neutral/informational -0.10 over 57, 13+/31-, p=0.0096. Music hype 0+/7- p=0.0156; intimates none 0+/7- p=0.0156; sitti story lift 4.19.",
+   "probability": "very likely",
+   "agent_change": "Add a register gate: reject copy classified hype or purely informational; require every cover to name a person, place, number or moment; ban hype adjectives per the copy_rules list; the value judge scores 'is there a story or stake' instead of 'is there a number'.",
+   "refutations": [
+    "The strongest statistic (hook_type=none, 1+/14-) does not transfer. Posts with no hook are reels and photo dumps, and our carousel agent never ships a cover without a hook. A gate that rejects 'purely informational' copy would reject formats that win in our own clients' industries: Nath's law explainers (31.5x), music's authoritative/expert register (7+/0-, p=0.016) and Hebrew news hooks (+0.14). The gate also depends on an LLM register classifier with no measured precision. The hype ban is well supported, in music (0+/7-) and overall (p=0.008), so ship that alone. Drop the gate against informational copy and the switch from judging on numbers to judging on stories.",
+    "Register here stands in for topic and format. 'Hype' and 'neutral/informational' are mostly house-promotion and explainer posts, which L1-04 already says lose on topic. hook_type=none covers only 16 accounts and is mostly text-free reels, photo dumps and giveaways. Music hype 0+/7- comes from weakest sets dominated by hidden-like placeholders. A classifier gate that rejects 'purely informational' copy would fight the Hebrew news data (news/announcement 8+/2-) and Geektime's own product. Banning hype adjectives is cheap and fine. The rest belongs in L1-04's cover gate. Don't ship a register gate."
+   ]
+  },
+  {
+   "id": "L1-07",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "font sizes",
+   "claim": "Big headline type wins only when the line is short; long sentences set huge become a wall.",
+   "evidence": "scale.md headline_size=huge +0.07 over 50 accts, 30+/16-, p=0.054; small -0.06, 18+/26-. Creator huge 4+/1-, B2B huge 7+/1- p=0.07, Hebrew small 1+/4-. Karoslabs: huge lift 2.0 but every huge winner is 6-7 words; ours set 12 words at 139px over 5 lines. Sitti: huge lift 6.5, all one short line. Legibility: profile-grid tile shows 96px at 11.6pt, iOS minimum; text attention scales with area (Pieters & Wedel, 1,363 ads).",
+   "probability": "likely",
+   "agent_change": "Cover hook at 96-140px on a 1080 canvas, 8 words or 45 characters or fewer (hard cap 12), 2-4 words per line, 2-4 lines, text-wrap balance; a GRID-HOOK gate fails covers whose hook is under 96px.",
+   "refutations": [
+    "headline_size=huge is not significant overall (30+/16-, p=0.054) and does not hold across industries: Hebrew news -0.095, startup -0.021, intimates and music 0.0 in the transfer table. The interaction the rule depends on, big type only when the line is short, is never tested; it rests on a few Karos and Sitti examples. The 96-140px, 8-word and 45-character numbers are not derived from any measurement. A hard GRID-HOOK gate is not justified.",
+    "Performance support is weak and contradicted. headline_size=huge gives p=0.054 and small gives p=0.29. The 8-word cap has no support in scale.md: cover_words median(best-worst) is 0 over 89 accounts. In Hebrew news the best covers carry more words (+3, 9+/2-), and thebrandblueprint_ wins at 11x with 11-17-word covers. The cap comes from a few Karos and Sitti anecdotes, so it is overfitted. The 96px grid-tile floor is legibility physics and can ship as a MIN-TYPE and GRID-HOOK gate. Drop the word caps or move them to kits.",
+    "This is where the evidence is thinnest. headline_size=huge is 30+/16- at p=0.054, not significant, and it is confounded with short covers and huge stacked-caption reels (for example Sitti's founder reels). The word cap is contradicted by the study's own data: cover_words median(best-worst)=0 over 89 accounts (35+/37-), and Hebrew news best covers carry more words (+3, 9+/2-). The 96px grid-legibility floor rests on legibility research, not this claim, and can live in the type gate (L1-06). Don't ship the 8-word/45-character hard cap as a global rule."
+   ]
+  },
+  {
+   "id": "L1-11",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "cadence",
+   "claim": "'Link in bio' calls to action and follow or save end cards lose; one specific ask in the caption (a comment keyword or a save-for-X) wins, with the caveat that the metric weights comments 3x.",
+   "evidence": "scale.md cta=link in bio/shop -0.14 over 55 accts, 13+/34-, p=0.0031; comment prompt +0.12 over 48, 30+/15-, p=0.0357; intimates comment 11+/1- p=0.0063; creator 7+/1-. a16z: 0 of 11 carousels with a follow end card reached 2x (median 0.73x) vs 12 of 28 without (1.79x); captions with CTA 0.59x vs 1.02x (confounded by promo posts). Pitch: save/share lift 3.5, link in bio 0.54. Intimates: comment asks 67th vs 47th percentile in all 9 testable accounts. Music: CTA no lift (14% vs 12%).",
+   "probability": "likely",
+   "agent_change": "Remove link-in-bio CTAs and 'follow for more' or 'save this' end cards; end on the last item or a one-line generalisation; the caption carries one ask chosen from the industry kit (comment keyword, finite-choice question, save-for-X, or none for media); rotate asks so none repeats in consecutive posts.",
+   "refutations": [
+    "The engagement metric is likes + 3 x comments, so a comment prompt raises the score mechanically. The intimates signal (11+/1-) is also inflated by comment-to-enter giveaways. Comment prompts do not transfer to startup (-0.083 over 8 accounts), and music shows no CTA lift. Link-in-bio losing (13+/34-, p=0.003) is confounded with promo posts, and the a16z follow-card result is one account with a template confound. Removing link-in-bio is defensible. Adding a rotated comment ask to every post optimises the metric's own bias.",
+    "The metric is likes + 3\u00d7comments, so a comment prompt raises the score mechanically. The +0.12 (p=0.036) and the intimates 11+/1- mostly measure the scoring formula, not reach or sales. Link-in-bio (-0.14) sits on promo and sales posts, so it is confounded with hard-sell content, and engagement does not measure the conversions a retail client (Hanky Panky, Kindly) wants from it. Music shows no CTA lift, and reputeforge's 19x winner ends on a follow card. A mandatory comment ask on every post also risks an engagement-bait demotion. Evidence is insufficient for a global rule. Leave CTAs to kits.",
+    "The positive lever is a metric artefact. Engagement is likes + 3x comments, so any comment prompt inflates the score mechanically. Intimates' 11+/1- includes comment-to-enter giveaways. Where likes are hidden, comments are almost the whole score. Link-in-bio (-0.14) sits on promotional posts, which lose on topic, and a16z flags its own CTA result as promo-confounded. Music shows no CTA lift. Optimising for comment keywords would chase our own scoring formula, and Meta demotes engagement bait. Dropping link-in-bio and follow end cards is harmless, but the 'one rotated comment or save ask per post' programme isn't justified."
+   ]
+  },
+  {
+   "id": "L1-12",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "language",
+   "claim": "Long captions that extend the cover's one idea, with a declarative first line, outperform short ones; hashtags are near-irrelevant.",
+   "evidence": "scale.md caption_length=long(>600) +0.06 over 66 accts, 39+/19-, p=0.0119; music 6+/0- p=0.031; intimates short 1+/12- p=0.0034. Eden 655k carousels: 400+ chars 28.5% vs 25.4% breakout. a16z: 0 of 72 captions use emoji, 2 use hashtags, length does not separate winners. Confounds: intimates long-caption lift is a giveaway-rules artefact; Hanky Panky's own median is 45 chars. Instagram capped hashtags at 5 (Dec 2025); Google indexes captions since July 2025.",
+   "probability": "likely",
+   "agent_change": "First caption line restates the cover in one declarative sentence with the name and number (125 chars or fewer); 300-1,200 characters by default with one line per slide in slide order; sources inline, credits last; 0-5 specific hashtags from a topic pool; client kits may override length (Hanky Panky 150 chars).",
+   "refutations": [
+    "39+/19-, p=0.012 overall, but the intimates 8+/0- is admitted to be a giveaway artefact. Remove it and the rest is about 31+/19-, p of about 0.12, not significant. Short captions are not significant overall (p=0.14), B2B reverses (short +0.17), and Hanky Panky's own median caption is 45 chars. Hashtags were never tested. A default 300-1,200 character caption is not supported. Leave caption length to client kits.",
+    "The effect is small (+0.06) and confounded. The intimates lift comes from giveaway rules (long captions plus many comments under the 3x comment weighting). B2B reverses (short +0.17), a16z shows no separation by length, and Hanky Panky's own median is 45 characters. A global default of 300-1,200 characters would lengthen B2B and retail captions against their own data. Caption length belongs in industry and client kits. The rules on the first line and hashtags are low-stakes, but the length default does not transfer.",
+    "The effect is small (+0.06) and heavily confounded. Long captions ride with giveaways (intimates' artefact is acknowledged), story or collab posts and carousels, and short captions ride with reels and photo dumps. The cleanest single-account measurement (a16z, 72 posts) finds length doesn't separate winners (38 vs 40 words). The client's own best practice runs the other way: Hanky Panky's median is 45 chars, and B2B short captions are +0.17. Eden is correlational. A 300-1,200-character default isn't justified. Keep length in client kits. The 0-5 hashtag rule is just the platform cap."
+   ]
+  },
+  {
+   "id": "L1-14",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "design",
+   "claim": "One visual system per account, with content varying and chrome fixed, is what makes winners recognisable; per-post preset rotation is what makes ours look random.",
+   "evidence": "a16z: one display serif, one sans, one ground family across ~17 templates; @deelpitch 5 systems in 5 weeks. Fintech: Me Poupe 15 slides one layout 28.35x, Nath, Tokeniza, Cerbasi identical skeletons. Sitti: Corner, mindtrip two templates carry all winners. Karoslabs: reputeforge repeats one module 8x (19.18x); engine picked 'bracketed-figure' then 'quiet-rule' for consecutive Karos posts. Karos archive: 113/167 slides same charcoal plate reads as one block, so variety must come inside the system.",
+   "probability": "very likely",
+   "agent_change": "Pin one system per client at onboarding (grounds, type scale, mark, devices, scrim) and remove per-post preset rotation; inside a carousel require at least three compositions (full-bleed photo, split, plate, device, type-only), no two consecutive slides alike, same type scale on every slide; series get a recognisable, numbered cover.",
+   "refutations": [
+    "There is no statistic here, only anecdotes from accounts that succeeded (survivorship). Within-account layout variety was never tested, and the advancement profile shows 2-3 bits of layout entropy among the best posts, meaning winners already mix layouts. Pinning the client's own kit is justified as brand fidelity (see L3). Removing preset rotation to improve performance is not shown.",
+    "The change contradicts its own evidence. The claim's winners repeat one module across the carousel: reputeforge one module 8x (19.18x), Me Poupe 15 slides in one layout (28.35x), a16z 'each carousel repeats one unit', and the Karos playbook 'one module at one scale reads as a series'. Requiring at least three compositions per carousel with no two consecutive slides alike would break exactly those winners. Pinning one system per client and removing per-post preset rotation is supported and should ship. The rule requiring variety inside a carousel should not."
+   ]
+  },
+  {
+   "id": "L1-19",
+   "layer": "L1 platform",
+   "scope": "all clients",
+   "dimension": "design",
+   "claim": "One bold brand accent in a single device beats muted or dark palettes, but the accent must never be used as small text on a light ground.",
+   "evidence": "B2B brand-colour heavy 5+/1- (7 accts, p=0.22); karoslabs lift 2.67, muted 0.5, dark 0.67; Hebrew dark 1+/9- p=0.0215, muted 0+/8- p=0.0078; music bright/saturated 0+/6- p=0.031 (industry-specific reversal: colour comes from footage). Karos archive accent area median 1.3% of slide; #FF6B2C on white 2.84:1 fails WCAG. Owner rule: keep orange on data fills.",
+   "probability": "likely",
+   "agent_change": "Every kit declares at least two grounds and one accent; accent capped at ~5% of slide area and used as fill (marker, bar, selected option) not as small text; compute WCAG and APCA for every text-colour pair at kit load and ban failing pairs by size; music/lifestyle kits set accent to none.",
+   "refutations": [
+    "All accounts, brand-colour heavy scores 18+/15-, p=0.73, a null. B2B's 5+/1- has p=0.22. Dark palettes reverse by industry: Hebrew 1+/9-, but music +0.17 (5+/1-), and brand-colour is -0.042 in fintech. 'A bold accent beats muted or dark' is not supported. Only the WCAG/APCA pair check stands, as a legibility standard with no performance data needed.",
+    "The performance claim is statistically null and contradicts itself. Brand-colour heavy is p=0.73 overall and 5+/1- (p=0.22) in B2B. Dark loses in Hebrew news (1+/9-) but wins in music (+0.17, 5+/1-). The rule that a bold accent beats muted is then implemented as an accent capped at about 5% of area, which is the opposite of 'brand-colour heavy'. The WCAG/APCA check on text pairs at kit load is sound but duplicates L1-08's contrast gate. Keep that check and drop the accent-area and 'bold beats muted' rules at L1.",
+    "The performance claim fails. Across all accounts, brand-colour heavy is null (18+/15-, p=0.73), B2B's 5+/1- is not significant (p=0.22), and music reverses. The dark and muted losses in Hebrew news reflect photo against no photo (L1-01), not accent use. The 5%-of-area accent cap has no support and cuts against B2B's 'brand-colour heavy' winners. The WCAG and APCA pair check is justified, but it belongs to L1-08's contrast gate. The owner's orange-on-data-fills rule already governs Karos."
+   ]
+  },
+  {
+   "id": "L2-02",
+   "layer": "L2 industry",
+   "scope": "B2B marketing / AI agency (Karos Labs)",
+   "dimension": "graphics",
+   "claim": "Each interior slide is a picture of the point (real brand asset, UI, found ad, diagram) with about 15-25 words; comparisons shown side by side win; graphics on the cover lose.",
+   "evidence": "Best carousels median 17 words per interior slide (n=21); comparison hooks lift 3.33; icons on cover 0.44, charts 0.4, screenshots 0.43; conversational 2.15 vs informational 0.47; brand-colour heavy 2.67; no logo on 69% of best covers; carousels 1.41-1.80x on carousel-led audiences, 0.37-0.56x on reel-trained ones. n=13 accounts.",
+   "probability": "likely",
+   "agent_change": "One graphic from the client's device library per interior slide, chosen by data shape; cover is one image or one short line; comment-keyword or save-for-X ask; the account's 22-follower data weighted near zero in the loop.",
+   "refutations": [
+    "No B2B within-account test besides logo=none (8+/1-, p=0.039) reaches p<0.05. Comparison hooks score 4+/1-, p=0.375; cover icons 1+/6-, p=0.125; brand-colour 5+/1-, p=0.22; conversational 7+/1-, p=0.07. The '17 words per interior slide' figure is 21 best posts with no weakest comparison. The 'lift' figures pool posts across accounts, which within-account voting was meant to avoid.",
+    "The evidence is thin, and the change cuts against B2B's own device statistics. The comparison lift of 3.33 rests on 4+/1- (p=0.375), brand-colour heavy is p=0.22, and words per interior slide come from 21 posts. B2B icons run -0.18 (1+/6-) and boxes -0.14 (2+/7-), yet the change requires a device on every interior slide. The Karos account itself (22 followers) cannot validate anything. The comment-keyword ask carries L1-11's 3x comment-weighting artefact. Only the rules backed by significant results (no logo 8+/1-, not muted 1+/8-) are solid.",
+    "This is thin and confounded. The lifts are pooled best against weakest across 13 accounts, not within-account; the within-account comparison-hook figure is 4+/1-, p=0.375. The best sets are mostly reels (43 of 78), and the synthesis admits carousels sink on reel-trained audiences, so this is a format confound. The 17-words-per-slide figure comes from best posts only. The comment-keyword ask is the 3x-comment artefact. The Karos-specific design is already covered by L3-02 (archive spec plus owner rules). Don't ship an industry-wide B2B kit from this."
+   ]
+  },
+  {
+   "id": "L2-03",
+   "layer": "L2 industry",
+   "scope": "Intimate apparel (Hanky Panky, Kindly Yours)",
+   "dimension": "layout",
+   "claim": "Words go on slide 1 only, interior slides stay wordless, logos stay off the image, and an explicit answerable ask is the strongest lever.",
+   "evidence": "Interior words median 0 (n=19-20); comment prompt +0.32 over 12 accts, 11+/1-, p=0.0063; asks 67th vs 47th percentile in all 9 testable accounts; short captions 1+/12- p=0.0034 (giveaway artefact); nobody in 12 accounts stamps a logo; swatch quiz 10.69x, product grids 2.09-2.91x; no-hook 0% of best vs 15% of weakest; Aerie #NotAI 45,841 likes.",
+   "probability": "very likely",
+   "agent_change": "Word gate 10 on slide 1, 0-3 on interiors; graphics only as product cut-out choices or grids with the game in the image; no logo on photo slides; one rotated ask per post; giveaways rare and big; creator content as Collabs; two body sizes per set.",
+   "refutations": [
+    "The headline lever, comment prompts at 11+/1-, is inflated twice: by the 3x comment weighting and by comment-to-enter giveaways. The short-caption signal is admitted to be a giveaway artefact. 'Interior words 0' and 'nobody stamps a logo' describe practice with no weakest comparison. The swatch quiz is one post. Only hook=none (0+/7-) is a clean signal, and it is already covered by L1-03.",
+    "The headline lever, 'an explicit ask is the strongest', is a metric artefact: comments weigh 3x, and the 11+/1- includes comment-to-enter giveaways. Hidden likes contaminate several accounts' weakest sets (Felina 32/36, Natori 35/36, teamkindly 36/36). Wordless interiors are a descriptive best-only norm with no weakest comparison, and the category's own signal cuts against text-free posts (headline_size=none 3+/10-). The single 10.69x swatch quiz is n=1. The brand conventions (no logo stamp, words on slide 1) can live in the client kits (L3-03, L3-04). Don't ship an industry kit built on the ask lever."
+   ]
+  },
+  {
+   "id": "L2-04",
+   "layer": "L2 industry",
+   "scope": "Fintech / investing Brazil (XO Digital)",
+   "dimension": "hook",
+   "claim": "Covers state the reader's stake as one checkable sentence (a rule with its date, a rate with its minimum, a named person with a number); market-size and listicle covers fail; the catch comes before the reassurance.",
+   "evidence": "Nath law explainers 31.5x/26.75x; INCO named portfolio 3.42x; cover words 9.5 best vs 13 weakest; number/list hooks 5.6% vs 11.1%; other-brand authority 15.3% vs 2.8%; condensed heavy sans 25% vs 5.6%; data graphics lift 3, icons 2.67; stock photos 2.8% vs 11.1%; hard-sell fills 5-6 of 6 worst on 4 accounts. n=13 accounts.",
+   "probability": "likely",
+   "agent_change": "Rule-change spine (hoje / proposta / mas aten\u00e7\u00e3o / o que fazer) drawn as bars; three sizes max with a heavy display headline of at most 2 lines; risk line and registration in caption and closer; proposals labelled as not in force on every slide; regulator marks never as decoration.",
+   "refutations": [
+    "No fintech within-account test reaches p<0.05; the minimum is 0.0703 (condensed 7+/1-). The pooled percentages are single-digit post counts: number/list hooks 4 vs 8, stock photos 2 vs 8, other-brand authority 11 vs 2. The 'rule-change spine' format generalises from 2 Nath posts on one account. The compliance parts (never present proposals as law, no regulator marks) are justified as correctness, not by these statistics.",
+    "The format prescription is overfitted: the 'rule-change spine' comes from two posts by one creator (Nath law explainers), not a brand. The other fintech signals are marginal: condensed type p=0.07, number/list 4 vs 8 posts, and 4+ sizes p=0.34. XO's reach comes only from capybara reels (385 followers), so a text-led rule-change carousel has no demonstrated transfer to XO. The compliance parts (risk line, proposals labelled as not in force, no regulator marks as decoration) are justified on regulatory grounds and should ship through L3-05. The spine and headline-shape rules should not ship as an L2 default."
+   ]
+  },
+  {
+   "id": "L2-06",
+   "layer": "L2 industry",
+   "scope": "Creator economy / city-guide app (Sitti)",
+   "dimension": "hook",
+   "claim": "A named place or person plus one concrete promise wins; pitching creators to monetise is the category's weakest format; the product itself (map, app card, save count) is the graphic.",
+   "evidence": "Story hook 23.9% of best vs 4.5% weakest (lift 4.19); product promo 1.4% vs 12.1%; letsdiscoverapp creator-pitch carousels 0.15-0.23x vs founder-find reels 10.5x; Stan named nurse 23.0x vs generic advice 0.23x; cover words 6 vs 10; huge headline lift 6.52 as one short line; mindtrip 29.7x with white card on darkened band. n=13 accounts, 20 of 66 weakest are placeholders.",
+   "probability": "likely",
+   "agent_change": "Topics only from a named creator's map of a named city or a founder story; one place per slide on a real photo of that place; text on cream or in a top gradient, never raw; a real in-app card with real values; founder reels for reach, carousels for series.",
+   "refutations": [
+    "20 of 66 weakest posts are hidden-like placeholders (about 30% contamination). No creator-industry within-account test reaches p<0.05: story 6+/1-, p=0.125; huge headline 4+/1-, p=0.375; product promo 1+/3-, p=0.625. The lifts pool posts, and the creator-pitch and Stan comparisons are single accounts. Too thin to restrict topics to named-creator maps and founder stories.",
+    "The evidence is too thin to change production. 20 of the 66 weakest posts (30%) are placeholders, which contaminates the comparison. The headline signals are non-significant: story 6+/1- (p=0.125), huge headline 4+/1- (p=0.375), comment prompt p=0.07. Restricting topics to named creators' city maps or founder stories assumes a content supply Sitti may not have. It is drawn from other apps' reels (letsdiscoverapp, Stan), not from carousels. The product-as-graphic idea is reasonable, but the topic whitelist is overfitted. Re-run with the placeholders removed before encoding it.",
+    "The evidence is too contaminated. The synthesis itself says nearly half the pooled weakest set is artefact: 20 of 66 posts with hidden-like placeholders plus about 10 posts under 25h old. It also says the list-hook, pill and logo lifts lean on those posts. The creator-pitch vs founder-find comparison is carousel against reel (a format confound). Stan's 23x vs 0.23x is n=2, and huge headline is 4+/1-, p=0.375. 'Topics only from a named creator's map or founder story' is too restrictive a production rule on this basis. Keep the Sitti kit fidelity (L3-07) and L1-04's named-subject gate instead."
+   ]
+  }
+ ],
+ "ranking_research": {
+  "findings": [
+   {
+    "claim": "Meta's own Instagram Feed ranking card (last updated 29 June 2026) lists a prediction dedicated to carousels: how likely the viewer is to swipe through the whole carousel. Its inputs are how often the viewer swipes to the next card, how many cards they view, whether the carousel was reordered in their Feed, whether the post is recommended, and how many cards the carousel has. Swipe depth and completion are scored directly.",
+    "implication_for_our_agent": "Treat completion as the carousel's main target. Every slide has to earn the next swipe: open a loop on slide 1, pay part of it off on each slide, and hold the full payoff back until near the end. Score drafts on 'reason to swipe' per slide and cut any slide that neither advances the argument nor adds new information. Slide count is itself an input, so padding a deck that people then abandon probably costs more than a short deck they finish.",
+    "sources": [
+     "https://transparency.meta.com/features/explaining-ranking/ig-feed/"
+    ],
+    "confidence": "high"
+   },
+   {
+    "claim": "The same Meta Feed card lists 'whether it's a photo and how much text is overlaid on it' as an input to the viewing-time prediction. Text on images is a modelled feature. Meta does not publish which direction it pushes. The Feed card also predicts DM sharing, time spent, skipping, profile visits, and post enjoyment (likes, comments, reshares).",
+    "implication_for_our_agent": "Text on slides is allowed, but it is measured through dwell time. Text that takes a few seconds to read and repays the time is consistent with the signal. A wall of text that people skip is not. Do not apply a hard '20% text' rule: that is left over from Facebook's retired ads policy. Instead, write slides that are fast to scan with one idea each, so dwell comes from reading rather than confusion.",
+    "sources": [
+     "https://transparency.meta.com/features/explaining-ranking/ig-feed/"
+    ],
+    "confidence": "high"
+   },
+   {
+    "claim": "Carousels get a second chance. Mosseri said in October 2024 that if someone sees a carousel and does not swipe, Instagram often shows it to them again, starting on the second piece of media. He also said carousels often get more reach than photos because more media means more interactions, and that adding music to a carousel makes it eligible for video surfaces such as the Reels tab.",
+    "implication_for_our_agent": "Slide 2 is a second cover. Design it to work on its own as a hook for someone who never saw slide 1: a strong headline and no 'as I said' dependency. Where the brand allows, attach licensed music so the carousel is eligible for Reels-tab distribution.",
+    "sources": [
+     "https://tech.yahoo.com/social-media/articles/why-instagram-carousels-sometimes-start-200811893.html",
+     "https://www.threads.com/@mattnavarra/post/DBgmZcEoiZb"
+    ],
+    "confidence": "high"
+   },
+   {
+    "claim": "In January 2025 Mosseri named watch time, likes per reach and sends per reach as the top three ranking signals. He tied likes more to follower reach and sends (DM shares) more to reach among non-followers. In April 2025 Instagram made Views the primary metric across all formats, including carousels, and Mosseri points creators to views, reach and sends.",
+    "implication_for_our_agent": "Every carousel needs a clear 'send trigger': something a viewer would forward to a specific person, such as a checklist for a colleague, a relatable truth, or a local recommendation. Our analytics loop should optimise for sends per reach and saves, normalised by reach. Raw likes are the wrong target. The widely repeated claim that sends are weighted 3-5x likes is not a Mosseri quote; treat it as folklore.",
+    "sources": [
+     "https://www.dataslayer.ai/blog/instagram-algorithm-2025-complete-guide-for-marketers",
+     "https://creatorlanehq.com/blog/instagram-algorithm-2026-mosseri-vs-measured",
+     "https://www.socialmediatoday.com/news/instagram-updates-metrics-to-focus-creators-on-views/723645/",
+     "https://www.socialpilot.co/instagram-marketing/instagram-views-metrics-changes"
+    ],
+    "confidence": "high"
+   },
+   {
+    "claim": "Instagram's official ranking explainer (May 2023) says Explore's top predicted actions are likes, saves and shares, and Feed's most heavily weighted predictions are time spent, comments, likes, shares and profile taps. Meta's current Explore card (June 2026) adds follow likelihood, 5+ seconds of viewing, saves, reshares, comments and 'Not Interested'.",
+    "implication_for_our_agent": "To reach non-followers through Explore, build for saves (reference value) and shares, and give the viewer a reason to follow: make it plain that the account posts this kind of thing regularly. A final slide that says what the series is will do more for follow likelihood than a generic 'follow for more'.",
+    "sources": [
+     "https://about.instagram.com/blog/announcements/instagram-ranking-explained",
+     "https://transparency.meta.com/features/explaining-ranking/ig-explore/"
+    ],
+    "confidence": "high"
+   },
+   {
+    "claim": "Originality is enforced at account level for photos and carousels. On 30 April 2026 Mosseri extended the unoriginal-content rules from Reels to photos and carousels. Accounts that mostly post content they did not create, or did not edit in a material way, stop being recommended to non-followers, and the penalty applies to all their posts. Watermarks, minor crops, credits, borders or a new caption do not make content original. Accounts regain eligibility once most recent posts over a rolling 30 days are original.",
+    "implication_for_our_agent": "Never build a carousel mainly from reposted third-party images, screenshots of other posts, or lightly cropped stock or UGC. Each deck should carry original design, original copy and synthesis. Watch it at account level: one lazy repost-heavy month can lose the whole client account its discovery. Add a guard that flags slides whose main visual is someone else's media with only small changes.",
+    "sources": [
+     "https://petapixel.com/2026/04/30/new-instagram-policies-target-reposted-content/",
+     "https://www.engadget.com/2160560/instagrams-recommendation-algorithm-will-penalize-unoriginal-photo-and-carousel-posts/",
+     "https://almcorp.com/blog/meta-original-content-rules-2026-facebook-instagram-creators/"
+    ],
+    "confidence": "high"
+   },
+   {
+    "claim": "Instagram's recommendation guidelines say Reels that are majority text, watermarked (for example with another platform's logo), low-resolution, bordered or previously posted are deprioritised. Content showing regulated products such as tobacco, vapes and pharmaceuticals is restricted from recommendation.",
+    "implication_for_our_agent": "For carousels with music or video slides that could reach Reels surfaces: no TikTok or CapCut watermarks, full-resolution exports (1080 wide), and no letterbox borders. Clients in regulated categories should expect little recommendation reach and should lean on follower reach, sends and search.",
+    "sources": [
+     "https://about.instagram.com/blog/announcements/instagram-ranking-explained"
+    ],
+    "confidence": "high"
+   },
+   {
+    "claim": "In large 2025-2026 studies, carousels lead on engagement and saves, and Reels lead on reach. Socialinsider (35M posts, 447K brand pages, 2025): engagement rate by followers was carousels 0.55%, Reels 0.52%, images 0.37%; in Q2 2026 it was 0.50%, 0.48% and 0.33%. Buffer: median engagement as a share of reach was carousels 6.90%, images 4.44%, Reels 3.31%. Reels get about 36% more reach than carousels and 2.25x more than single images. Metricool (24.4M posts, 375K accounts): carousels get about 9x the saves of single images and roughly double the reach. Single-image reach fell about 22% year on year.",
+    "implication_for_our_agent": "Carousels are the right default for depth, saves and follower relationships. Single-image posts are the weakest format and should be the exception. Pure reach to new audiences favours Reels, so the carousel agent's measure of success is saves, sends and engagement per reach, not topline reach. Consider adding a video slide or offering a Reel variant when a client's goal is discovery.",
+    "sources": [
+     "https://www.socialinsider.io/social-media-benchmarks/instagram",
+     "https://buffer.com/resources/state-of-social-media-engagement-2026/",
+     "https://buffer.com/resources/instagram-reach-engagement-analysis/",
+     "https://metricool.com/press-release-instagram-study-2026/"
+    ],
+    "confidence": "high"
+   },
+   {
+    "claim": "Longer carousels tend to perform better, but the evidence is correlational. Eden's study of 655,385 carousels (Aug 2025 to Aug 2026, 12,159 creators) found the share of posts reaching at least 2x the creator's own median rises from 23.4% at 3 slides to 28.8% at 10 and about 32% at 14-20 slides. Only 16.7% of carousels use 11 or more slides, and the most common length is 5. Socialinsider reports reach rising above 10 slides. Older industry figures say decks under 4 slides perform barely better than single images.",
+    "implication_for_our_agent": "Default to 8-12 slides for educational or reference decks and allow up to 15-20 when there is real content for them, since the 20-slide cap has applied since August 2024. Avoid 2-4 slide decks unless the format is deliberately quick. Eden measured likes, not completion, and completion is modelled against card count, so length has to be earned by content. Never pad.",
+    "sources": [
+     "https://eden.so/blog/instagram-carousel-study/",
+     "https://www.socialinsider.io/blog/instagram-carousel/",
+     "https://storrito.com/resources/how-instagrams-20-slide-carousels-work-and-what-the-new-limits-are/"
+    ],
+    "confidence": "medium"
+   },
+   {
+    "claim": "Carousels that mix images and video reportedly outperform image-only carousels. One figure puts mixed carousels at 2.33% engagement, and another says one or two video slides lift performance by about 29%. Both are repeated in secondary write-ups of Socialinsider data that I could not trace to a primary table.",
+    "implication_for_our_agent": "Test inserting one short motion or video slide (a product clip, or animated data) in the middle third of a deck to break the pattern. Treat it as an A/B hypothesis in the analytics loop, not a rule.",
+    "sources": [
+     "https://www.notes2pic.com/blog/instagram-carousel-statistics",
+     "https://yougov.com/articles/31680-carousel-posts-using-all-10-slides-instagram-have-"
+    ],
+    "confidence": "low"
+   },
+   {
+    "claim": "Hashtags now play a minor role. In December 2025 Instagram capped posts at 5 hashtags. Mosseri said hashtags help with search and categorisation, not reach, and that a few specific tags beat many generic ones. Instagram removed hashtag following in December 2024. Eden found only a 2.6-point spread in breakout rate across hashtag bands, and 65% of carousels used no hashtags.",
+    "implication_for_our_agent": "Output 0-5 specific, relevant hashtags and never a generic block. Put the SEO effort into keyword-rich captions and on-slide text instead.",
+    "sources": [
+     "https://www.digitaltrends.com/social-media/instagram-now-limits-you-to-five-hashtags-per-post/",
+     "https://www.socialmediatoday.com/news/instagram-implements-new-limits-on-hashtag-use/808309/",
+     "https://eden.so/blog/instagram-carousel-study/"
+    ],
+    "confidence": "high"
+   },
+   {
+    "claim": "Since 10 July 2025, public posts from professional accounts (photos, carousels and Reels) can be indexed by Google and other search engines. Captions and alt text can appear in results. In-app search also uses caption keywords.",
+    "implication_for_our_agent": "Write the caption's first line as a searchable, plain-language statement of the topic, using the brand name, category and place when relevant. Generate custom alt text for each slide. Captions are long-lived search assets, not just a supplement to the slides.",
+    "sources": [
+     "https://ppc.land/instagram-content-becomes-searchable-on-google-starting-july-10/",
+     "https://wersm.com/instagram-content-will-now-be-searchable-on-google/"
+    ],
+    "confidence": "high"
+   },
+   {
+    "claim": "Longer captions and questions correlate with more engagement. Eden found captions of 400+ characters had a 28.5% breakout rate against 25.4% for captions under 50 characters. Metricool found posts with questions got 36.7% more comments and posts with comment CTAs got about 203% more comments. Explicit engagement bait ('like if', 'tag a friend') is demoted under Meta's long-standing engagement-bait policy.",
+    "implication_for_our_agent": "Write substantive captions (roughly 400-1,200 characters) that add context the slides do not carry. Close with one real question tied to the content. Avoid 'tag a friend' and 'comment YES' bait, and write send triggers ('send this to...') as natural value statements rather than demands.",
+    "sources": [
+     "https://eden.so/blog/instagram-carousel-study/",
+     "https://metricool.com/press-release-instagram-study-2026/",
+     "https://techcrunch.com/2017/12/18/facebook-is-clamping-down-on-posts-that-shamelessly-beg-for-your-engagement"
+    ],
+    "confidence": "medium"
+   },
+   {
+    "claim": "Posting more often is linked to faster growth. Buffer's analysis of 2M+ posts from about 100K accounts found 3-5 feed posts a week roughly doubles follower growth against lower frequency, with further gains at 6-9 a week and about a 12% reach lift per post. Eden found creators posting 3+ carousels a week break out 30.1% of the time against 22-24% for less frequent posters. Posting time is the weakest lever, with about a 3-point spread.",
+    "implication_for_our_agent": "Plan at least 3 feed posts a week per client, mixing carousels with Reels where possible, and keep quality consistent. Do not spend effort optimising posting time beyond sensible local-time windows.",
+    "sources": [
+     "https://www.socialmediatoday.com/news/study-shows-posting-more-instagram-leads-to-more-reach/757633/",
+     "https://buffer.com/resources/social-media-frequency-guide/",
+     "https://eden.so/blog/instagram-carousel-study/"
+    ],
+    "confidence": "medium"
+   },
+   {
+    "claim": "Attention is moving to Reels, DMs and recommendations. Mosseri's October 2025 'Tabs' redesign, tested in India and South Korea, puts Reels and DMs up front. Reels reportedly make up about half of time spent, and Mosseri says most recent growth came from DMs, Reels and recommendations. Since December 2025 the 'Your Algorithm' topic controls let users tune topics across Reels, then Explore (April 2026), then Feed.",
+    "implication_for_our_agent": "Carousels compete for a shrinking Home feed. The ways out are sends (DMs), recommendations (originality plus saves and shares) and the Reels tab (carousels with music). Keep each client's topic tight and consistent so topic classification, and users' Your Algorithm choices, map the account to a clear interest.",
+    "sources": [
+     "https://www.engadget.com/social-media/instagram-tests-new-layout-that-puts-the-spotlight-on-reels-and-dms-215407062.html",
+     "https://www.inro.social/blog/instagram-tabs-new-layout-2025",
+     "https://about.instagram.com/blog/announcements/reels-algorithm-control",
+     "https://www.socialmediatoday.com/news/instagram-expands-your-algorithm-tool-to-explore/817772/"
+    ],
+    "confidence": "medium"
+   },
+   {
+    "claim": "Mosseri's 20-slide year-end memo on 31 December 2025 said feeds are filling with 'synthetic everything' and that authenticity is becoming infinitely reproducible. He said creators are moving toward rawer, less polished content as proof of being real, and that Instagram may move toward fingerprinting real media and labelling AI content.",
+    "implication_for_our_agent": "Generic AI aesthetics (Midjourney gloss, Ghibli or Wes Anderson imitation) are a growing liability. Base slides on the brand's real assets: real product photos, real people, real places and data only the brand has. Treat heavily AI-generated imagery as a risk for labelling and trust. This supports the rule that the brand-kit logo and real media come before synthetic visuals.",
+    "sources": [
+     "https://www.engadget.com/social-media/instagram-chief-ai-is-so-ubiquitous-it-will-be-more-practical-to-fingerprint-real-media-than-fake-media-202620080.html",
+     "https://om.co/2026/01/01/what-is-instagrams-adam-mosseri-really-saying-in-his-year-end-memo/",
+     "https://www.socialmediatoday.com/news/instagram-chief-outlines-the-challenges-of-ai-content/808674/"
+    ],
+    "confidence": "medium"
+   },
+   {
+    "claim": "Format specs: carousels take up to 20 media items. The first slide's aspect ratio sets the ratio for the whole deck. 4:5 (1080x1350) fills the most feed space, 3:4 (1080x1440) is now supported, and the profile grid shows 3:4 thumbnails, so the edges of a 4:5 cover get cropped on the grid.",
+    "implication_for_our_agent": "Render at 1080x1350 (4:5) or 1080x1440 (3:4), consistently across slides. Keep the cover's headline and logo inside a 3:4 safe area centred on the slide so the grid thumbnail still reads.",
+    "sources": [
+     "https://carouselpost.io/guides/instagram-carousel-size",
+     "https://storrito.com/resources/how-instagrams-20-slide-carousels-work-and-what-the-new-limits-are/"
+    ],
+    "confidence": "medium"
+   },
+   {
+    "claim": "Commonly repeated folklore with no primary source: sends or saves weighted '3-5x' or '3x' likes; a 'no more than 20% text per slide' rule; a fixed hook formula on slide 1; specific best posting hours; original creators getting '40-60% more reach' after the April 2026 update; the claim that '10+ reposts in 30 days means exclusion' (this comes from the 2024 Reels aggregator rule and is now replaced by the majority-of-recent-posts test).",
+    "implication_for_our_agent": "Do not hard-code any of these as rules in prompts or quality gates. Where they are useful, frame them as hypotheses for the analytics loop to test against each client's own baseline.",
+    "sources": [
+     "https://creatorlanehq.com/blog/instagram-algorithm-2026-mosseri-vs-measured",
+     "https://www.socialync.io/blog/adam-mosseri-shares-instagram-algorithm-2026"
+    ],
+    "confidence": "low"
+   },
+   {
+    "claim": "Meta runs large-scale OCR on image text: its Rosetta system, described on Meta's engineering blog in 2018, extracts text from images for content understanding. Combined with the Feed card's overlay-text signal and search indexing, the words on a slide are probably machine-read for topic and relevance.",
+    "implication_for_our_agent": "Use clear, high-contrast, standard type for key terms so both OCR and humans can read them. Put the topic keyword on the cover slide as well as in the caption. Avoid important text in stylised or distorted lettering.",
+    "sources": [
+     "https://engineering.fb.com/2018/09/11/ai-research/rosetta-understanding-text-in-images-and-videos-with-machine-learning/",
+     "https://transparency.meta.com/features/explaining-ranking/ig-feed/"
+    ],
+    "confidence": "low"
+   }
+  ],
+  "numbers": [
+   {
+    "parameter": "Engagement rate by followers, 2025: carousel / Reel / image",
+    "value": "0.55% / 0.52% / 0.37% (35M posts, 447,613 pages)",
+    "source": "https://www.socialinsider.io/social-media-benchmarks/instagram"
+   },
+   {
+    "parameter": "Engagement rate by followers, Q2 2026: carousel / Reel / image / platform",
+    "value": "0.50% / 0.48% / 0.33% / 0.45%",
+    "source": "https://www.socialinsider.io/social-media-benchmarks/instagram"
+   },
+   {
+    "parameter": "Average saves per post, 50-100K accounts: Reel / carousel / image",
+    "value": "22 / 35 / 10",
+    "source": "https://www.socialinsider.io/social-media-benchmarks/instagram"
+   },
+   {
+    "parameter": "Average views per post, 10-50K accounts: Reel / carousel / image",
+    "value": "2,460 / 4,275 / 2,340",
+    "source": "https://www.socialinsider.io/social-media-benchmarks/instagram"
+   },
+   {
+    "parameter": "Median engagement as a share of reach: carousel / image / Reel",
+    "value": "6.90% / 4.44% / 3.31%",
+    "source": "https://buffer.com/resources/state-of-social-media-engagement-2026/"
+   },
+   {
+    "parameter": "Reach, Reels vs carousels / Reels vs images",
+    "value": "+36% / 2.25x",
+    "source": "https://buffer.com/resources/instagram-reach-engagement-analysis/"
+   },
+   {
+    "parameter": "Carousel saves vs single images",
+    "value": "about 9x (24.4M posts, 375K accounts)",
+    "source": "https://metricool.com/press-release-instagram-study-2026/"
+   },
+   {
+    "parameter": "Single-image year-on-year change in reach / interactions",
+    "value": "-21.96% / -25.41%",
+    "source": "https://metricool.com/press-release-instagram-study-2026/"
+   },
+   {
+    "parameter": "Share of posts reaching at least 2x the creator's median, by slide count",
+    "value": "3 slides 23.4%; 10 slides 28.8%; 14 slides 32.1%; 18-20 slides about 32%",
+    "source": "https://eden.so/blog/instagram-carousel-study/"
+   },
+   {
+    "parameter": "Share of carousels with 11+ slides; most common length",
+    "value": "16.7%; 5 slides",
+    "source": "https://eden.so/blog/instagram-carousel-study/"
+   },
+   {
+    "parameter": "Caption of 400+ characters vs under 50: rate of reaching 2x creator median",
+    "value": "28.5% vs 25.4%",
+    "source": "https://eden.so/blog/instagram-carousel-study/"
+   },
+   {
+    "parameter": "Cadence of 3+ carousels a week vs less: rate of reaching 2x creator median",
+    "value": "30.1% vs 22-24%",
+    "source": "https://eden.so/blog/instagram-carousel-study/"
+   },
+   {
+    "parameter": "Maximum slides per carousel",
+    "value": "20 (since August 2024)",
+    "source": "https://storrito.com/resources/how-instagrams-20-slide-carousels-work-and-what-the-new-limits-are/"
+   },
+   {
+    "parameter": "Hashtag cap per post",
+    "value": "5 (since December 2025)",
+    "source": "https://www.digitaltrends.com/social-media/instagram-now-limits-you-to-five-hashtags-per-post/"
+   },
+   {
+    "parameter": "Originality recovery window",
+    "value": "rolling 30 days, needs a majority of recent posts to be original",
+    "source": "https://almcorp.com/blog/meta-original-content-rules-2026-facebook-instagram-creators/"
+   },
+   {
+    "parameter": "Posting cadence linked to about 2x follower growth",
+    "value": "3-5 feed posts a week (2M+ posts, about 100K accounts)",
+    "source": "https://www.socialmediatoday.com/news/study-shows-posting-more-instagram-leads-to-more-reach/757633/"
+   },
+   {
+    "parameter": "Comment lift: questions / comment CTAs",
+    "value": "+36.70% / +202.78%",
+    "source": "https://metricool.com/press-release-instagram-study-2026/"
+   },
+   {
+    "parameter": "Recommended render size",
+    "value": "1080x1350 (4:5) or 1080x1440 (3:4); profile grid thumbnail is 3:4",
+    "source": "https://carouselpost.io/guides/instagram-carousel-size"
+   },
+   {
+    "parameter": "Google indexing of professional-account posts",
+    "value": "from 10 July 2025, covering posts since 1 January 2020",
+    "source": "https://ppc.land/instagram-content-becomes-searchable-on-google-starting-july-10/"
+   }
+  ]
+ }
+}

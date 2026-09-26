@@ -1,0 +1,356 @@
+{
+ "baseline": {
+  "accounts": 89,
+  "rows": [
+   {
+    "grouping": "archetype",
+    "best_k": 30,
+    "skill": 0.0128,
+    "perm_p": 0.01
+   },
+   {
+    "grouping": "involvement",
+    "best_k": 30,
+    "skill": 0.0114,
+    "perm_p": 0.01
+   },
+   {
+    "grouping": "industry",
+    "best_k": 30,
+    "skill": 0.01,
+    "perm_p": 0.01
+   },
+   {
+    "grouping": "content_job",
+    "best_k": 30,
+    "skill": 0.0057,
+    "perm_p": 0.02
+   },
+   {
+    "grouping": "audience",
+    "best_k": 30,
+    "skill": 0.0032,
+    "perm_p": 0.04
+   },
+   {
+    "grouping": "size",
+    "best_k": 30,
+    "skill": 0.0027,
+    "perm_p": 0.04
+   },
+   {
+    "grouping": "format_mix",
+    "best_k": 30,
+    "skill": 0.0026,
+    "perm_p": 0.04
+   },
+   {
+    "grouping": "fmix x style",
+    "best_k": 100,
+    "skill": 0.0015,
+    "perm_p": 0.05
+   },
+   {
+    "grouping": "visual_style",
+    "best_k": 100,
+    "skill": 0.0001,
+    "perm_p": 0.23
+   }
+  ]
+ },
+ "baseline+no_hidden_likes": {
+  "accounts": 74,
+  "rows": [
+   {
+    "grouping": "involvement",
+    "best_k": 30,
+    "skill": 0.0119,
+    "perm_p": 0.01
+   },
+   {
+    "grouping": "archetype",
+    "best_k": 30,
+    "skill": 0.0114,
+    "perm_p": 0.01
+   },
+   {
+    "grouping": "industry",
+    "best_k": 30,
+    "skill": 0.0077,
+    "perm_p": 0.02
+   },
+   {
+    "grouping": "content_job",
+    "best_k": 30,
+    "skill": 0.0049,
+    "perm_p": 0.03
+   },
+   {
+    "grouping": "audience",
+    "best_k": 30,
+    "skill": 0.0046,
+    "perm_p": 0.02
+   },
+   {
+    "grouping": "format_mix",
+    "best_k": 30,
+    "skill": 0.0042,
+    "perm_p": 0.01
+   },
+   {
+    "grouping": "fmix x style",
+    "best_k": 30,
+    "skill": 0.003,
+    "perm_p": 0.05
+   },
+   {
+    "grouping": "size",
+    "best_k": 100,
+    "skill": 0.0014,
+    "perm_p": 0.09
+   },
+   {
+    "grouping": "visual_style",
+    "best_k": 100,
+    "skill": 0.0,
+    "perm_p": 0.32
+   }
+  ]
+ },
+ "no_young_posts": {
+  "accounts": 82,
+  "rows": [
+   {
+    "grouping": "involvement",
+    "best_k": 30,
+    "skill": 0.0111,
+    "perm_p": 0.01
+   },
+   {
+    "grouping": "industry",
+    "best_k": 30,
+    "skill": 0.0079,
+    "perm_p": 0.01
+   },
+   {
+    "grouping": "archetype",
+    "best_k": 30,
+    "skill": 0.0076,
+    "perm_p": 0.01
+   },
+   {
+    "grouping": "content_job",
+    "best_k": 30,
+    "skill": 0.0034,
+    "perm_p": 0.03
+   },
+   {
+    "grouping": "audience",
+    "best_k": 30,
+    "skill": 0.0027,
+    "perm_p": 0.03
+   },
+   {
+    "grouping": "size",
+    "best_k": 30,
+    "skill": 0.002,
+    "perm_p": 0.07
+   },
+   {
+    "grouping": "format_mix",
+    "best_k": 100,
+    "skill": 0.0013,
+    "perm_p": 0.14
+   },
+   {
+    "grouping": "fmix x style",
+    "best_k": 100,
+    "skill": 0.0011,
+    "perm_p": 0.06
+   },
+   {
+    "grouping": "visual_style",
+    "best_k": 30,
+    "skill": 0.0004,
+    "perm_p": 0.16
+   }
+  ]
+ },
+ "no_young_posts+no_hidden_likes": {
+  "accounts": 67,
+  "rows": [
+   {
+    "grouping": "involvement",
+    "best_k": 30,
+    "skill": 0.0115,
+    "perm_p": 0.01
+   },
+   {
+    "grouping": "archetype",
+    "best_k": 30,
+    "skill": 0.0078,
+    "perm_p": 0.01
+   },
+   {
+    "grouping": "industry",
+    "best_k": 30,
+    "skill": 0.0077,
+    "perm_p": 0.01
+   },
+   {
+    "grouping": "content_job",
+    "best_k": 30,
+    "skill": 0.0038,
+    "perm_p": 0.04
+   },
+   {
+    "grouping": "audience",
+    "best_k": 30,
+    "skill": 0.0035,
+    "perm_p": 0.03
+   },
+   {
+    "grouping": "format_mix",
+    "best_k": 30,
+    "skill": 0.0021,
+    "perm_p": 0.09
+   },
+   {
+    "grouping": "fmix x style",
+    "best_k": 30,
+    "skill": 0.002,
+    "perm_p": 0.13
+   },
+   {
+    "grouping": "size",
+    "best_k": 100,
+    "skill": 0.0008,
+    "perm_p": 0.24
+   },
+   {
+    "grouping": "visual_style",
+    "best_k": 100,
+    "skill": 0.0001,
+    "perm_p": 0.22
+   }
+  ]
+ },
+ "carousels_only": {
+  "accounts": 33,
+  "rows": [
+   {
+    "grouping": "industry",
+    "best_k": 30,
+    "skill": 0.0048,
+    "perm_p": 0.12
+   },
+   {
+    "grouping": "archetype",
+    "best_k": 30,
+    "skill": 0.0023,
+    "perm_p": 0.14
+   },
+   {
+    "grouping": "audience",
+    "best_k": 100,
+    "skill": 0.0006,
+    "perm_p": 0.4
+   },
+   {
+    "grouping": "visual_style",
+    "best_k": 100,
+    "skill": 0.0002,
+    "perm_p": 0.3
+   },
+   {
+    "grouping": "content_job",
+    "best_k": 100,
+    "skill": 0.0,
+    "perm_p": 0.44
+   },
+   {
+    "grouping": "involvement",
+    "best_k": 100,
+    "skill": -0.0004,
+    "perm_p": 0.57
+   },
+   {
+    "grouping": "format_mix",
+    "best_k": 100,
+    "skill": -0.0012,
+    "perm_p": 0.73
+   },
+   {
+    "grouping": "fmix x style",
+    "best_k": 100,
+    "skill": -0.0013,
+    "perm_p": 0.79
+   },
+   {
+    "grouping": "size",
+    "best_k": 100,
+    "skill": -0.0018,
+    "perm_p": 0.77
+   }
+  ]
+ },
+ "carousels_only+no_hidden_likes": {
+  "accounts": 24,
+  "rows": [
+   {
+    "grouping": "archetype",
+    "best_k": 10,
+    "skill": 0.0048,
+    "perm_p": 0.11
+   },
+   {
+    "grouping": "fmix x style",
+    "best_k": 10,
+    "skill": 0.0025,
+    "perm_p": 0.06
+   },
+   {
+    "grouping": "visual_style",
+    "best_k": 10,
+    "skill": 0.0017,
+    "perm_p": 0.12
+   },
+   {
+    "grouping": "industry",
+    "best_k": 30,
+    "skill": 0.0009,
+    "perm_p": 0.33
+   },
+   {
+    "grouping": "format_mix",
+    "best_k": 100,
+    "skill": 0.0006,
+    "perm_p": 0.29
+   },
+   {
+    "grouping": "size",
+    "best_k": 100,
+    "skill": -0.0004,
+    "perm_p": 0.57
+   },
+   {
+    "grouping": "content_job",
+    "best_k": 100,
+    "skill": -0.0005,
+    "perm_p": 0.55
+   },
+   {
+    "grouping": "audience",
+    "best_k": 100,
+    "skill": -0.0012,
+    "perm_p": 0.69
+   },
+   {
+    "grouping": "involvement",
+    "best_k": 100,
+    "skill": -0.002,
+    "perm_p": 0.78
+   }
+  ]
+ }
+}
