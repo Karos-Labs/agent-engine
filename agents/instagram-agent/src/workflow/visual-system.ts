@@ -1430,7 +1430,11 @@ export function clientVisualSystemCss(
     // the one `script-fonts.ts` measured for it, and this sheet lands after
     // that one on identical specificity — so the only way to let the measured
     // value stand is not to write this declaration at all.
-    resolution.covers ? "  font-weight: var(--display-weight, 600); letter-spacing: var(--display-tracking, -0.012em);" : "  font-weight: var(--display-weight, 600);",
+    // 2026-09-26: the word space is paid back in proportion to the tracking. The register's
+    // tracking is tuned for its own face (grotesque: -0.028em for Inter), but a client's own
+    // display face inherits it; Kindly Yours' Plus Jakarta Sans set "for your recipient"
+    // with the word spaces nearly closed (local re-render of prep batch 8).
+    resolution.covers ? "  font-weight: var(--display-weight, 600); letter-spacing: var(--display-tracking, -0.012em); word-spacing: calc(var(--display-tracking, -0.012em) * -3);" : "  font-weight: var(--display-weight, 600);",
     // THE FACE'S OWN TWIN BLEED, on the display hosts and nowhere else — see
     // `DISPLAY_REGISTER_STACKS`. Scoped to this selector list rather than set
     // on `:root` because the bleed pays for the DISPLAY face's content area,
