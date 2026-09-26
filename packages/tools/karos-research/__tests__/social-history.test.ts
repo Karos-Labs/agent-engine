@@ -54,6 +54,29 @@ describe("research.socialHistory", () => {
     await fs.rm(rootDir, { recursive: true, force: true });
   });
 
+  it("reads a deeper window by cursor pages when asked (#253 C-3.0b), and a 12-post read never answers it", async () => {
+    const pages: string[] = [];
+    const scraper = {
+      ...fakeScraper({ "instagram/peer": Array.from({ length: 12 }, (_, i) => post(`https://instagram.com/p/a${i}`, `shallow ${i}`)) }),
+      async socialHistoryPage(request: { cursor?: string }) {
+        pages.push(request.cursor ?? "first");
+        const n = pages.length;
+        return { records: Array.from({ length: 12 }, (_, i) => post(`https://instagram.com/p/${n}-${i}`, `page ${n} post ${i}`)), ...(n < 4 ? { nextCursor: `c${n}` } : {}) };
+      },
+    };
+    const tool = createKarosResearchTools(store, { scraper })["research.socialHistory"]!;
+    // The default read: one call, twelve posts, cached.
+    const shallow = await tool.execute({ accounts: [{ platform: "instagram", username: "peer" }] }, { ctx });
+    if (shallow.status !== "success") throw new Error("unreachable");
+    expect((shallow.result as { posts: unknown[] }).posts).toHaveLength(12);
+    // The deep read: its own cache key, three pages, thirty-six posts.
+    const deep = await tool.execute({ accounts: [{ platform: "instagram", username: "peer" }], postsPerAccount: 36 }, { ctx });
+    if (deep.status !== "success") throw new Error("unreachable");
+    expect((deep.result as { fromCache: boolean; posts: unknown[] }).fromCache).toBe(false);
+    expect((deep.result as { posts: unknown[] }).posts).toHaveLength(36);
+    expect(pages).toEqual(["first", "c1", "c2"]);
+  });
+
   it("reads every account, strips the @, excerpts the text, and serves the second read from the cache", async () => {
     const scraper = fakeScraper({
       "x/acmehq": [post("https://x.com/acmehq/status/1", "We shipped four-day scheduling."), post("https://x.com/acmehq/status/2", "")],
