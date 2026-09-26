@@ -417,7 +417,7 @@ import {
   describedAsPhotograph,
   mayBeMark,
 } from "./entity-imagery.js";
-import { gradePictureSet, heroScrimCssBlock, imageTreatmentCssBlock, resolveGenerationStyle, type GenerationStyle } from "./style-lock.js";
+import { DRAWN_STYLE_LINE, drawnDisplayFontCssBlock, drawnGenerationStyle, drawnPostDecision, gradePictureSet, heroScrimCssBlock, imageTreatmentCssBlock, resolveGenerationStyle, type GenerationStyle } from "./style-lock.js";
 import { literalIllustrationOf, planImageBackfill, registerFor, resolveRescuedSelection } from "./image-density.js";
 import { describeRepairs, repairMechanicalTells } from "./mechanical-repair.js";
 import {
@@ -5869,8 +5869,25 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
     // The middle argument is the DERIVED kit, not the configured
     // `BrandTokens`: both treatment gates need `cssVars["--bg"]` and the
     // accent ring, and neither exists on `BrandTokens`.
+    // ── 04k0: A DRAWN POST (S6, 2026-09-26) ──
+    //
+    // Only when the category's strongest harvested posts are drawn, on a seeded
+    // share of runs, and never over the client's own photographs or a direction
+    // that forbids drawing (`drawnPostDecision`). A drawn post generates every
+    // picture in one ink line and sources no photograph, so it stays one
+    // visual system. Every other run's frozen style is unchanged.
+    const postTreatment = await wf.step.code("04k0-post-treatment", async () =>
+      drawnPostDecision({
+        library: exemplarLibrary,
+        seed: wf.runId,
+        clientUploads: tier0Slots.size,
+        clientMediaOnly,
+        forbid: visualDirection?.forbid ?? [],
+      }),
+    );
+    const drawnPost = postTreatment.drawn;
     const frozenStyle: GenerationStyle = await wf.step.code("04k-freeze-generation-style", async () =>
-      resolveGenerationStyle(visualDirection, effectiveKit, brief),
+      drawnPost ? drawnGenerationStyle() : resolveGenerationStyle(visualDirection, effectiveKit, brief),
     );
 
     // ── 04q: THE PRODUCT CAMPAIGN'S PLAN (2026-09-24, stage 4 of the reference-looks plan) ──
@@ -6150,6 +6167,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
         // able to disagree.
         heroScrimCssBlock(),
         markCssBlock(markScript, runMarkRing()),
+        // S6: a drawn post sets its display line in a handwriting face (Latin scripts only).
+        drawnPost && markScript === undefined ? drawnDisplayFontCssBlock() : "",
         // WS-07: the client's own corners, lines and buttons, when its site was measured.
         designLanguageCssBlock(runDesignLanguage),
         // RFC-20 Part 11: MOUNTED NOWHERE — see `GROUND_MATERIAL_MOUNTED`.
@@ -9388,7 +9407,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           // and before 05b's harvesters. It is absent on a client-media-only
           // run for the reason `05y` states: `mediaSource: "client"` is "only
           // media I upload for THIS job", and `05y` returns nothing there.
-          : [...tier0Pool.candidates, ...(clientMediaOnly ? [] : libraryRead.candidates), ...carriedGeneratedFrames];
+          : [...tier0Pool.candidates, ...(clientMediaOnly || drawnPost ? [] : libraryRead.candidates), ...carriedGeneratedFrames];
       // Why the pool is empty, in the sourcing layer's own words. Without it
       // the hold below could only say "no candidate qualified", which reads as
       // an editorial verdict on the topic and sent whoever debugged prep run
@@ -9476,7 +9495,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // leave the slide to `05b` exactly as it was before this step existed.
       /** What the entity route did, per slide, for the gate payload. */
       const entitySourcingReport: Array<{ slide: number; entity: string; tiers: Array<{ tier: string; why: string; got: number }> }> = [];
-      if (attemptEntities.length > 0 && imageCandidatePool.length === 0 && !clientMediaOnly && slidesNeedingSource.length > 0) {
+      if (attemptEntities.length > 0 && imageCandidatePool.length === 0 && !clientMediaOnly && !drawnPost && slidesNeedingSource.length > 0) {
         const harvestTool = tools["media.harvestArticleImages"];
         const searchTool = tools["web.search_web"];
         const peopleTool = tools["research.entityPeople"];
@@ -9632,7 +9651,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // stacked on top of each other.
       entitySourcingForGate = entitySourcingReport;
 
-      if (imageCandidatePool.length === 0 && slidesNeedingSource.length > 0 && findImages !== undefined && !clientMediaOnly) {
+      if (imageCandidatePool.length === 0 && slidesNeedingSource.length > 0 && findImages !== undefined && !clientMediaOnly && !drawnPost) {
         const sourced = await wf.step.code(rev(`05b-source-images-attempt-${attempt}`), async () =>
           // A search that never answers must not hold the run (batch 8: 50+ min);
           // past the deadline it reads as an outage, the path below survives.
@@ -11130,7 +11149,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           .map((e) => ({ name: e.name, kind: e.kind, ...(e.isPublicFigure ? { isPublicFigure: true } : {}) }));
         const backfilled: FloorGap[] = planImageBackfill(copy, withPictureNs, want - fromFailed.length, {
           ...(frozenStyle.treatment !== undefined ? { treatment: frozenStyle.treatment } : {}),
-          register: registerFor(ctx.runId),
+          // A drawn post's gap frames are drawn in the post's own line, not a rotating register.
+          register: drawnPost ? ({ id: "ink", phrase: DRAWN_STYLE_LINE } as unknown as ReturnType<typeof registerFor>) : registerFor(ctx.runId),
           ...(drawnSubjects.length > 0 ? { subjects: drawnSubjects } : {}),
           // 2026-09-24: a list post's items may carry pictures (thepitchbydeel
           // pubsub-21255292697877233 shipped one picture in eight).
