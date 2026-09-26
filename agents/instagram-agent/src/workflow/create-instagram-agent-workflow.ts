@@ -9889,6 +9889,15 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // 2026-09-26 (owner): a screen the story is about (the post names the product) is
       // drawn, not rewritten; an unrelated one still is (`isRelatedScreenBrief`).
       const relatedScreen = (scene: string): boolean => isRelatedScreenBrief(scene, postEntities);
+      /** A related screen is drawn with its look spelled out, and its batch drops the screen family from the negatives. */
+      const screenBatch = (gaps: ReadonlyArray<{ n: number; prompt: string }>) => {
+        const ns = new Set(gaps.filter((g) => relatedScreen(g.prompt)).map((g) => g.n));
+        const forbid = ns.size > 0 ? buildArtDirection(frozen.brandTokens, visualDirection)?.["forbid"] : undefined;
+        return {
+          needs: gaps.map((g) => (ns.has(g.n) ? { ...g, prompt: `${g.prompt} ${RELATED_SCREEN_STYLE}` } : g)),
+          forbid: Array.isArray(forbid) ? forbidWithoutScreens(forbid as string[]) : undefined,
+        };
+      };
       const rewritesScene = (scene: string): boolean =>
         prescribesClicheScene(scene) ||
         (!styleIsNonPhotographic(frozenStyle.line) && prescribesAbstractGraphic(scene)) ||
@@ -10198,13 +10207,11 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           buildArgs: (gaps, forConcept) => {
             // Computed once, above the literal, per this block's own rule.
             const permitted = forConcept !== undefined ? conceptPermittedSubjects(forConcept, likenessPermit) : { marks: [], figures: [] };
-            // A related screen is drawn with its look spelled out, and its batch drops the screen family from the negatives.
-            const screenGaps = new Set(gaps.filter((g) => relatedScreen(g.prompt)).map((g) => g.n));
-            const baseArt = buildArtDirection(frozen.brandTokens, visualDirection);
+            const screens = screenBatch(gaps);
             return {
             repoRoot: options.repoRoot,
             runId: wf.runId,
-            needs: gaps.map((g) => (screenGaps.has(g.n) ? { ...g, prompt: `${g.prompt} ${RELATED_SCREEN_STYLE}` } : g)),
+            needs: screens.needs,
             // The real canvas, not a hardcoded default: a generated slide that
             // renders at a different ratio to the template gets cropped, and a
             // crop is exactly how a carefully-composed frame loses its subject.
@@ -10212,8 +10219,8 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             // Phase 3, items Q + S, and Phase 4's concept override — see the
             // block above `rescueTiers` for both.
             art: {
-              ...baseArt,
-              ...(screenGaps.size > 0 && Array.isArray(baseArt?.["forbid"]) ? { forbid: forbidWithoutScreens(baseArt["forbid"] as string[]) } : {}),
+              ...buildArtDirection(frozen.brandTokens, visualDirection),
+              ...(screens.forbid !== undefined ? { forbid: screens.forbid } : {}),
               ...(forConcept !== undefined ? buildConceptArtDirection(frozen.brandTokens, visualDirection, forConcept) : {}),
               ...(frozenStyle.line !== undefined ? { styleLock: frozenStyle.line } : {}),
               // §5.3/§5.4 — see the `permitted` note above `rescueTiers`.
