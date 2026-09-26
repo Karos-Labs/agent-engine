@@ -1,6 +1,7 @@
 import { keepClientSitePages } from "./site-identity.js";
 import { lintReadableCopy, readableCopySteer } from "./readable-copy.js";
 import { brandMarkZone } from "./brand-render-tokens.js";
+import { SOURCE_IMAGES_DEADLINE_MS, withinDeadline } from "./step-deadline.js";
 import { exemplarLook } from "./exemplar-look.js";
 import { coverWeightsFor, pickCoverComposition } from "./cover-composition.js";
 import { buildExemplarLibrary, densityFromLibrary, nicheHooksForCopy, EXEMPLAR_LIBRARY_BELIEF_KEY, EXEMPLAR_POSTS_PER_ACCOUNT, exemplarLibraryAction, exemplarPatternEvidence, exemplarStudioNotes, failedLibrary, planHarvest, postsToJudge, readExemplarLibrary, type ExemplarLibrary, type HarvestedExemplar } from "./exemplar-library.js";
@@ -9631,7 +9632,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
 
       if (imageCandidatePool.length === 0 && slidesNeedingSource.length > 0 && findImages !== undefined && !clientMediaOnly) {
         const sourced = await wf.step.code(rev(`05b-source-images-attempt-${attempt}`), async () =>
-          findImages.execute(
+          // A search that never answers must not hold the run (batch 8: 50+ min);
+          // past the deadline it reads as an outage, the path below survives.
+          withinDeadline(findImages.execute(
             {
               repoRoot: options.repoRoot,
               runId: wf.runId,
@@ -9648,7 +9651,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
             needs: slidesNeedingSource.map((s) => ({ n: s.n, query: retrievalQueryFor(normaliseVisualNeed(s)) })),
             },
             { ctx },
-          ),
+          ), SOURCE_IMAGES_DEADLINE_MS, () => ({ status: "tooling_error", reason: `media.findImages did not answer within ${SOURCE_IMAGES_DEADLINE_MS / 1000}s` }) as Awaited<ReturnType<typeof findImages.execute>>),
         );
 
         if (sourced.status === "success") {
