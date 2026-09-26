@@ -217,6 +217,8 @@ const HAPPY_PATH_STEP_IDS = [
   // systems on the same day and the same story. It is the direct answer to the
   // owner's "the orange lines are the biggest sign a post was made with AI" and
   // to "on some slides there is a number and on some there is not".
+  // 2026-09-26: the harvested template this run is styled after (none on the fixture's library).
+  "04p0-pick-template-recipe",
   "04p-resolve-visual-system",
   "04p1-cover-composition",
   "05-write-copy-attempt-1",

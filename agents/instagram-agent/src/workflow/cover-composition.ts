@@ -34,7 +34,7 @@ const LIBRARY_SHARE = 0.5;
 const MIN_ENTRIES = 3;
 
 /** The judge's `coverType` vocabulary, mapped to what a cover can render. */
-const FROM_COVER_TYPE: Record<string, Partial<CoverWeights>> = {
+export const FROM_COVER_TYPE: Record<string, Partial<CoverWeights>> = {
   "photo-full-bleed": { poster: 1 },
   person: { poster: 1 },
   product: { poster: 0.5, sandwich: 0.5 },
