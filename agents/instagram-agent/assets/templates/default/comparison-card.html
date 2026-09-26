@@ -1676,7 +1676,10 @@ body:not(:has(#head:not(:empty))) .cmp-cols { background-image: none; box-shadow
        the upper frame is the picture. */
     var overPhoto = document.querySelector('img.hero[src]:not([src=""]):not([data-kind]), img.hero[src]:not([src=""])[data-kind=""], .bg[data-kind=""] > img[src]:not([src=""]), .bg:not([data-kind]) > img[src]:not([src=""])') !== null
       && getComputedStyle(document.querySelector('.scrim') || document.body).display !== 'none';
-    if (primary.length && !overPhoto) {
+    /* A sandwich cover's picture is the space BETWEEN the title and the deck;
+       a grown title would eat it. */
+    var sandwich = document.querySelector('img.hero[data-kind="sandwich"]') !== null;
+    if (primary.length && !overPhoto && !sandwich) {
       var extentBefore = objectExtent();
       var grown = 0;
       while (grown > -1 && !overflows()) {
@@ -1784,9 +1787,30 @@ body:not(:has(#head:not(:empty))) .cmp-cols { background-image: none; box-shadow
     }
     return top === Infinity ? null : { top: top, bottom: bottom };
   }
+  /* THE SANDWICH (2026-09-26): the picture fills exactly the space between the
+     title's last line and the deck's first, a gap apart from each. Measured
+     after the type is set, like `fillPicture`. */
+  function placeSandwich() {
+    var pic = document.querySelector('img.hero[data-kind="sandwich"]');
+    if (!pic) return;
+    var title = plate.querySelector('#title');
+    var deck = plate.querySelector('.lockup > .body-text');
+    if (!title) return;
+    var gap = 32;
+    var titleRect = title.getBoundingClientRect();
+    var deckTop = deck && deck.getBoundingClientRect().height > 0 ? deck.getBoundingClientRect().top : plate.getBoundingClientRect().bottom - parseFloat(getComputedStyle(plate).paddingBottom || '0');
+    var top = Math.round(titleRect.bottom + gap);
+    var height = Math.round(deckTop - gap - top);
+    if (height < 240) return;
+    document.body.style.setProperty('--sandwich-top', top + 'px');
+    document.body.style.setProperty('--sandwich-h', height + 'px');
+    document.body.setAttribute('data-sandwich', String(height));
+  }
   function resetPicture() {
     document.body.style.removeProperty('--frame-h');
     document.body.style.removeProperty('--inset-h');
+    document.body.style.removeProperty('--sandwich-top');
+    document.body.style.removeProperty('--sandwich-h');
     document.body.removeAttribute('data-picture-filled');
   }
   function fillPicture() {
@@ -1825,7 +1849,8 @@ body:not(:has(#head:not(:empty))) .cmp-cols { background-image: none; box-shadow
   }
   pass();
   fillPicture();
-  var done = function () { resetPicture(); pass(); fillPicture(); anchorScrim(); window.__CAROUSEL_READY__ = true; };
+  placeSandwich();
+  var done = function () { resetPicture(); pass(); fillPicture(); placeSandwich(); anchorScrim(); window.__CAROUSEL_READY__ = true; };
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(done, done);
   else done();
 })();
