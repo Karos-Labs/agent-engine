@@ -2855,6 +2855,14 @@ function figureKey(figure: string): string {
  * an earlier slide (a stat's figure, or a device kept there). The slide keeps
  * its words; a device with a new number is untouched.
  */
+/**
+ * A slide that OPENS with a figure must paint it as a device (`default:numbers-are-devices`),
+ * so such a device is never dropped. The same pattern as `LEADS_WITH_FIGURE` in
+ * `visual-qa-pre-checks.ts`, which imports this module and so cannot be imported here;
+ * `closing-slides-owner-2026-09-26.test.ts` pins the two to one source.
+ */
+export const OPENS_WITH_FIGURE = /^\s*(?!\d{4}\b)(?:[$€£₪]\s?)?\d[\d.,]*\s?(?:%|[kKmM]\b|million|billion|אלף|מיליון|מיליארד)?/u;
+
 export function withoutRepeatedDevices(slides: readonly InstagramSlideCopy[]): InstagramSlideCopy[] {
   const shown = new Set<string>();
   return slides.map((slide) => {
@@ -2862,7 +2870,8 @@ export function withoutRepeatedDevices(slides: readonly InstagramSlideCopy[]): I
     if (slide.device !== undefined) {
       const figures = deviceFigureValues(slide.device).map(figureKey).filter((f) => f.length > 0);
       const headline = figureKey(slide.headline);
-      if (figures.length > 0 && figures.every((f) => shown.has(f) || headline.includes(f))) {
+      const opens = [slide.headline, slide.body].some((t) => typeof t === "string" && OPENS_WITH_FIGURE.test(t));
+      if (!opens && figures.length > 0 && figures.every((f) => shown.has(f) || headline.includes(f))) {
         const { device: _repeated, ...rest } = slide;
         next = rest as InstagramSlideCopy;
       }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildMarkRing, ringIndexesFor } from "../src/workflow/emphasis-marks.js";
-import { assembleSlidesData, withoutRepeatedDevices } from "../src/workflow/slides-data.js";
+import { assembleSlidesData, OPENS_WITH_FIGURE, withoutRepeatedDevices } from "../src/workflow/slides-data.js";
+import { LEADS_WITH_FIGURE } from "../src/workflow/visual-qa-pre-checks.js";
 import type { InstagramCopyOutput, InstagramSlideCopy } from "../src/workflow/types.js";
 
 /**
@@ -73,7 +74,7 @@ describe("a device that only repeats a number is dropped", () => {
 
   it("drops a device whose number the headline already states, and keeps one with a new number", () => {
     const out = withoutRepeatedDevices([
-      slide(2, { headline: "42% still run AI as an assistant", device: figure("42%") } as Partial<InstagramSlideCopy>),
+      slide(2, { headline: "Most CMOs, 42%, still run AI as an assistant", device: figure("42%") } as Partial<InstagramSlideCopy>),
       slide(3, { headline: "What changed", device: figure("3,000") } as Partial<InstagramSlideCopy>),
       slide(4, { headline: "The same number again", device: figure("3000") } as Partial<InstagramSlideCopy>),
     ]);
@@ -81,5 +82,15 @@ describe("a device that only repeats a number is dropped", () => {
     expect(out[1]!.device).toBeDefined();
     // "3000" is "3,000": separators do not make a new number.
     expect(out[2]!.device).toBeUndefined();
+  });
+});
+
+describe("a slide that opens with its figure keeps the device (default:numbers-are-devices)", () => {
+  it("keeps it even when the headline states the number, and the two patterns are one source", () => {
+    expect(OPENS_WITH_FIGURE.source).toBe(LEADS_WITH_FIGURE.source);
+    const out = withoutRepeatedDevices([
+      slide(2, { headline: "₪1,200 a month is the median", device: { kind: "figure", value: "₪1,200", label: "median monthly spend", source: "internal data, 2026" } } as Partial<InstagramSlideCopy>),
+    ]);
+    expect(out[0]!.device).toBeDefined();
   });
 });
