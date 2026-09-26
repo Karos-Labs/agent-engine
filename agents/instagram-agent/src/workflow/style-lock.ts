@@ -352,7 +352,7 @@ export const GenerationStyleSchema = z.object({
    * before item S existed, byte for byte.
    */
   line: z.string().min(1).max(200).optional(),
-  source: z.enum(["direction", "none"]),
+  source: z.enum(["direction", "none", "drawn"]),
   /** Per client, never per slide. See `pickImageTreatment`. */
   treatment: ImageTreatmentSchema,
   /** Why that treatment — always present, including for `none`. */
@@ -432,6 +432,90 @@ export function resolveGenerationStyle(
     treatmentReason: decision.reason,
     ...(decision.tintHex !== undefined ? { tintHex: decision.tintHex } : {}),
   };
+}
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// S6 (2026-09-26) — a DRAWN post, when the category's best posts are drawn
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The owner's references (2026-09-26) include a hand-drawn cover that out-liked
+ * every polished one (28.5K): a scale for "hype vs reality", stick figures,
+ * handwritten type. One drawn frame inside a photographed carousel breaks the
+ * one-visual-system rule, so "drawn" is a POST-level treatment: every picture
+ * is generated in this line and no photograph is sourced.
+ *
+ * It is chosen only on evidence: the harvested exemplars of this client's
+ * category (judge 1.2.0 names `doodle` and `illustration` covers) must show
+ * drawn covers among the strongest posts, and then only on a seeded share of
+ * runs capped at `DRAWN_MAX_SHARE`. A client whose art direction forbids
+ * drawing, whose run is client-media only, or who uploaded pictures for this
+ * run is never drawn: the client's own photographs always win.
+ */
+export const DRAWN_STYLE_ID = "drawn-ink";
+export const DRAWN_STYLE_LINE =
+  "Hand-drawn editorial illustration in loose black ink on warm off-white paper: simple expressive figures and objects, confident marker strokes, lots of white space, one flat accent.";
+/** Drawn covers among the category's strongest exemplars before a drawn post is considered. */
+export const DRAWN_MIN_EXEMPLAR_VOTES = 3;
+/** The most runs that are drawn, however drawn the category is. */
+export const DRAWN_MAX_SHARE = 0.35;
+/** How many of the strongest exemplars are read. */
+export const DRAWN_EXEMPLARS_READ = 12;
+const DRAWN_FORBID = /\b(illustrat\w*|drawing|drawn|cartoon|sketch\w*|doodle\w*|hand[- ]drawn)\b/iu;
+
+export interface DrawnPostDecision {
+  drawn: boolean;
+  reason: string;
+  votes: number;
+  read: number;
+}
+
+export function drawnPostDecision(input: {
+  library: { status: string; entries: ReadonlyArray<{ role: string; craft: number; lift?: number | undefined; dna: Record<string, unknown> }> } | undefined;
+  seed: string;
+  clientUploads: number;
+  clientMediaOnly: boolean;
+  forbid: readonly string[];
+}): DrawnPostDecision {
+  const no = (reason: string, votes = 0, read = 0): DrawnPostDecision => ({ drawn: false, reason, votes, read });
+  if (input.clientMediaOnly) return no("the run is client media only");
+  if (input.clientUploads > 0) return no("the client uploaded pictures for this run, and its own photographs win");
+  if (input.forbid.some((f) => DRAWN_FORBID.test(f))) return no("the art direction forbids drawn imagery");
+  if (input.library === undefined || input.library.status !== "built") return no("no exemplar library to read the category from");
+  const strongest = [...input.library.entries]
+    .filter((e) => typeof e.dna["coverType"] === "string")
+    .sort((a, b) => b.craft - a.craft || (b.lift ?? 0) - (a.lift ?? 0))
+    .slice(0, DRAWN_EXEMPLARS_READ);
+  const votes = strongest.filter((e) => e.dna["coverType"] === "doodle" || e.dna["coverType"] === "illustration").length;
+  if (votes < DRAWN_MIN_EXEMPLAR_VOTES) return no(`${votes} of the ${strongest.length} strongest exemplars are drawn, under ${DRAWN_MIN_EXEMPLAR_VOTES}`, votes, strongest.length);
+  const share = Math.min(DRAWN_MAX_SHARE, votes / strongest.length);
+  let h = 2166136261;
+  for (const ch of `${input.seed}:drawn`) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0;
+  const draw = (h % 10_000) / 10_000;
+  return draw < share
+    ? { drawn: true, reason: `${votes} of the ${strongest.length} strongest exemplars are drawn; this run drew under the ${Math.round(share * 100)}% share`, votes, read: strongest.length }
+    : no(`${votes} of the ${strongest.length} strongest exemplars are drawn, but this run drew over the ${Math.round(share * 100)}% share`, votes, strongest.length);
+}
+
+/**
+ * A drawn post's display face: a handwriting face, as the owner's drawn
+ * reference sets its headline. Latin scripts only; a Hebrew post keeps its
+ * script face (the caller passes nothing then). Loaded like the brand faces.
+ */
+export const DRAWN_DISPLAY_FACE = "Caveat";
+export function drawnDisplayFontCssBlock(): string {
+  return `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=${DRAWN_DISPLAY_FACE}:wght@600;700&display=swap">
+<style>
+/* instagram-agent drawn post (S6) - built by style-lock.ts. */
+:root { --f-display: "${DRAWN_DISPLAY_FACE}", "Segoe Print", "Bradley Hand", cursive; }
+</style>`;
+}
+
+/** The frozen style of a drawn post: the drawn line replaces the photographic lock, and no photographic treatment applies. */
+export function drawnGenerationStyle(): GenerationStyle {
+  return { id: DRAWN_STYLE_ID, line: DRAWN_STYLE_LINE, source: "drawn", treatment: "none", treatmentReason: "a drawn post: the photographic treatment does not apply to ink drawings" };
 }
 
 // ────────────────────────────────────────────────────────────────────────────

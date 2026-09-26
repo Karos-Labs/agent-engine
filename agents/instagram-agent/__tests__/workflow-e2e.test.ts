@@ -184,6 +184,8 @@ const HAPPY_PATH_STEP_IDS = [
   // Phase 3 (item S): the run's ONE generation style and image treatment,
   // frozen before the attempt loop so every attempt, every revision and every
   // generated image inherit the identical line.
+  // 2026-09-26 (S6): whether this post is drawn; runs every revision, decides nothing on the fixture.
+  "04k0-post-treatment",
   "04k-freeze-generation-style",
   // Phase 1 (RFC-13 item K): the angle this carousel argues — one Sonnet
   // proposal per REVISION (never per attempt), then the deterministic pick.
