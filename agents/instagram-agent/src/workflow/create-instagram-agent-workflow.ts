@@ -10603,12 +10603,20 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           if (sel.imagePath === null) continue;
           try {
             const outcome = await stage.execute({ repoRoot: options.repoRoot, runId: wf.runId, path: sel.imagePath }, { ctx });
-            if (outcome.status !== "success") continue;
+            if (outcome.status !== "success") {
+              // 2026-09-26: prep batch 8's karoslabs run staged NOTHING here
+              // (an empty map for three stock photographs), lost slide 7's
+              // picture on a resume, and left no trace of why. The reason is
+              // the tool's own; it is logged so the next loss is diagnosable.
+              console.warn(`06e2-stage-images-durably: ${sel.imagePath} was not staged (${outcome.status}: ${"reason" in outcome ? String((outcome as { reason?: unknown }).reason).slice(0, 200) : "no reason"})`);
+              continue;
+            }
             uris[sel.imagePath] = (outcome.result as { gcsUri: string }).gcsUri;
-          } catch {
+          } catch (error) {
             // Best effort by design. A picture that could not be staged is
             // no worse off than every picture was before this step existed;
             // it just cannot be recovered if the instance dies.
+            console.warn(`06e2-stage-images-durably: ${sel.imagePath} threw while staging: ${(error as Error).message.slice(0, 200)}`);
           }
         }
         return uris;
