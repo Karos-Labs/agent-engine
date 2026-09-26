@@ -449,7 +449,7 @@
         var above = top - r.top > 150;
         var label = document.createElement('div');
         label.className = 'callout-label';
-        label.textContent = text;
+        label.appendChild(document.createTextNode(text));
         layer.appendChild(label);
         document.body.appendChild(layer);
         var lw = label.getBoundingClientRect().width, lh = label.getBoundingClientRect().height;
