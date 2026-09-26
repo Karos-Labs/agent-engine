@@ -1244,6 +1244,18 @@ export function framedHeroFor(params: {
   return params.body.trim().split(/\s+/u).filter((w) => w.length > 0).length >= FRAMED_DECK_MIN_WORDS;
 }
 
+/**
+ * Owner decision 16 (2026-09-25): a closer never sends the reader to the link
+ * in bio and never asks for a follow. Sentences that do are dropped; what is
+ * left is returned, possibly empty. English, Portuguese, Spanish and Hebrew,
+ * the languages the prep clients post in.
+ */
+const BANNED_CLOSER_ASK = /\b(?:links?\s+in\s+(?:our|my|the)?\s*bio|link\s+na\s+bio|enlace\s+en\s+(?:la\s+)?bio|follow\s+(?:us|me|@\S+|for\s+more)|siga[- ]nos|sígue(?:nos|me))|לינק\s+בביו|קישור\s+בביו|עקבו\s+אחרינו/iu;
+export function withoutBannedCloserAsk(text: string): string {
+  const sentences = text.split(/(?<=[.!?؟])\s+/u);
+  return sentences.filter((s) => !BANNED_CLOSER_ASK.test(s)).join(" ").trim();
+}
+
 export function ctaFormFor(text: string): "pill" | "line" {
   const trimmed = text.trim();
   const words = trimmed.split(/\s+/u).filter((w) => w.length > 0).length;
@@ -2369,7 +2381,14 @@ function contentFor(
           // The question/CTA branch reads the RAW body — the isolate characters
           // are `\p{Cf}` and would not defeat this test, but a routing decision
           // made on composed bytes is a decision made on the wrong value.
-          ...(closes && /[?؟]/u.test(slide.body) ? { question: iso(slide.body) } : { cta: iso(slide.body), ctaForm: ctaFormFor(slide.body) }),
+          // Owner decision 16: never "link in bio", never a follow line. The
+          // writer still wrote one (prep batch 8, thepitchbydeel), so the sentence
+          // is dropped in code; with nothing left the closer ends on its takeaway.
+          ...((): Record<string, string> => {
+            const ask = withoutBannedCloserAsk(slide.body);
+            if (ask.length === 0) return {};
+            return closes && /[?؟]/u.test(ask) ? { question: iso(ask) } : { cta: iso(ask), ctaForm: ctaFormFor(ask) };
+          })(),
           ...(built !== undefined && fragment === built.device ? { deviceFigures: built.deviceFigures, deviceKind: built.deviceKind } : {}),
         },
         htmlFragments: {
@@ -2379,7 +2398,10 @@ function contentFor(
           // follow the same branch, so the fragment can never end up in the
           // slot that collapsed.
           ...runsSlot("takeawayRuns", markRuns("headline", slide.headline)),
-          ...runsSlot(closes && /[?؟]/u.test(slide.body) ? "questionRuns" : "ctaRuns", markRuns("body", slide.body)),
+          // The marks follow the SAME sanitised ask (decision 16), or none when it was dropped whole.
+          ...(withoutBannedCloserAsk(slide.body) === slide.body.trim()
+            ? runsSlot(closes && /[?؟]/u.test(slide.body) ? "questionRuns" : "ctaRuns", markRuns("body", slide.body))
+            : {}),
         },
         marks: markResult(),
       };
