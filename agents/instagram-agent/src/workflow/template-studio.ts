@@ -2248,8 +2248,14 @@ export async function validateStudioTemplate(
     const value = draft.sample[name];
     return typeof value === "string" && value.trim().length > 0;
   };
+  // A `*Runs` slot and its plain twin carry the SAME words (the marked and
+  // the unmarked rendering); reading either one shows them. Refusing a
+  // template that declared both and read one threw away no content and cost
+  // Sitti's list_takeaway on both of its setups ("slot headlineRuns is
+  // declared but the markup never reads {{headlineRuns}}", 2026-09-18/24).
+  const twinOf = (name: string): string => (name.endsWith("Runs") ? name.slice(0, -"Runs".length) : `${name}Runs`);
   for (const name of declared) {
-    if (!extracted.includes(name)) {
+    if (!extracted.includes(name) && !extracted.includes(twinOf(name))) {
       failures.push(fail(2, `slot "${name}" is declared but the markup never reads {{${name}}} — a declared slot nothing reads is content thrown away`));
     }
     // A slot CODE fills is never the sample's to demonstrate (2026-09-23).
