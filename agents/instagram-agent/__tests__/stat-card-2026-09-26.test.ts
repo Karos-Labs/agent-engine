@@ -48,3 +48,24 @@ describe("the stat card (2026-09-26)", () => {
     expect(html).toContain('data-figure-ink="{{figureInk}}"');
   });
 });
+
+describe("one hero per plate: a headline_focus with a figure device (2026-09-26)", () => {
+  it("sets that figure in the accent under the same contrast gate, and drops the headline one rung", () => {
+    const slide = assembleSlidesData({
+      clientSlug: "k", postId: "p", repoRoot: "/r",
+      brandTokens: { templateDir: "t", slideTemplate: "slide.html", accentColor: "#ff6b2c" } as never,
+      copy: { format: "carousel", caption: "c", slides: [
+        { n: 1, headline: "A headline for the cover of this post", body: "A deck line.", visualNeed: "v", sourceRef: "s", layout: "cover" },
+        { n: 2, headline: "Output was never the bottleneck.", body: "Strategy still scales at human speed.", visualNeed: "v", sourceRef: "s", layout: "headline_focus", device: { kind: "figure", value: "42%", label: "of CMOs still run AI as a task assistant", source: "BCG CMO Survey 2026" } },
+      ] } as unknown as InstagramCopyOutput,
+      selections: [1, 2].map((n) => ({ n, imagePath: null, reason: "r", license: "x", rightsUsable: true, watermarkFree: true, claimMatch: 5, claimMatchReason: "r" })),
+      canvas: { w: 1080, h: 1440, scale: 2, slides_min: 1, slides_max: 8 },
+      paletteSeed: "k", groundHex: "#1a1a1a", foregroundHex: "#f2f1ec", brandAccentFallback: "#ff6b2c", accentRing: ["#ff6b2c"],
+    }).slides.find((s) => s.n === 2)!;
+    expect(slide.fields["figureInk"]).toBe("accent");
+    const html = readFileSync(path.join(__dirname, "..", "assets", "templates", "default", "headline-focus.html"), "utf8");
+    expect(html).toContain('body[data-figure-ink="accent"] .hf-device .dv-figure { color: var(--accent, currentColor); }');
+    expect(html).toContain("body:has(.hf-device .dv-figure) .hf-headline.r-display { font-size: var(--t-statement); }");
+    expect(html).toContain('data-figure-ink="{{figureInk}}"');
+  });
+});

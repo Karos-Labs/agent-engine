@@ -3489,7 +3489,7 @@ export function assembleSlidesData(params: {
         // 2026-09-24: which of the three closer forms (`closerFormFor`); only the closer plate reads it.
         ...(layout === "closer" ? { closerForm: closerFormFor(`${params.clientSlug}:${params.paletteSeed ?? ""}`) } : {}),
         // 2026-09-26: a stat's figure in the accent, where the accent reads on this ground as large type (3:1).
-        ...(layout === "stat_callout" && slideAccentColor !== undefined && effectiveGround !== undefined && contrastRatio(slideAccentColor, effectiveGround) >= FIGURE_INK_MIN_CONTRAST ? { figureInk: "accent" } : {}),
+        ...((layout === "stat_callout" || (layout === "headline_focus" && slide.device?.kind === "figure")) && slideAccentColor !== undefined && effectiveGround !== undefined && contrastRatio(slideAccentColor, effectiveGround) >= FIGURE_INK_MIN_CONTRAST ? { figureInk: "accent" } : {}),
         ...(photoCredit !== undefined ? { photoCredit } : {}),
         ...(groundTone !== undefined ? { groundTone } : {}),
         // `auto`: the renderer looks at the slide and places it (publish.renderCarousel 1.11.0).
