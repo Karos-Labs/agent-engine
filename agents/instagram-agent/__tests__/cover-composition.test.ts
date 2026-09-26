@@ -94,6 +94,9 @@ describe("a poster carries a short headline; a long one takes the sandwich (2026
   it("never overrides a composition the run chose on purpose", () => {
     expect(coverCompositionForHeadline("framed", "Geography is not the disqualifier. nybl won Paris from the UAE.")).toBe("framed");
     expect(coverCompositionForHeadline("sandwich", "Short line")).toBe("sandwich");
+    // An unhonoured typographic cover (it kept its photograph) is a poster, so a long headline still takes the sandwich.
+    expect(coverCompositionForHeadline("typographic", "Geography is not the disqualifier. nybl won Paris from the UAE.")).toBe("sandwich");
+    expect(coverCompositionForHeadline("typographic", "The 3,000-agent CMO fallacy")).toBe("poster");
   });
 });
 

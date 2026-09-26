@@ -2925,7 +2925,9 @@ export const TYPOGRAPHIC_COVER_MIN_OTHER_PICTURES = 3;
 
 /** The cover composition a headline can carry: a requested poster (or none) with a long headline becomes the sandwich. */
 export function coverCompositionForHeadline(requested: "poster" | "sandwich" | "framed" | "typographic" | undefined, headline: string): "poster" | "sandwich" | "framed" | "typographic" {
-  const chosen = requested ?? "poster";
+  // A typographic cover that still has a photograph (no figure of its own, see the
+  // imagePath rule) is a poster, and takes the same long-headline rule.
+  const chosen = requested === undefined || requested === "typographic" ? "poster" : requested;
   if (chosen !== "poster") return chosen;
   const words = headline.trim().split(/\s+/u).filter((w) => w.length > 0).length;
   return words > POSTER_MAX_HEADLINE_WORDS ? "sandwich" : "poster";
