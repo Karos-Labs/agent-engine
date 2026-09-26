@@ -14,7 +14,11 @@ import { latestRunForQuery, writeRunRecord, type RunRecord } from "./runs.js";
 // keeps its SHAPE — hidden like count, pinned, paid partnership, media kind —
 // read off the vendor record. Formats had been guessed from caption text and
 // a hidden like count read as the vendor's placeholder 3.
-const TOOL_VERSION = "1.2.0";
+// 1.3.0 — 2026-09-26 (research round #253, C-3.0b): optional `postsPerAccount`
+// (default 12, unchanged) so the within-account topic scorer can read the
+// 36-post window the research asked for; above one vendor page the tool pages
+// by cursor. The depth is part of the cache key.
+const TOOL_VERSION = "1.3.0";
 
 const SOCIAL_PLATFORMS = ["x", "instagram", "reddit", "tiktok", "linkedin"] as const;
 
@@ -22,6 +26,25 @@ const SOCIAL_PLATFORMS = ["x", "instagram", "reddit", "tiktok", "linkedin"] as c
 const POSTS_PER_ACCOUNT = 12;
 /** How much of a post travels. Enough to recognise a repeat of the subject, not enough to re-read the post. */
 const POST_EXCERPT_CHARS = 600;
+
+/** Vendor pages to read at most, whatever depth is asked: a runaway cursor must not bill without end. */
+const MAX_HISTORY_PAGES = 5;
+
+/** An account's recent posts to `depth`: one call when a page covers it, else cursor pages. */
+async function readDepth(scraper: ScraperProvider, platform: SocialPlatform, username: string, depth: number) {
+  if (depth <= POSTS_PER_ACCOUNT || scraper.socialHistoryPage === undefined) {
+    return scraper.socialHistory({ platform, username, limit: Math.min(depth, POSTS_PER_ACCOUNT) });
+  }
+  const records: Awaited<ReturnType<ScraperProvider["socialHistory"]>> = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_HISTORY_PAGES && records.length < depth; page++) {
+    const got = await scraper.socialHistoryPage({ platform, username, limit: POSTS_PER_ACCOUNT, ...(cursor !== undefined ? { cursor } : {}) });
+    records.push(...got.records);
+    if (got.nextCursor === undefined || got.records.length === 0) break;
+    cursor = got.nextCursor;
+  }
+  return records.slice(0, depth);
+}
 
 export const SocialHistoryInputSchema = z.object({
   accounts: z
@@ -44,6 +67,13 @@ export const SocialHistoryInputSchema = z.object({
     .min(1)
     .default("6h")
     .describe("Freshness window — a read of the same accounts inside it is served from the cache, so several agents running the same afternoon share one scrape."),
+  postsPerAccount: z
+    .number()
+    .int()
+    .min(1)
+    .max(60)
+    .optional()
+    .describe("How many recent posts to read per account (default 12). Above one vendor page (12) the tool pages by cursor, one billed call per page."),
 });
 export type SocialHistoryInput = z.input<typeof SocialHistoryInputSchema>;
 
@@ -132,7 +162,9 @@ export function createSocialHistory(store: WorkspaceStoreLike, scraper?: Scraper
     inputSchema: SocialHistoryInputSchema,
     async execute(rawInput, { ctx }) {
       const input = rawInput as z.output<typeof SocialHistoryInputSchema>;
-      const query = cacheKey(input.accounts);
+      const depth = input.postsPerAccount ?? POSTS_PER_ACCOUNT;
+      // The depth is part of the key: a 12-post read must never answer a 36-post request.
+      const query = depth === POSTS_PER_ACCOUNT ? cacheKey(input.accounts) : `${cacheKey(input.accounts)}#${depth}`;
       const windowMs = parseDurationMs(input.window);
 
       const cached = await latestRunForQuery(store, ctx.clientSlug, JOB, query);
@@ -150,7 +182,7 @@ export function createSocialHistory(store: WorkspaceStoreLike, scraper?: Scraper
       for (const account of input.accounts) {
         const username = account.username.replace(/^@/, "");
         try {
-          const records = await scraper.socialHistory({ platform: account.platform, username, limit: POSTS_PER_ACCOUNT });
+          const records = await readDepth(scraper, account.platform, username, depth);
           for (const record of records) {
             const text = (record.text ?? record.title ?? "").trim();
             if (text.length === 0) continue;

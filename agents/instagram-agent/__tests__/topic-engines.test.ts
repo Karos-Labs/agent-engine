@@ -397,7 +397,7 @@ describe("gatherTopicSignals", () => {
       now: NOW,
     });
 
-    expect(historyCalls[0]).toEqual({ accounts: [{ platform: "instagram", username: "peer" }, { platform: "x", username: "pricingnerd" }], window: "24h" });
+    expect(historyCalls[0]).toEqual({ accounts: [{ platform: "instagram", username: "peer" }, { platform: "x", username: "pricingnerd" }], window: "24h", postsPerAccount: 36 });
     expect(gathered.signals.referencePosts.map((p) => p.handle)).toEqual(["peer", "peer"]);
     // The named per-account problem travels; a private profile must not hide
     // behind "history unavailable".

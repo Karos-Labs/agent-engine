@@ -50,6 +50,8 @@ import type { ClientBrief, SocialHistoryPost } from "@agent-engine/tools";
 export const MAX_REFERENCE_ACCOUNTS = 6;
 /** A post older than this says nothing about what lands NOW, and its engagement has finished accruing while a fresh post's has not. */
 export const REFERENCE_POST_MAX_AGE_DAYS = 30;
+/** Posts read per reference account for the within-account scorer (#253 C-3.0b: a 28-day / 36-post window). */
+export const WITHIN_ACCOUNT_POSTS = 36;
 /** How many peer posts reach the prompt. Eight is enough to show a pattern across three or four accounts without crowding out the news digest. */
 export const MAX_REFERENCE_POSTS = 8;
 /** Community questions carried forward. */
@@ -543,7 +545,9 @@ export async function gatherTopicSignals(
     try {
       // 24 h window: the same read every channel of this client makes today,
       // so the first run of the day pays and the rest are cache hits.
-      const outcome = await socialHistory.execute({ accounts, window: "24h" }, { ctx });
+      // 36 posts an account (research round #253, C-3.0b): a within-account
+      // ranking over twelve posts is a ranking over two weeks of a busy feed.
+      const outcome = await socialHistory.execute({ accounts, window: "24h", postsPerAccount: WITHIN_ACCOUNT_POSTS }, { ctx });
       if (outcome.status === "success") {
         const result = outcome.result as { posts: SocialHistoryPost[]; problems: string[]; fromCache: boolean };
         if (!result.fromCache) scraperExecutions += accounts.length;
