@@ -410,6 +410,8 @@ export function resolveRenderRules(frozenRules: readonly StyleRule[]): { source:
  */
 export const LAYOUT_FIELD_KEYS: ReadonlySet<string> = new Set([
   "accentColor",
+  // 2026-09-26: whether a stat's figure is set in the accent (it clears 3:1 on its ground). Metadata, never prose.
+  "figureInk",
   "dir",
   "brandHandle",
   "seriesBadge",

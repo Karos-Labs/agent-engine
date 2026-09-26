@@ -1383,6 +1383,20 @@ body.ta-center .plate > .mark-badge { margin-inline: auto; }
   background-repeat: no-repeat;
 }
 body:not(:has(#figure:not(:empty))) .num-zone { background-image: none; box-shadow: none; }
+/* 2026-09-26: the panel fills the plate (the emptiness floor), so its contents
+   are distributed across it: the figure at the head, its label at the foot. With
+   both at the top, re-rendered prep batch 8 showed a grey box half empty under a
+   220px figure (Hanky Panky 62%, The Pitch 0.05%, Geektime $70M), which read as a
+   placeholder. A stat card's caption belongs at its base. */
+.num-zone { justify-content: space-between; }
+/* The figure in the slide's accent (2026-09-26): the owner's references set the key
+   number in the brand colour ("$1000", "101", "AGI"), and the owner found the
+   karoslabs post missing its orange. `--accent` is the slide accent `paletteForSlide`
+   already chose to clear the contrast floor against this ground. Content, not a rule
+   under a headline (the 2026-09-16 verdict banned the rules). Only where the accent
+   clears 3:1 against this ground (`figureInk`, slides-data.ts): The Pitch by Deel's
+   violet on its own purple ground did not. */
+body[data-figure-ink="accent"] .num-figure { color: var(--accent, currentColor); }
 .num-label { max-inline-size: min(18em, 100%); }
 .sc-foot {
   display: flex;
@@ -1392,7 +1406,7 @@ body:not(:has(#figure:not(:empty))) .num-zone { background-image: none; box-shad
 .num-body { max-inline-size: min(24em, 100%); }
 </style>
 </head>
-<body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-hero-scrim="{{heroScrimStrength}}" data-ground="{{groundStyle}}" data-tone="{{groundTone}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}" data-anchor="{{compositionAnchor}}" data-figure="{{figurePlacement}}">
+<body class="ts-{{fontScale}} ta-{{textAlign}}" data-n="{{slideIndex}}" data-hero-scrim="{{heroScrimStrength}}" data-ground="{{groundStyle}}" data-tone="{{groundTone}}" data-cover="{{coverForm}}" data-accent="{{accentForm}}" data-anchor="{{compositionAnchor}}" data-figure="{{figurePlacement}}" data-figure-ink="{{figureInk}}">
   <div class="ground" aria-hidden="true"></div>
 
   <div class="zone-mark">

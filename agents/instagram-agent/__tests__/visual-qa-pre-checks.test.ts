@@ -126,6 +126,7 @@ describe("DEFAULT_RENDER_RULES + resolveRenderRules — Phase 0 item D's rule so
       // 2026-09-18: WHERE the bounded picture sits on the plate. Layout
       // metadata for the same reason `groundStyle` is: nobody writes it, and a
       // slide carrying only these has no prose.
+      "figureInk",
       "figurePlacement",
       "fontScale",
       "groundStyle",
