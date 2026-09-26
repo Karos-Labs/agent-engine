@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DRAWN_MAX_SHARE, DRAWN_MIN_EXEMPLAR_VOTES, DRAWN_STYLE_LINE, drawnDisplayFontCssBlock, drawnGenerationStyle, drawnPostDecision, GenerationStyleSchema } from "../src/workflow/style-lock.js";
+import { ABSTRACT_STYLE_LINE, abstractGenerationStyle, DRAWN_MAX_SHARE, DRAWN_MIN_EXEMPLAR_VOTES, DRAWN_STYLE_LINE, drawnDisplayFontCssBlock, drawnGenerationStyle, drawnPostDecision, GenerationStyleSchema } from "../src/workflow/style-lock.js";
 
 /** S6 (2026-09-26): a whole post drawn in one ink line, only where the category's best posts are drawn. */
 const entry = (coverType: string, craft = 5) => ({ role: "reference", craft, lift: 3, dna: { coverType } });
@@ -36,5 +36,21 @@ describe("drawnPostDecision", () => {
     expect(style.line).toBe(DRAWN_STYLE_LINE);
     expect(style.treatment).toBe("none");
     expect(drawnDisplayFontCssBlock()).toMatch(/--f-display: "Caveat"/u);
+  });
+});
+
+describe("an abstract-render post (S8, the deelpitch cover)", () => {
+  const mixed = (drawn: number, abstract: number) => ({ status: "built", entries: [...Array.from({ length: drawn }, () => entry("doodle")), ...Array.from({ length: abstract }, () => entry("abstract-3d")), ...Array.from({ length: 12 - drawn - abstract }, () => entry("photo-full-bleed"))] });
+  it("the family with more votes wins, and it is chosen on the same seeded share", () => {
+    const picks = Array.from({ length: 200 }, (_, i) => drawnPostDecision({ ...base, library: mixed(3, 9), seed: `pubsub-9${i}` }));
+    expect(picks.some((d) => d.treatment === "abstract")).toBe(true);
+    expect(picks.every((d) => d.treatment !== "drawn")).toBe(true);
+    expect(picks.filter((d) => d.treatment === "abstract").every((d) => d.drawn === false)).toBe(true);
+  });
+  it("freezes one rendered line with no photographic treatment", () => {
+    const style = abstractGenerationStyle();
+    expect(GenerationStyleSchema.parse(style)).toEqual(style);
+    expect(style.line).toBe(ABSTRACT_STYLE_LINE);
+    expect(style.treatment).toBe("none");
   });
 });

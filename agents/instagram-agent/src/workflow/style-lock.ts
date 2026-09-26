@@ -464,8 +464,22 @@ export const DRAWN_MAX_SHARE = 0.35;
 export const DRAWN_EXEMPLARS_READ = 12;
 const DRAWN_FORBID = /\b(illustrat\w*|drawing|drawn|cartoon|sketch\w*|doodle\w*|hand[- ]drawn)\b/iu;
 
+/**
+ * S8 (2026-09-26, the owner's deelpitch cover: a soft glowing 3D gradient form
+ * over the headline): the second MADE treatment. Chosen exactly like the drawn
+ * post, on the category's own evidence (judge 1.2.0's `abstract-3d` covers),
+ * and when both families qualify, the one with more votes wins.
+ */
+export const ABSTRACT_STYLE_ID = "abstract-render";
+export const ABSTRACT_STYLE_LINE =
+  "Abstract rendered forms: soft glowing glass-like 3D shapes with smooth colour gradients in the brand palette, on a deep dark ground, studio-lit, no text, no people.";
+
+export type PostTreatment = "photo" | "drawn" | "abstract";
+
 export interface DrawnPostDecision {
   drawn: boolean;
+  /** 2026-09-26: which made treatment, if any; `drawn` stays for the trace it already reads. */
+  treatment: PostTreatment;
   reason: string;
   votes: number;
   read: number;
@@ -478,7 +492,7 @@ export function drawnPostDecision(input: {
   clientMediaOnly: boolean;
   forbid: readonly string[];
 }): DrawnPostDecision {
-  const no = (reason: string, votes = 0, read = 0): DrawnPostDecision => ({ drawn: false, reason, votes, read });
+  const no = (reason: string, votes = 0, read = 0): DrawnPostDecision => ({ drawn: false, treatment: "photo", reason, votes, read });
   if (input.clientMediaOnly) return no("the run is client media only");
   if (input.clientUploads > 0) return no("the client uploaded pictures for this run, and its own photographs win");
   if (input.forbid.some((f) => DRAWN_FORBID.test(f))) return no("the art direction forbids drawn imagery");
@@ -487,16 +501,20 @@ export function drawnPostDecision(input: {
     .filter((e) => typeof e.dna["coverType"] === "string")
     .sort((a, b) => b.craft - a.craft || (b.lift ?? 0) - (a.lift ?? 0))
     .slice(0, DRAWN_EXEMPLARS_READ);
-  const votes = strongest.filter((e) => e.dna["coverType"] === "doodle" || e.dna["coverType"] === "illustration").length;
-  if (votes < DRAWN_MIN_EXEMPLAR_VOTES) return no(`${votes} of the ${strongest.length} strongest exemplars are drawn, under ${DRAWN_MIN_EXEMPLAR_VOTES}`, votes, strongest.length);
+  const drawnVotes = strongest.filter((e) => e.dna["coverType"] === "doodle" || e.dna["coverType"] === "illustration").length;
+  const abstractVotes = strongest.filter((e) => e.dna["coverType"] === "abstract-3d").length;
+  const family: "drawn" | "abstract" = abstractVotes > drawnVotes ? "abstract" : "drawn";
+  const votes = Math.max(drawnVotes, abstractVotes);
+  const noun = family === "drawn" ? "drawn" : "abstract renders";
+  if (votes < DRAWN_MIN_EXEMPLAR_VOTES) return no(`${drawnVotes} drawn and ${abstractVotes} abstract of the ${strongest.length} strongest exemplars, under ${DRAWN_MIN_EXEMPLAR_VOTES}`, votes, strongest.length);
   const share = Math.min(DRAWN_MAX_SHARE, votes / strongest.length);
   let h = 2166136261;
   for (const ch of `${input.seed}:drawn`) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
   h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0;
   const draw = (h % 10_000) / 10_000;
   return draw < share
-    ? { drawn: true, reason: `${votes} of the ${strongest.length} strongest exemplars are drawn; this run drew under the ${Math.round(share * 100)}% share`, votes, read: strongest.length }
-    : no(`${votes} of the ${strongest.length} strongest exemplars are drawn, but this run drew over the ${Math.round(share * 100)}% share`, votes, strongest.length);
+    ? { drawn: family === "drawn", treatment: family, reason: `${votes} of the ${strongest.length} strongest exemplars are ${noun}; this run drew under the ${Math.round(share * 100)}% share`, votes, read: strongest.length }
+    : no(`${votes} of the ${strongest.length} strongest exemplars are ${noun}, but this run drew over the ${Math.round(share * 100)}% share`, votes, strongest.length);
 }
 
 /**
@@ -511,6 +529,11 @@ export function drawnDisplayFontCssBlock(): string {
 /* instagram-agent drawn post (S6) - built by style-lock.ts. */
 :root { --f-display: "${DRAWN_DISPLAY_FACE}", "Segoe Print", "Bradley Hand", cursive; }
 </style>`;
+}
+
+/** The frozen style of an abstract-render post (S8): one rendered line, no photographic treatment. */
+export function abstractGenerationStyle(): GenerationStyle {
+  return { id: ABSTRACT_STYLE_ID, line: ABSTRACT_STYLE_LINE, source: "drawn", treatment: "none", treatmentReason: "an abstract-render post: the photographic treatment does not apply to rendered forms" };
 }
 
 /** The frozen style of a drawn post: the drawn line replaces the photographic lock, and no photographic treatment applies. */
