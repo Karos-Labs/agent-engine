@@ -138,7 +138,8 @@ describe("placementMixShortfall: a post whose every picture is a background", ()
   });
 
   it("has no opinion when the post has nowhere bounded to put one", () => {
-    expect(placementMixShortfall(carousel("cover", "photo", "photo", "photo", "closer", "closer"), new Set([1, 2]))).toBe(0);
+    // 2026-09-26 (S3): a closer is a bounded seat now, so the no-seat fixture ends on plates that carry none.
+    expect(placementMixShortfall(carousel("cover", "photo", "photo", "photo", "headline_focus", "text_only"), new Set([1, 2]))).toBe(0);
   });
 
   it("stops at the ceiling rather than pushing a post over it for the sake of variety", () => {
@@ -162,7 +163,8 @@ describe("enforceImageryBand", () => {
     // structured draft sourcing nothing — and it is now harder to reach, which
     // is the point of widening the set.
     const shipped = carousel("headline_focus", "text_only", "custom", "text_only", "headline_focus", "text_only", "closer", "custom");
-    expect(capable(shipped), "the fixture is not the imageless carousel this case is about").toBe(0);
+    // 2026-09-26 (S3): the closer is a band seat now; nothing else in the draft is.
+    expect(capable(shipped), "the fixture is not the imageless carousel this case is about").toBe(1);
 
     const out = enforceImageryBand(shipped);
     expect(out.before).toBe(0);
@@ -328,7 +330,8 @@ describe("enforceImageryBand", () => {
     // and counting it as a photograph is what let a carousel of three banded
     // panels meet a floor a reader would say it missed.
     const panels = carousel("stat_callout", "quote_card", "comparison_card", "list_takeaway", "headline_focus", "closer", "custom", "custom");
-    expect(panels.slides.filter((sl) => HERO_IMAGE_LAYOUTS.has(sl.layout!)).length, "all four panels can source a band").toBe(4);
+    // Four panels and, since S3 (2026-09-26), the closer.
+    expect(panels.slides.filter((sl) => HERO_IMAGE_LAYOUTS.has(sl.layout!)).length, "all four panels and the closer can source a band").toBe(5);
     expect(pictures(panels), "and not one of them is a picture plate").toBe(0);
     const out = enforceImageryBand(panels, 0);
     expect(out.demotions).toEqual([]);
