@@ -43,21 +43,21 @@ export function exemplarVoteWeight(entry: { role: string; craft: number }): numb
 /** The strongest exemplars only: craft first, then lift. */
 const MAX_ENTRIES = 12;
 
-const GROUND: Record<string, ExemplarLook["ground"]> = {
+export const GROUND: Record<string, ExemplarLook["ground"]> = {
   "flat-light": "flat",
   "flat-dark": "flat",
   "brand-colour": "flat",
   gradient: "flat",
   texture: "glyph",
 };
-const ACCENT: Record<string, ExemplarLook["accentForm"]> = {
+export const ACCENT: Record<string, ExemplarLook["accentForm"]> = {
   "highlight-block": "band",
   "colour-word": "tint",
   underline: "rule",
   weight: "none",
   none: "none",
 };
-const TYPE_SCALE: Record<string, ExemplarLook["typeScale"]> = {
+export const TYPE_SCALE: Record<string, ExemplarLook["typeScale"]> = {
   low: "display",
   none: "display",
   medium: "editorial",

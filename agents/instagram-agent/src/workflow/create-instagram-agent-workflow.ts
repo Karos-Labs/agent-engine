@@ -3,6 +3,7 @@ import { lintReadableCopy, readableCopySteer } from "./readable-copy.js";
 import { brandMarkZone } from "./brand-render-tokens.js";
 import { SOURCE_IMAGES_DEADLINE_MS, withinDeadline } from "./step-deadline.js";
 import { exemplarLook } from "./exemplar-look.js";
+import { exemplarRecipes, pickRecipe, recipeBasis } from "./exemplar-recipes.js";
 import { coverWeightsFor, pickCoverComposition } from "./cover-composition.js";
 import { buildExemplarLibrary, densityFromLibrary, nicheHooksForCopy, EXEMPLAR_LIBRARY_BELIEF_KEY, EXEMPLAR_POSTS_PER_ACCOUNT, exemplarLibraryAction, exemplarPatternEvidence, exemplarStudioNotes, failedLibrary, planHarvest, postsToJudge, readExemplarLibrary, type ExemplarLibrary, type HarvestedExemplar } from "./exemplar-library.js";
 import fs from "node:fs/promises";
@@ -7446,8 +7447,25 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // same `systemId` per attempt with that attempt's real count, and the two
       // can never disagree about WHICH system this post is in.
       // 2026-09-26: the client's best harvested exemplars rank the catalog (see `exemplar-look.ts`).
+      // 04p0: TEMPLATES FROM THE HARVEST (2026-09-26). This run is styled after
+      // one of the strongest harvested posts, ranked by what it earned and how
+      // well it is made (`exemplarRecipes`). The recipe leads each axis it
+      // names; the plurality look fills the rest.
+      const templateRecipe = await wf.step.code(rev("04p0-pick-template-recipe"), () => {
+        const recipes = exemplarRecipes(exemplarLibrary);
+        const picked = pickRecipe(recipes, wf.runId);
+        return picked === undefined
+          ? { recipes: recipes.length, basis: "no harvested post qualified as a template (craft 4+ with a readable look), so the category's plurality look leads" }
+          : { recipes: recipes.length, recipe: picked, basis: recipeBasis(picked) };
+      });
+      const recipe = templateRecipe.recipe;
       const lookFromExemplars = exemplarLook(exemplarLibrary);
-      const exemplarPreference = lookFromExemplars === undefined ? {} : { preferred: { ground: lookFromExemplars.ground, accentForm: lookFromExemplars.accentForm, typeScale: lookFromExemplars.typeScale } };
+      const preferredAxes = {
+        ground: recipe?.ground ?? lookFromExemplars?.ground,
+        accentForm: recipe?.accentForm ?? lookFromExemplars?.accentForm,
+        typeScale: recipe?.typeScale ?? lookFromExemplars?.typeScale,
+      };
+      const exemplarPreference = preferredAxes.ground === undefined && preferredAxes.accentForm === undefined && preferredAxes.typeScale === undefined ? {} : { preferred: preferredAxes };
       const visualSystem = await wf.step.code(rev("04p-resolve-visual-system"), () =>
         pickVisualSystem({
           clientSlug: wf.clientSlug,
@@ -7474,6 +7492,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // cover keeps its own frame.
       const coverChoice = await wf.step.code(rev("04p1-cover-composition"), () => {
         if (newsCover) return { composition: "poster" as const, basis: "a news cover keeps its own frame" };
+        if (recipe?.cover !== undefined) return { composition: recipe.cover, basis: `the template's own cover: ${templateRecipe.basis}` };
         const chosen = coverWeightsFor(exemplarLibrary);
         return { composition: pickCoverComposition(chosen.weights, `${wf.clientSlug}:${wf.runId}`), weights: chosen.weights, basis: chosen.basis };
       });
