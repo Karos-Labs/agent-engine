@@ -84,7 +84,8 @@ describe("03a-03c always run; 03g selects", () => {
 
   it("trendJacking 'always' + a 5/5 story: the trend takes the slot and the catalog row is released for a later run", async () => {
     env = await setupTestEnvironment();
-    await writeConfig(env, { trendJacking: "always" });
+    // 2026-09-26: the concept selector now fires on a story like this one; its extra model turn is not in `happyTurns()`, and this file is about topic selection.
+    await writeConfig(env, { trendJacking: "always", instagramConceptMode: "off" });
     const scout = goodTrendScoutOutput();
     scout.candidates[0]!.interest = 5;
     const { result, selected } = await runWorkflow(env, "ig_scout_jack", fakeRouterSequence(happyTurns({ scout })));
@@ -144,6 +145,7 @@ describe("03a-03c always run; 03g selects", () => {
   it("empty catalog + on-brand candidates: the strongest trend for this run's mode takes the slot", async () => {
     env = await setupTestEnvironment({ seedTopics: [] });
     await env.store.writeJson("acme", ["client", "profile"], { name: "Acme", industry: "B2B SaaS" });
+    await writeConfig(env, { instagramConceptMode: "off" }); // see the trendJacking case above
     const { result, selected, modeStep } = await runWorkflow(env, "ig_scout_trend");
     expect(result.status).toBe("completed");
     expect(selected?.source).toBe("trend");
