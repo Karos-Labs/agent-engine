@@ -1366,6 +1366,12 @@ body.ta-center .plate > .mark-badge { margin-inline: auto; }
   gap: var(--sp);
 }
 .sl-lockup .headline { max-inline-size: min(17ch, 100%); }
+/* 2026-09-26: under an INSET picture the headline is not set over a photograph, so the
+   17ch measure that keeps it on the shade does not apply. At 17ch an eleven-word headline
+   broke into five lines under the 600px picture, overflowed the 520px left for it, and the
+   ladder shrank it two steps to caption size on a plate 5% covered by text (karoslabs prep
+   batch 8, slide 3: the owner's "boring"). */
+body[data-figure="inset"] .sl-lockup .headline { max-inline-size: min(24ch, 100%); }
 .sl-lockup .body-text { max-inline-size: min(26em, 100%); }
 .sl-device { margin-block-start: var(--sp-2); }
 </style>
@@ -1476,6 +1482,15 @@ body.ta-center .plate > .mark-badge { margin-inline: auto; }
     for (var g = 0; g < content.length; g++) {
       var box = content[g].getBoundingClientRect();
       if (box.height === 0 || box.width === 0) continue;
+      /* An INLINE box is measured by its face's ascent and descent, not its
+         line box (see the limb below), so it pokes a few px past a field its
+         block sits inside. Emphasis wraps every run of a marked field in an
+         inline span (`.mk`/`.mk-t`), and once a one-colour brand's marks
+         painted (2026-09-26) those spans made this limb shrink karoslabs'
+         slide 3 two steps to caption size on a plate 5% covered by text. The
+         block that holds them is measured here anyway. */
+      var boxDisplay = getComputedStyle(content[g]).display;
+      if (boxDisplay === 'inline' || boxDisplay === 'contents') continue;
       if (box.top < f.top - 1 || box.bottom > f.bottom + 1) return true;
     }
 

@@ -202,7 +202,7 @@ describe("RFC-17: a mark declared on a markable archetype reaches a slot", () =>
         ],
         emphasis: ["founder"],
       }),
-      slide({ n: 6, layout: "closer", headline: "That is the whole pattern", body: "Which review round would you cut first?", emphasis: ["pattern", "cut"] }),
+      slide({ n: 6, layout: "closer", headline: "That is the whole pattern", body: "Which review round would you cut first?", emphasis: ["pattern"] }), // 2026-09-26: never a body mark
     ];
     const { runsBySlide, marksBySlide, issues } = assemble(slides);
 
@@ -317,7 +317,7 @@ describe("RFC-17: a mark declared on a markable archetype reaches a slot", () =>
         layout: "headline_focus",
         headline: "Enthusiasm versus process in the second month",
         body: "Only one of these survives contact with a genuinely busy week.",
-        emphasis: ["survives contact"],
+        emphasis: ["versus process"], // 2026-09-26: a mark lives in the headline, never the body
       }),
     ]);
     for (const n of [1, 2]) {

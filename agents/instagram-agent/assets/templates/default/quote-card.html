@@ -1494,6 +1494,15 @@ body:not(:has(#quote > span:not(:empty))) .quote-block { background-image: none;
     for (var g = 0; g < content.length; g++) {
       var box = content[g].getBoundingClientRect();
       if (box.height === 0 || box.width === 0) continue;
+      /* An INLINE box is measured by its face's ascent and descent, not its
+         line box (see the limb below), so it pokes a few px past a field its
+         block sits inside. Emphasis wraps every run of a marked field in an
+         inline span (`.mk`/`.mk-t`), and once a one-colour brand's marks
+         painted (2026-09-26) those spans made this limb shrink karoslabs'
+         slide 3 two steps to caption size on a plate 5% covered by text. The
+         block that holds them is measured here anyway. */
+      var boxDisplay = getComputedStyle(content[g]).display;
+      if (boxDisplay === 'inline' || boxDisplay === 'contents') continue;
       if (box.top < f.top - 1 || box.bottom > f.bottom + 1) return true;
     }
 

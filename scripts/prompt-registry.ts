@@ -181,8 +181,8 @@ export const PROMPT_REGISTRY: readonly PromptRegistryEntry[] = [
   {
     promptId: "instagram-copy",
     agent: "instagram-agent",
-    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37"],
-    latestVersion: "37",
+    versions: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38"],
+    latestVersion: "38",
     // `requires` is UNCHANGED at @16. §23 makes `languageBrief` binding when it is present, but §1 is
     // demoted rather than deleted, so the `languageDirective` marker — which looks for the literal
     // `clientVoiceContext` — is still satisfied, and an English run reads identically to @15.

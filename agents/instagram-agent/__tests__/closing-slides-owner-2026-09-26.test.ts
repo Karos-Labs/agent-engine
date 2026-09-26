@@ -94,3 +94,31 @@ describe("a slide that opens with its figure keeps the device (default:numbers-a
     expect(out[0]!.device).toBeDefined();
   });
 });
+
+describe("a mark is for display type, never running text (2026-09-26)", () => {
+  it("drops a body span with its own reason and still paints the headline's", () => {
+    const copy = {
+      format: "carousel",
+      caption: "c",
+      slides: [
+        slide(1, { layout: "cover", headline: "The 3,000-agent CMO fallacy", emphasis: ["CMO fallacy"] }),
+        slide(2, { headline: "Output runs at machine speed. Strategy still runs at human speed.", body: "The gap between them is where brand drift lives.", emphasis: ["machine speed", "brand drift"] }),
+        slide(3, { layout: "closer", headline: "The 32% outperforms because of what it kept.", body: "What would you keep?" }),
+      ],
+    } as unknown as InstagramCopyOutput;
+    const report = { hexesBySlide: new Map<number, string[]>(), issues: [] as Array<{ slide: number; field: string; text: string; reason: string }>, kindsBySlide: new Map<number, string[]>() };
+    const data = assembleSlidesData({
+      clientSlug: "karoslabs", postId: "p", repoRoot: "/r",
+      brandTokens: { templateDir: "t", slideTemplate: "slide.html" },
+      copy,
+      selections: copy.slides.map((s) => ({ n: s.n, imagePath: null, reason: "r", license: "x", rightsUsable: true, watermarkFree: true, claimMatch: 5, claimMatchReason: "r" })),
+      canvas: { w: 1080, h: 1440, scale: 2, slides_min: 1, slides_max: 8 },
+      paletteSeed: "karoslabs", groundHex: GROUND, foregroundHex: INK, brandAccentFallback: ORANGE, accentRing: [ORANGE],
+      markReportOut: report as never,
+    });
+    const s2 = data.slides.find((s) => s.n === 2)!;
+    expect(s2.htmlFragments?.["headlineRuns"] ?? "").toContain("machine speed");
+    expect(s2.htmlFragments?.["bodyRuns"] ?? "").toBe("");
+    expect(report.issues.some((i) => i.slide === 2 && i.field === "body" && i.text === "brand drift" && /never in running text/u.test(i.reason))).toBe(true);
+  });
+});
