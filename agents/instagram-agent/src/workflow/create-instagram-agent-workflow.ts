@@ -1,6 +1,7 @@
 import { keepClientSitePages } from "./site-identity.js";
 import { lintReadableCopy, readableCopySteer } from "./readable-copy.js";
 import { brandMarkZone } from "./brand-render-tokens.js";
+import { exemplarLook } from "./exemplar-look.js";
 import { buildExemplarLibrary, densityFromLibrary, nicheHooksForCopy, EXEMPLAR_LIBRARY_BELIEF_KEY, EXEMPLAR_POSTS_PER_ACCOUNT, exemplarLibraryAction, exemplarPatternEvidence, exemplarStudioNotes, failedLibrary, planHarvest, postsToJudge, readExemplarLibrary, type ExemplarLibrary, type HarvestedExemplar } from "./exemplar-library.js";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -7421,6 +7422,9 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
       // `clientSlug:runId:seriesId`, so `systemFor(n)` below re-resolves the
       // same `systemId` per attempt with that attempt's real count, and the two
       // can never disagree about WHICH system this post is in.
+      // 2026-09-26: the client's best harvested exemplars rank the catalog (see `exemplar-look.ts`).
+      const lookFromExemplars = exemplarLook(exemplarLibrary);
+      const exemplarPreference = lookFromExemplars === undefined ? {} : { preferred: { ground: lookFromExemplars.ground, accentForm: lookFromExemplars.accentForm, typeScale: lookFromExemplars.typeScale } };
       const visualSystem = await wf.step.code(rev("04p-resolve-visual-system"), () =>
         pickVisualSystem({
           clientSlug: wf.clientSlug,
@@ -7431,6 +7435,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
           recentOwnSystemIds: recentSystemIds(skeletonHistory),
           recentCrossClientSystemIds: crossClientSystemIds(crossClientFormatHistory, wf.clientSlug, SYSTEM_CROSS_CLIENT_HOLD),
           ...(newsCover ? { forcedCoverForm: "news-frame" as const } : {}),
+          ...exemplarPreference,
         }),
       );
       // Read by `headExtras`, which is defined above `draftOnce` because the
@@ -7456,6 +7461,7 @@ export function createInstagramAgentWorkflow(options: CreateInstagramAgentWorkfl
               recentOwnSystemIds: recentSystemIds(skeletonHistory),
               recentCrossClientSystemIds: crossClientSystemIds(crossClientFormatHistory, wf.clientSlug, SYSTEM_CROSS_CLIENT_HOLD),
               ...(newsCover ? { forcedCoverForm: "news-frame" as const } : {}),
+              ...exemplarPreference,
             });
 
       // ── 04l: the register card, the persona and the few-shot (Phase 4, RFC-15 §3) ──
