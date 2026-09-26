@@ -255,7 +255,8 @@ function sentencesWithOffsets(text: string): Array<{ text: string; start: number
 }
 
 /** Sentence boundaries that hold for both Latin and Hebrew copy — `.`/`!`/`?` plus the Arabic-script question mark `؟` (Hebrew copy uses Latin punctuation), and the line break the writer's bodies often use. */
-const SENTENCE_SPLIT = /(?<=[.!?؟])\s+|\n+/u;
+// 2026-09-26: never after an initial ("J.P. Morgan"), as `slides-data.ts`'s SENTENCE_END.
+const SENTENCE_SPLIT = /(?<=[.!?؟])(?<!(?:^|[^\p{L}])\p{L}\.)\s+|\n+/u;
 
 export function sentencesOf(text: string): string[] {
   return text
