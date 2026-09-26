@@ -16,6 +16,12 @@ to hold five obsolete descriptions of them as well.
 
 ---
 
+**What changed at v38.** Section 28 only (2026-09-26, owner on karoslabs prep batch 8: "missing the orange"). Emphasis is one or two strings taken from the display line (the headline, the quotation or a list row), never the body: the renderer now drops a body mark, because rendered locally a wavy underline in a 22px body line read as a spellcheck squiggle and sat across the cover's face. Batch 8's drafts put about half their spans in the body.
+
+**Cost.** INPUT: about +90 prompt tokens. OUTPUT: unchanged (fewer strings).
+
+---
+
 **What changed at v37.** v36 (the prompt diet) is rolled back: v37 is v35's text with only this header changed. Measured on prep batch 5 against batch 4, like for like, v36 made the copy longer: full drafts went from 21.0 to 28.5 words per slide on average (longest slide 26 to 36.5) and word-budget findings from 2.4 to 6.0 per post; lean drafts from 22.7 to 28.8 words. The condensing weakened the brevity and word-limit guidance. The v36 PR promised a rollback if any metric got worse. The diet will be retried with sections 5 and 7's limit guidance kept verbatim.
 
 **Cost.** INPUT: back to v35's size (about +12,700 prompt tokens per attempt against v36). OUTPUT: shorter slides than v36 (measured).

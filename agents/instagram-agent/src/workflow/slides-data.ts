@@ -2144,6 +2144,16 @@ function contentFor(
     const fieldName = field === "item" ? `item[${itemIndex ?? 0}]` : field;
     const declared = (assigned.byField.get(fieldName) ?? []).map((t) => ({ text: t }));
     if (declared.length === 0) return undefined;
+    // A MARK IS FOR DISPLAY TYPE (2026-09-26). Rendered on karoslabs prep
+    // batch 8 once a one-colour brand's marks painted: a wavy underline or a
+    // slab inside a 22px body line reads as a spellcheck squiggle, and on the
+    // cover it sat across the speaker's face. The owner's reference (the
+    // Liquid Death breakdown) marks one word of the HEADLINE. Running text is
+    // never marked; the span is reported with this reason.
+    if (field === "body") {
+      for (const d of declared) markDrops.push({ field: fieldName, text: d.text, reason: "a mark is set on display type (the headline, title, closing line or quotation), never in running text, where it reads as a spellcheck underline" });
+      return undefined;
+    }
     const resolved = resolveSlideMarks(fieldName, text, declared, {
       dir,
       allowedIndexes: plan.allowedIndexes,
